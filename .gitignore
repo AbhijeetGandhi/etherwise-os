@@ -1,0 +1,32 @@
+# Secrets — never commit (v3 reads shared creds from ../etherwise-os/.credentials until PL-10)
+.credentials/
+*.env
+!*.env.example
+
+# Runtime state
+var/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Knowledge inbox payloads (personal/client data) — pipeline output in knowledge/ IS tracked
+knowledge-inbox/*
+!knowledge-inbox/fathom/.gitkeep
+!knowledge-inbox/loom/.gitkeep
+
+# Transcripts and raw client material are never committed
+**/raw-transcripts/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS / Cowork FUSE artifacts
+.DS_Store
+.fuse_hidden*
+
+# Editor
+.vscode/
+.idea/
