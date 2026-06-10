@@ -1,0 +1,11 @@
+Build-phase marker — while this file exists, agent sessions may edit core/
+and .claude/ (kernel build, diffs approved in-session by Abhijeet).
+
+DELETE THIS FILE at operational cutover (M1 shadow start). Hooks then
+hard-deny agent writes to:
+  core/  (config.py and all kernel modules)
+  .claude/hooks/  .claude/settings.json
+  rails/REGISTRY.md
+
+The marker itself is never agent-writable (guardrails deny it even while it
+exists), so removal is one-way from the agent's point of view.

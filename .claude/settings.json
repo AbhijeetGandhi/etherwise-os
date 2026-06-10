@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=\"$CLAUDE_PROJECT_DIR\" python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/pretooluse.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=\"$CLAUDE_PROJECT_DIR\" python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/posttooluse.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=\"$CLAUDE_PROJECT_DIR\" python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/sessionstart.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

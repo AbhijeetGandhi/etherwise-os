@@ -24,6 +24,7 @@ VAR_DIR = V3_ROOT / "var"
 DB_PATH = VAR_DIR / "etherwise.db"
 LOG_DIR = VAR_DIR / "logs"
 BACKUP_DIR = VAR_DIR / "backups"
+LOCK_DIR = VAR_DIR / "locks"   # flock single-instance locks (runner)
 KNOWLEDGE_DIR = V3_ROOT / "knowledge"
 KNOWLEDGE_INBOX = V3_ROOT / "knowledge-inbox"
 
@@ -62,6 +63,38 @@ DAILY_HARD_LIMIT_USD = 5.00                       # ClaudeBudgetExceeded
 PER_RUN_MAX_USD = 0.50                            # single invocation kill-switch
 PER_RUN_MAX_TOOL_CALLS = 40                       # NemoClaw lesson: die in-run, not at daily cap
 PER_RUN_MAX_OUTPUT_TOKENS = 8_000
+
+# ── Claude API (gateway) ─────────────────────────────────────────────────────
+# $/MTok: (input, output, cache_read, cache_write_1h)
+# Source: claude-platform-research-2026-06 §1 + claude-api skill (verified 2026-06).
+# Cache write 1h = 2x input.
+PRICING = {
+    "claude-fable-5":            (10.0, 50.0, 1.00, 20.0),
+    "claude-opus-4-8":           ( 5.0, 25.0, 0.50, 10.0),
+    "claude-sonnet-4-6":         ( 3.0, 15.0, 0.30,  6.0),
+    "claude-haiku-4-5-20251001": ( 1.0,  5.0, 0.10,  2.0),
+}
+CACHE_TTL = "1h"              # prompt-cache TTL (architecture §4)
+CLAUDE_TIMEOUT_SECONDS = 120  # per-call HTTP timeout
+# SDK auto-retries OFF in gateway — runner.py owns retry/backoff/failover.
+
+# ── Runner (job wrapper) ─────────────────────────────────────────────────────
+RUNNER_MAX_ATTEMPTS = 3           # per model in failover chain
+RUNNER_BACKOFF_BASE_SECONDS = 30  # 30s -> 60s between retries
+RUNNER_STAGGER_MAX_SECONDS = 120  # hash(task) % N sleep at top-of-hour
+
+# ── Deprecation + platform calendar (doctor watches these) ───────────────────
+DEPRECATION_WATCH = {
+    "claude-haiku-4-5-20251001":
+        ("2026-08-15", "dated snapshot retires not before 2026-10-15"
+         " — review pin"),
+}
+CALENDAR_WATCH = (
+    ("2026-06-15", "Claim Agent SDK credit (one-time opt-in, Max account);"
+     " flip ETHERWISE_BILLING=credit"),
+    ("2026-06-22", "Fable-included window ends — architect sessions move to"
+     " Opus 4.8 or usage credits"),
+)
 
 # ── Shadow mode (pre-flight §9) ──────────────────────────────────────────────
 # True ⇒ external writes (Airtable / ClickUp / email / Upwork drafts) are
@@ -144,5 +177,5 @@ def config_sha256() -> str:
 
 
 def ensure_dirs() -> None:
-    for d in (VAR_DIR, LOG_DIR, BACKUP_DIR, KNOWLEDGE_INBOX / "fathom", KNOWLEDGE_INBOX / "loom"):
+    for d in (VAR_DIR, LOG_DIR, BACKUP_DIR, LOCK_DIR, KNOWLEDGE_INBOX / "fathom", KNOWLEDGE_INBOX / "loom"):
         d.mkdir(parents=True, exist_ok=True)
