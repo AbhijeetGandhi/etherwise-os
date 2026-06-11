@@ -166,6 +166,23 @@ class TestBashRules(unittest.TestCase):
             self.bash("sqlite3 ../etherwise-os/etherwise.db '.tables'").action,
             "allow")
 
+    def test_v2_reads_with_benign_redirects_allowed(self):
+        # 2>/dev/null and 2>&1 are not writes INTO v2 — regression: these were
+        # false-positive denied the moment hooks went live (Day 3)
+        self.assertEqual(
+            self.bash("grep -rln pat /x/etherwise-os 2>/dev/null").action,
+            "allow")
+        self.assertEqual(
+            self.bash('sqlite3 "file:/x/etherwise-os/etherwise.db?mode=ro"'
+                      ' ".schema jobs" 2>&1 | head').action, "allow")
+
+    def test_redirect_into_v2_denied(self):
+        self.assertEqual(
+            self.bash("echo hi > ../etherwise-os/notes.md").action, "deny")
+        self.assertEqual(
+            self.bash("cat x >> /Users/a/Etherwise/etherwise-os/log.txt")
+            .action, "deny")
+
     def test_own_db_mutations_allowed(self):
         self.assertEqual(
             self.bash("sqlite3 var/etherwise.db 'DELETE FROM quarantine"

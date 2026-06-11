@@ -171,10 +171,12 @@ def _evaluate_bash(command: str, v3_root: Path) -> Decision:
                      " forbidden (never echo credentials) — the gateway"
                      " loads secrets itself")
 
+    # Redirect must target a v2 path — a bare ">" check false-positived on
+    # benign 2>/dev/null / 2>&1 in read-only commands (caught live, Day 3).
     if "etherwise-os" in command and (
             _SQL_MUTATION_RE.search(command)
             or re.search(r"\b(rm|mv|chmod|chown|truncate)\b", command)
-            or ">" in command):
+            or re.search(r">\s*\S*etherwise-os", command)):
         return _deny("v2 (etherwise-os) is live production and read-only"
                      " from v3 — do not modify it (incidents only,"
                      " via Abhijeet)")

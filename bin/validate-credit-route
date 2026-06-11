@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""June-15 credit-route validation: PYTHONPATH=. python3 bin/validate-credit-route
+
+Asserts the subscription/credit billing path ACTUALLY ENGAGES — payg fallback
+is disabled in-process so a credit failure fails loudly here instead of being
+silently absorbed (the exact failure mode Abhijeet flagged: silent always-payg).
+
+Checks:
+ 1. gateway.call(route='credit') succeeds with fallback OFF
+ 2. result.route == 'credit'
+ 3. the claude_usage row says billing_route='credit' with a reported cost
+ 4. prints the flip instruction (config default payg->credit is a reviewed
+    commit, not done by this script)
+"""
+import sys
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import claude_gateway as gw  # noqa: E402
+from core import config, db  # noqa: E402
+
+
+def main() -> int:
+    print("validate-credit-route: forcing route='credit',"
+          " payg fallback DISABLED for this check...")
+    try:
+        with mock.patch.object(config, "BILLING_FALLBACK_TO_PAYG", False):
+            result = gw.call(
+                task_name="credit-route-validation",
+                model_key="classify",            # haiku — cheapest probe
+                user_content="Reply with the single word OK.",
+                purpose="june-15 credit validation",
+                max_output_tokens=16,
+                route="credit")
+    except gw.CreditRouteError as exc:
+        print(f"FAIL: credit route did not engage: {exc}")
+        print("Most likely: Agent SDK credit not claimed yet (one-time opt-in"
+              " on the Max account, claimable from 2026-06-15), or `claude`"
+              " CLI not on PATH for this shell, or subscription auth missing.")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"FAIL: unexpected error on credit route: {exc!r}")
+        return 1
+
+    if result.route != "credit":
+        print(f"FAIL: route_used={result.route!r} — fallback engaged despite"
+              " being disabled? Investigate before flipping the default.")
+        return 1
+
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT billing_route, total_cost_usd, model FROM claude_usage"
+            " WHERE task_name='credit-route-validation'"
+            " ORDER BY id DESC LIMIT 1").fetchone()
+    print(f"PASS: route_used=credit · model={row['model']} ·"
+          f" ledger billing_route={row['billing_route']} ·"
+          f" reported cost ${row['total_cost_usd']:.4f}"
+          f" · reply={result.text.strip()[:20]!r}")
+    print("\nNext (reviewed commit, not automated): flip the default in"
+          " core/config.py ->"
+          " BILLING_DEFAULT_ROUTE = os.environ.get(\"ETHERWISE_BILLING\","
+          " \"credit\") and commit. Until then individual calls can pass"
+          " route='credit'.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

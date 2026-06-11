@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""One-time v2 -> v3 import + parity report (architecture §4, Day 3).
+
+PYTHONPATH=. python3 bin/import-v2
+
+Reads v2 etherwise.db (ATTACH, read-only) + the Airtable Proposals table
+(REST, read-only). Writes v3 tables + quarantine, then a written parity
+report to ../reports/parity-report-<date>.md. STOPS there — nothing consumes
+the imported data until Abhijeet signs off.
+
+Quarantined (payloads preserved in v3 quarantine, NOT imported):
+  - jobs with status='Phantom' (June 10-11 incidents; 68 after restoration)
+  - Airtable legacy proposals: Status='Submitted', no outcome, not linked to
+    any v2 row (the pre-v2 44)
+  - Airtable records containing #ERROR values (the known 8)
+Listed for approval, NOT deleted and NOT quarantined:
+  - Airtable Proposals created in the 2026-06-10 incident window from corrupt
+    jobs (the ~30 junk records) -> sweep CSV next to the report.
+
+v2 is opened read-only throughout. Refuses to run if v3 already has sales
+rows (re-run path: rm var/etherwise.db* && migrate && import).
+"""
+from __future__ import annotations
+
+import json
+import sys
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db, runner  # noqa: E402
+
+V2_DB = config.V2_DB_PATH
+REPORTS = config.WORKSPACE_ROOT / "reports"
+TODAY = datetime.now(config.TZ).strftime("%Y-%m-%d")
+
+# v3 table <- (v2 table, {v3 col: v2 col} renames). Unlisted columns map 1:1.
+TABLE_MAP = [
+    ("scored_jobs", "jobs", {}),
+    ("proposals", "vendor_proposals", {"thread_id": "room_id"}),
+    ("contracts", "contracts", {"thread_id": "room_id"}),
+    ("offers", "offers", {"thread_id": "room_id"}),
+    ("transactions", "transactions", {}),
+    ("threads", "rooms", {"proposal_id": "vendor_proposal_id",
+                          "latest_message_id": "latest_story_id",
+                          "latest_message_dt": "latest_story_dt"}),
+    ("messages", "stories", {"thread_id": "room_id"}),
+    ("drafts", "drafts", {"thread_id": "room_id"}),
+    ("clients", "clients", {}),
+    ("communications", "communications", {}),
+]
+
+
+def cols(conn, table, schema="main"):
+    return [r[1] for r in conn.execute(f"PRAGMA {schema}.table_info({table})")]
+
+
+def import_sqlite(conn) -> dict:
+    """Copy v2 tables into v3 names; quarantine Phantom jobs. Returns stats."""
+    stats = {}
+    for v3_table, v2_table, renames in TABLE_MAP:
+        v3_cols = cols(conn, v3_table)
+        v2_cols = set(cols(conn, v2_table, "v2"))
+        pairs = []
+        for c in v3_cols:
+            src = renames.get(c, c)
+            if src in v2_cols:
+                pairs.append((c, src))
+        dst = ",".join(p[0] for p in pairs)
+        src = ",".join(f"v2.{v2_table}.{p[1]}" for p in pairs)
+
+        where = ""
+        if v3_table == "scored_jobs":
+            # quarantine phantoms with full payload, import the rest
+            phantom_cols = cols(conn, v2_table, "v2")
+            q = conn.execute(
+                f"SELECT * FROM v2.jobs WHERE status='Phantom'")
+            n_q = 0
+            for row in q.fetchall():
+                payload = dict(zip(phantom_cols, row))
+                conn.execute(
+                    "INSERT INTO quarantine (source, reason, payload_json)"
+                    " VALUES ('import-v2', 'phantom-incident-2026-06-10/11',"
+                    " ?)", (json.dumps(payload, default=str),))
+                n_q += 1
+            stats["quarantined_phantom_jobs"] = n_q
+            where = " WHERE v2.jobs.status != 'Phantom'"
+
+        conn.execute(f"INSERT INTO {v3_table} ({dst}) SELECT {src}"
+                     f" FROM v2.{v2_table}{where}")
+        v2_n = conn.execute(
+            f"SELECT COUNT(*) FROM v2.{v2_table}").fetchone()[0]
+        v3_n = conn.execute(
+            f"SELECT COUNT(*) FROM {v3_table}").fetchone()[0]
+        stats[v3_table] = {"v2": v2_n, "v3": v3_n}
+
+    # claude_usage: v2 rows -> v3 ledger (route was always payg in v2)
+    conn.execute(
+        "INSERT INTO claude_usage (called_at, ist_date, task_name, purpose,"
+        " model, billing_route, input_tokens, output_tokens,"
+        " cache_creation_tokens, cache_read_tokens, total_cost_usd,"
+        " duration_ms, tool_calls, stop_reason, error)"
+        " SELECT called_at, ist_date, task_name, purpose, model, 'payg',"
+        " input_tokens, output_tokens, cache_creation_tokens,"
+        " cache_read_tokens, total_cost_usd, duration_ms, 0, stop_reason,"
+        " error FROM v2.claude_usage")
+    stats["claude_usage"] = {
+        "v2": conn.execute("SELECT COUNT(*) FROM v2.claude_usage")
+        .fetchone()[0],
+        "v3_imported": conn.execute(
+            "SELECT COUNT(*) FROM claude_usage WHERE billing_route='payg'"
+            " AND task_name NOT IN ('test_task','credit-route-validation')")
+        .fetchone()[0]}
+    return stats
+
+
+# ── Airtable phase (REST, read-only) ─────────────────────────────────────────
+
+def _airtable_key() -> str:
+    env = config.CREDENTIALS_DIR / "etherwise-os.env"
+    for line in env.read_text().splitlines():
+        if line.startswith("AIRTABLE_API_KEY="):
+            return line.split("=", 1)[1].strip()
+    sys.exit("AIRTABLE_API_KEY not found")
+
+
+def fetch_airtable_proposals() -> list:
+    key = _airtable_key()
+    records, offset = [], None
+    base, table = config.AIRTABLE_BASE, config.AT["proposals"]
+    while True:
+        params = {"pageSize": "100"}
+        if offset:
+            params["offset"] = offset
+        url = (f"https://api.airtable.com/v0/{base}/{table}?"
+               + urllib.parse.urlencode(params))
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+        records += data.get("records", [])
+        offset = data.get("offset")
+        if not offset:
+            return records
+
+
+def classify_airtable(conn, records) -> dict:
+    linked_ids = {r[0] for r in conn.execute(
+        "SELECT airtable_record_id FROM proposals"
+        " WHERE airtable_record_id IS NOT NULL")}
+    linked_ids |= {r[0] for r in conn.execute(
+        "SELECT airtable_record_id FROM scored_jobs"
+        " WHERE airtable_record_id IS NOT NULL")}
+    phantom_at_ids = set()
+    for r in conn.execute(
+            "SELECT payload_json FROM quarantine WHERE source='import-v2'"):
+        at_id = json.loads(r[0]).get("airtable_record_id")
+        if at_id:
+            phantom_at_ids.add(at_id)
+
+    out = {"total": len(records), "linked": 0, "error_records": [],
+           "legacy_submitted": [], "junk_window": [], "other_unlinked": []}
+    for rec in records:
+        rid, fields = rec["id"], rec.get("fields", {})
+        created = rec.get("createdTime", "")
+        has_error = any(isinstance(v, str) and "#ERROR" in v
+                        for v in fields.values()) or any(
+            isinstance(v, dict) and v.get("error")
+            for v in fields.values())
+        in_junk_window = ("2026-06-10T17:30" <= created <= "2026-06-10T19:30")
+
+        if has_error:
+            out["error_records"].append(
+                {"id": rid, "created": created,
+                 "name": str(fields.get("Job Title")
+                             or fields.get("Name") or "")[:80]})
+        elif in_junk_window and (rid not in linked_ids
+                                 or rid in phantom_at_ids):
+            out["junk_window"].append(
+                {"id": rid, "created": created,
+                 "name": str(fields.get("Job Title")
+                             or fields.get("Name") or "")[:80]})
+        elif rid in linked_ids:
+            out["linked"] += 1
+        elif str(fields.get("Status", "")) == "Submitted" and not (
+                fields.get("Outcome Reason") or fields.get("Outcome Notes")):
+            out["legacy_submitted"].append(
+                {"id": rid, "created": created,
+                 "name": str(fields.get("Job Title")
+                             or fields.get("Name") or "")[:80],
+                 "fields": fields})
+        else:
+            out["other_unlinked"].append(
+                {"id": rid, "created": created,
+                 "status": str(fields.get("Status", ""))[:30]})
+    return out
+
+
+def quarantine_airtable(conn, classification) -> None:
+    for rec in classification["legacy_submitted"]:
+        conn.execute(
+            "INSERT INTO quarantine (source, reason, payload_json)"
+            " VALUES ('import-v2', 'pre-v2-submitted-no-outcome', ?)",
+            (json.dumps(rec, default=str),))
+    for rec in classification["error_records"]:
+        conn.execute(
+            "INSERT INTO quarantine (source, reason, payload_json)"
+            " VALUES ('import-v2', 'airtable-error-record', ?)",
+            (json.dumps(rec, default=str),))
+
+
+# ── parity checks ─────────────────────────────────────────────────────────────
+
+def parity_checks(conn) -> list:
+    checks = []
+
+    def check(name, v2_val, v3_val):
+        ok = v2_val == v3_val
+        checks.append((("PASS" if ok else "FAIL"), name, v2_val, v3_val))
+        return ok
+
+    for v3_table, v2_table, _ in TABLE_MAP:
+        v2_n = conn.execute(f"SELECT COUNT(*) FROM v2.{v2_table}").fetchone()[0]
+        v3_n = conn.execute(f"SELECT COUNT(*) FROM {v3_table}").fetchone()[0]
+        if v3_table == "scored_jobs":
+            q = conn.execute(
+                "SELECT COUNT(*) FROM quarantine WHERE"
+                " reason='phantom-incident-2026-06-10/11'").fetchone()[0]
+            check(f"{v3_table}: v2 rows == v3 + quarantined", v2_n, v3_n + q)
+        else:
+            check(f"{v3_table}: row count", v2_n, v3_n)
+
+    # money to the cent (signed sums + by profile)
+    for label, where in (("ALL", "1=1"), ("Personal", "profile='Personal'"),
+                         ("Agency", "profile='Agency'"),
+                         ("NULL-profile", "profile IS NULL")):
+        v2_s = conn.execute(
+            f"SELECT ROUND(COALESCE(SUM(amount),0),2) FROM v2.transactions"
+            f" WHERE {where}").fetchone()[0]
+        v3_s = conn.execute(
+            f"SELECT ROUND(COALESCE(SUM(amount),0),2) FROM transactions"
+            f" WHERE {where}").fetchone()[0]
+        check(f"transactions SUM(amount) [{label}]", v2_s, v3_s)
+
+    # terminal statuses preserved exactly
+    for table_pair, status_col in ((("vendor_proposals", "proposals"),
+                                    "status"),):
+        v2_t, v3_t = table_pair
+        v2_d = dict(conn.execute(
+            f"SELECT {status_col}, COUNT(*) FROM v2.{v2_t} GROUP BY 1"))
+        v3_d = dict(conn.execute(
+            f"SELECT {status_col}, COUNT(*) FROM {v3_t} GROUP BY 1"))
+        check(f"{v3_t}: full status distribution", v2_d, v3_d)
+
+    v2_jobs_d = dict(conn.execute(
+        "SELECT status, COUNT(*) FROM v2.jobs WHERE status != 'Phantom'"
+        " GROUP BY 1"))
+    v3_jobs_d = dict(conn.execute(
+        "SELECT status, COUNT(*) FROM scored_jobs GROUP BY 1"))
+    check("scored_jobs: status distribution (ex-Phantom)", v2_jobs_d,
+          v3_jobs_d)
+
+    # spot sums on numeric columns
+    for table, col in (("scored_jobs", "score"),
+                       ("proposals", "charge_rate"),
+                       ("contracts", "hourly_rate")):
+        v2_t = {"scored_jobs": "jobs", "proposals": "vendor_proposals",
+                "contracts": "contracts"}[table]
+        extra = " WHERE status != 'Phantom'" if table == "scored_jobs" else ""
+        v2_s = conn.execute(
+            f"SELECT ROUND(COALESCE(SUM({col}),0),2) FROM v2.{v2_t}{extra}"
+        ).fetchone()[0]
+        v3_s = conn.execute(
+            f"SELECT ROUND(COALESCE(SUM({col}),0),2) FROM {table}"
+        ).fetchone()[0]
+        check(f"{table}: SUM({col})", v2_s, v3_s)
+    return checks
+
+
+def baseline_metrics(conn) -> dict:
+    """§9: snapshot so v3 regressions are detectable against v2 BEHAVIOR."""
+    m = {}
+    m["proposals_total"] = conn.execute(
+        "SELECT COUNT(*) FROM proposals").fetchone()[0]
+    m["proposals_by_status"] = dict(conn.execute(
+        "SELECT status, COUNT(*) FROM proposals GROUP BY 1"))
+    won = m["proposals_by_status"].get("Won", 0)
+    closed = sum(v for k, v in m["proposals_by_status"].items()
+                 if k in ("Won", "Lost", "Expired", "Withdrawn"))
+    m["win_rate_of_closed"] = round(won / closed, 3) if closed else None
+    m["jobs_clickup_last_14d"] = conn.execute(
+        "SELECT COUNT(*) FROM scored_jobs WHERE status='ClickUp Created'"
+        " AND fetched_at >= datetime('now', '-14 days')").fetchone()[0]
+    m["jobs_hot_last_14d"] = conn.execute(
+        "SELECT COUNT(*) FROM scored_jobs WHERE score >= 16"
+        " AND fetched_at >= datetime('now', '-14 days')").fetchone()[0]
+    m["claude_spend_30d_usd"] = round(conn.execute(
+        "SELECT COALESCE(SUM(total_cost_usd),0) FROM v2.claude_usage"
+        " WHERE called_at >= datetime('now', '-30 days')").fetchone()[0], 2)
+    m["active_contracts"] = conn.execute(
+        "SELECT COUNT(*) FROM contracts WHERE upwork_status='ACTIVE'"
+    ).fetchone()[0]
+    m["earnings_30d_usd"] = round(conn.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE amount > 0"
+        " AND COALESCE(fully_paid_dt, creation_dt) >="
+        " datetime('now','-30 days')").fetchone()[0], 2)
+    return m
+
+
+def task(ctx):
+    if not V2_DB.exists():
+        raise RuntimeError(f"v2 db missing: {V2_DB}")
+    with db.connect() as conn:
+        already = conn.execute("SELECT COUNT(*) FROM scored_jobs").fetchone()[0]
+        if already:
+            raise RuntimeError(
+                f"v3 already has {already} scored_jobs rows — refusing to"
+                " double-import. Re-run path: rm var/etherwise.db* &&"
+                " PYTHONPATH=. python3 -m core.db && rerun.")
+        conn.execute(f"ATTACH 'file:{V2_DB}?mode=ro' AS v2")
+        ctx.log("v2 attached read-only; importing sqlite tables")
+        stats = import_sqlite(conn)
+
+        ctx.log("fetching Airtable Proposals for legacy/error/junk"
+                " classification")
+        records = fetch_airtable_proposals()
+        classification = classify_airtable(conn, records)
+        quarantine_airtable(conn, classification)
+
+        checks = parity_checks(conn)
+        metrics = baseline_metrics(conn)
+        # no explicit DETACH — it errors inside the open transaction; the
+        # attachment is released when the connection closes
+
+    REPORTS.mkdir(exist_ok=True)
+    report_path = REPORTS / f"parity-report-{TODAY}.md"
+    sweep_path = REPORTS / f"airtable-junk-sweep-{TODAY}.csv"
+    lines = [
+        f"# v2 -> v3 Import Parity Report — {TODAY}",
+        "",
+        f"Source: `{V2_DB}` (read-only) + Airtable Proposals"
+        f" (`{config.AT['proposals']}`)",
+        "**Sign-off gate: nothing consumes this data until Abhijeet"
+        " approves.**",
+        "",
+        "## Parity checks",
+        "| status | check | v2 | v3 |",
+        "|---|---|---|---|",
+    ]
+    fails = 0
+    for status, name, v2v, v3v in checks:
+        fails += status == "FAIL"
+        lines.append(f"| {status} | {name} | `{v2v}` | `{v3v}` |")
+    lines += [
+        "",
+        f"**{len(checks) - fails}/{len(checks)} checks PASS**"
+        + (f" — {fails} FAIL (DO NOT SIGN OFF)" if fails else ""),
+        "",
+        "## Quarantine summary",
+        f"- Phantom jobs (June 10-11 incidents):"
+        f" {stats.get('quarantined_phantom_jobs', 0)}",
+        f"- Airtable legacy Submitted-no-outcome:"
+        f" {len(classification['legacy_submitted'])}",
+        f"- Airtable #ERROR records: {len(classification['error_records'])}",
+        "",
+        "## Airtable Proposals classification",
+        f"- total records: {classification['total']}",
+        f"- linked to v2 rows: {classification['linked']}",
+        f"- junk-window (2026-06-10 17:30-19:30Z, sweep list — NOT touched):"
+        f" {len(classification['junk_window'])}",
+        f"- other unlinked (imported nowhere, listed for review):"
+        f" {len(classification['other_unlinked'])}",
+        "",
+        "### Junk-window sweep list (approval required before any deletion)",
+    ]
+    for rec in classification["junk_window"]:
+        lines.append(f"- `{rec['id']}` {rec['created']} — {rec['name']}")
+    lines += ["", "### Error records (quarantined)"]
+    for rec in classification["error_records"]:
+        lines.append(f"- `{rec['id']}` {rec['created']} — {rec['name']}")
+    lines += ["", "### Legacy Submitted-no-outcome (quarantined)"]
+    for rec in classification["legacy_submitted"]:
+        lines.append(f"- `{rec['id']}` {rec['created']} — {rec['name']}")
+    if classification["other_unlinked"]:
+        lines += ["", "### Other unlinked Airtable records (FYI)"]
+        for rec in classification["other_unlinked"][:40]:
+            lines.append(f"- `{rec['id']}` {rec['created']}"
+                         f" status={rec['status']}")
+    lines += [
+        "",
+        "## Baseline metrics snapshot (§9 — regression reference)",
+        "```json",
+        json.dumps(metrics, indent=1),
+        "```",
+        "",
+        "## Table stats",
+        "```json",
+        json.dumps(stats, indent=1),
+        "```",
+    ]
+    report_path.write_text("\n".join(lines))
+
+    with open(sweep_path, "w") as f:
+        f.write("record_id,created,name\n")
+        for rec in classification["junk_window"]:
+            f.write(f"{rec['id']},{rec['created']},\"{rec['name']}\"\n")
+
+    ctx.log(f"parity report written: {report_path}")
+    return {"checks_pass": len(checks) - fails, "checks_fail": fails,
+            "report": str(report_path), "sweep_csv": str(sweep_path),
+            "quarantined": stats.get("quarantined_phantom_jobs", 0)
+            + len(classification["legacy_submitted"])
+            + len(classification["error_records"])}
+
+
+if __name__ == "__main__":
+    result = runner.run_task("import_v2", task, module="kernel")
+    print(json.dumps(result.metrics, indent=1))
+    sys.exit(0 if result.status == "completed"
+             and not result.metrics.get("checks_fail") else 1)
