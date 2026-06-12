@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""upwork-token-cutover — flips Upwork OAuth refresh ownership v2 -> v3.
+
+PREPARATION ONLY until M1b cutover: dry-run (default) prints the exact plan
+and current state; --execute requires --signed-off-by-abhijeet and performs:
+
+  1. verify current owner is v2 and the access token works (WHOAMI)
+  2. unload v2's upwork-domain launchd agents (sync-state, poll-inbox) —
+     they are the only refresh writers
+  3. write 'v3' to var/upwork-token-owner (arms UpworkClient.refresh)
+  4. supervised refresh: rotate the token once via v3, re-verify WHOAMI
+  5. honest ledger row 'upwork-token-cutover' in the V3 runs table
+
+Rollback: --rollback reloads the v2 agents and writes 'v2' back to the
+marker (v3 refresh disarms instantly).
+"""
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db  # noqa: E402
+from modules.upwork import queries, upwork_client  # noqa: E402
+
+V2_AGENTS = ("com.etherwise.sync-state", "com.etherwise.poll-inbox")
+LAUNCH_AGENTS = Path.home() / "Library/LaunchAgents"
+
+
+def whoami_ok() -> bool:
+    try:
+        client = upwork_client.UpworkClient()
+        data = client.graphql(queries.WHOAMI)
+        return bool((data.get("user") or {}).get("id"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"WHOAMI failed: {exc!r}", file=sys.stderr)
+        return False
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--execute", action="store_true")
+    p.add_argument("--rollback", action="store_true")
+    p.add_argument("--signed-off-by-abhijeet", action="store_true",
+                   help="required with --execute: M1b parity reviewed and"
+                        " cutover approved in-session")
+    args = p.parse_args()
+
+    owner = upwork_client.token_owner()
+    state = {
+        "owner_marker": owner,
+        "creds_path": str(upwork_client.CREDS_PATH),
+        "v2_agents": {},
+    }
+    listed = subprocess.run(["launchctl", "list"], capture_output=True,
+                            text=True).stdout
+    for agent in V2_AGENTS:
+        state["v2_agents"][agent] = "loaded" if agent in listed \
+            else "not-loaded"
+    print(json.dumps(state, indent=1))
+
+    if args.rollback:
+        if not args.execute:
+            print("ROLLBACK PLAN: reload v2 agents + marker 'v2'."
+                  " Add --execute to perform.")
+            return 0
+        for agent in V2_AGENTS:
+            plist = LAUNCH_AGENTS / f"{agent}.plist"
+            if plist.exists():
+                subprocess.run(["launchctl", "load", "-w", str(plist)])
+        upwork_client.OWNER_MARKER.write_text("v2")
+        print("ROLLED BACK: owner=v2, v2 agents reloaded")
+        return 0
+
+    plan = [
+        "1. WHOAMI with current token (must pass)",
+        f"2. launchctl unload {', '.join(V2_AGENTS)}",
+        "3. write 'v3' -> var/upwork-token-owner",
+        "4. supervised refresh via v3 client + WHOAMI re-verify",
+        "5. ledger row 'upwork-token-cutover' (v3 runs)",
+    ]
+    if not args.execute:
+        print("DRY-RUN — cutover plan:")
+        for step in plan:
+            print(f"  {step}")
+        print("Execute at M1b cutover ONLY, with:"
+              " --execute --signed-off-by-abhijeet")
+        return 0
+
+    if not args.signed_off_by_abhijeet:
+        sys.exit("REFUSED: --execute requires --signed-off-by-abhijeet"
+                 " (M1b cutover gate)")
+    if owner == "v3":
+        sys.exit("owner is already v3 — nothing to flip")
+    if not whoami_ok():
+        sys.exit("ABORT: current token fails WHOAMI — fix auth before"
+                 " flipping ownership")
+
+    started = datetime.now(timezone.utc).isoformat()
+    for agent in V2_AGENTS:
+        plist = LAUNCH_AGENTS / f"{agent}.plist"
+        if plist.exists():
+            subprocess.run(["launchctl", "unload", str(plist)])
+            print(f"unloaded {agent}")
+    upwork_client.OWNER_MARKER.write_text("v3")
+    print("owner marker -> v3")
+
+    client = upwork_client.UpworkClient()
+    client.refresh()
+    if not whoami_ok():
+        upwork_client.OWNER_MARKER.write_text("v2")
+        sys.exit("ABORT: post-refresh WHOAMI failed — marker reverted to v2;"
+                 " reload v2 agents manually and investigate")
+    print("supervised refresh OK, WHOAMI verified")
+
+    with db.connect(None) as conn:
+        conn.execute(
+            "INSERT INTO runs (task_name, started_at, completed_at, status,"
+            " metrics_json) VALUES ('upwork-token-cutover', ?, ?,"
+            " 'completed', ?)",
+            (started, datetime.now(timezone.utc).isoformat(),
+             json.dumps({"owner": "v3", "v2_agents_unloaded": V2_AGENTS})))
+    print("CUTOVER COMPLETE: v3 owns the Upwork token")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

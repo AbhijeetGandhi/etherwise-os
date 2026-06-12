@@ -1,5 +1,17 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-06-12 late (Day 5 complete) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-06-13 (Day 6 complete) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## Day 6 status (M1b BUILT + SHADOW-LIVE, parallel with M1a)
+**All three M1b tasks built on the kernel and supervised-run clean against live Upwork:**
+- `modules/upwork/upwork_client.py` — READ-ONLY-token GraphQL client (§9: 401 → TransientAPIError, wait for v2's refresher; refresh() HARD-GATED on var/upwork-token-owner='v3'). Live quirks ported the hard way: Cloudflare 403s default urllib UA (browser headers), partial-data GraphQL errors are NORMAL (tolerate_errors envelope), per-ACE financial auth errors tolerated per profile.
+- `modules/upwork/sync_state.py` (hourly :45) — proposals/contracts/offers/dual-ACE transactions onto v3 tables. **Supervised run 20: 25 proposals updated, 46 TERMINAL-PRESERVED (protection proven against live data), 51 contracts, 32 transactions, 1 tolerated agency-ACE error.** queries.py ported VERBATIM from v2 (the quirks ARE the field selections).
+- `modules/upwork/poll_inbox.py` (10:15 + 19:15 IST; v2 runs hourly — divergence documented for cutover review) — threads/messages mirror, **deterministic classification VERBATIM** (tiers, awaiting-reply, 48/72/168h, <12h, max-2-consecutive, snooze, stale-30d), Haiku thread-INTENT for owed threads + Sonnet drafts (draft-churn guard: pending same-bucket draft = no re-draft), contact@ digest as shadow intent. **Supervised run 19: 120 threads, 182 messages, buckets owed 3 / followup 12 / hard-skip 93, 16 pending drafts, digest intent in ledger, $0.04.** NOTE: order said "bucket classification via Haiku" — implemented as deterministic buckets (predictability spectrum) + Haiku layered for thread intent only; flag if you meant otherwise.
+- `modules/upwork/outcome_capture.py` (Sunday 11:00 IST) — the FIRST v3 RAIL (registry entry + full spec in rails/REGISTRY.md). Composer keys on Upwork's modified_dt (bug caught live: updated_at moves on every sync touch and would have flooded 46 old closures). Run 21: clean skip-empty. **form_url PENDING — Omni prompt at `../upwork/omni-prompt-outcome-form.md`; paste the shr… link into REGISTRY.md when created.**
+- `bin/upwork-token-cutover` — dry-run prints the 5-step plan; --execute requires --signed-off-by-abhijeet; aborts+reverts marker if post-refresh WHOAMI fails; --rollback restores v2. NO FLIP performed.
+- **launchd TCC lesson:** bash -lc + /usr/bin/python3 gets PermissionError on ~/Desktop from launchd context — v2's pattern (direct framework Python binary, the TCC-granted executable) ported to ALL FOUR v3 plists (scan/sync/inbox/outcomes), all loaded.
+- `bin/shadow-diff` extended: sync mirror deltas (proposal status mismatches vs v2), inbox bucket distributions v3-vs-v2, per-task shadow intents.
+**Tests: 175 v3 + 41 bridge green.** Gateway spend today: ~$0.05.
+**NEXT:** both shadows accumulate to ~Jun 20-22 cutovers · Abhijeet: run the Omni prompt, paste form_url into REGISTRY.md · June-15 credit validation fires Sunday 12:10 IST · M2 cockpit design session per build sequence.
 
 ## Day 5 status (re-scores executed + M1a SHADOW LIVE)
 **Run-1 re-score (approved) EXECUTED:** 15 rows per the eval's approved values (3 gated → effective 15; breakdowns regenerated with approved totals pinned + provenance; per-id asserts; ledger 'rescore-run1-jobs') · 10 drafts · 8 tasks pushed run-scoped, 0 errors · all 15 task bodies refreshed in place · summary `../reports/rescore-run1-2026-06-12.md` — **awaiting Cowork's external liveness pass.**
@@ -65,6 +77,9 @@ Complete rebuild of Etherwise OS ("v3") per the four planning docs in `../busine
 **→ Day-5 re-score addendum:** the 16 mis-scored rows from run 2256 (Skipped-without-rule + invented rubric) join the re-score queue — same playbook as the 15 approved rows (canonical matrix re-score → scoped push for ≥8). The 2 n8n-title rows stay Skipped (rule-correct).
 **→ n8n RULE REFINED (Abhijeet, 2026-06-12): primary-subject-only.** Skip ONLY when n8n is THE subject (title starts with it / only tool named / n8n-specific build with no Make/Claude/Airtable angle). Multi-tool pipe-lists score normally with the judgment noted. Tags never trigger (unchanged). Installed in v4.14.2; **M1a's hard-rules port must encode this as the deterministic rule** (title-start regex + sole-tool check; the "centers on" judgment stays a scoring-stage note). The 2 n8n-title rows from run 2256 join the re-score queue under the new rule (they were rule-correct under the old one).
 
+## ✅ DAY-5 LIVENESS PASS COMPLETE (Cowork, 2026-06-12 night): both re-score batches 13/13 ALIVE
+All 13 task-bearing rows from rescore-run1 + rescore-canonical externally verified against live Upwork — zero dead links. The recovered board now carries verified Hot leads at 30, 30, 29, 29, 28, 26, 22 + Standard 19/17/15s. CC's Day-5 "waiting on" items now resolved: supervised run 3 ✓ (run 2259, clean), scanner re-enabled hourly ✓, liveness ✓. Remaining open: M1b design session (Abhijeet + Cowork) · June-15 credit validation (armed, fires Sunday 12:10 IST) · M1a shadow accumulating daily diffs toward cutover evidence.
+
 ## ✅ SCANNER RE-ENABLED HOURLY (2026-06-12 ~22:40 IST) — supervised runs complete
 Run 2256 proved integrity (5/5 external criteria). Run 2259 (v4.14.2) proved judgment: canonical matrix keys, whale gate textbook (raw 16 → effective 15, GHL $2K client, both recorded), draft per ≥12 rule, matrix_selfcheck 0, liveness_probe reported AND externally re-verified ALIVE. v4.13 task: delete ~July 10 as planned. Rollback = disable v5.
 **Standing watch (first 48h of hourly):** spot-verify a run/day externally — scores in sane bands, no rule-less Skips, push scoped. The hourly cadence is the first unsupervised production of the v4.14 architecture; M1a's shadow diffs become the permanent watchdog.
@@ -79,6 +94,11 @@ Run 2256 proved integrity (5/5 external criteria). Run 2259 (v4.14.2) proved jud
 - **Scoring model LOCKED: Sonnet 4.6 regardless of eval outcome** (Abhijeet: revenue-engine quality over savings). The Haiku-vs-Sonnet eval still runs as a CALIBRATION check (flag drift in tier boundaries; also explain run-1's 15.1-vs-22.0 avg), but `MODELS["scoring"]` does not change. Update the config comment.
 - v2.3 matrix + Category Priority Gate, effective score stored (already in v4.14.1 prompt + push routing).
 - Shadow: 7 days against the v4.14 Cowork task (claims/scores/tasks diffed daily). Cutover retires the Cowork scanner task entirely (or freezes it as rollback per policy).
+
+**M1b — DESIGN COMPLETE (final session 2026-06-12 night):**
+- Follow-up drafts → **email digest to contact@etherwise.io** (consolidates away from the old personal-gmail stream): thread context + ready-to-paste draft per stale thread.
+- Outcome capture = **the first v3 production RAIL**: Sunday **11 AM IST** email lists the week's closed proposals, each linking a **prefilled Airtable form** (proposal record preselected via prefill params, Outcome Reason dropdown, optional note) → submission writes Outcome Reason/Notes directly. NOTE: Airtable forms are UI-created — Abhijeet creates it once (~2 min: form on Proposals table, fields Outcome Reason + Outcome Notes, share link) when CC asks; CC wires the prefill links + the Sunday composer.
+- Shadow: **PARALLEL with M1a** (his call — different v2 agents diffed, zero conflict; both cutovers target ~Jun 20-22).
 
 **M1b — sync + inbox (upwork domain):**
 - Rewrites sync_state + poll_inbox + the upwork slice of sync_airtable onto the kernel.
