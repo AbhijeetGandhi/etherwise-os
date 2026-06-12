@@ -38,7 +38,7 @@ V2_DB_PATH = V2_ROOT / "etherwise.db"                # import + shadow-diff sour
 # Dateless IDs are FIXED since the 4.6 generation; Haiku pinned by date.
 # Deprecation watch: Haiku 4.5 → review by 2026-08-15 (retires not before Oct 15).
 MODELS = {
-    "scoring":   "claude-sonnet-4-6",            # eval-pending: Haiku-vs-Sonnet eval (Day 3) may downgrade
+    "scoring":   "claude-sonnet-4-6",            # LOCKED (M1 design, 2026-06-12): Sonnet regardless of eval — revenue-engine quality over savings; eval is calibration-only
     "classify":  "claude-haiku-4-5-20251001",    # thread/commitment/note classification
     "drafting":  "claude-sonnet-4-6",            # proposals, follow-ups, briefs
     "reasoning": "claude-opus-4-8",              # CoS sweeps (on fire), weekly retro

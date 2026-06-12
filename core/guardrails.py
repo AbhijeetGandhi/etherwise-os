@@ -36,7 +36,9 @@ from core import config, db
 MARKER_REL = ".claude/ALLOW_CORE_WRITES"
 
 _FILE_WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
-_PROTECTED_TOP_DIRS = ("core", ".claude")
+# scripts/ added 2026-06-12: supervised run 1 self-patched clickup_push.py
+# mid-run — production tooling is propose-don't-patch like core/.
+_PROTECTED_TOP_DIRS = ("core", ".claude", "scripts")
 _PROTECTED_FILES = ("rails/REGISTRY.md",)
 
 _MCP_READONLY_VERBS = ("list", "get", "search", "read", "download", "ping",
@@ -166,7 +168,11 @@ def _evaluate_rm(command: str, v3_root: Path) -> Optional[Decision]:
 
 
 def _evaluate_bash(command: str, v3_root: Path) -> Decision:
-    if ".credentials" in command and _CRED_READER_RE.search(command):
+    # Path-like references only ('/.credentials' or '.credentials/') — a bare
+    # '.credentials' can be a grep PATTERN over code (live false positive,
+    # Day 4). Reading or copying the actual files/dir still denies.
+    if (("/.credentials" in command or ".credentials/" in command)
+            and _CRED_READER_RE.search(command)):
         return _deny("reading credential files into the transcript is"
                      " forbidden (never echo credentials) — the gateway"
                      " loads secrets itself")

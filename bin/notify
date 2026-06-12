@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Drain critical anomalies into an interrupt email (decision #9).
+Usage: PYTHONPATH=. python3 bin/notify"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import notify, runner  # noqa: E402
+
+
+def task(ctx):
+    out = notify.drain_critical_anomalies(db_path=ctx.db_path)
+    ctx.log(f"drained {out.get('drained', 0)} critical anomalies")
+    return out
+
+
+if __name__ == "__main__":
+    result = runner.run_task("notify_drain", task, module="kernel")
+    print(json.dumps(result.metrics))
+    sys.exit(0 if result.status in ("completed", "skipped_empty") else 1)

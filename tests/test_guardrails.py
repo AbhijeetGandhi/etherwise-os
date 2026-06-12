@@ -122,6 +122,13 @@ class TestProtectedPaths(unittest.TestCase):
                   "knowledge/wiki/foo.md", "tests/test_x.py"):
             self.assertEqual(self.edit(p).action, "allow", p)
 
+    def test_scripts_dir_protected(self):
+        # supervised-run-1 lesson: the run self-patched clickup_push.py
+        # mid-run; scripts/ now sits inside the repo + hook perimeter
+        self.assertEqual(self.edit("scripts/clickup_push.py").action, "deny")
+        self.assertEqual(
+            self.edit("scripts/feed_bridge.py", allowed=True).action, "allow")
+
     def test_write_tool_same_rules(self):
         d = ev("Write", {"file_path": "core/config.py"})
         self.assertEqual(d.action, "deny")
@@ -202,6 +209,18 @@ class TestBashRules(unittest.TestCase):
     def test_credentials_listing_allowed(self):
         self.assertEqual(
             self.bash("ls -la ../etherwise-os/.credentials/").action, "allow")
+
+    def test_grepping_code_for_credentials_string_allowed(self):
+        # regression: grep PATTERN mentioning .credentials (no path) was
+        # denied — second live false positive, Day 4
+        self.assertEqual(
+            self.bash("grep -n 'ROOT =\\|\\.credentials' scripts/*.py"
+                      " | head").action, "allow")
+
+    def test_copying_credentials_dir_denied(self):
+        self.assertEqual(
+            self.bash("cp -r ../etherwise-os/.credentials /tmp/x").action,
+            "deny")
 
     def test_upwork_mutation_denied(self):
         self.assertEqual(
