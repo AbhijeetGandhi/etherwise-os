@@ -104,10 +104,20 @@ DUMP_JS = r"""
 """
 
 
-def chrome_eval(js: str) -> str:
-    """Execute JS in Chrome's active tab via osascript; returns the JS result."""
-    script = ('tell application "Google Chrome" to execute active tab of '
-              'front window javascript (item 1 of argv)')
+def chrome_eval(js: str, tab_ref=None) -> str:
+    """Execute JS via osascript; returns the JS result.
+
+    tab_ref=None targets the ACTIVE tab (v4.14.x scanner-prompt behavior).
+    tab_ref=(window_id, tab_index) targets a specific tab WITHOUT focusing
+    it — the M1a shadow pipeline uses a dedicated parked tab and must never
+    touch the user's active tab."""
+    if tab_ref is None:
+        target = "active tab of front window"
+    else:
+        window_id, tab_index = tab_ref
+        target = f"tab {int(tab_index)} of window id {int(window_id)}"
+    script = (f'tell application "Google Chrome" to execute {target}'
+              ' javascript (item 1 of argv)')
     try:
         proc = subprocess.run(
             ["osascript", "-e", "on run argv", "-e", script, "-e", "end run",
@@ -281,18 +291,18 @@ def dedupe_batch(jobs):
 
 # ── claim (upwork-job-recorder contract) ──────────────────────────────────────
 
-def known_ids(conn, ids):
+def known_ids(conn, ids, table: str = "jobs"):
     if not ids:
         return set()
     marks = ",".join("?" * len(ids))
     return {r[0] for r in conn.execute(
-        f"SELECT id FROM jobs WHERE id IN ({marks})", list(ids))}
+        f"SELECT id FROM {table} WHERE id IN ({marks})", list(ids))}
 
 
-def claim_new(conn, feed: str, job: dict) -> None:
+def claim_new(conn, feed: str, job: dict, table: str = "jobs") -> None:
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
-        """INSERT INTO jobs (id, job_url, title, description, created_dt,
+        f"""INSERT INTO {table} (id, job_url, title, description, created_dt,
              fetched_at, feed_source, contract_type, hourly_min, hourly_max,
              fixed_budget, weekly_budget, total_applicants, experience_level,
              engagement, engagement_duration, skills_json, client_country,
@@ -312,7 +322,8 @@ def claim_new(conn, feed: str, job: dict) -> None:
          1 if job.get("client_payment_verified") else 0, now))
 
 
-def process(feed: str, jobs, db_path=DB, dry_run: bool = False) -> dict:
+def process(feed: str, jobs, db_path=DB, dry_run: bool = False,
+            table: str = "jobs") -> dict:
     if feed not in FEEDS:
         sys.exit(f"feed must be one of {FEEDS} (exact, lowercase) — got"
                  f" {feed!r}")
@@ -332,13 +343,13 @@ def process(feed: str, jobs, db_path=DB, dry_run: bool = False) -> dict:
     conn = sqlite3.connect(db_path, timeout=10)
     conn.execute("PRAGMA foreign_keys=ON")
     try:
-        existing = known_ids(conn, [j["id"] for j in valid])
+        existing = known_ids(conn, [j["id"] for j in valid], table=table)
         new_jobs = [j for j in valid if j["id"] not in existing]
         claimed = []
         for j in new_jobs:
             if not dry_run:
                 try:
-                    claim_new(conn, feed, j)
+                    claim_new(conn, feed, j, table=table)
                 except sqlite3.IntegrityError:
                     continue            # raced an overlapping run: it's known
             claimed.append(j["id"])

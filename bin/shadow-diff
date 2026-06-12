@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""shadow-diff — daily comparator: v3 shadow intentions vs v2 production
+actuals for the upwork_scan module. The cutover evidence.
+
+Usage: PYTHONPATH=. python3 bin/shadow-diff [--date YYYY-MM-DD]
+
+Compares, for the given IST date (default today):
+  - claims: scored_jobs (v3) vs jobs (v2, the v4.14.1 Cowork task) by id
+  - scores: deltas on commonly-scored ids
+  - tasks: v3 shadow_ledger clickup intents vs v2 rows that actually got a
+    clickup_task_id
+
+Writes reports/shadow-diff-upwork_scan-<date>.md and prints a JSON summary.
+READ-ONLY on both databases.
+"""
+import argparse
+import json
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config  # noqa: E402
+
+V2_DB = config.V2_ROOT / "etherwise.db"
+FEEDS = ("most_recent", "best_matches", "my_feed")
+
+
+def rows(db_path, sql, args=()):
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.close()
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--date",
+                   default=datetime.now(config.TZ).strftime("%Y-%m-%d"))
+    args = p.parse_args()
+    day = args.date
+
+    marks = ",".join("?" * len(FEEDS))
+    v3 = {r["id"]: r for r in rows(
+        config.DB_PATH,
+        f"SELECT id, score, status, title FROM scored_jobs"
+        f" WHERE date(fetched_at) = ? AND feed_source IN ({marks})",
+        (day, *FEEDS))}
+    v2 = {r["id"]: r for r in rows(
+        V2_DB,
+        f"SELECT id, score, status, title, clickup_task_id FROM jobs"
+        f" WHERE date(fetched_at) = ? AND feed_source IN ({marks})",
+        (day, *FEEDS))}
+    intents = {r["entity_key"]: json.loads(r["payload_json"]) for r in rows(
+        config.DB_PATH,
+        "SELECT entity_key, payload_json FROM shadow_ledger"
+        " WHERE task_name = 'upwork_scan' AND target = 'clickup'"
+        "   AND date(at) = ?", (day,))}
+
+    both = sorted(set(v3) & set(v2))
+    only_v3 = sorted(set(v3) - set(v2))
+    only_v2 = sorted(set(v2) - set(v3))
+
+    score_deltas = []
+    for jid in both:
+        s3, s2 = v3[jid]["score"], v2[jid]["score"]
+        if s3 is not None and s2 is not None and s3 != s2:
+            score_deltas.append((jid, s2, s3))
+
+    v2_tasked = {j for j, r in v2.items() if r["clickup_task_id"]}
+    intended = set(intents)
+    task_agree = sorted(intended & v2_tasked)
+    task_only_v3 = sorted(intended - v2_tasked)
+    task_only_v2 = sorted(v2_tasked - intended)
+
+    summary = {
+        "date": day,
+        "claims": {"both": len(both), "only_v3": len(only_v3),
+                   "only_v2": len(only_v2)},
+        "score_deltas": len(score_deltas),
+        "tasks": {"agree": len(task_agree), "only_v3": len(task_only_v3),
+                  "only_v2": len(task_only_v2)},
+    }
+
+    lines = [f"# Shadow diff — upwork_scan vs v2 production — {day}", "",
+             f"## Claims (by job id)",
+             f"- both systems: {len(both)}",
+             f"- only v3 (shadow saw, prod missed): {len(only_v3)}"
+             + (f" — {only_v3}" if only_v3 else ""),
+             f"- only v2 (prod saw, shadow missed): {len(only_v2)}"
+             + (f" — {only_v2}" if only_v2 else ""), "",
+             "## Score deltas (common ids, v2 -> v3)"]
+    for jid, s2, s3 in score_deltas:
+        lines.append(f"- {jid}: {s2} -> {s3}"
+                     f"  ({(v3[jid]['title'] or '')[:50]})")
+    if not score_deltas:
+        lines.append("- none")
+    lines += ["", "## Task decisions",
+              f"- agree (intended + actually tasked): {len(task_agree)}",
+              f"- v3 intended only: {task_only_v3 or 'none'}",
+              f"- v2 tasked only: {task_only_v2 or 'none'}"]
+
+    out = Path(config.V3_ROOT.parent / "reports"
+               / f"shadow-diff-upwork_scan-{day}.md")
+    out.write_text("\n".join(lines))
+    print(json.dumps(summary))
+    print(f"report: {out}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,5 +1,19 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-06-11 (Day 2 complete) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-06-12 late (Day 5 complete) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## Day 5 status (re-scores executed + M1a SHADOW LIVE)
+**Run-1 re-score (approved) EXECUTED:** 15 rows per the eval's approved values (3 gated → effective 15; breakdowns regenerated with approved totals pinned + provenance; per-id asserts; ledger 'rescore-run1-jobs') · 10 drafts · 8 tasks pushed run-scoped, 0 errors · all 15 task bodies refreshed in place · summary `../reports/rescore-run1-2026-06-12.md` — **awaiting Cowork's external liveness pass.**
+**Run-2256 addendum EXECUTED (canonical re-score, new generic tool `scripts/rescore_canonical.py`):** 18 Skipped rows re-derived deterministically — 9 hard-skips reproduced/corrected IN CODE (4 original floors identical; 3 floor violations the invented rubric missed incl. both negative-score rows; 1 sole-tool n8n under the refined rule; 1 n8n-title also under fixed-floor) + 9 canonical-scored via gateway (incl. 5 multi-tool n8n rows released by the refined rule, and the Airtable-Healthcare row that v3 shadow independently scored 27 — cross-validation). Results in `../reports/rescore-canonical-<date>.md`, ledger 'rescore-canonical'.
+**n8n REFINED RULE encoded in M1a hard rules** (modules/upwork/scoring.py): title-start regex OR sole-tool check (canonical tool names only — bare 'make' is the English verb); multi-tool pipe-lists score normally; tags never trigger; "centers on n8n" judgment stays scoring-stage. Tests cover all variants.
+**M1a BUILT AND SHADOW-LIVE (sourcing invariant honored — the same three personalized feed tabs, osascript-driven):**
+- `modules/upwork/scoring.py` — v2.3 matrix + gate (cap re-enforced in CODE), hard rules in code pre-model, ANCHORED EXEMPLARS (20 graded real-history examples, `modules/upwork/fixtures/exemplars.json`).
+- `modules/upwork/scan_pipeline.py` — dedicated `#ew-scan` tab (find-or-create-once with focus restore; NEVER the user's active tab; `set URL of tab i` steals no focus), feed_bridge as a library (tab-targeted chrome_eval + table param; CLI unchanged), claims into V3 scored_jobs, gateway structured-output scoring, drafts ≥16 at scan, ClickUp + digest INTENTS → shadow_ledger. Zero external writes by construction.
+- **launchd `io.etherwise.v3.upwork-scan` INSTALLED, hourly at :15.** First live shadow run (v3 run 13) clean: 4 claims → 1 hot (27 🎥 Airtable-Healthcare, drafted) + 3 hard-rule skips, intents in ledger, $0.026.
+- `bin/shadow-diff` — daily comparator vs the Cowork task (claims by id / score deltas / task decisions); first report `../reports/shadow-diff-upwork_scan-2026-06-12.md` (partial-day noise expected).
+- AppleScript gotcha recorded: backslash line-continuation is invalid (AppleScript wants ¬) — keep statements single-line in scripts.
+**Stretch landed: `modules/knowledge/fathom_poll.py`** — official API, hwm cursor in sync_cursors, recording_id dedupe, paginated with cap, writes only knowledge-inbox/fathom/. Tested (HTTP mocked). Not yet scheduled — plist at M3; historical backfill (~360 calls) available then.
+**Tests: 158 v3 + 41 bridge, all green.**
+**NEXT:** shadow days accumulate (run `bin/shadow-diff` daily; baseline = v4.14.2 supervised run 3 then hourly re-enable) · Cowork: liveness on both re-score task batches · M1b design session · June-15 credit flip (launchd one-shot armed).
 
 ## What's happening
 Complete rebuild of Etherwise OS ("v3") per the four planning docs in `../business/`:
@@ -50,6 +64,10 @@ Complete rebuild of Etherwise OS ("v3") per the four planning docs in `../busine
 **Verdict: run 2 counts for integrity, NOT as the final clean run. One more supervised run on v4.14.2 proves judgment, then hourly enable.**
 **→ Day-5 re-score addendum:** the 16 mis-scored rows from run 2256 (Skipped-without-rule + invented rubric) join the re-score queue — same playbook as the 15 approved rows (canonical matrix re-score → scoped push for ≥8). The 2 n8n-title rows stay Skipped (rule-correct).
 **→ n8n RULE REFINED (Abhijeet, 2026-06-12): primary-subject-only.** Skip ONLY when n8n is THE subject (title starts with it / only tool named / n8n-specific build with no Make/Claude/Airtable angle). Multi-tool pipe-lists score normally with the judgment noted. Tags never trigger (unchanged). Installed in v4.14.2; **M1a's hard-rules port must encode this as the deterministic rule** (title-start regex + sole-tool check; the "centers on" judgment stays a scoring-stage note). The 2 n8n-title rows from run 2256 join the re-score queue under the new rule (they were rule-correct under the old one).
+
+## ✅ SCANNER RE-ENABLED HOURLY (2026-06-12 ~22:40 IST) — supervised runs complete
+Run 2256 proved integrity (5/5 external criteria). Run 2259 (v4.14.2) proved judgment: canonical matrix keys, whale gate textbook (raw 16 → effective 15, GHL $2K client, both recorded), draft per ≥12 rule, matrix_selfcheck 0, liveness_probe reported AND externally re-verified ALIVE. v4.13 task: delete ~July 10 as planned. Rollback = disable v5.
+**Standing watch (first 48h of hourly):** spot-verify a run/day externally — scores in sane bands, no rule-less Skips, push scoped. The hourly cadence is the first unsupervised production of the v4.14 architecture; M1a's shadow diffs become the permanent watchdog.
 
 ## M1 DESIGN SESSION — SPEC LOCKED (Abhijeet + Cowork, 2026-06-12)
 **Slicing: M1a (scan pipeline) then M1b (sync + inbox), separate shadows + cutovers (~2-3 days apart).**

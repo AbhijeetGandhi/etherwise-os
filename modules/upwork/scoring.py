@@ -21,6 +21,15 @@ from core import config, runner
 EXEMPLARS_PATH = Path(__file__).resolve().parent / "fixtures/exemplars.json"
 
 _N8N_RE = re.compile(r"\bn8n\b", re.I)
+_N8N_TITLE_START_RE = re.compile(r"^\W*n8n\b", re.I)
+# Refined rule (Abhijeet, 2026-06-12): skip only when n8n is THE subject —
+# title starts with it, OR it's the only stack tool named. Multi-tool
+# pipe-lists score normally; tags never trigger. The "centers on n8n"
+# judgment stays a scoring-stage note, not a hard rule.
+# bare 'make' is the English verb — only the canonical tool name counts
+_OTHER_TOOLS_RE = re.compile(
+    r"\b(make\.com|airtable|claude|zapier|vapi|retell|gohighlevel|ghl|"
+    r"python|openai|gpt|hubspot|salesforce|notion|monday\.com)\b", re.I)
 _NO_ASIA_RE = re.compile(r"no\s+asia", re.I)
 _ONSITE_RE = re.compile(r"\bon[- ]?site\b", re.I)
 _GATE_CAP = 15
@@ -66,8 +75,10 @@ def hard_rule_skip(job: dict) -> Optional[str]:
     title = job.get("title") or ""
     desc = job.get("description") or ""
     text = f"{title}\n{desc}"
-    if _N8N_RE.search(text):
+    if _N8N_TITLE_START_RE.search(title):
         return "n8n_exclusion"
+    if _N8N_RE.search(text) and not _OTHER_TOOLS_RE.search(text):
+        return "n8n_exclusion"          # sole-tool: n8n is THE subject
     if job.get("contract_type") == "Hourly":
         if (job.get("hourly_max") or 0) < config.HARD_FLOOR_HOURLY:
             return "hourly_below_30"
@@ -173,3 +184,26 @@ def score_job(job: dict, task_name: str, db_path=None) -> dict:
     return {"score": effective, "gated": bool(v.get("gated")),
             "loom_flag": 1 if effective >= config.LOOM_FLAG_THRESHOLD else 0,
             "breakdown": breakdown}
+
+
+# ── proposal drafting (>=16 at scan time, M1 decision) ───────────────────────
+
+PROPOSAL_SKILL = config.WORKSPACE_ROOT / "skills/upwork-proposal-writer/SKILL.md"
+
+
+def draft_proposal(job: dict, task_name: str, db_path=None) -> str:
+    skill = PROPOSAL_SKILL.read_text()[:6000]
+    result = runner.claude_call(
+        task_name=task_name, model_key="drafting",
+        system=("You draft Upwork proposals for Abhijeet Gandhi (Etherwise)."
+                " Follow these rules exactly:\n\n" + skill),
+        user_content=("Draft a proposal for this job. Return ONLY the"
+                      " proposal text.\n\n"
+                      f"Title: {job.get('title')}\n"
+                      f"Description: {(job.get('description') or '')[:3000]}\n"
+                      f"Type: {job.get('contract_type')}"
+                      f" Budget: {job.get('fixed_budget') or ''}"
+                      f" ${job.get('hourly_min')}-{job.get('hourly_max')}/hr\n"
+                      f"Skills: {job.get('skills_json')}"),
+        purpose=f"draft {job.get('id')}", db_path=db_path)
+    return result.text.strip()

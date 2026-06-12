@@ -42,12 +42,30 @@ class TestHardRules(unittest.TestCase):
                 client_total_spent=200_000.0)
         self.assertEqual(scoring.hard_rule_skip(j), "fixed_below_500")
 
-    def test_n8n_in_title_or_description_skips(self):
-        self.assertEqual(scoring.hard_rule_skip(job(title="n8n expert")),
-                         "n8n_exclusion")
+    # n8n rule REFINED 2026-06-12 (Abhijeet): primary-subject-only.
+    def test_n8n_title_start_skips(self):
         self.assertEqual(
-            scoring.hard_rule_skip(job(description="migrate N8N flows")),
+            scoring.hard_rule_skip(job(title="n8n expert needed",
+                                       description="automation work")),
             "n8n_exclusion")
+        self.assertEqual(
+            scoring.hard_rule_skip(job(title="N8N Developer for Agency",
+                                       description="ops automations")),
+            "n8n_exclusion")
+
+    def test_n8n_sole_tool_skips(self):
+        j = job(title="Automation Developer",
+                description="migrate our N8N flows and maintain them")
+        self.assertEqual(scoring.hard_rule_skip(j), "n8n_exclusion")
+
+    def test_n8n_in_multi_tool_pipeline_scores_normally(self):
+        j = job(title="Automation Developer",
+                description="pipeline across Make.com, n8n and Airtable")
+        self.assertIsNone(scoring.hard_rule_skip(j))
+        # title-START still skips even when other tools appear later
+        # (brief: title-start OR sole-tool — deterministic, no judgment)
+        j2 = job(title="n8n to Make.com migration")
+        self.assertEqual(scoring.hard_rule_skip(j2), "n8n_exclusion")
 
     def test_n8n_in_tags_only_does_not_skip(self):
         j = job(skills_json=json.dumps(["n8n", "Make.com"]))
@@ -55,7 +73,8 @@ class TestHardRules(unittest.TestCase):
 
     def test_n8n_word_boundary(self):
         self.assertIsNone(scoring.hard_rule_skip(
-            job(description="working with n8nx-like tools")))
+            job(title="Automation build",
+                description="working with n8nx-like tools")))
 
     def test_no_asia_skips(self):
         self.assertEqual(
