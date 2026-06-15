@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -142,6 +143,14 @@ class TestRouting(CockpitServerCase):
         d = json.loads(body)
         for key in ("applied", "by_status", "win_rate", "bands", "to_triage"):
             self.assertIn(key, d)
+
+    def test_wake_post_authed_and_allowlisted(self):
+        with mock.patch.object(actions.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stderr="")
+            gs, _ = self.post("/api/wake", body={"job": "sync"})
+        self.assertEqual(gs, 200)
+        ps, _ = self.post("/api/wake", token=None, body={"job": "sync"})
+        self.assertEqual(ps, 401)
 
     def test_no_send_endpoint_anywhere(self):
         # drafts-only is sacred: no route may expose a send path
@@ -466,6 +475,62 @@ class TestNudgeActions(unittest.TestCase):
         actions.nudge(self.db_path, {"item_key": "followup:rA", "action": "done"})
         after = data.today(self.db_path, today="2026-06-15")["metrics"]["follow_ups_due"]
         self.assertEqual(after, before - 1)
+
+
+class TestWakeAndRail(unittest.TestCase):
+    def test_wake_kicks_allowlisted_label(self):
+        with mock.patch.object(actions.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stderr="")
+            out = actions.wake(None, {"job": "scan"})
+        self.assertTrue(out["ok"])
+        argv = run.call_args[0][0]
+        self.assertIn("io.etherwise.v3.upwork-scan", " ".join(argv))
+        self.assertIn("kickstart", argv)
+
+    def test_wake_rejects_unknown_job(self):
+        with mock.patch.object(actions.subprocess, "run") as run:
+            with self.assertRaises(ValueError):
+                actions.wake(None, {"job": "rm-rf"})  # not allowlisted
+            run.assert_not_called()
+
+    def test_wake_brief_not_available_until_m4(self):
+        with self.assertRaises(ValueError):
+            actions.wake(None, {"job": "brief"})
+
+    def test_rail_kicks_outcome_capture(self):
+        with mock.patch.object(actions.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stderr="")
+            out = actions.rail(None, {"rail": "outcome-capture"})
+        self.assertTrue(out["ok"])
+        self.assertIn("io.etherwise.v3.upwork-outcomes",
+                      " ".join(run.call_args[0][0]))
+
+    def test_rail_rejects_unknown(self):
+        with self.assertRaises(ValueError):
+            actions.rail(None, {"rail": "send-money"})
+
+
+class TestKnowledgeReader(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-kn-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_stub_with_fathom_status(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sync_cursors (name, value) VALUES"
+                         " ('fathom_created_after','2026-06-10T00:00:00Z')")
+        out = data.knowledge(self.db_path)
+        self.assertEqual(out["status"], "stub")
+        self.assertIn("M3", out["message"])
+        self.assertEqual(out["fathom"]["cursor"], "2026-06-10T00:00:00Z")
+
+    def test_no_cursor_yet(self):
+        out = data.knowledge(self.db_path)
+        self.assertIsNone(out["fathom"]["cursor"])
 
 
 def seed_money(db_path):

@@ -30,12 +30,14 @@ GET_ROUTES: dict = {
     "/api/today": data.today,
     "/api/pipeline": data.pipeline,
     "/api/clients": data.clients,
+    "/api/knowledge": data.knowledge,
     "/api/system": data.system,
     "/api/money": data.money,
 }
-# POST /api/* routes. Wake (launchd kick) arrives in Phase 5.
 POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
+    "/api/wake": actions.wake,    # allowlisted launchd kick
+    "/api/rail": actions.rail,    # allowlisted rail trigger
 }
 
 

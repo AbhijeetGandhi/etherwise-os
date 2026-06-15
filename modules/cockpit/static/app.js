@@ -95,6 +95,24 @@ const RENDERERS = {
   System: async (view) => {
     const d = await api("/api/system");
     view.appendChild(el("h2", "section", "System"));
+
+    // Run-now: allowlisted launchd kicks (wake) + the live rail
+    const run = el("div", "card");
+    run.appendChild(el("h3", null, "Run now"));
+    const runRow = el("div", "fu-actions");
+    [["Scan", "/api/wake", { job: "scan" }],
+     ["Sync", "/api/wake", { job: "sync" }],
+     ["Inbox", "/api/wake", { job: "inbox" }],
+     ["Outcome capture (rail)", "/api/rail", { rail: "outcome-capture" }]].forEach(([label, path, body]) => {
+      const b = el("button", "action", label);
+      b.onclick = () => kick(path, body, b);
+      runRow.appendChild(b);
+    });
+    const brief = el("button", "action", "Brief (M4)");
+    brief.disabled = true; brief.title = "Chief of Staff brief arrives with M4";
+    runRow.appendChild(brief);
+    run.appendChild(runRow);
+    view.appendChild(run);
     const grid = el("div", "grid");
     const dr = d.doctor || {};
     grid.appendChild(card("Doctor",
@@ -318,10 +336,30 @@ const RENDERERS = {
     view.appendChild(el("div", "muted", "Source: Airtable Clients · deeper per-client health (owed replies, hours vs cap) arrives with the comms mirror."));
   },
   Knowledge: async (view) => {
+    const d = await api("/api/knowledge");
     view.appendChild(el("h2", "section", "Knowledge"));
-    placeholder(view, "Ingestion arrives with M3. Fathom poller is staged; nothing to show yet.");
+    placeholder(view, d.message || "Arrives with M3.");
+    const f = d.fathom || {};
+    view.appendChild(card("Fathom poller",
+      `<div class="muted">High-water mark: ${f.cursor || "—"}</div>`
+      + `<div class="muted">Last successful poll: ${f.last_poll || "never"}</div>`));
   },
 };
+
+async function kick(path, body, btn) {
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Running…";
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    btn.textContent = d.ok ? "Kicked ✓" : "Failed";
+  } catch (e) { btn.textContent = "Failed"; }
+  setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 2000);
+}
 
 // Small categorical bar chart (inline — full control over per-bar emphasis
 // and a labeled target line, which uPlot's single-fill bars make awkward).

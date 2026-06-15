@@ -110,6 +110,29 @@ _HOT = config.HOT_LEAD_THRESHOLD
 _RECENT_HOT_DAYS = 7    # Today shows actionable-now hot leads; backlog -> Pipeline
 
 
+def knowledge(db_path: Optional[Path] = None) -> dict:
+    """Knowledge panel — honest stub until M3 (ingestion). Surfaces the
+    Fathom poller's high-water-mark + last run so the IA slot isn't empty."""
+    conn = _ro(db_path)
+    try:
+        row = conn.execute("SELECT value FROM sync_cursors WHERE name="
+                           "'fathom_created_after'").fetchone()
+        last = conn.execute(
+            "SELECT completed_at, status FROM runs WHERE task_name="
+            "'fathom_poll' AND status='completed' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return {
+        "status": "stub",
+        "message": "Knowledge ingestion arrives with M3 (Fathom/Loom "
+                   "transcripts → classify → extract → cite). The Fathom "
+                   "poller is staged; nothing indexed yet.",
+        "fathom": {"cursor": row["value"] if row else None,
+                   "last_poll": last["completed_at"] if last else None},
+    }
+
+
 def clients(db_path: Optional[Path] = None, *, client=None,
             use_cache: bool = True) -> dict:
     """Clients panel — live from the Airtable Clients table via the stdlib
