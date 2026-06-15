@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from core import config
-from modules.cockpit import data
+from modules.cockpit import actions, data
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _CT = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
@@ -31,8 +31,10 @@ GET_ROUTES: dict = {
     "/api/system": data.system,
     "/api/money": data.money,
 }
-# POST /api/* routes (nudge actions, wake) arrive in Phase 2/5.
-POST_ROUTES: dict = {}
+# POST /api/* routes. Wake (launchd kick) arrives in Phase 5.
+POST_ROUTES: dict = {
+    "/api/nudge": actions.nudge,
+}
 
 
 class Handler(BaseHTTPRequestHandler):

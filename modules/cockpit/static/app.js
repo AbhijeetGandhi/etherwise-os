@@ -24,6 +24,17 @@ async function api(path) {
   return r.json();
 }
 
+async function nudge(itemKey, action, snoozeDays) {
+  const body = { item_key: itemKey, action: action };
+  if (snoozeDays) body.snooze_days = snoozeDays;
+  await fetch("/api/nudge", {
+    method: "POST",
+    headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  show("Today");  // refresh
+}
+
 const fmtUsd = (n) => "$" + (n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 
@@ -89,7 +100,13 @@ const RENDERERS = {
       copy.onclick = () => { navigator.clipboard.writeText(f.draft || ""); copy.textContent = "Copied"; setTimeout(() => copy.textContent = "Copy draft", 1200); };
       const open = el("button", "action", "Open thread");
       open.onclick = () => window.open(f.thread_url, "_blank");
-      btns.append(copy, open);
+      const done = el("button", "action primary", "Done");
+      done.onclick = () => nudge("followup:" + f.thread_id, "done");
+      const snooze = el("button", "action", "Snooze 3d");
+      snooze.onclick = () => nudge("followup:" + f.thread_id, "snooze", 3);
+      const dismiss = el("button", "action", "Dismiss");
+      dismiss.onclick = () => nudge("followup:" + f.thread_id, "dismiss");
+      btns.append(copy, open, done, snooze, dismiss);
       item.append(left, btns);
       fu.appendChild(item);
     });

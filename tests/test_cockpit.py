@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core import config, db
-from modules.cockpit import data, server
+from modules.cockpit import actions, data, server
 
 TOKEN = "test-cockpit-token-123"
 
@@ -144,10 +144,19 @@ class TestRouting(CockpitServerCase):
             ps, _ = self.post(p)
             self.assertIn(gs, (401, 404), p)
             self.assertIn(ps, (401, 404), p)
-        # and the source carries no send route literal
+        # and no source carries a send route literal
         src = (Path(server.__file__).read_text()
-               + Path(data.__file__).read_text())
+               + Path(data.__file__).read_text()
+               + Path(actions.__file__).read_text())
         self.assertNotIn("/send", src)
+
+    def test_nudge_post_authed(self):
+        gs, _ = self.post("/api/nudge",
+                          body={"item_key": "followup:rA", "action": "done"})
+        self.assertEqual(gs, 200)
+        ps, _ = self.post("/api/nudge", token=None,
+                          body={"item_key": "x", "action": "done"})
+        self.assertEqual(ps, 401)
 
 
 class TestSystemReader(unittest.TestCase):
@@ -271,6 +280,64 @@ class TestTodayReader(unittest.TestCase):
         self.assertEqual(m["hot_leads"], 1)
         self.assertEqual(m["revenue"]["target_usd"],
                          config.MONTHLY_REVENUE_TARGET_USD)
+
+
+class TestNudgeActions(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-nudge-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_today(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def state(self, key):
+        with db.connect(self.db_path) as conn:
+            r = conn.execute("SELECT state, snooze_until FROM nudge_state"
+                             " WHERE item_key=?", (key,)).fetchone()
+        return dict(r) if r else None
+
+    def test_done_persists_and_hides_followup(self):
+        actions.nudge(self.db_path, {"item_key": "followup:rA",
+                                     "action": "done"})
+        self.assertEqual(self.state("followup:rA")["state"], "done")
+        # re-read today: rA gone, rB still there (persists across "restart")
+        out = data.today(self.db_path, today="2026-06-15")
+        ids = [f["thread_id"] for f in out["follow_ups"]]
+        self.assertNotIn("rA", ids)
+        self.assertIn("rB", ids)
+
+    def test_dismiss_hides(self):
+        actions.nudge(self.db_path, {"item_key": "followup:rB",
+                                     "action": "dismiss"})
+        out = data.today(self.db_path, today="2026-06-15")
+        self.assertNotIn("rB", [f["thread_id"] for f in out["follow_ups"]])
+
+    def test_snooze_hides_until_date_then_returns(self):
+        actions.nudge(self.db_path, {"item_key": "followup:rA",
+                                     "action": "snooze", "snooze_days": 3},
+                      today="2026-06-15")
+        self.assertEqual(self.state("followup:rA")["snooze_until"],
+                         "2026-06-18")
+        # still snoozed on the 17th
+        self.assertNotIn("rA", [f["thread_id"] for f in
+                                data.today(self.db_path,
+                                           today="2026-06-17")["follow_ups"]])
+        # back on the 18th
+        self.assertIn("rA", [f["thread_id"] for f in
+                             data.today(self.db_path,
+                                        today="2026-06-18")["follow_ups"]])
+
+    def test_invalid_action_rejected(self):
+        with self.assertRaises(ValueError):
+            actions.nudge(self.db_path, {"item_key": "x", "action": "send"})
+
+    def test_done_count_drops_followups_due(self):
+        before = data.today(self.db_path, today="2026-06-15")["metrics"]["follow_ups_due"]
+        actions.nudge(self.db_path, {"item_key": "followup:rA", "action": "done"})
+        after = data.today(self.db_path, today="2026-06-15")["metrics"]["follow_ups_due"]
+        self.assertEqual(after, before - 1)
 
 
 def seed_money(db_path):

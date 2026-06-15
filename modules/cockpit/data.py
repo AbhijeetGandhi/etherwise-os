@@ -105,6 +105,13 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     day = today or _ist_today()
     conn = _ro(db_path)
     try:
+        # items the founder has acted on: done/dismissed always hidden;
+        # snoozed hidden until snooze_until <= day (B1b local nudge_state).
+        suppressed = {r["item_key"] for r in conn.execute(
+            "SELECT item_key FROM nudge_state WHERE state IN"
+            " ('done','dismissed') OR (state='snoozed' AND"
+            " COALESCE(snooze_until,'') > ?)", (day,))}
+
         # follow-ups = pending drafts + thread context; owed before followup
         follow_ups = [{
             "thread_id": r["thread_id"],
@@ -118,14 +125,16 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             " JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status = 'pending'"
             " ORDER BY CASE t.bucket WHEN 'owed' THEN 0 WHEN 'unmatched-owed'"
-            " THEN 1 ELSE 2 END, d.generated_at DESC")]
+            " THEN 1 ELSE 2 END, d.generated_at DESC")
+            if f"followup:{r['thread_id']}" not in suppressed]
 
         hot_leads = [dict(r) for r in conn.execute(
             "SELECT id, title, score, job_url,"
             " (draft_proposal IS NOT NULL) AS has_draft FROM scored_jobs"
             " WHERE score >= ? AND status IN ('Scored','Drafted')"
             " AND clickup_task_id IS NULL"
-            " ORDER BY first_scored_at DESC, score DESC LIMIT 10", (_HOT,))]
+            " ORDER BY first_scored_at DESC, score DESC LIMIT 10", (_HOT,))
+            if f"hotlead:{r['id']}" not in suppressed]
 
         # string-compare the YYYY-MM-DD prefix — created_dt carries a
         # "+0000" offset SQLite's date() can't parse (would return NULL).
