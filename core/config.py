@@ -170,6 +170,23 @@ HARD_FLOOR_FIXED = 500.0       # v4.9: NO exceptions
 NOTIFY_EMAIL = "contact@etherwise.io"
 SMTP_FROM = "contact@etherwise.io"
 
+# ── Cockpit (M2) ──────────────────────────────────────────────────────────────
+COCKPIT_HOST = "127.0.0.1"      # localhost only; never 0.0.0.0
+COCKPIT_PORT = 5051            # v2 dashboard holds :5050 (live)
+COCKPIT_TOKEN_FILE = CREDENTIALS_DIR / "cockpit-token.txt"
+
+
+def cockpit_token() -> str | None:
+    try:
+        return COCKPIT_TOKEN_FILE.read_text().strip() or None
+    except OSError:
+        return None
+
+
+# ── Finance targets (cockpit Money) ───────────────────────────────────────────
+# year-end goal $40K, floor $35K (2026-06); may become a monthly ramp at M5.
+MONTHLY_REVENUE_TARGET_USD = 35000.0
+
 # ── Integrity ────────────────────────────────────────────────────────────────
 def config_sha256() -> str:
     """Hash of this file's bytes — verified by guardrails at task start."""

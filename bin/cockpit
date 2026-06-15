@@ -1,0 +1,45 @@
+#!/bin/bash
+# Etherwise cockpit control: load | unload | status | open | url
+# Run interactively (not from launchd) — bash here has the terminal's FDA.
+set -u
+LABEL="io.etherwise.v3.cockpit"
+PLIST_SRC="/Users/abhijeet/Desktop/Etherwise/etherwise-v3/launchd/$LABEL.plist"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+TOKEN_FILE="/Users/abhijeet/Desktop/Etherwise/etherwise-os/.credentials/cockpit-token.txt"
+PORT=5051
+
+cmd="${1:-status}"
+case "$cmd" in
+  load)
+    cp "$PLIST_SRC" "$PLIST"
+    launchctl unload "$PLIST" 2>/dev/null
+    launchctl load -w "$PLIST"
+    echo "loaded $LABEL"
+    ;;
+  unload)
+    launchctl unload "$PLIST" 2>/dev/null
+    echo "unloaded $LABEL"
+    ;;
+  reload)
+    cp "$PLIST_SRC" "$PLIST"
+    launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null \
+      || { launchctl unload "$PLIST" 2>/dev/null; launchctl load -w "$PLIST"; }
+    echo "reloaded $LABEL"
+    ;;
+  status)
+    launchctl list | grep "$LABEL" || echo "not loaded"
+    ;;
+  url)
+    [ -f "$TOKEN_FILE" ] && echo "http://127.0.0.1:$PORT/?token=$(cat "$TOKEN_FILE")" \
+      || echo "token not generated yet — run: bin/cockpit load"
+    ;;
+  open)
+    if [ -f "$TOKEN_FILE" ]; then
+      open "http://127.0.0.1:$PORT/?token=$(cat "$TOKEN_FILE")"
+    else
+      echo "token not generated yet — run: bin/cockpit load (starts the server, which mints it)"
+    fi
+    ;;
+  *)
+    echo "usage: bin/cockpit {load|unload|reload|status|url|open}"; exit 1;;
+esac
