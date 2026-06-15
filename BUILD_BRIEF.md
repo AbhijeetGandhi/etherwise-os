@@ -1,5 +1,19 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-06-13 (Day 6 complete) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-06-15 (Day 7 — M2 cockpit Phases 0-2, CHECKPOINT) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## Day 7 — M2 COCKPIT v1, Phases 0-2 done → CHECKPOINT (awaiting Abhijeet review)
+Built per `business/etherwise-v3-m2-cockpit-{design,BUILD-ORDER}.md`. Decisions locked this session: Airtable REST client = build it but it's Phase-4 work (Money+Today are SQLite-local) · Clients live-from-Airtable (Phase 4) · nudges = LOCAL nudge_state, Airtable round-trip deferred to M4 (DoD amended) · revenue target $35K/mo · cash position deferred (no honest source) · port 5051 · uPlot · token in .credentials/cockpit-token.txt.
+**Phase 0 (0d3c7b8) — scaffold, LIVE always-on:** `modules/cockpit/` stdlib ThreadingHTTPServer, localhost-only, token auth on /api/*; read-only SQLite data layer; six-section SPA shell; `/api/system` (last run per job, spend vs ceilings, shadow volume, light offline doctor). KeepAlive plist (June-14 TCC pattern); `bin/cockpit load|reload|open|url`. Token minted to .credentials (600).
+**Phase 1 (eb053eb) — Money:** revenue-vs-target (canonical Hourly/Fixed/Bonus, mirrors v2 reconcile), last month, 12-mo uPlot chart, connects spend, transactions feed. **Cash position NOT fabricated** — no bank/Wise source in v3 SQLite (Upwork ledger only, inconsistent signs); rendered as honest note. Live: June MTD $5,084/$35k (14.5%), May $22,800.
+**Phase 2 (f41ebf4 read · 7d08e23 write) — Today/follow-ups:** split layout (actions top / metrics below). Follow-ups = pending poll_inbox drafts (owed-first) + copy-draft + open-thread (drafts-only — NO send route anywhere, guard-tested). Hot leads (recent untasked ≥16). Metrics strip: applied today/week/last, active proposals/interviews/contracts, revenue-vs-target, follow-ups-due + hot-leads counts. `003_cockpit.sql` nudge_state (local); Done/Snooze/Dismiss persist + filter the queue (verified live round-trip).
+**Tests: 205 v3 green** (31 cockpit). Cockpit live + verified on :5051 (`bin/cockpit open`).
+**◆ CHECKPOINT QUESTIONS for Abhijeet (before Pipeline/Clients/System, Phases 3-5):**
+1. **Cash position** — how do you want it computed? No bank/Wise balance in v3 SQLite (those were v2 CSV imports, not mirrored). Options: define a source to mirror (M5), or pick a proxy (Upwork available balance? net ledger?). Currently an honest "—" with a note.
+2. **`applied` counts read 0** (today/week/last-week) — v3's proposals mirror has no rows with a created_dt in the last 14 days. Real (low recent volume / v2 is live) or should I check the mirror? Worth a look but not blocking.
+3. **Hot-leads count = 127** (all-time untasked ≥16, historical backlog). Scope the glance-metric to recent only, or leave as backlog indicator?
+4. **Visual** — clean/neutral/professional/single-accent per your C4 redline; open `bin/cockpit open` and redline.
+**Deferred to Phase 4 core/ batch (one approval):** the stdlib Airtable REST client (Clients live-read + future mirroring) + `doctor.check_cockpit` real auth check (still the SKIP stub — DoD item for v1-done, not 0-2).
+**NEXT after checkpoint:** Phase 3 Pipeline + Today metrics polish · Phase 4 Clients (Airtable client) + System (full) · Phase 5 Knowledge stub + wake buttons + outcome-capture rail button. Then v1 DoD review.
 
 ## Day 6 status (M1b BUILT + SHADOW-LIVE, parallel with M1a)
 **All three M1b tasks built on the kernel and supervised-run clean against live Upwork:**
