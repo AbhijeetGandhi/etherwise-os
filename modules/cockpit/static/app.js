@@ -241,7 +241,7 @@ function drawBarChart(box, items, opts) {  // items: [{label, v}]; opts.money
       + "</div>";
     return;
   }
-  const opts = {
+  const cfg = {
     width: box.clientWidth || 820, height: 220,
     scales: { x: { time: false } },
     legend: { show: false },
@@ -254,7 +254,7 @@ function drawBarChart(box, items, opts) {  // items: [{label, v}]; opts.money
       paths: uPlot.paths.bars({ size: [0.6, 60] }),
     }],
   };
-  new uPlot(opts, [xs, ys], box);
+  new uPlot(cfg, [xs, ys], box);
 }
 
 function card(title, html) {

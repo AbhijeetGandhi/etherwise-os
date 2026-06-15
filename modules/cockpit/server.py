@@ -78,6 +78,9 @@ class Handler(BaseHTTPRequestHandler):
     # ── verbs ─────────────────────────────────────────────────────────────
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
+        if path == "/favicon.ico":
+            self._send(204, b"", "image/x-icon")
+            return
         if path == "/" or path == "/index.html" or path.startswith("/static/"):
             self._static(path)
             return
