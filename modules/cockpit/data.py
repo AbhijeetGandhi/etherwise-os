@@ -6,7 +6,7 @@ nothing invented.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -90,6 +90,101 @@ def system(db_path: Optional[Path] = None) -> dict:
                   "hard_limit_usd": config.DAILY_HARD_LIMIT_USD},
         "shadow": {"pending": shadow.get("pending", 0), "by_status": shadow},
         "doctor": _doctor_light(),
+    }
+
+
+ROOM_URL = "https://www.upwork.com/messages/rooms/{tid}/"
+_TERMINAL_PROP = ("Won", "Lost", "Expired", "Withdrawn", "Skipped")
+_ACTIVE_CONTRACT = ("ACTIVE", "PENDING")
+_HOT = config.HOT_LEAD_THRESHOLD
+
+
+def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
+    """Today hero: actionable queue (follow-ups w/ draft, hot leads,
+    proto-nudges) + the metrics strip. Read-only; real data only."""
+    day = today or _ist_today()
+    conn = _ro(db_path)
+    try:
+        # follow-ups = pending drafts + thread context; owed before followup
+        follow_ups = [{
+            "thread_id": r["thread_id"],
+            "topic": r["topic"] or r["room_name"],
+            "tier": r["tier"], "bucket": r["bucket"],
+            "draft": r["body"], "word_count": r["word_count"],
+            "thread_url": ROOM_URL.format(tid=r["thread_id"]),
+        } for r in conn.execute(
+            "SELECT d.thread_id, d.body, d.word_count, d.tier,"
+            " t.bucket, t.topic, t.room_name FROM drafts d"
+            " JOIN threads t ON t.id = d.thread_id"
+            " WHERE d.sent_status = 'pending'"
+            " ORDER BY CASE t.bucket WHEN 'owed' THEN 0 WHEN 'unmatched-owed'"
+            " THEN 1 ELSE 2 END, d.generated_at DESC")]
+
+        hot_leads = [dict(r) for r in conn.execute(
+            "SELECT id, title, score, job_url,"
+            " (draft_proposal IS NOT NULL) AS has_draft FROM scored_jobs"
+            " WHERE score >= ? AND status IN ('Scored','Drafted')"
+            " AND clickup_task_id IS NULL"
+            " ORDER BY first_scored_at DESC, score DESC LIMIT 10", (_HOT,))]
+
+        # string-compare the YYYY-MM-DD prefix — created_dt carries a
+        # "+0000" offset SQLite's date() can't parse (would return NULL).
+        d0 = date.fromisoformat(day)
+        week_lo = (d0 - timedelta(days=6)).isoformat()
+        lw_lo = (d0 - timedelta(days=13)).isoformat()
+        lw_hi = (d0 - timedelta(days=7)).isoformat()
+
+        def applied_between(lo, hi):
+            return conn.execute(
+                "SELECT COUNT(*) FROM proposals WHERE"
+                " substr(created_dt,1,10) BETWEEN ? AND ?",
+                (lo, hi)).fetchone()[0]
+
+        applied_today = applied_between(day, day)
+        applied_week = applied_between(week_lo, day)
+        applied_last = applied_between(lw_lo, lw_hi)
+
+        prop_marks = ",".join("?" * len(_TERMINAL_PROP))
+        active_props = conn.execute(
+            f"SELECT COUNT(*) FROM proposals WHERE status NOT IN"
+            f" ({prop_marks}) OR status IS NULL", _TERMINAL_PROP).fetchone()[0]
+        interviews = conn.execute(
+            "SELECT COUNT(*) FROM proposals WHERE status = 'Interview'"
+        ).fetchone()[0]
+        cmarks = ",".join("?" * len(_ACTIVE_CONTRACT))
+        active_contracts = conn.execute(
+            f"SELECT COUNT(*) FROM contracts WHERE upwork_status IN"
+            f" ({cmarks})", _ACTIVE_CONTRACT).fetchone()[0]
+        follow_ups_due = len(follow_ups)
+        hot_count = conn.execute(
+            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND status IN"
+            " ('Scored','Drafted') AND clickup_task_id IS NULL",
+            (_HOT,)).fetchone()[0]
+    finally:
+        conn.close()
+
+    rev = money(db_path, today=day)["revenue"]
+    # proto-nudges (v1): a revenue-pacing signal; M4 replaces with real feed
+    proto = []
+    if rev["pct_to_target"] is not None and rev["pct_to_target"] < 100:
+        proto.append({"kind": "pacing",
+                      "text": f"Revenue {rev['pct_to_target']}% to "
+                              f"${int(rev['target_usd']):,} target ({rev['month']})",
+                      "ref": "money"})
+    return {
+        "follow_ups": follow_ups,
+        "hot_leads": hot_leads,
+        "proto_nudges": proto,
+        "metrics": {
+            "applied": {"today": applied_today, "week": applied_week,
+                        "last_week": applied_last},
+            "active": {"proposals": active_props, "interviews": interviews,
+                       "contracts": active_contracts},
+            "follow_ups_due": follow_ups_due, "hot_leads": hot_count,
+            "revenue": {"mtd_usd": rev["month_usd"],
+                        "target_usd": rev["target_usd"],
+                        "pct": rev["pct_to_target"]},
+        },
     }
 
 

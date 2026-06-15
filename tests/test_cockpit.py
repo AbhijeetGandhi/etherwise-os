@@ -129,6 +129,13 @@ class TestRouting(CockpitServerCase):
         self.assertEqual(status, 200)
         self.assertIn("revenue", json.loads(body))
 
+    def test_today_endpoint_200(self):
+        status, body = self.get("/api/today")
+        self.assertEqual(status, 200)
+        d = json.loads(body)
+        for key in ("follow_ups", "hot_leads", "proto_nudges", "metrics"):
+            self.assertIn(key, d)
+
     def test_no_send_endpoint_anywhere(self):
         # drafts-only is sacred: no route may expose a send path
         for p in ("/api/send", "/api/message/send", "/api/upwork/send",
@@ -177,6 +184,93 @@ class TestSystemReader(unittest.TestCase):
         # offline doctor: a list of checks with statuses, no network
         self.assertIsInstance(out["doctor"]["checks"], list)
         self.assertIn(out["doctor"]["worst"], ("PASS", "WARN", "FAIL"))
+
+
+def seed_today(db_path):
+    with db.connect(db_path) as conn:
+        # threads + pending drafts → follow-ups
+        for tid, bucket, tier in [("rA", "owed", "HOT"),
+                                  ("rB", "followup", "WARM"),
+                                  ("rC", "snoozed", "COLD")]:
+            conn.execute("INSERT INTO threads (id, room_name, topic, bucket,"
+                         " tier) VALUES (?,?,?,?,?)",
+                         (tid, f"Room {tid}", f"Topic {tid}", bucket, tier))
+        conn.execute("INSERT INTO drafts (thread_id, draft_kind, tier, body,"
+                     " word_count, sent_status) VALUES"
+                     " ('rA','owed','HOT','Reply draft',2,'pending')")
+        conn.execute("INSERT INTO drafts (thread_id, draft_kind, tier, body,"
+                     " word_count, sent_status) VALUES"
+                     " ('rB','followup','WARM','Nudge draft',2,'pending')")
+        conn.execute("INSERT INTO drafts (thread_id, draft_kind, tier, body,"
+                     " word_count, sent_status) VALUES"
+                     " ('rC','followup','COLD','Old',1,'stale')")  # not pending
+        # hot leads: recent, not tasked
+        conn.execute("INSERT INTO scored_jobs (id, title, score, status,"
+                     " job_url, first_scored_at) VALUES"
+                     " ('2065400000000000111','Make build',24,'Drafted',"
+                     " 'https://www.upwork.com/jobs/~022065400000000000111/',"
+                     " '2026-06-15T03:00:00+00:00')")
+        conn.execute("INSERT INTO scored_jobs (id, title, score, status,"
+                     " clickup_task_id, first_scored_at) VALUES"
+                     " ('2065400000000000112','Tasked',20,'ClickUp Created',"
+                     " 'abc','2026-06-15T03:00:00+00:00')")  # tasked → excluded
+        # proposals for applied counts (created_dt windows) + active
+        for pid, status, dt in [
+                ("p1", "Submitted", "2026-06-15T09:00:00+0000"),   # today
+                ("p2", "Interview", "2026-06-12T09:00:00+0000"),   # this week
+                ("p3", "Submitted", "2026-06-05T09:00:00+0000"),   # last week
+                ("p4", "Won", "2026-04-01T09:00:00+0000")]:
+            conn.execute("INSERT INTO proposals (id, status, created_dt)"
+                         " VALUES (?,?,?)", (pid, status, dt))
+        conn.execute("INSERT INTO contracts (id, upwork_status) VALUES"
+                     " ('c1','ACTIVE')")
+
+
+class TestTodayReader(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-today-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_today(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_followups_are_pending_drafts_with_thread_link(self):
+        out = data.today(self.db_path, today="2026-06-15")
+        fu = {f["thread_id"]: f for f in out["follow_ups"]}
+        self.assertIn("rA", fu)   # owed, pending
+        self.assertIn("rB", fu)   # followup, pending
+        self.assertNotIn("rC", fu)  # draft is stale, not pending
+        self.assertIn("messages/rooms/rA", fu["rA"]["thread_url"])
+        self.assertEqual(fu["rA"]["draft"], "Reply draft")
+
+    def test_owed_sorts_before_followup(self):
+        out = data.today(self.db_path, today="2026-06-15")
+        self.assertEqual(out["follow_ups"][0]["bucket"], "owed")
+
+    def test_hot_leads_recent_untasked_only(self):
+        out = data.today(self.db_path, today="2026-06-15")
+        ids = [h["id"] for h in out["hot_leads"]]
+        self.assertIn("2065400000000000111", ids)
+        self.assertNotIn("2065400000000000112", ids)  # tasked → excluded
+
+    def test_applied_counts_windows(self):
+        out = data.today(self.db_path, today="2026-06-15")
+        a = out["metrics"]["applied"]
+        self.assertEqual(a["today"], 1)       # p1
+        self.assertGreaterEqual(a["week"], 2)  # p1 + p2 within 7d
+        self.assertEqual(a["last_week"], 1)   # p3
+
+    def test_active_and_counts(self):
+        out = data.today(self.db_path, today="2026-06-15")
+        m = out["metrics"]
+        self.assertEqual(m["active"]["interviews"], 1)
+        self.assertEqual(m["active"]["contracts"], 1)
+        self.assertEqual(m["follow_ups_due"], 2)
+        self.assertEqual(m["hot_leads"], 1)
+        self.assertEqual(m["revenue"]["target_usd"],
+                         config.MONTHLY_REVENUE_TARGET_USD)
 
 
 def seed_money(db_path):

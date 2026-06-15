@@ -69,6 +69,68 @@ const RENDERERS = {
     });
     view.appendChild(t);
   },
+  Today: async (view) => {
+    const d = await api("/api/today");
+    const m = d.metrics || {};
+    view.appendChild(el("h2", "section", "Today"));
+
+    // ── Actions (top) ──
+    const fu = el("div", "card");
+    fu.appendChild(el("h3", null, `Follow-ups due (${(d.follow_ups||[]).length})`));
+    if (!(d.follow_ups || []).length) fu.appendChild(el("div", "muted", "Nothing owed or due. ✓"));
+    (d.follow_ups || []).forEach((f) => {
+      const item = el("div", "row");
+      const left = el("div");
+      left.innerHTML = `<strong>${f.topic || f.thread_id}</strong> `
+        + `<span class="pill ${f.bucket}">${f.bucket}</span> `
+        + `<span class="muted">${f.tier || ""} · ${f.word_count||0}w</span>`;
+      const btns = el("div");
+      const copy = el("button", "action", "Copy draft");
+      copy.onclick = () => { navigator.clipboard.writeText(f.draft || ""); copy.textContent = "Copied"; setTimeout(() => copy.textContent = "Copy draft", 1200); };
+      const open = el("button", "action", "Open thread");
+      open.onclick = () => window.open(f.thread_url, "_blank");
+      btns.append(copy, open);
+      item.append(left, btns);
+      fu.appendChild(item);
+    });
+    view.appendChild(fu);
+
+    const hl = el("div", "card");
+    hl.appendChild(el("h3", null, `Hot leads (${(d.hot_leads||[]).length})`));
+    if (!(d.hot_leads || []).length) hl.appendChild(el("div", "muted", "No new hot leads awaiting a proposal."));
+    (d.hot_leads || []).forEach((h) => {
+      const item = el("div", "row");
+      const left = el("div", null, `<strong>${h.title || h.id}</strong> <span class="muted">${h.has_draft ? "· draft ready" : ""}</span>`);
+      const right = el("div");
+      right.appendChild(el("span", "pill ok", "score " + h.score));
+      if (h.job_url) { const o = el("button", "action", "Open job"); o.onclick = () => window.open(h.job_url, "_blank"); right.appendChild(o); }
+      item.append(left, right);
+      hl.appendChild(item);
+    });
+    view.appendChild(hl);
+
+    if ((d.proto_nudges || []).length) {
+      const pn = el("div", "card");
+      pn.appendChild(el("h3", null, "Nudges (proto · real feed with M4)"));
+      d.proto_nudges.forEach((n) => pn.appendChild(el("div", "row", `<div>${n.text}</div>`)));
+      view.appendChild(pn);
+    }
+
+    // ── Metrics strip (below) ──
+    view.appendChild(el("h2", "section", "At a glance"));
+    const grid = el("div", "grid");
+    const a = m.applied || {}, rev = m.revenue || {}, act = m.active || {};
+    grid.appendChild(card("Applied", `<div class="metric">${a.today||0} <small>today</small></div>`
+      + `<div class="muted">${a.week||0} this week · ${a.last_week||0} last week</div>`));
+    const pct = Math.min(100, rev.pct || 0);
+    grid.appendChild(card("Revenue MTD", `<div class="metric">${fmtUsd(rev.mtd_usd)} <small>/ ${fmtUsd(rev.target_usd)}</small></div>`
+      + `<div class="bar"><span style="width:${pct}%"></span></div>`));
+    grid.appendChild(card("Pipeline", `<div class="metric">${act.proposals||0} <small>active</small></div>`
+      + `<div class="muted">${act.interviews||0} interviews · ${act.contracts||0} contracts</div>`));
+    grid.appendChild(card("Queue", `<div class="metric">${m.follow_ups_due||0} <small>follow-ups</small></div>`
+      + `<div class="muted">${m.hot_leads||0} hot leads</div>`));
+    view.appendChild(grid);
+  },
   Money: async (view) => {
     const d = await api("/api/money");
     const r = d.revenue || {};
@@ -168,4 +230,4 @@ async function show(section) {
 }
 
 document.getElementById("env").textContent = location.host;
-show("System");
+show("Today");
