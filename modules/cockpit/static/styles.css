@@ -44,7 +44,32 @@ th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
 th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
 .bar{height:8px;background:var(--bg);border-radius:999px;overflow:hidden;margin-top:8px}
 .bar > span{display:block;height:100%;background:var(--accent)}
-.chart{width:100%;height:220px}
+.chart{width:100%;height:240px}
+/* inline categorical bar chart */
+.bc{width:100%}
+.bc-plot{position:relative;height:200px;display:flex;align-items:flex-end}
+.bc-bars{display:flex;align-items:flex-end;gap:6px;width:100%;height:100%}
+.bc-col{flex:1;display:flex;align-items:flex-end;height:100%}
+.bc-bar{width:100%;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px}
+.bc-bar.bc-current{background:repeating-linear-gradient(45deg,var(--accent),var(--accent) 4px,#bcd3d1 4px,#bcd3d1 8px);opacity:.75}
+.bc-target{position:absolute;left:0;right:0;border-top:1px dashed var(--muted);pointer-events:none}
+.bc-target span{position:absolute;right:0;top:-16px;font-size:11px;color:var(--muted);background:var(--panel);padding:0 4px}
+.bc-labels{display:flex;gap:6px;margin-top:6px}
+.bc-labels .bc-lbl{flex:1;text-align:center;font-size:11px;color:var(--muted)}
+.bc-lbl.bc-lbl-current{color:var(--accent);font-weight:600}
+/* tier pills */
+.pill.tier-hot{background:#fbeae8;color:var(--fail)}
+.pill.tier-warm{background:#fdf3e2;color:var(--warn)}
+.pill.tier-cold{background:#eaf1fb;color:#2c5aa0}
+.pill.tier-unknown{background:#eef1f4;color:var(--muted)}
+.pill.followup,.pill.owed,.pill.unmatched-owed,.pill.unmatched-followup{background:var(--accent-soft);color:var(--accent)}
+/* follow-up rows: fixed right-aligned action column; title truncates */
+.fu-row{display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid var(--line)}
+.fu-row:last-child{border-bottom:0}
+.fu-left{flex:1;min-width:0}
+.fu-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fu-meta{display:flex;align-items:center;gap:8px;margin-top:4px}
+.fu-actions{flex:none;display:flex;gap:6px;white-space:nowrap}
 button.action{border:1px solid var(--line);background:var(--panel);color:var(--ink);
   font:inherit;font-weight:600;padding:7px 12px;border-radius:8px;cursor:pointer}
 button.action:hover{border-color:var(--accent);color:var(--accent)}

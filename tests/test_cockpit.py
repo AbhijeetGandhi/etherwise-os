@@ -12,7 +12,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from core import config, db
@@ -205,12 +205,14 @@ class TestSystemReader(unittest.TestCase):
 def seed_today(db_path):
     with db.connect(db_path) as conn:
         # threads + pending drafts → follow-ups
-        for tid, bucket, tier in [("rA", "owed", "HOT"),
-                                  ("rB", "followup", "WARM"),
-                                  ("rC", "snoozed", "COLD")]:
+        for tid, bucket, tier, lastdt in [
+                ("rA", "owed", "HOT", "2026-06-10T09:00:00+00:00"),
+                ("rB", "followup", "WARM", "2026-06-05T09:00:00+00:00"),
+                ("rC", "snoozed", "COLD", "2026-06-01T09:00:00+00:00")]:
             conn.execute("INSERT INTO threads (id, room_name, topic, bucket,"
-                         " tier) VALUES (?,?,?,?,?)",
-                         (tid, f"Room {tid}", f"Topic {tid}", bucket, tier))
+                         " tier, latest_message_dt) VALUES (?,?,?,?,?,?)",
+                         (tid, f"Room {tid}", f"Topic {tid}", bucket, tier,
+                          lastdt))
         conn.execute("INSERT INTO drafts (thread_id, draft_kind, tier, body,"
                      " word_count, sent_status) VALUES"
                      " ('rA','owed','HOT','Reply draft',2,'pending')")
@@ -271,6 +273,13 @@ class TestTodayReader(unittest.TestCase):
         out = data.today(self.db_path, today="2026-06-15")
         self.assertEqual(out["follow_ups"][0]["bucket"], "owed")
 
+    def test_followup_has_real_age_not_wordcount(self):
+        # redline 2: age_days is the true thread age (not word_count-as-weeks)
+        out = data.today(self.db_path, today="2026-06-15")
+        fu = {f["thread_id"]: f for f in out["follow_ups"]}
+        self.assertEqual(fu["rA"]["age_days"], 5)   # Jun10 → Jun15
+        self.assertEqual(fu["rB"]["age_days"], 10)  # Jun05 → Jun15
+
     def test_hot_leads_recent_untasked_only(self):
         out = data.today(self.db_path, today="2026-06-15")
         ids = [h["id"] for h in out["hot_leads"]]
@@ -318,33 +327,39 @@ class TestPipelineReader(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_to_triage_is_all_untasked_hot(self):
+    def test_to_triage_is_open_untasked_hot(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
-        # recent (111) + old (113), both untasked hot; tasked (112) excluded
+        # 111(24)+113(18) untasked hot; 112 is ClickUp Created (tasked) → out
         self.assertEqual(out["to_triage"], 2)
 
-    def test_score_bands(self):
+    def test_score_bands_open_board_only(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
         b = out["bands"]
-        self.assertGreaterEqual(b["hot"], 2)   # 111(24)+112(20)+113(18) >=16
-        self.assertIn("standard", b)
-        self.assertIn("low", b)
+        self.assertEqual(b["hot"], 2)        # untasked hot only (not 112)
+        self.assertEqual(b["hot"], out["to_triage"])  # coherent
+        self.assertIn("note", b)             # honest caveat present
 
-    def test_win_rate_from_status(self):
+    def test_win_rate_from_status_with_caveat(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
         wr = out["win_rate"]
         # seed_today p4=Won + w1,w2=Won → 3 won; +Lost1 +Expired1 → decided 5
         self.assertEqual(wr["won"], 3)
         self.assertEqual(wr["decided"], 5)
         self.assertEqual(wr["pct"], 60.0)
+        self.assertIn("threads-only", wr["caveat"])  # honest skew note
 
     def test_proposals_by_status(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
         self.assertEqual(out["by_status"].get("Won"), 3)
 
-    def test_applied_trend_series(self):
+    def test_applied_trend_filled_to_current_week(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
-        self.assertIsInstance(out["applied_trend"], list)
+        t = out["applied_trend"]
+        self.assertEqual(len(t), 10)               # zero-filled window
+        self.assertTrue(t[-1]["current"])          # ends at current week
+        d = datetime(2026, 6, 15).date()
+        expected_mon = (d - timedelta(days=d.weekday())).isoformat()
+        self.assertEqual(t[-1]["week"], expected_mon)
 
 
 class TestNudgeActions(unittest.TestCase):
@@ -447,6 +462,13 @@ class TestMoneyReader(unittest.TestCase):
     def test_revenue_last_month(self):
         out = data.money(self.db_path, today="2026-06-15")
         self.assertEqual(out["revenue"]["last_month"], "2026-05")
+        self.assertEqual(out["revenue"]["last_month_usd"], 4000.0)
+
+    def test_last_month_mtd_apples_to_apples(self):
+        # seed_money's May earning is dated May-20; through May-15 (same DOM
+        # as today June-15) it should NOT be counted → MTD=0, full=4000
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertEqual(out["revenue"]["last_month_mtd_usd"], 0.0)
         self.assertEqual(out["revenue"]["last_month_usd"], 4000.0)
 
     def test_connects_spend(self):

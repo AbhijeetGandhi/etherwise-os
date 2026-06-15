@@ -121,11 +121,26 @@ def pipeline(db_path: Optional[Path] = None,
             "last_week": applied_between(
                 (d0 - timedelta(days=13)).isoformat(),
                 (d0 - timedelta(days=7)).isoformat())}
-        # weekly applied trend (ISO week) over the last ~10 weeks, for a chart
-        trend = [{"week": r["wk"], "count": r["n"]} for r in conn.execute(
-            "SELECT strftime('%Y-%W', created_dt) wk, COUNT(*) n"
-            " FROM proposals WHERE created_dt LIKE '20%'"
-            " GROUP BY wk ORDER BY wk DESC LIMIT 10")][::-1]
+        # Applied-per-week trend: bucket by week-start (Monday) in Python so
+        # it's consistent (no SQLite/Python %W mismatch) and ZERO-FILLED out
+        # to the CURRENT week — so a recent gap reads as a gap, not a chart
+        # that mysteriously ends early (redline 5).
+        from collections import Counter
+        rows = conn.execute("SELECT created_dt FROM proposals"
+                            " WHERE created_dt LIKE '20%'").fetchall()
+        counts = Counter()
+        for r in rows:
+            try:
+                d = date.fromisoformat(r["created_dt"][:10])
+                counts[(d - timedelta(days=d.weekday())).isoformat()] += 1
+            except ValueError:
+                pass
+        this_mon = d0 - timedelta(days=d0.weekday())
+        trend = [{"week": (this_mon - timedelta(weeks=i)).isoformat(),
+                  "count": counts.get(
+                      (this_mon - timedelta(weeks=i)).isoformat(), 0),
+                  "current": i == 0}
+                 for i in range(9, -1, -1)]
 
         by_status = {r["status"] or "Unknown": r["n"] for r in conn.execute(
             "SELECT status, COUNT(*) n FROM proposals GROUP BY status")}
@@ -135,21 +150,32 @@ def pipeline(db_path: Optional[Path] = None,
         decided = conn.execute(
             f"SELECT COUNT(*) FROM proposals WHERE status IN ({dmarks})",
             _DECIDED_PROP).fetchone()[0]
-        win_rate = {"won": won, "decided": decided,
-                    "pct": round(100 * won / decided, 1) if decided else None}
+        win_rate = {
+            "won": won, "decided": decided,
+            "pct": round(100 * won / decided, 1) if decided else None,
+            # Mirror holds only proposals WITH a message room (roomList
+            # sourcing) — submitted-but-no-reply losses are absent, so this
+            # OVERSTATES win rate until the M1 sourcing fix. Honest caveat.
+            "caveat": "threads-only — submitted-no-reply proposals not yet "
+                      "captured (M1 sourcing fix pending); win rate is an "
+                      "upper bound"}
 
+        # Score bands = the OPEN board (untasked Scored/Drafted) — the actual
+        # "what's on the board" snapshot. Counting all-time + tasked rows
+        # inverted the ratio with degraded/pre-canonical scoring noise
+        # (redline 1). Hot here == to_triage.
         bands_row = conn.execute(
             "SELECT SUM(score>=16) hot, SUM(score>=12 AND score<16) standard,"
             " SUM(score>=8 AND score<12) low FROM scored_jobs"
-            " WHERE status IN ('Scored','Drafted','ClickUp Created')"
+            " WHERE status IN ('Scored','Drafted') AND clickup_task_id IS NULL"
         ).fetchone()
         bands = {"hot": bands_row["hot"] or 0,
                  "standard": bands_row["standard"] or 0,
-                 "low": bands_row["low"] or 0}
-        to_triage = conn.execute(
-            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND status IN"
-            " ('Scored','Drafted') AND clickup_task_id IS NULL", (_HOT,)
-        ).fetchone()[0]
+                 "low": bands_row["low"] or 0,
+                 "note": "open board (untasked). Scores include the "
+                         "pre-canonical-matrix backlog — hot is an upper "
+                         "bound until a backlog re-score (M1 cleanup)."}
+        to_triage = bands["hot"]
     finally:
         conn.close()
     return {"applied": applied, "applied_trend": trend,
@@ -176,14 +202,19 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             "topic": r["topic"] or r["room_name"],
             "tier": r["tier"], "bucket": r["bucket"],
             "draft": r["body"], "word_count": r["word_count"],
+            # real thread age (days) so the queue reads honestly — the old UI
+            # showed word_count as "Nw" which was misread as weeks (redline 2)
+            "age_days": r["age_days"],
             "thread_url": ROOM_URL.format(tid=r["thread_id"]),
         } for r in conn.execute(
             "SELECT d.thread_id, d.body, d.word_count, d.tier,"
-            " t.bucket, t.topic, t.room_name FROM drafts d"
-            " JOIN threads t ON t.id = d.thread_id"
+            " t.bucket, t.topic, t.room_name,"
+            " CAST(julianday(?) - julianday(substr(t.latest_message_dt,1,10))"
+            "   AS INT) AS age_days"
+            " FROM drafts d JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status = 'pending'"
             " ORDER BY CASE t.bucket WHEN 'owed' THEN 0 WHEN 'unmatched-owed'"
-            " THEN 1 ELSE 2 END, d.generated_at DESC")
+            " THEN 1 ELSE 2 END, d.generated_at DESC", (day,))
             if f"followup:{r['thread_id']}" not in suppressed]
 
         # Today shows RECENT actionable hot leads only; the all-time untasked
@@ -267,7 +298,9 @@ def money(db_path: Optional[Path] = None,
     """Money panel from v3 SQLite (Upwork transactions). Revenue uses the
     canonical earnings definition. Cash position is intentionally NOT
     fabricated — no bank/Wise balance source exists in v3 SQLite yet."""
-    month = (today or _ist_today())[:7]
+    day = today or _ist_today()
+    month = day[:7]
+    dom = day[8:10]                       # day-of-month, for MTD-vs-MTD
     last_month = _prev_month(month)
     earn_marks = ",".join("?" * len(EARNING_TYPES))
     conn = _ro(db_path)
@@ -279,9 +312,20 @@ def money(db_path: Optional[Path] = None,
                 f" AND substr(creation_dt,1,7) = ?",
                 (*EARNING_TYPES, ym)).fetchone()[0]
 
+        def rev_through_day(ym: str, dd: str) -> float:
+            # earnings in month ym up to day-of-month dd (apples-to-apples MTD)
+            return conn.execute(
+                f"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
+                f" type IN ({earn_marks}) AND amount > 0"
+                f" AND substr(creation_dt,1,7) = ?"
+                f" AND substr(creation_dt,9,2) <= ?",
+                (*EARNING_TYPES, ym, dd)).fetchone()[0]
+
         month_usd = rev_for(month)
         last_usd = rev_for(last_month)
-        by_month = [{"month": r["ym"], "usd": round(r["usd"], 2)}
+        last_mtd_usd = rev_through_day(last_month, dom)  # same-day-of-month
+        by_month = [{"month": r["ym"], "usd": round(r["usd"], 2),
+                     "current": r["ym"] == month}
                     for r in conn.execute(
                         f"SELECT substr(creation_dt,1,7) AS ym,"
                         f" SUM(amount) AS usd FROM transactions WHERE"
@@ -308,6 +352,9 @@ def money(db_path: Optional[Path] = None,
                                    / config.MONTHLY_REVENUE_TARGET_USD, 1)
             if config.MONTHLY_REVENUE_TARGET_USD else None,
             "last_month": last_month, "last_month_usd": round(last_usd, 2),
+            # apples-to-apples: last month through the SAME day-of-month, so
+            # MTD-vs-MTD doesn't read like a crash (redline 3)
+            "last_month_mtd_usd": round(last_mtd_usd, 2),
             "by_month": by_month,
         },
         "connects": {"this_month_usd": round(connects_month, 2),

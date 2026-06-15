@@ -68,6 +68,14 @@ async function nudge(itemKey, action, snoozeDays) {
 
 const fmtUsd = (n) => "$" + (n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const pill = (text, cls) => text ? el("span", "pill " + (cls || ""), text) : document.createTextNode("");
+function ago(days) {
+  if (days == null) return "";
+  if (days <= 0) return "today";
+  if (days < 7) return days + "d ago";
+  const w = Math.floor(days / 7);
+  return w + "w ago";  // explicitly "ago" — never bare "Nw" (read as weeks)
+}
 
 function renderNav(active) {
   const nav = document.getElementById("nav");
@@ -121,17 +129,19 @@ const RENDERERS = {
     fu.appendChild(el("h3", null, `Follow-ups due (${(d.follow_ups||[]).length})`));
     if (!(d.follow_ups || []).length) fu.appendChild(el("div", "muted", "Nothing owed or due. ✓"));
     (d.follow_ups || []).forEach((f) => {
-      const item = el("div", "row");
-      const left = el("div");
-      left.innerHTML = `<strong>${f.topic || f.thread_id}</strong> `
-        + `<span class="pill ${f.bucket}">${f.bucket}</span> `
-        + `<span class="muted">${f.tier || ""} · ${f.word_count||0}w</span>`;
-      const btns = el("div");
+      const item = el("div", "fu-row");
+      const left = el("div", "fu-left");
+      const title = el("div", "fu-title", f.topic || f.thread_id);  // truncates via CSS
+      const meta = el("div", "fu-meta");
+      meta.append(pill(f.bucket, f.bucket), pill(f.tier, "tier-" + (f.tier || "").toLowerCase()));
+      if (f.age_days != null) meta.appendChild(el("span", "muted", ago(f.age_days)));
+      left.append(title, meta);
+      const btns = el("div", "fu-actions");
       const copy = el("button", "action", "Copy draft");
       copy.onclick = () => { navigator.clipboard.writeText(f.draft || ""); copy.textContent = "Copied"; setTimeout(() => copy.textContent = "Copy draft", 1200); };
       const open = el("button", "action", "Open thread");
       open.onclick = () => window.open(f.thread_url, "_blank");
-      const done = el("button", "action primary", "Done");
+      const done = el("button", "action", "Done");  // neutral until clicked
       done.onclick = () => nudge("followup:" + f.thread_id, "done");
       const snooze = el("button", "action", "Snooze 3d");
       snooze.onclick = () => nudge("followup:" + f.thread_id, "snooze", 3);
@@ -187,11 +197,13 @@ const RENDERERS = {
     grid.appendChild(card("Applied", `<div class="metric">${a.today||0} <small>today</small></div>`
       + `<div class="muted">${a.week||0} this week · ${a.last_week||0} last week</div>`));
     grid.appendChild(card("Win rate", `<div class="metric">${wr.pct != null ? wr.pct + "%" : "—"}</div>`
-      + `<div class="muted">${wr.won||0} won of ${wr.decided||0} decided</div>`));
-    grid.appendChild(card("Score bands", `<div class="metric">${b.hot||0} <small>hot</small></div>`
-      + `<div class="muted">${b.standard||0} standard · ${b.low||0} low</div>`));
+      + `<div class="muted">${wr.won||0} won of ${wr.decided||0} decided</div>`
+      + `<div class="muted" style="font-size:11px">${wr.caveat || ""}</div>`));
+    grid.appendChild(card("Open board", `<div class="metric">${b.hot||0} <small>hot</small></div>`
+      + `<div class="muted">${b.standard||0} standard · ${b.low||0} low</div>`
+      + `<div class="muted" style="font-size:11px">${b.note || ""}</div>`));
     grid.appendChild(card("To triage", `<div class="metric">${d.to_triage||0}</div>`
-      + `<div class="muted">untasked hot leads (all-time backlog)</div>`));
+      + `<div class="muted">untasked hot leads to action</div>`));
     view.appendChild(grid);
 
     view.appendChild(el("h2", "section", "Applied per week"));
@@ -199,7 +211,7 @@ const RENDERERS = {
     const chart = el("div", "chart");
     chartBox.appendChild(chart);
     view.appendChild(chartBox);
-    drawBarChart(chart, (d.applied_trend || []).map(t => ({ label: (t.week||"").slice(2), v: t.count })));
+    drawBarChart(chart, (d.applied_trend || []).map(t => ({ label: (t.week || "").slice(5), v: t.count, current: t.current })));
 
     view.appendChild(el("h2", "section", "Proposals by status"));
     const t = el("table");
@@ -219,10 +231,12 @@ const RENDERERS = {
       `<div class="metric">${fmtUsd(r.month_usd)} <small>/ ${fmtUsd(r.target_usd)}</small></div>`
       + `<div class="bar"><span style="width:${pct}%"></span></div>`
       + `<div class="muted">${r.pct_to_target ?? 0}% to target · ${r.month}</div>`));
-    const delta = (r.month_usd || 0) - (r.last_month_usd || 0);
-    grid.appendChild(card("Last month",
-      `<div class="metric">${fmtUsd(r.last_month_usd)}</div>`
-      + `<div class="muted">${delta >= 0 ? "+" : ""}${fmtUsd(delta)} vs this month-to-date</div>`));
+    // apples-to-apples: this MTD vs last month through the same day
+    const mtdDelta = (r.month_usd || 0) - (r.last_month_mtd_usd || 0);
+    grid.appendChild(card("Pace vs last month",
+      `<div class="metric">${mtdDelta >= 0 ? "+" : "−"}${fmtUsd(Math.abs(mtdDelta))}</div>`
+      + `<div class="muted">MTD ${fmtUsd(r.month_usd)} vs ${fmtUsd(r.last_month_mtd_usd)} same point last month</div>`
+      + `<div class="muted">last month full: ${fmtUsd(r.last_month_usd)}</div>`));
     const c = d.connects || {};
     grid.appendChild(card("Connects spend",
       `<div class="metric">${fmtUsd(c.this_month_usd)} <small>this month</small></div>`
@@ -238,7 +252,9 @@ const RENDERERS = {
     const chart = el("div", "chart");
     chartBox.appendChild(chart);
     view.appendChild(chartBox);
-    drawBarChart(chart, (r.by_month || []).map((m) => ({ label: m.month.slice(2), v: m.usd })), { money: true });
+    drawBarChart(chart,
+      (r.by_month || []).map((m) => ({ label: m.month.slice(2), v: m.usd, current: m.current })),
+      { money: true, target: r.target_usd, targetLabel: "target " + fmtUsd(r.target_usd) });
 
     view.appendChild(el("h2", "section", "Recent transactions"));
     const t = el("table");
@@ -259,33 +275,31 @@ const RENDERERS = {
   },
 };
 
-function drawBarChart(box, items, opts) {  // items: [{label, v}]; opts.money
+// Small categorical bar chart (inline — full control over per-bar emphasis
+// and a labeled target line, which uPlot's single-fill bars make awkward).
+// items: [{label, v, current?}]; opts: {money?, target?, targetLabel?}
+function drawBarChart(box, items, opts) {
   opts = opts || {};
   if (!items.length) { box.innerHTML = '<div class="muted">No data yet.</div>'; return; }
-  const labels = items.map((m) => m.label);
-  const ys = items.map((m) => m.v);
-  const xs = items.map((_, i) => i);
-  if (typeof uPlot === "undefined") {  // fallback: inline bars, no dep
-    const max = Math.max(...ys, 1);
-    box.innerHTML = '<div style="display:flex;align-items:flex-end;gap:6px;height:200px">'
-      + items.map((m, i) => `<div title="${m.label}: ${m.v}" style="flex:1;background:var(--accent);opacity:.85;height:${Math.round(100*ys[i]/max)}%"></div>`).join("")
-      + "</div>";
-    return;
+  const fmt = (v) => opts.money ? fmtUsd(v) : String(v);
+  const max = Math.max(...items.map((m) => m.v), opts.target || 0, 1) * 1.12;
+  const bars = items.map((m) => {
+    const h = Math.round(100 * m.v / max);
+    const cls = "bc-bar" + (m.current ? " bc-current" : "");
+    return `<div class="bc-col" title="${m.label}: ${fmt(m.v)}">`
+      + `<div class="${cls}" style="height:${h}%"></div></div>`;
+  }).join("");
+  const labels = items.map((m) =>
+    `<div class="bc-lbl${m.current ? " bc-lbl-current" : ""}">${m.label}</div>`).join("");
+  let target = "";
+  if (opts.target) {
+    const bottom = Math.round(100 * opts.target / max);
+    target = `<div class="bc-target" style="bottom:${bottom}%">`
+      + `<span>${opts.targetLabel || ("target " + fmt(opts.target))}</span></div>`;
   }
-  const cfg = {
-    width: box.clientWidth || 820, height: 220,
-    scales: { x: { time: false } },
-    legend: { show: false },
-    axes: [
-      { values: (u, s) => s.map((i) => labels[i] || "") },
-      { values: (u, s) => s.map((v) => opts.money ? "$" + Math.round(v / 1000) + "k" : String(v)) },
-    ],
-    series: [{}, {
-      label: "Revenue", stroke: "#2f6f6b", fill: "rgba(47,111,107,.18)",
-      paths: uPlot.paths.bars({ size: [0.6, 60] }),
-    }],
-  };
-  new uPlot(cfg, [xs, ys], box);
+  box.innerHTML = `<div class="bc"><div class="bc-plot">${target}`
+    + `<div class="bc-bars">${bars}</div></div>`
+    + `<div class="bc-labels">${labels}</div></div>`;
 }
 
 function card(title, html) {
