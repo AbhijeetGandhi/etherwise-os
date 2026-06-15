@@ -309,6 +309,54 @@ class TestTodayReader(unittest.TestCase):
         self.assertNotIn("2065400000000000113", ids)  # May job excluded
 
 
+class FakeAirtable:
+    def __init__(self, records):
+        self._records = records
+    def list_records(self, base, table, **kw):
+        return self._records
+
+
+class TestClientsReader(unittest.TestCase):
+    def setUp(self):
+        data._clients_cache["data"] = None  # reset module cache between tests
+
+    def fake(self):
+        return FakeAirtable([
+            {"id": "rec1", "fields": {"Name": "Acme", "Status": "Active",
+             "Contracts": ["c1", "c2"], "Transactions": ["t1"],
+             "Tags": ["make.com"], "First Contract Date": "2025-04-01"}},
+            {"id": "rec2", "fields": {"Name": "Beta", "Status": "Paused",
+             "Contracts": ["c3"], "Transactions": []}},
+        ])
+
+    def test_maps_fields_and_counts_links(self):
+        out = data.clients(client=self.fake(), use_cache=False)
+        self.assertEqual(out["count"], 2)
+        acme = next(c for c in out["clients"] if c["name"] == "Acme")
+        self.assertEqual(acme["status"], "Active")
+        self.assertEqual(acme["contracts"], 2)
+        self.assertEqual(acme["transactions"], 1)
+
+    def test_active_sorts_first(self):
+        out = data.clients(client=self.fake(), use_cache=False)
+        self.assertEqual(out["clients"][0]["status"], "Active")
+
+    def test_by_status_summary(self):
+        out = data.clients(client=self.fake(), use_cache=False)
+        self.assertEqual(out["by_status"], {"Active": 1, "Paused": 1})
+
+    def test_cache_avoids_second_fetch(self):
+        calls = {"n": 0}
+
+        class Counting(FakeAirtable):
+            def list_records(self, *a, **k):
+                calls["n"] += 1
+                return []
+        data.clients(client=Counting([]), use_cache=True)
+        data.clients(client=Counting([]), use_cache=True)
+        self.assertEqual(calls["n"], 1)  # second served from cache
+
+
 class TestPipelineReader(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-pipe-"))

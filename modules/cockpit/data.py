@@ -6,11 +6,16 @@ nothing invented.
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from core import config, doctor_checks
+from core.airtable_client import AirtableClient
+
+_STATUS_ORDER = {"Active": 0, "Paused": 1, "Lead": 2, "Ended": 3, "Past": 4}
+_clients_cache = {"at": 0.0, "data": None}   # 60s TTL — Airtable is external
 
 # Light doctor for the System panel: fast, local, no network, no full-tree
 # secret scan (that's bin/doctor's job). Reflects the REAL machine.
@@ -80,6 +85,9 @@ def system(db_path: Optional[Path] = None) -> dict:
         shadow = {r["diff_status"] or "pending": r["n"] for r in conn.execute(
             "SELECT diff_status, COUNT(*) AS n FROM shadow_ledger"
             " GROUP BY diff_status")}
+        shadow_by_task = {r["task_name"]: r["n"] for r in conn.execute(
+            "SELECT task_name, COUNT(*) AS n FROM shadow_ledger"
+            " GROUP BY task_name ORDER BY n DESC")}
     finally:
         conn.close()
     return {
@@ -88,7 +96,8 @@ def system(db_path: Optional[Path] = None) -> dict:
                   "mtd_usd": round(spend_mtd, 4),
                   "soft_limit_usd": config.DAILY_SOFT_LIMIT_USD,
                   "hard_limit_usd": config.DAILY_HARD_LIMIT_USD},
-        "shadow": {"pending": shadow.get("pending", 0), "by_status": shadow},
+        "shadow": {"pending": shadow.get("pending", 0), "by_status": shadow,
+                   "by_task": shadow_by_task},
         "doctor": _doctor_light(),
     }
 
@@ -99,6 +108,46 @@ _DECIDED_PROP = ("Won", "Lost", "Expired", "Withdrawn")   # win-rate denominator
 _ACTIVE_CONTRACT = ("ACTIVE", "PENDING")
 _HOT = config.HOT_LEAD_THRESHOLD
 _RECENT_HOT_DAYS = 7    # Today shows actionable-now hot leads; backlog -> Pipeline
+
+
+def clients(db_path: Optional[Path] = None, *, client=None,
+            use_cache: bool = True) -> dict:
+    """Clients panel — live from the Airtable Clients table via the stdlib
+    REST client (the cloud-data seam; independent of MCP). 60s cache so tab
+    switches don't hammer Airtable. Per-client deep health (owed replies,
+    hours vs cap) arrives when the comms mirror lands; v1 shows status,
+    contracts, activity, tags."""
+    now = time.monotonic()
+    if use_cache and _clients_cache["data"] is not None \
+            and now - _clients_cache["at"] < 60:
+        return _clients_cache["data"]
+
+    cl = client or AirtableClient()
+    recs = cl.list_records(
+        config.AIRTABLE_BASE, config.AT["clients"],
+        fields=["Name", "Status", "Folder Name", "First Contract Date",
+                "Tags", "Contracts", "Transactions", "Notes"])
+    rows = []
+    for r in recs:
+        f = r.get("fields", {})
+        rows.append({
+            "name": f.get("Name") or f.get("Folder Name") or "(unnamed)",
+            "status": f.get("Status") or "Unknown",
+            "first_contract": f.get("First Contract Date"),
+            "tags": f.get("Tags") or [],
+            "contracts": len(f.get("Contracts") or []),
+            "transactions": len(f.get("Transactions") or []),
+            "note": (f.get("Notes") or "")[:140],
+        })
+    rows.sort(key=lambda x: (_STATUS_ORDER.get(x["status"], 9),
+                             x["name"].lower()))
+    summary = {}
+    for x in rows:
+        summary[x["status"]] = summary.get(x["status"], 0) + 1
+    out = {"clients": rows, "count": len(rows), "by_status": summary,
+           "source": "airtable:Clients"}
+    _clients_cache["at"], _clients_cache["data"] = now, out
+    return out
 
 
 def pipeline(db_path: Optional[Path] = None,

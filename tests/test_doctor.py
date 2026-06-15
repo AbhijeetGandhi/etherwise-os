@@ -154,6 +154,24 @@ class TestGuardrailsSelfTest(unittest.TestCase):
                          [c.detail for c in checks])
 
 
+class TestCockpitCheck(unittest.TestCase):
+    def test_loopback_bind_passes(self):
+        checks = dc.check_cockpit()
+        binds = [c for c in checks if c.name == "cockpit bind"]
+        self.assertEqual(binds[0].status, "PASS")  # config is 127.0.0.1
+
+    def test_flags_non_loopback(self):
+        with __import__("unittest").mock.patch.object(
+                dc.config, "COCKPIT_HOST", "0.0.0.0"):
+            checks = dc.check_cockpit()
+        bind = [c for c in checks if c.name == "cockpit bind"][0]
+        self.assertEqual(bind.status, "FAIL")
+
+    def test_no_skip_stub_remains(self):
+        details = " ".join(c.detail for c in dc.check_cockpit())
+        self.assertNotIn("lands at M2", details)
+
+
 class TestHooksCheck(unittest.TestCase):
     def test_real_repo_wiring_passes(self):
         checks = dc.check_hooks(root=config.V3_ROOT)

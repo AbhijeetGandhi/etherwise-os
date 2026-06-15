@@ -318,7 +318,26 @@ def check_plists(root: Optional[Path] = None) -> list:
 
 
 def check_cockpit() -> list:
-    return [Check("SKIP", "cockpit auth", "cockpit lands at M2")]
+    """Cockpit auth/bind hygiene (M2): token present, token file owner-only,
+    server bound to loopback. No network."""
+    checks = []
+    tok = config.cockpit_token()
+    checks.append(Check("PASS" if tok else "WARN", "cockpit token",
+                        "present" if tok
+                        else "not minted yet (server mints on first start)"))
+    tf = config.COCKPIT_TOKEN_FILE
+    if Path(tf).is_file() and Path(tf).stat().st_mode & 0o077:
+        checks.append(Check("WARN", "cockpit token file",
+                            f"{tf} readable beyond owner — chmod 600"))
+    elif Path(tf).is_file():
+        checks.append(Check("PASS", "cockpit token file", "mode 600"))
+    host = getattr(config, "COCKPIT_HOST", "127.0.0.1")
+    checks.append(Check("PASS" if host == "127.0.0.1" else "FAIL",
+                        "cockpit bind",
+                        f"{host}:{config.COCKPIT_PORT}"
+                        + (" (loopback)" if host == "127.0.0.1"
+                           else " — NOT loopback, exposed!")))
+    return checks
 
 
 ALL_CHECKS = (

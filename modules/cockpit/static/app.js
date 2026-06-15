@@ -118,6 +118,31 @@ const RENDERERS = {
       t.appendChild(tr);
     });
     view.appendChild(t);
+
+    // doctor check list (full System)
+    view.appendChild(el("h2", "section", "Doctor checks"));
+    const dt = el("table");
+    dt.innerHTML = "<tr><th>Check</th><th>Status</th><th>Detail</th></tr>";
+    ((d.doctor || {}).checks || []).forEach((c) => {
+      const tr = el("tr");
+      tr.innerHTML = `<td>${c.name}</td>`
+        + `<td><span class="pill ${c.status.toLowerCase()}">${c.status}</span></td>`
+        + `<td class="muted">${c.detail || ""}</td>`;
+      dt.appendChild(tr);
+    });
+    view.appendChild(dt);
+    view.appendChild(el("div", "muted", "Model-ID validity vs /v1/models runs in <code>bin/doctor</code> (network)."));
+
+    const byTask = (d.shadow || {}).by_task || {};
+    if (Object.keys(byTask).length) {
+      view.appendChild(el("h2", "section", "Shadow ledger (cutover evidence)"));
+      const st = el("table");
+      st.innerHTML = "<tr><th>Task</th><th>Intents</th></tr>";
+      Object.entries(byTask).forEach(([k, n]) => {
+        const tr = el("tr"); tr.innerHTML = `<td>${k}</td><td>${n}</td>`; st.appendChild(tr);
+      });
+      view.appendChild(st);
+    }
   },
   Today: async (view) => {
     const d = await api("/api/today");
@@ -268,6 +293,29 @@ const RENDERERS = {
       t.appendChild(tr);
     });
     view.appendChild(t);
+  },
+  Clients: async (view) => {
+    const d = await api("/api/clients");
+    view.appendChild(el("h2", "section", `Clients (${d.count || 0})`));
+    const sb = d.by_status || {};
+    const grid = el("div", "grid");
+    const order = ["Active", "Paused", "Lead", "Ended", "Past"];
+    Object.keys(sb).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
+      .forEach((s) => grid.appendChild(card(s, `<div class="metric">${sb[s]}</div>`)));
+    view.appendChild(grid);
+    const t = el("table");
+    t.innerHTML = "<tr><th>Client</th><th>Status</th><th>Contracts</th><th>Activity</th><th>Tags</th></tr>";
+    (d.clients || []).forEach((c) => {
+      const tr = el("tr");
+      const tags = (c.tags || []).slice(0, 3).map((x) => `<span class="pill">${x}</span>`).join(" ");
+      tr.innerHTML = `<td><strong>${c.name}</strong></td>`
+        + `<td><span class="pill ${(c.status||"").toLowerCase()==="active"?"ok":""}">${c.status}</span></td>`
+        + `<td>${c.contracts}</td><td class="muted">${c.transactions} txns</td>`
+        + `<td>${tags}</td>`;
+      t.appendChild(tr);
+    });
+    view.appendChild(t);
+    view.appendChild(el("div", "muted", "Source: Airtable Clients · deeper per-client health (owed replies, hours vs cap) arrives with the comms mirror."));
   },
   Knowledge: async (view) => {
     view.appendChild(el("h2", "section", "Knowledge"));

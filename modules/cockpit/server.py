@@ -29,6 +29,7 @@ _CT = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
 GET_ROUTES: dict = {
     "/api/today": data.today,
     "/api/pipeline": data.pipeline,
+    "/api/clients": data.clients,
     "/api/system": data.system,
     "/api/money": data.money,
 }
