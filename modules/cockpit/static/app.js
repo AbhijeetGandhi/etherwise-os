@@ -19,9 +19,40 @@ function bootToken() {
 
 async function api(path) {
   const r = await fetch(path, { headers: { "X-Cockpit-Token": bootToken() } });
-  if (r.status === 401) throw new Error("unauthorized — open via `bin/cockpit open`");
+  if (r.status === 401) { const e = new Error("unauthorized"); e.unauthorized = true; throw e; }
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json();
+}
+
+let currentSection = "Today";
+
+function renderUnlock(view, failed) {
+  view.innerHTML = "";
+  const box = el("div", "unlock");
+  box.appendChild(el("h3", null, "Cockpit locked"));
+  box.appendChild(el("p", "muted",
+    "Paste your cockpit token to unlock this browser. Saved locally — you only do this once."));
+  if (failed) box.appendChild(el("p", "unlock-err", "That token didn’t work. Try again."));
+  const input = el("input", "unlock-input");
+  input.type = "password";
+  input.placeholder = "cockpit token";
+  input.autofocus = true;
+  const btn = el("button", "action primary", "Unlock");
+  const doUnlock = () => {
+    const t = input.value.trim();
+    if (!t) return;
+    localStorage.setItem(TOKEN_KEY, t);
+    show(currentSection);
+  };
+  btn.onclick = doUnlock;
+  input.onkeydown = (e) => { if (e.key === "Enter") doUnlock(); };
+  const row = el("div", "unlock-row");
+  row.append(input, btn);
+  box.appendChild(row);
+  box.appendChild(el("div", "muted",
+    "Get it: run <code>bin/cockpit url</code> in the repo — or <code>bin/cockpit open</code> to skip this screen."));
+  view.appendChild(box);
+  input.focus();
 }
 
 async function nudge(itemKey, action, snoozeDays) {
@@ -265,6 +296,7 @@ function card(title, html) {
 }
 
 async function show(section) {
+  currentSection = section;
   renderNav(section);
   const view = document.getElementById("view");
   view.innerHTML = "";
@@ -273,6 +305,7 @@ async function show(section) {
     if (r) await r(view);
     else { view.appendChild(el("h2", "section", section)); placeholder(view, section + " — wiring in a later phase."); }
   } catch (e) {
+    if (e && e.unauthorized) { renderUnlock(view, !!localStorage.getItem(TOKEN_KEY)); return; }
     view.appendChild(el("div", "placeholder", String(e.message || e)));
   }
 }

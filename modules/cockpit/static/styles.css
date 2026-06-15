@@ -49,3 +49,14 @@ button.action{border:1px solid var(--line);background:var(--panel);color:var(--i
   font:inherit;font-weight:600;padding:7px 12px;border-radius:8px;cursor:pointer}
 button.action:hover{border-color:var(--accent);color:var(--accent)}
 button.action.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.unlock{max-width:460px;margin:64px auto;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);padding:28px}
+.unlock h3{margin:0 0 6px;font-size:18px}
+.unlock p{margin:0 0 14px}
+.unlock-row{display:flex;gap:8px;margin:4px 0 14px}
+.unlock-input{flex:1;font:inherit;padding:9px 11px;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg)}
+.unlock-input:focus{outline:none;border-color:var(--accent)}
+.unlock-err{color:var(--fail);font-weight:600}
+code{background:var(--bg);border:1px solid var(--line);border-radius:4px;
+  padding:1px 5px;font-size:12px}
