@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""One-time: normalize proposals.created_dt / modified_dt from epoch-millis
+(carried raw from v2 by import-v2) to ISO-8601, the v3 canonical format.
+
+Fixes the data-integrity defect behind cockpit applied=0 and outcome_capture's
+broken closed-window (both compare dates as ISO). Idempotent: only touches
+all-digit values (GLOB '[0-9]*'); re-running is a no-op once converted.
+
+Discipline (June-11 lesson): backup first · dry SELECT plan · scoped WHERE ·
+verify count unchanged + dates sane · honest runs-ledger row.
+
+Usage: python3 bin/normalize-proposal-dates [--live]   (dry-run default)
+"""
+import argparse
+import json
+import shutil
+import sqlite3
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config  # noqa: E402
+from modules.upwork.sync_state import iso_dt  # noqa: E402
+
+DB = config.DB_PATH
+COLS = ("created_dt", "modified_dt")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--live", action="store_true")
+    args = ap.parse_args()
+
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    total = conn.execute("SELECT COUNT(*) FROM proposals").fetchone()[0]
+    targets = {c: conn.execute(
+        f"SELECT COUNT(*) FROM proposals WHERE {c} GLOB '[0-9]*' AND {c} NOT LIKE '%-%'"
+    ).fetchone()[0] for c in COLS}
+    print(json.dumps({"mode": "LIVE" if args.live else "DRY-RUN",
+                      "total_proposals": total,
+                      "epoch_rows_to_convert": targets}))
+    sample = conn.execute(
+        "SELECT id, created_dt FROM proposals WHERE created_dt GLOB '[0-9]*'"
+        " LIMIT 3").fetchall()
+    for r in sample:
+        print(f"  {r['id']}: {r['created_dt']} -> {iso_dt(r['created_dt'])}")
+
+    if not args.live:
+        print("dry-run: no writes. Rerun with --live.")
+        conn.close()
+        return 0
+
+    backup = config.BACKUP_DIR / (
+        "etherwise-pre-proposal-date-normalize-"
+        + datetime.now(config.TZ).strftime("%Y%m%d_%H%M") + ".db")
+    config.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(DB, backup)
+    print(f"backup: {backup}")
+
+    started = datetime.now(timezone.utc).isoformat()
+    changed = {}
+    for c in COLS:
+        rows = conn.execute(
+            f"SELECT id, {c} AS v FROM proposals WHERE {c} GLOB '[0-9]*' AND {c} NOT LIKE '%-%'"
+        ).fetchall()
+        for r in rows:
+            conn.execute(f"UPDATE proposals SET {c}=? WHERE id=?",
+                         (iso_dt(r["v"]), r["id"]))
+        changed[c] = len(rows)
+    # verify: count unchanged, no epoch leftovers, dates parseable
+    assert conn.execute("SELECT COUNT(*) FROM proposals").fetchone()[0] == total
+    leftover = {c: conn.execute(
+        f"SELECT COUNT(*) FROM proposals WHERE {c} GLOB '[0-9]*' AND {c} NOT LIKE '%-%'"
+    ).fetchone()[0] for c in COLS}
+    assert all(v == 0 for v in leftover.values()), f"leftover epoch: {leftover}"
+    conn.execute(
+        "INSERT INTO runs (task_name, started_at, completed_at, status,"
+        " metrics_json) VALUES ('normalize-proposal-dates', ?, ?,"
+        " 'completed', ?)",
+        (started, datetime.now(timezone.utc).isoformat(),
+         json.dumps({"converted": changed, "total": total})))
+    conn.commit()
+    newest = conn.execute(
+        "SELECT MAX(created_dt) FROM proposals").fetchone()[0]
+    conn.close()
+    print(json.dumps({"converted": changed, "leftover_epoch": leftover,
+                      "newest_created_dt": newest}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

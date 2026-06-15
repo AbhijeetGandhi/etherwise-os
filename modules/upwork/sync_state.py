@@ -37,6 +37,26 @@ def money(node: Optional[dict]) -> Optional[float]:
         return None
 
 
+def iso_dt(value) -> Optional[str]:
+    """Normalize a date to ISO-8601, the v3 canonical format. Upwork/v2 hand
+    us epoch MILLISECONDS for proposal dates (e.g. '1779100550433'); the rest
+    of v3 (transactions, scored_jobs) is ISO. Storing epoch-millis here broke
+    every date-window consumer (cockpit applied counts, outcome_capture).
+    Digit strings are treated as epoch (13=ms, 10=s); anything else passes
+    through unchanged (already ISO)."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        ts = int(s)
+        if len(s) >= 13:        # milliseconds
+            ts //= 1000
+        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    return s                    # already ISO
+
+
 # ── upserts (terminal-protected) ─────────────────────────────────────────────
 
 def upsert_proposal(conn, vp: dict, thread_id: Optional[str]) -> str:
@@ -61,15 +81,15 @@ def upsert_proposal(conn, vp: dict, thread_id: Optional[str]) -> str:
              vp.get("coverLetter"), job.get("id"), job.get("title"),
              client.get("companyName"), client.get("country"),
              money(client.get("totalSpent")),
-             vp.get("createdDateTime"), vp.get("modifiedDateTime"),
-             thread_id))
+             iso_dt(vp.get("createdDateTime")),
+             iso_dt(vp.get("modifiedDateTime")), thread_id))
         return "inserted"
     if exists["status"] in TERMINAL:
         # mirror non-status telemetry only; the verdict is permanent
         conn.execute(
             "UPDATE proposals SET upwork_status=?, modified_dt=?,"
             " updated_at=datetime('now') WHERE id=? AND status IN"
-            " (?,?,?,?,?)", (upwork_status, vp.get("modifiedDateTime"),
+            " (?,?,?,?,?)", (upwork_status, iso_dt(vp.get("modifiedDateTime")),
                              pid, *TERMINAL))
         return "terminal-preserved"
     conn.execute(
@@ -80,7 +100,7 @@ def upsert_proposal(conn, vp: dict, thread_id: Optional[str]) -> str:
            WHERE id=? AND (status IS NULL OR status NOT IN (?,?,?,?,?))""",
         (upwork_status, money(vp.get("chargeRate")), vp.get("coverLetter"),
          job.get("title"), client.get("companyName"),
-         vp.get("modifiedDateTime"), thread_id, pid, *TERMINAL))
+         iso_dt(vp.get("modifiedDateTime")), thread_id, pid, *TERMINAL))
     return "updated"
 
 

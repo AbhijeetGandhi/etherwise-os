@@ -55,7 +55,39 @@ def vp(pid="prop1", status="Pending", title="Make build"):
             "modifiedDateTime": "2026-06-10T00:00:00Z"}
 
 
+class TestIsoDt(unittest.TestCase):
+    def test_epoch_millis_to_iso(self):
+        # "1779100550433" -> 2026-04-... ISO (the proposals.created_dt format)
+        out = sync_state.iso_dt("1779100550433")
+        self.assertTrue(out.startswith("2026-"))
+        self.assertIn("T", out)
+
+    def test_epoch_seconds_to_iso(self):
+        self.assertTrue(sync_state.iso_dt("1779100550").startswith("20"))
+
+    def test_iso_passthrough(self):
+        self.assertEqual(sync_state.iso_dt("2026-06-09T23:12:05+00:00"),
+                         "2026-06-09T23:12:05+00:00")
+
+    def test_none_and_empty(self):
+        self.assertIsNone(sync_state.iso_dt(None))
+        self.assertIsNone(sync_state.iso_dt(""))
+
+
 class TestSyncUpserts(M1bCase):
+    def test_proposal_stores_iso_not_epoch(self):
+        with db.connect(self.db_path) as conn:
+            sync_state.upsert_proposal(
+                conn, vp(pid="pX", status="Submitted"), "t1")
+            # simulate Upwork handing epoch-millis like v2 does
+            v = vp(pid="pE", status="Submitted")
+            v["createdDateTime"] = "1779100550433"
+            sync_state.upsert_proposal(conn, v, "t2")
+            row = conn.execute("SELECT created_dt FROM proposals WHERE id='pE'"
+                               ).fetchone()
+        self.assertTrue(row["created_dt"].startswith("2026-"))  # ISO, not epoch
+        self.assertNotIn("17791", row["created_dt"])
+
     def test_proposal_insert_then_update(self):
         with db.connect(self.db_path) as conn:
             self.assertEqual(sync_state.upsert_proposal(conn, vp(), "t1"),
