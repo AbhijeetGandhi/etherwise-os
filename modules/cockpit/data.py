@@ -30,6 +30,16 @@ def _ist_today() -> str:
     return datetime.now(config.TZ).strftime("%Y-%m-%d")
 
 
+# Canonical earnings definition — mirrors v2 reconcile_airtable.py (the
+# reconciled revenue parity set). amount>0 guards refunds/reversals.
+EARNING_TYPES = ("Hourly Earning", "Fixed Earning", "Bonus")
+
+
+def _prev_month(ym: str) -> str:
+    y, m = int(ym[:4]), int(ym[5:7])
+    return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
+
+
 def _doctor_light() -> dict:
     checks = []
     for name in _DOCTOR_LIGHT:
@@ -80,4 +90,62 @@ def system(db_path: Optional[Path] = None) -> dict:
                   "hard_limit_usd": config.DAILY_HARD_LIMIT_USD},
         "shadow": {"pending": shadow.get("pending", 0), "by_status": shadow},
         "doctor": _doctor_light(),
+    }
+
+
+def money(db_path: Optional[Path] = None,
+          today: Optional[str] = None) -> dict:
+    """Money panel from v3 SQLite (Upwork transactions). Revenue uses the
+    canonical earnings definition. Cash position is intentionally NOT
+    fabricated — no bank/Wise balance source exists in v3 SQLite yet."""
+    month = (today or _ist_today())[:7]
+    last_month = _prev_month(month)
+    earn_marks = ",".join("?" * len(EARNING_TYPES))
+    conn = _ro(db_path)
+    try:
+        def rev_for(ym: str) -> float:
+            return conn.execute(
+                f"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
+                f" type IN ({earn_marks}) AND amount > 0"
+                f" AND substr(creation_dt,1,7) = ?",
+                (*EARNING_TYPES, ym)).fetchone()[0]
+
+        month_usd = rev_for(month)
+        last_usd = rev_for(last_month)
+        by_month = [{"month": r["ym"], "usd": round(r["usd"], 2)}
+                    for r in conn.execute(
+                        f"SELECT substr(creation_dt,1,7) AS ym,"
+                        f" SUM(amount) AS usd FROM transactions WHERE"
+                        f" type IN ({earn_marks}) AND amount > 0"
+                        f" GROUP BY ym ORDER BY ym DESC LIMIT 12",
+                        EARNING_TYPES)][::-1]
+        connects_month = conn.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
+            " type = 'Connect Purchase' AND substr(creation_dt,1,7) = ?",
+            (month,)).fetchone()[0]
+        connects_life = conn.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
+            " type = 'Connect Purchase'").fetchone()[0]
+        feed = [dict(r) for r in conn.execute(
+            "SELECT creation_dt, type, amount, currency, profile, description"
+            " FROM transactions ORDER BY creation_dt DESC LIMIT 15")]
+    finally:
+        conn.close()
+    return {
+        "revenue": {
+            "month": month, "month_usd": round(month_usd, 2),
+            "target_usd": config.MONTHLY_REVENUE_TARGET_USD,
+            "pct_to_target": round(100 * month_usd
+                                   / config.MONTHLY_REVENUE_TARGET_USD, 1)
+            if config.MONTHLY_REVENUE_TARGET_USD else None,
+            "last_month": last_month, "last_month_usd": round(last_usd, 2),
+            "by_month": by_month,
+        },
+        "connects": {"this_month_usd": round(connects_month, 2),
+                     "lifetime_usd": round(connects_life, 2)},
+        "transactions": feed,
+        "cash": {"value_usd": None,
+                 "note": "No bank/Wise balance source in v3 SQLite yet "
+                         "(Upwork ledger only). Define the source — lands "
+                         "with the M5 finance mirror."},
     }

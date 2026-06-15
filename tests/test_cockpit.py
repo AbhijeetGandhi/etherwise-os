@@ -124,6 +124,11 @@ class TestRouting(CockpitServerCase):
         status, _ = self.get("/api/does-not-exist")
         self.assertEqual(status, 404)
 
+    def test_money_endpoint_200(self):
+        status, body = self.get("/api/money")
+        self.assertEqual(status, 200)
+        self.assertIn("revenue", json.loads(body))
+
     def test_no_send_endpoint_anywhere(self):
         # drafts-only is sacred: no route may expose a send path
         for p in ("/api/send", "/api/message/send", "/api/upwork/send",
@@ -172,6 +177,78 @@ class TestSystemReader(unittest.TestCase):
         # offline doctor: a list of checks with statuses, no network
         self.assertIsInstance(out["doctor"]["checks"], list)
         self.assertIn(out["doctor"]["worst"], ("PASS", "WARN", "FAIL"))
+
+
+def seed_money(db_path):
+    rows = [
+        # (type, amount, creation_dt, profile, currency, description)
+        ("Fixed Earning", 2000.0, "2026-06-10T00:00:00+0000", "Personal"),
+        ("Hourly Earning", 1500.0, "2026-06-12T00:00:00+0000", "Personal"),
+        ("Bonus", 200.0, "2026-06-05T00:00:00+0000", "Agency"),
+        ("Fixed Earning", 4000.0, "2026-05-20T00:00:00+0000", "Personal"),  # last month
+        ("Hourly Earning", -50.0, "2026-06-11T00:00:00+0000", "Personal"),  # refund-ish, amount<=0 excluded
+        ("Salary", -3000.0, "2026-06-01T00:00:00+0000", "Personal"),        # expense, not revenue
+        ("Connect Purchase", 45.0, "2026-06-08T00:00:00+0000", "Personal"),
+        ("Connect Purchase", 45.0, "2026-05-08T00:00:00+0000", "Personal"),
+        ("Fixed Earning", 999.0, "2026-04-10T00:00:00+0000", "Personal"),   # older month (chart)
+    ]
+    with db.connect(db_path) as conn:
+        for i, (typ, amt, dt, prof) in enumerate(rows):
+            conn.execute(
+                "INSERT INTO transactions (record_id, type, amount, currency,"
+                " creation_dt, profile, description) VALUES (?,?,?,?,?,?,?)",
+                (f"t{i}", typ, amt, "USD", dt, prof, f"{typ} row"))
+
+
+class TestMoneyReader(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-money-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_money(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_revenue_this_month_canonical(self):
+        out = data.money(self.db_path, today="2026-06-15")
+        # 2000 + 1500 + 200 (earnings, amount>0); excludes -50, Salary, Connect
+        self.assertEqual(out["revenue"]["month_usd"], 3700.0)
+        self.assertEqual(out["revenue"]["target_usd"],
+                         config.MONTHLY_REVENUE_TARGET_USD)
+        self.assertEqual(out["revenue"]["month"], "2026-06")
+
+    def test_revenue_last_month(self):
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertEqual(out["revenue"]["last_month"], "2026-05")
+        self.assertEqual(out["revenue"]["last_month_usd"], 4000.0)
+
+    def test_connects_spend(self):
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertEqual(out["connects"]["this_month_usd"], 45.0)
+        self.assertEqual(out["connects"]["lifetime_usd"], 90.0)
+
+    def test_transactions_feed(self):
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertLessEqual(len(out["transactions"]), 15)
+        newest = out["transactions"][0]
+        self.assertEqual(newest["creation_dt"][:10], "2026-06-12")  # latest
+        for key in ("type", "amount", "currency", "profile"):
+            self.assertIn(key, newest)
+
+    def test_by_month_chart_series(self):
+        out = data.money(self.db_path, today="2026-06-15")
+        by = {m["month"]: m["usd"] for m in out["revenue"]["by_month"]}
+        self.assertEqual(by.get("2026-06"), 3700.0)
+        self.assertEqual(by.get("2026-05"), 4000.0)
+        self.assertEqual(by.get("2026-04"), 999.0)
+
+    def test_cash_position_not_fabricated(self):
+        # honest: no bank source in v3 SQLite — flagged, not a fake number
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertIn("cash", out)
+        self.assertIsNone(out["cash"]["value_usd"])
+        self.assertTrue(out["cash"]["note"])
 
 
 if __name__ == "__main__":

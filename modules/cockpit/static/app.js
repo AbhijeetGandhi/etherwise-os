@@ -69,12 +69,83 @@ const RENDERERS = {
     });
     view.appendChild(t);
   },
-  // Money + Today rendered in their phases; others honest placeholders.
+  Money: async (view) => {
+    const d = await api("/api/money");
+    const r = d.revenue || {};
+    view.appendChild(el("h2", "section", "Money"));
+    const grid = el("div", "grid");
+    const pct = Math.min(100, r.pct_to_target || 0);
+    grid.appendChild(card("Revenue this month",
+      `<div class="metric">${fmtUsd(r.month_usd)} <small>/ ${fmtUsd(r.target_usd)}</small></div>`
+      + `<div class="bar"><span style="width:${pct}%"></span></div>`
+      + `<div class="muted">${r.pct_to_target ?? 0}% to target · ${r.month}</div>`));
+    const delta = (r.month_usd || 0) - (r.last_month_usd || 0);
+    grid.appendChild(card("Last month",
+      `<div class="metric">${fmtUsd(r.last_month_usd)}</div>`
+      + `<div class="muted">${delta >= 0 ? "+" : ""}${fmtUsd(delta)} vs this month-to-date</div>`));
+    const c = d.connects || {};
+    grid.appendChild(card("Connects spend",
+      `<div class="metric">${fmtUsd(c.this_month_usd)} <small>this month</small></div>`
+      + `<div class="muted">${fmtUsd(c.lifetime_usd)} lifetime</div>`));
+    const cash = d.cash || {};
+    grid.appendChild(card("Cash position",
+      `<div class="metric muted">—</div>`
+      + `<div class="muted" style="font-size:12px">${cash.note || ""}</div>`));
+    view.appendChild(grid);
+
+    view.appendChild(el("h2", "section", "Revenue by month"));
+    const chartBox = el("div", "card");
+    const chart = el("div", "chart");
+    chartBox.appendChild(chart);
+    view.appendChild(chartBox);
+    drawRevChart(chart, r.by_month || []);
+
+    view.appendChild(el("h2", "section", "Recent transactions"));
+    const t = el("table");
+    t.innerHTML = "<tr><th>Date</th><th>Type</th><th>Amount</th><th>Profile</th></tr>";
+    (d.transactions || []).forEach((x) => {
+      const tr = el("tr");
+      const amt = (x.amount >= 0 ? "" : "−") + fmtUsd(Math.abs(x.amount));
+      tr.innerHTML = `<td class="muted">${(x.creation_dt||"").slice(0,10)}</td>`
+        + `<td>${x.type || "—"}</td><td>${amt} ${x.currency||""}</td>`
+        + `<td class="muted">${x.profile || "—"}</td>`;
+      t.appendChild(tr);
+    });
+    view.appendChild(t);
+  },
   Knowledge: async (view) => {
     view.appendChild(el("h2", "section", "Knowledge"));
     placeholder(view, "Ingestion arrives with M3. Fathom poller is staged; nothing to show yet.");
   },
 };
+
+function drawRevChart(box, byMonth) {
+  if (!byMonth.length) { box.innerHTML = '<div class="muted">No revenue data.</div>'; return; }
+  const labels = byMonth.map((m) => m.month.slice(2));  // "26-06"
+  const ys = byMonth.map((m) => m.usd);
+  const xs = byMonth.map((_, i) => i);
+  if (typeof uPlot === "undefined") {  // fallback: inline bars, no dep
+    const max = Math.max(...ys, 1);
+    box.innerHTML = '<div style="display:flex;align-items:flex-end;gap:6px;height:200px">'
+      + byMonth.map((m, i) => `<div title="${m.month}: ${fmtUsd(m.usd)}" style="flex:1;background:var(--accent);opacity:.85;height:${Math.round(100*ys[i]/max)}%"></div>`).join("")
+      + "</div>";
+    return;
+  }
+  const opts = {
+    width: box.clientWidth || 820, height: 220,
+    scales: { x: { time: false } },
+    legend: { show: false },
+    axes: [
+      { values: (u, s) => s.map((i) => labels[i] || "") },
+      { values: (u, s) => s.map((v) => "$" + Math.round(v / 1000) + "k") },
+    ],
+    series: [{}, {
+      label: "Revenue", stroke: "#2f6f6b", fill: "rgba(47,111,107,.18)",
+      paths: uPlot.paths.bars({ size: [0.6, 60] }),
+    }],
+  };
+  new uPlot(opts, [xs, ys], box);
+}
 
 function card(title, html) {
   const c = el("div", "card");
