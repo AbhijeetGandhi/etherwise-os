@@ -1,5 +1,13 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-06-16 (Day 7 cont. — M2 Phase 3 + applied-count fix + real-data redline, CHECKPOINT) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-06-16 (Day 7 cont. — M2 cockpit v1 FEATURE-COMPLETE, Phases 0-5, → DoD sign-off) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## M2 COCKPIT v1 — FEATURE-COMPLETE (Phases 0-5), awaiting Abhijeet DoD sign-off
+All six sections wired to real data; light/neutral theme; 241 v3 tests green; cockpit KeepAlive-live on :5051.
+- **Phase 4 (7ed1997)** Clients live from Airtable via NEW `core/airtable_client.py` (stdlib REST, PAT, MCP-independent — the cloud-data seam seed; engine_writer fills sync slot for M4) · full System (doctor check list + shadow-by-task) · `doctor.check_cockpit` real (token/mode/loopback PASS).
+- **Phase 5 (ff9a2be)** Knowledge honest stub + Fathom poller status · `actions.wake`/`actions.rail` = ALLOWLISTED launchd kick (scan/sync/inbox + outcome-capture rail; brief=M4 greyed) — the wake/rail seam · System 'Run now' buttons.
+- **DoD live-verified:** Today 10 follow-ups+drafts/applied/rev-strip · Money MTD-vs-target + feed (cash=M5 placeholder) · Pipeline win 45.7%/bands 137-213-15 · Clients 64 live · Knowledge stub · System doctor (0 FAIL) · nudge done/snooze/dismiss round-trips (local nudge_state; Airtable→M4) · wake + outcome-rail buttons fire · localhost+token always-on · doctor cockpit PASS · 241 tests green. ONLY remaining DoD item: **your review/sign-off**.
+- **Known/accepted (not defects):** Today hot-count window (sweeps June-10/11 import; self-corrects ~June 18 or scope by posting-date — your call) · applied/win-rate undercount until the M1 proposal-sourcing fix (logged, next M1 work) · cash deferred to M5.
+- **NEXT after sign-off:** the logged M1 proposal-sourcing fix (roomList misses submitted-no-room proposals), then M3/M4/M5 per build order. Visual redline: applied; awaiting any further notes.
 
 ## Day 7 cont. (2026-06-16) — applied-count bug fixed + M2 Phase 3 done → CHECKPOINT
 **APPLIED-COUNT BUG (data-integrity) FIXED (38fef31):** root cause = `proposals.created_dt`/`modified_dt` stored as epoch-MILLIS (import-v2 carried v2's raw value un-normalized) while all v3 consumers use ISO → cockpit window compare never matched → applied=0; same defect silently broke `outcome_capture`'s modified_dt window. Fixed at the DATA layer: `sync_state.iso_dt()` normalizes future writes; `bin/normalize-proposal-dates` backfilled the 73 rows (backup+dry-run+verify; its assert caught a bad GLOB predicate pre-commit). Verified live applied=0/0/3 (was 0/0/0).
