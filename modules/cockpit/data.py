@@ -95,8 +95,66 @@ def system(db_path: Optional[Path] = None) -> dict:
 
 ROOM_URL = "https://www.upwork.com/messages/rooms/{tid}/"
 _TERMINAL_PROP = ("Won", "Lost", "Expired", "Withdrawn", "Skipped")
+_DECIDED_PROP = ("Won", "Lost", "Expired", "Withdrawn")   # win-rate denominator
 _ACTIVE_CONTRACT = ("ACTIVE", "PENDING")
 _HOT = config.HOT_LEAD_THRESHOLD
+_RECENT_HOT_DAYS = 7    # Today shows actionable-now hot leads; backlog -> Pipeline
+
+
+def pipeline(db_path: Optional[Path] = None,
+             today: Optional[str] = None) -> dict:
+    """Pipeline panel: applied trend, proposals by status, win rate, score
+    bands (from scored_jobs.score — no ClickUp dependency), and the all-time
+    untasked-hot 'to triage' backlog."""
+    day = today or _ist_today()
+    d0 = date.fromisoformat(day)
+    conn = _ro(db_path)
+    try:
+        def applied_between(lo, hi):
+            return conn.execute(
+                "SELECT COUNT(*) FROM proposals WHERE"
+                " substr(created_dt,1,10) BETWEEN ? AND ?",
+                (lo, hi)).fetchone()[0]
+        applied = {
+            "today": applied_between(day, day),
+            "week": applied_between((d0 - timedelta(days=6)).isoformat(), day),
+            "last_week": applied_between(
+                (d0 - timedelta(days=13)).isoformat(),
+                (d0 - timedelta(days=7)).isoformat())}
+        # weekly applied trend (ISO week) over the last ~10 weeks, for a chart
+        trend = [{"week": r["wk"], "count": r["n"]} for r in conn.execute(
+            "SELECT strftime('%Y-%W', created_dt) wk, COUNT(*) n"
+            " FROM proposals WHERE created_dt LIKE '20%'"
+            " GROUP BY wk ORDER BY wk DESC LIMIT 10")][::-1]
+
+        by_status = {r["status"] or "Unknown": r["n"] for r in conn.execute(
+            "SELECT status, COUNT(*) n FROM proposals GROUP BY status")}
+        dmarks = ",".join("?" * len(_DECIDED_PROP))
+        won = conn.execute("SELECT COUNT(*) FROM proposals WHERE status='Won'"
+                           ).fetchone()[0]
+        decided = conn.execute(
+            f"SELECT COUNT(*) FROM proposals WHERE status IN ({dmarks})",
+            _DECIDED_PROP).fetchone()[0]
+        win_rate = {"won": won, "decided": decided,
+                    "pct": round(100 * won / decided, 1) if decided else None}
+
+        bands_row = conn.execute(
+            "SELECT SUM(score>=16) hot, SUM(score>=12 AND score<16) standard,"
+            " SUM(score>=8 AND score<12) low FROM scored_jobs"
+            " WHERE status IN ('Scored','Drafted','ClickUp Created')"
+        ).fetchone()
+        bands = {"hot": bands_row["hot"] or 0,
+                 "standard": bands_row["standard"] or 0,
+                 "low": bands_row["low"] or 0}
+        to_triage = conn.execute(
+            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND status IN"
+            " ('Scored','Drafted') AND clickup_task_id IS NULL", (_HOT,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return {"applied": applied, "applied_trend": trend,
+            "by_status": by_status, "win_rate": win_rate, "bands": bands,
+            "to_triage": to_triage}
 
 
 def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
@@ -128,12 +186,18 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             " THEN 1 ELSE 2 END, d.generated_at DESC")
             if f"followup:{r['thread_id']}" not in suppressed]
 
+        # Today shows RECENT actionable hot leads only; the all-time untasked
+        # backlog is surfaced in Pipeline as "to triage" (Abhijeet, Phase 3).
+        recent_lo = (date.fromisoformat(day)
+                     - timedelta(days=_RECENT_HOT_DAYS)).isoformat()
         hot_leads = [dict(r) for r in conn.execute(
             "SELECT id, title, score, job_url,"
             " (draft_proposal IS NOT NULL) AS has_draft FROM scored_jobs"
             " WHERE score >= ? AND status IN ('Scored','Drafted')"
             " AND clickup_task_id IS NULL"
-            " ORDER BY first_scored_at DESC, score DESC LIMIT 10", (_HOT,))
+            " AND substr(first_scored_at,1,10) >= ?"
+            " ORDER BY first_scored_at DESC, score DESC LIMIT 10",
+            (_HOT, recent_lo))
             if f"hotlead:{r['id']}" not in suppressed]
 
         # string-compare the YYYY-MM-DD prefix — created_dt carries a
@@ -167,8 +231,9 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         follow_ups_due = len(follow_ups)
         hot_count = conn.execute(
             "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND status IN"
-            " ('Scored','Drafted') AND clickup_task_id IS NULL",
-            (_HOT,)).fetchone()[0]
+            " ('Scored','Drafted') AND clickup_task_id IS NULL"
+            " AND substr(first_scored_at,1,10) >= ?",
+            (_HOT, recent_lo)).fetchone()[0]
     finally:
         conn.close()
 
@@ -249,7 +314,7 @@ def money(db_path: Optional[Path] = None,
                      "lifetime_usd": round(connects_life, 2)},
         "transactions": feed,
         "cash": {"value_usd": None,
-                 "note": "No bank/Wise balance source in v3 SQLite yet "
-                         "(Upwork ledger only). Define the source — lands "
-                         "with the M5 finance mirror."},
+                 "note": "Arrives with M5 — the finance module will mirror "
+                         "statement running-balances for a real cash "
+                         "position. (Revenue + transactions below are live.)"},
     }

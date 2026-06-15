@@ -136,6 +136,13 @@ class TestRouting(CockpitServerCase):
         for key in ("follow_ups", "hot_leads", "proto_nudges", "metrics"):
             self.assertIn(key, d)
 
+    def test_pipeline_endpoint_200(self):
+        status, body = self.get("/api/pipeline")
+        self.assertEqual(status, 200)
+        d = json.loads(body)
+        for key in ("applied", "by_status", "win_rate", "bands", "to_triage"):
+            self.assertIn(key, d)
+
     def test_no_send_endpoint_anywhere(self):
         # drafts-only is sacred: no route may expose a send path
         for p in ("/api/send", "/api/message/send", "/api/upwork/send",
@@ -223,6 +230,12 @@ def seed_today(db_path):
                      " clickup_task_id, first_scored_at) VALUES"
                      " ('2065400000000000112','Tasked',20,'ClickUp Created',"
                      " 'abc','2026-06-15T03:00:00+00:00')")  # tasked → excluded
+        # OLD untasked hot lead: excluded from Today (recent), counted in
+        # Pipeline to-triage backlog
+        conn.execute("INSERT INTO scored_jobs (id, title, score, status,"
+                     " first_scored_at) VALUES"
+                     " ('2065400000000000113','Old hot',18,'Scored',"
+                     " '2026-05-01T03:00:00+00:00')")
         # proposals for applied counts (created_dt windows) + active
         for pid, status, dt in [
                 ("p1", "Submitted", "2026-06-15T09:00:00+0000"),   # today
@@ -277,9 +290,61 @@ class TestTodayReader(unittest.TestCase):
         self.assertEqual(m["active"]["interviews"], 1)
         self.assertEqual(m["active"]["contracts"], 1)
         self.assertEqual(m["follow_ups_due"], 2)
-        self.assertEqual(m["hot_leads"], 1)
+        self.assertEqual(m["hot_leads"], 1)  # recent only; old (May) excluded
         self.assertEqual(m["revenue"]["target_usd"],
                          config.MONTHLY_REVENUE_TARGET_USD)
+
+    def test_hot_leads_today_is_recent_only(self):
+        out = data.today(self.db_path, today="2026-06-15")
+        ids = [h["id"] for h in out["hot_leads"]]
+        self.assertNotIn("2065400000000000113", ids)  # May job excluded
+
+
+class TestPipelineReader(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-pipe-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_today(self.db_path)
+        with db.connect(self.db_path) as conn:  # add terminal outcomes
+            for pid, status, dt in [
+                    ("w1", "Won", "2026-05-01T00:00:00+0000"),
+                    ("w2", "Won", "2026-05-02T00:00:00+0000"),
+                    ("l1", "Lost", "2026-05-03T00:00:00+0000"),
+                    ("e1", "Expired", "2026-05-04T00:00:00+0000")]:
+                conn.execute("INSERT INTO proposals (id, status, created_dt)"
+                             " VALUES (?,?,?)", (pid, status, dt))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_to_triage_is_all_untasked_hot(self):
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        # recent (111) + old (113), both untasked hot; tasked (112) excluded
+        self.assertEqual(out["to_triage"], 2)
+
+    def test_score_bands(self):
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        b = out["bands"]
+        self.assertGreaterEqual(b["hot"], 2)   # 111(24)+112(20)+113(18) >=16
+        self.assertIn("standard", b)
+        self.assertIn("low", b)
+
+    def test_win_rate_from_status(self):
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        wr = out["win_rate"]
+        # seed_today p4=Won + w1,w2=Won → 3 won; +Lost1 +Expired1 → decided 5
+        self.assertEqual(wr["won"], 3)
+        self.assertEqual(wr["decided"], 5)
+        self.assertEqual(wr["pct"], 60.0)
+
+    def test_proposals_by_status(self):
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        self.assertEqual(out["by_status"].get("Won"), 3)
+
+    def test_applied_trend_series(self):
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        self.assertIsInstance(out["applied_trend"], list)
 
 
 class TestNudgeActions(unittest.TestCase):

@@ -28,6 +28,7 @@ _CT = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
 # GET /api/* → reader(db_path) -> JSON-able dict. Extended per phase.
 GET_ROUTES: dict = {
     "/api/today": data.today,
+    "/api/pipeline": data.pipeline,
     "/api/system": data.system,
     "/api/money": data.money,
 }

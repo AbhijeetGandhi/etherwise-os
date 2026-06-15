@@ -148,6 +148,36 @@ const RENDERERS = {
       + `<div class="muted">${m.hot_leads||0} hot leads</div>`));
     view.appendChild(grid);
   },
+  Pipeline: async (view) => {
+    const d = await api("/api/pipeline");
+    view.appendChild(el("h2", "section", "Pipeline"));
+    const a = d.applied || {}, wr = d.win_rate || {}, b = d.bands || {};
+    const grid = el("div", "grid");
+    grid.appendChild(card("Applied", `<div class="metric">${a.today||0} <small>today</small></div>`
+      + `<div class="muted">${a.week||0} this week · ${a.last_week||0} last week</div>`));
+    grid.appendChild(card("Win rate", `<div class="metric">${wr.pct != null ? wr.pct + "%" : "—"}</div>`
+      + `<div class="muted">${wr.won||0} won of ${wr.decided||0} decided</div>`));
+    grid.appendChild(card("Score bands", `<div class="metric">${b.hot||0} <small>hot</small></div>`
+      + `<div class="muted">${b.standard||0} standard · ${b.low||0} low</div>`));
+    grid.appendChild(card("To triage", `<div class="metric">${d.to_triage||0}</div>`
+      + `<div class="muted">untasked hot leads (all-time backlog)</div>`));
+    view.appendChild(grid);
+
+    view.appendChild(el("h2", "section", "Applied per week"));
+    const chartBox = el("div", "card");
+    const chart = el("div", "chart");
+    chartBox.appendChild(chart);
+    view.appendChild(chartBox);
+    drawBarChart(chart, (d.applied_trend || []).map(t => ({ label: (t.week||"").slice(2), v: t.count })));
+
+    view.appendChild(el("h2", "section", "Proposals by status"));
+    const t = el("table");
+    t.innerHTML = "<tr><th>Status</th><th>Count</th></tr>";
+    Object.entries(d.by_status || {}).sort((x, y) => y[1] - x[1]).forEach(([s, n]) => {
+      const tr = el("tr"); tr.innerHTML = `<td>${s}</td><td>${n}</td>`; t.appendChild(tr);
+    });
+    view.appendChild(t);
+  },
   Money: async (view) => {
     const d = await api("/api/money");
     const r = d.revenue || {};
@@ -177,7 +207,7 @@ const RENDERERS = {
     const chart = el("div", "chart");
     chartBox.appendChild(chart);
     view.appendChild(chartBox);
-    drawRevChart(chart, r.by_month || []);
+    drawBarChart(chart, (r.by_month || []).map((m) => ({ label: m.month.slice(2), v: m.usd })), { money: true });
 
     view.appendChild(el("h2", "section", "Recent transactions"));
     const t = el("table");
@@ -198,15 +228,16 @@ const RENDERERS = {
   },
 };
 
-function drawRevChart(box, byMonth) {
-  if (!byMonth.length) { box.innerHTML = '<div class="muted">No revenue data.</div>'; return; }
-  const labels = byMonth.map((m) => m.month.slice(2));  // "26-06"
-  const ys = byMonth.map((m) => m.usd);
-  const xs = byMonth.map((_, i) => i);
+function drawBarChart(box, items, opts) {  // items: [{label, v}]; opts.money
+  opts = opts || {};
+  if (!items.length) { box.innerHTML = '<div class="muted">No data yet.</div>'; return; }
+  const labels = items.map((m) => m.label);
+  const ys = items.map((m) => m.v);
+  const xs = items.map((_, i) => i);
   if (typeof uPlot === "undefined") {  // fallback: inline bars, no dep
     const max = Math.max(...ys, 1);
     box.innerHTML = '<div style="display:flex;align-items:flex-end;gap:6px;height:200px">'
-      + byMonth.map((m, i) => `<div title="${m.month}: ${fmtUsd(m.usd)}" style="flex:1;background:var(--accent);opacity:.85;height:${Math.round(100*ys[i]/max)}%"></div>`).join("")
+      + items.map((m, i) => `<div title="${m.label}: ${m.v}" style="flex:1;background:var(--accent);opacity:.85;height:${Math.round(100*ys[i]/max)}%"></div>`).join("")
       + "</div>";
     return;
   }
@@ -216,7 +247,7 @@ function drawRevChart(box, byMonth) {
     legend: { show: false },
     axes: [
       { values: (u, s) => s.map((i) => labels[i] || "") },
-      { values: (u, s) => s.map((v) => "$" + Math.round(v / 1000) + "k") },
+      { values: (u, s) => s.map((v) => opts.money ? "$" + Math.round(v / 1000) + "k" : String(v)) },
     ],
     series: [{}, {
       label: "Revenue", stroke: "#2f6f6b", fill: "rgba(47,111,107,.18)",
