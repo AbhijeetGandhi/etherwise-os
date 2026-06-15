@@ -70,6 +70,14 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted
 .fu-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fu-meta{display:flex;align-items:center;gap:8px;margin-top:4px}
 .fu-actions{flex:none;display:flex;gap:6px;white-space:nowrap}
+/* toasts — subtle functional feedback (wake/rail) */
+.toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50}
+.toast{background:var(--ink);color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;
+  box-shadow:0 4px 14px rgba(0,0,0,.18);opacity:0;transform:translateY(8px);
+  transition:opacity .25s,transform .25s;max-width:340px}
+.toast.show{opacity:1;transform:none}
+.toast-err{background:var(--fail)}
+button.action:disabled{opacity:.55;cursor:default}
 button.action{border:1px solid var(--line);background:var(--panel);color:var(--ink);
   font:inherit;font-weight:600;padding:7px 12px;border-radius:8px;cursor:pointer}
 button.action:hover{border-color:var(--accent);color:var(--accent)}

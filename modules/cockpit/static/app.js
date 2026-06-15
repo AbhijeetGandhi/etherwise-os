@@ -346,9 +346,20 @@ const RENDERERS = {
   },
 };
 
+function toast(msg, isError) {
+  let host = document.getElementById("toasts");
+  if (!host) { host = el("div", "toasts"); host.id = "toasts"; document.body.appendChild(host); }
+  const t = el("div", "toast" + (isError ? " toast-err" : ""), msg);
+  host.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3800);
+}
+
 async function kick(path, body, btn) {
-  const label = btn.textContent;
+  const name = btn.textContent;
+  toast(`${name} started — Jobs will update shortly`);
   btn.disabled = true; btn.textContent = "Running…";
+  let ok = false;
   try {
     const r = await fetch(path, {
       method: "POST",
@@ -356,9 +367,19 @@ async function kick(path, body, btn) {
       body: JSON.stringify(body),
     });
     const d = await r.json();
-    btn.textContent = d.ok ? "Kicked ✓" : "Failed";
-  } catch (e) { btn.textContent = "Failed"; }
-  setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 2000);
+    ok = !!d.ok;
+    btn.textContent = ok ? "Started ✓" : "Failed";
+    if (!ok) toast(`${name} failed: ${d.error || "see logs"}`, true);
+  } catch (e) { btn.textContent = "Failed"; toast(`${name} failed to start`, true); }
+  if (ok) {
+    // the job runs async — refresh the Jobs ledger a few seconds later so
+    // the new run shows without a manual reload
+    setTimeout(() => {
+      if (currentSection === "System") { toast("Jobs ledger refreshed"); show("System"); }
+    }, 4500);
+  } else {
+    setTimeout(() => { btn.textContent = name; btn.disabled = false; }, 2500);
+  }
 }
 
 // Small categorical bar chart (inline — full control over per-bar emphasis
