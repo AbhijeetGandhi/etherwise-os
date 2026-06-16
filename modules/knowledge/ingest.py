@@ -89,7 +89,14 @@ def grade_density(text: str) -> float:
 
 # ── ingest one file ───────────────────────────────────────────────────────────
 
-_PARSERS = {"fathom": parse_fathom}
+def parse_email(payload: dict) -> dict:
+    """Gmail message -> normalized source dict (delegates to email_poll so the
+    parsing lives next to the puller; imported lazily to avoid a cycle)."""
+    from modules.knowledge import email_poll
+    return email_poll.parse_email(payload)
+
+
+_PARSERS = {"fathom": parse_fathom, "email": parse_email}
 
 
 def ingest_file(path: Path, db_path=None, client_map=None,

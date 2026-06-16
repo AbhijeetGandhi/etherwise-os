@@ -7,9 +7,15 @@ linkage (counterparty org/user/room-name). Include domain forms AND any accented
 """
 from __future__ import annotations
 
-from typing import List
+import re
+from typing import Dict, List
 
 from core import db
+
+# a roster identifier is a company DOMAIN if it looks like one (dot, no spaces).
+# Personal domains (gmail.com etc.) are intentionally never roster identifiers,
+# so email pulling stays company-gated — never vacuums personal mail.
+_DOMAIN = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
 
 # Abhijeet's Upwork user id — the "our side" of every thread (never a counterparty).
 _OWNER_USER_ID = "1647672547786633216"
@@ -32,6 +38,19 @@ def load_client_map(db_path=None) -> List[dict]:
     """Return the active client roster (pilot roster until the clients mirror
     is populated at M1b)."""
     return PILOT_CLIENTS
+
+
+def domain_map(client_map: List[dict]) -> Dict[str, str]:
+    """{company_domain: client_id} from roster identifiers — the sender-domain
+    gate for email pulling. Clients with no company-domain identifier (e.g. a
+    personal-email client) simply won't match; add their domain to the roster."""
+    out: Dict[str, str] = {}
+    for c in client_map:
+        for ident in c.get("identifiers", []):
+            d = ident.lower().strip()
+            if _DOMAIN.match(d):
+                out[d] = c["client_id"]
+    return out
 
 
 def _match(hay: str, client_map: List[dict]):
