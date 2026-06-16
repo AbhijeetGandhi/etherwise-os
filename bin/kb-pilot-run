@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""One-shot pilot ingest for ONE client (kept under the $0.50 per-run cap by
+running a single client per process). Usage: kb-pilot-run <client_id> [max].
+Phase-5 full backfill stays gated; this is the pilot path only.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from modules.knowledge import pipeline, clients, crm  # noqa: E402
+from core import config  # noqa: E402
+
+ZIP = Path(__file__).resolve().parents[2] / "assets" / \
+    "Fathom_Transcripts_2026-04-08_09_37_19.zip"
+
+
+def main():
+    cid = sys.argv[1]
+    cap = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+    cmap = clients.load_client_map(config.DB_PATH)
+    client = next(c for c in cmap if c["client_id"] == cid)
+
+    res = pipeline.process_zip(ZIP, config.DB_PATH, cmap, {cid},
+                               max_per_client=cap)
+    facts = sum((r.get("facts") or {}).get("inserted", 0)
+                for r in res if r.get("status") == "ingested")
+    print(f"{cid}: {len(res)} fathom calls, {facts} facts")
+    crmres = crm.ingest_crm(config.DB_PATH, cid, client["name"],
+                            client["identifiers"])
+    print(f"{cid}: CRM {crmres}")
+
+
+if __name__ == "__main__":
+    main()

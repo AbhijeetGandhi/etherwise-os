@@ -13,7 +13,8 @@ from unittest import mock
 
 from core import db
 from core import claude_gateway as gw
-from modules.knowledge import kb, ingest, extract, index
+from modules.knowledge import (kb, ingest, extract, index, crm, dossier,
+                               librarian)
 
 CLIENT_MAP = [
     {"client_id": "recHorizons", "name": "Horizons ABA",
@@ -204,6 +205,151 @@ class TestFTS(KBCase):
                                           client_id="recHermon")), 1)
         self.assertEqual(len(index.search(self.db_path, "Vapi",
                                           client_id="recHorizons")), 0)
+
+
+# ── asset-zip Fathom shape (transcript timestamps + participant emails) ───────
+class TestAssetParse(KBCase):
+    def test_parses_asset_shape(self):
+        payload = {
+            "recording_id": 9911, "title": "Endura kickoff",
+            "date": "2026-04-01T10:00:00Z",
+            "url": "https://fathom.video/calls/9911",
+            "participants": [{"name": "Sam", "email": "sam@endurasolutions.com.au"},
+                             {"name": "Abhijeet", "email": "a@etherwise.io"}],
+            "transcript": [
+                {"timestamp": "00:00:05", "speaker": "Sam", "text": "We need RPA."},
+                {"timestamp": "00:01:10", "speaker": "Abhijeet", "text": "On it."}],
+        }
+        parsed = ingest.parse_fathom(payload)
+        self.assertEqual(parsed["source_ref"], "fathom/9911")
+        self.assertEqual(parsed["occurred_dt"], "2026-04-01T10:00:00Z")
+        self.assertIn("sam@endurasolutions.com.au", parsed["participants"])
+        self.assertIn("[00:00:05] Sam: We need RPA.", parsed["text"])
+
+    def test_asset_classifies_by_email_domain(self):
+        client_map = [{"client_id": "endura", "name": "Endura Solutions",
+                       "identifiers": ["endurasolutions.com.au", "endura"]}]
+        payload = {"recording_id": 1, "title": "call", "date": "2026-04-01",
+                   "participants": [{"name": "S", "email": "s@endurasolutions.com.au"}],
+                   "transcript": [{"timestamp": "0", "speaker": "S", "text": "hi there"}]}
+        p = self.drop(payload, "e.json")
+        r = ingest.ingest_file(p, db_path=self.db_path, client_map=client_map)
+        self.assertEqual(r["client_id"], "endura")
+
+
+# ── CRM numbers → cited facts (deterministic, no model) ───────────────────────
+class TestCRM(KBCase):
+    def seed(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, type, description,"
+                " assignment_company, amount, creation_dt, canonical_key)"
+                " VALUES ('t1','Hourly Earning','work','Adélye',100.0,"
+                "'2026-01-01','k1'),"
+                " ('t2','Fixed Earning','work','Adélye',400.0,'2026-02-01','k2'),"
+                " ('t3','Connect Purchase','noise','Adélye',-5.0,'2026-02-01','k3')")
+
+    def test_emits_cited_revenue_fact(self):
+        self.seed()
+        facts = crm.crm_facts(self.db_path, "adelye", "Adelye", ["adélye"])
+        self.assertTrue(facts)
+        rev = [f for f in facts if "Revenue" in f["fact_text"]][0]
+        self.assertIn("$500", rev["fact_text"])           # 100+400, excludes -5
+        self.assertEqual(rev["confidence"], "CONFIRMED")
+        self.assertEqual(rev["citation"], "CRM:transactions")
+
+    def test_ingest_crm_idempotent(self):
+        self.seed()
+        r1 = crm.ingest_crm(self.db_path, "adelye", "Adelye", ["adélye"])
+        r2 = crm.ingest_crm(self.db_path, "adelye", "Adelye", ["adélye"])
+        self.assertEqual(r1["inserted"], r2["inserted"])
+        n = self.rows("SELECT COUNT(*) c FROM sources WHERE source_type='crm'")
+        self.assertEqual(n[0]["c"], 1)                     # one synthetic source
+        f = self.rows("SELECT COUNT(*) c FROM facts WHERE client_id='adelye'")
+        self.assertEqual(f[0]["c"], r1["inserted"])        # not duplicated
+
+
+# ── dossier render is deterministic + cites everything ────────────────────────
+class TestDossier(KBCase):
+    FACTS = [
+        {"category": "numbers", "fact_text": "Revenue $19,457.",
+         "citation": "CRM:transactions", "confidence": "CONFIRMED"},
+        {"category": "stack", "fact_text": "Uses Make.com.",
+         "citation": "fathom/1 @ 00:02", "confidence": "CROSS-VERIFIED"},
+        {"category": "overview", "fact_text": "Might expand next year.",
+         "citation": "fathom/1 @ 00:09", "confidence": "INFERRED"},
+    ]
+    SOURCES = [{"source_type": "fathom", "source_ref": "fathom/1",
+                "title": "kickoff", "occurred_dt": "2026-04-01", "density": 0.5}]
+
+    def test_render_deterministic(self):
+        a = dossier.render_dossier("Adelye", "adelye", self.FACTS,
+                                   self.SOURCES, "2026-06-16")
+        b = dossier.render_dossier("Adelye", "adelye", self.FACTS,
+                                   self.SOURCES, "2026-06-16")
+        self.assertEqual(a, b)
+
+    def test_every_fact_cited_and_inferred_flagged(self):
+        md = dossier.render_dossier("Adelye", "adelye", self.FACTS,
+                                    self.SOURCES, "2026-06-16")
+        self.assertIn("CRM:transactions", md)
+        self.assertIn("fathom/1 @ 00:02", md)
+        self.assertIn("_INFERRED_", md)                    # inferred italicized
+        self.assertIn("CONFIRMED", md)
+
+    def test_compile_writes_file_and_index(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash, client_id) VALUES"
+                         " ('fathom','fathom/1','h1','adelye')")
+            sid = conn.execute("SELECT id FROM sources").fetchone()["id"]
+        index.index_facts(self.db_path, sid, "adelye", self.FACTS)
+        out = dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                      "2026-06-16", dossier_dir=self.tmp / "dz")
+        self.assertTrue(Path(out["path"]).exists())
+        self.assertEqual(out["facts"], 3)
+        idx = self.rows("SELECT * FROM dossier_index WHERE client_id='adelye'")
+        self.assertEqual(idx[0]["fact_count"], 3)
+
+
+# ── librarian: cites when grounded, refuses when kb is silent ─────────────────
+class TestLibrarian(KBCase):
+    def seed_fact(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash, client_id) VALUES"
+                         " ('fathom','fathom/1','h1','adelye')")
+            sid = conn.execute("SELECT id FROM sources").fetchone()["id"]
+        index.index_facts(self.db_path, sid, "adelye", [
+            {"category": "stack", "fact_text": "Adelye uses Make.com for ops.",
+             "citation": "fathom/1 @ 00:02", "confidence": "CONFIRMED"}])
+
+    def gw_result(self, obj):
+        return gw.GatewayResult(
+            text=json.dumps(obj), parsed=obj, model="claude-sonnet-4-6",
+            route="payg", usage={}, cost_usd=0.01, stop_reason="end_turn",
+            duration_ms=5)
+
+    def test_grounded_answer_cites(self):
+        self.seed_fact()
+        ans = {"answer": "They use Make.com.", "grounded": True,
+               "citations": ["fathom/1 @ 00:02"]}
+        with mock.patch.object(librarian.runner, "claude_call",
+                               return_value=self.gw_result(ans)):
+            out = librarian.answer("What stack does Adelye use?",
+                                   db_path=self.db_path, client_id="adelye")
+        self.assertTrue(out["grounded"])
+        self.assertIn("fathom/1 @ 00:02", out["citations"])
+        self.assertEqual(out["facts_used"], 1)
+
+    def test_refuses_when_no_facts(self):
+        # no facts seeded → no FTS hits → refusal WITHOUT calling the model
+        with mock.patch.object(librarian.runner, "claude_call",
+                               side_effect=AssertionError("must not call model")):
+            out = librarian.answer("What is their revenue?",
+                                   db_path=self.db_path, client_id="adelye")
+        self.assertFalse(out["grounded"])
+        self.assertEqual(out["citations"], [])
 
 
 if __name__ == "__main__":

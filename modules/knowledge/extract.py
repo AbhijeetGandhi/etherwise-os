@@ -53,7 +53,7 @@ SYSTEM = (
 
 
 def extract_facts(source: dict, text: str, db_path=None,
-                  max_tokens: int = 2000) -> List[dict]:
+                  max_tokens: int = 4000) -> List[dict]:
     """Returns validated cited facts: [{category, fact_text, confidence,
     citation}]. citation = '<source_ref> @ <locator>'. Uncited/untagged
     facts from the model are dropped (never persisted)."""

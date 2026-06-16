@@ -19,27 +19,41 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 # ── parsers (per source) ──────────────────────────────────────────────────────
 
 def parse_fathom(payload: dict) -> dict:
-    """Fathom meeting JSON -> normalized source dict."""
+    """Fathom meeting JSON -> normalized source dict. Handles BOTH the API
+    poller shape and the historical export (asset zip): transcript segments
+    may carry a `timestamp` (used as citation anchors); participants may be
+    [{name, email}] (email domains drive classification)."""
     rid = str(payload.get("recording_id") or payload.get("id") or "")
     tx = payload.get("transcript") or []
+    lines, spoken = [], set()
     if isinstance(tx, list):
-        lines = []
-        speakers = set()
         for seg in tx:
             sp = (seg.get("speaker") or "").strip()
+            ts = (seg.get("timestamp") or "").strip()
             if sp:
-                speakers.add(sp)
-            lines.append(f"{sp}: {seg.get('text', '')}".strip(": ").strip())
+                spoken.add(sp)
+            prefix = f"[{ts}] " if ts else ""
+            lines.append(f"{prefix}{sp}: {seg.get('text', '')}".strip())
         text = "\n".join(lines)
     else:
-        text, speakers = str(tx), set()
+        text = str(tx)
+    # participants: explicit list (name/email) wins; else transcript speakers
+    parts = []
+    for p in (payload.get("participants") or []):
+        if isinstance(p, dict):
+            parts.append((p.get("name") or "").strip())
+            if p.get("email"):
+                parts.append(p["email"].strip())
+        elif p:
+            parts.append(str(p).strip())
+    participants = sorted({x for x in parts if x} or spoken)
     return {
         "source_type": "fathom",
         "source_ref": f"fathom/{rid}",
         "title": payload.get("title"),
-        "occurred_dt": payload.get("created_at")
-        or payload.get("recording_start_time"),
-        "participants": sorted(speakers),
+        "occurred_dt": payload.get("created_at") or payload.get("date")
+        or payload.get("recording_start") or payload.get("recording_start_time"),
+        "participants": participants,
         "text": text,
         "url": payload.get("url"),
     }
