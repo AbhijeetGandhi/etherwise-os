@@ -1,6 +1,12 @@
 # BUILD BRIEF — read this first, every session
 **Updated:** 2026-06-16 (Day 7 cont. — M2 cockpit v1 FEATURE-COMPLETE, Phases 0-5, → DoD sign-off) · **Owner of this file:** updated at every checkpoint, never stale.
 
+## M3 KNOWLEDGE — Phase 0 DONE (e9bdb45); Phase 1-2 next
+**Phase 0 (pipeline core, committed):** `004_kb.sql` (sources/facts/dossier_index + FTS5; citations code+schema-enforced — confidence CHECK, citation NOT NULL) · `knowledge/SCHEMA.md` ported · `modules/knowledge/{kb,ingest,extract,index}.py` (content-hash dedup, rule-classify by participant/domain, density grade, Sonnet-via-gateway cited extraction that DROPS uncited, FTS search). 12 tests; 253 suite green.
+**Phase 1 recon:** real data in `assets/Fathom_Transcripts_2026-04-08.zip` = 357 call JSONs (field `transcript`, participants w/ name+email). Top client domains: **horizonsaba.com 138 · adelye.com 47 · endurasolutions.com.au 11 · themedicalkitchen.com 9** (etherwise.io 20 = internal). Upwork source ready: 2,351 messages / 127 threads (communications table empty — use messages). 
+**Proposed pilots (2-3 active clients): Horizons ABA · Adelye · Endura Solutions** — build real dossiers from Fathom + Upwork msgs + CRM numbers. **Cost note:** pilot extraction (~25-40 recent calls across 3 clients) ≈ $0.50-1.50 Sonnet — modest, within caps. FULL backfill (357 calls ≈ $7-18) gets its own cost estimate + your go before running (Phase 5).
+**NEXT:** Phase 1 (asset-zip parser + classify against the 64-client roster + live extract on pilots) → Phase 1.5 Upwork-msgs + CRM numbers → Phase 2 (dossier compiler + `kb-librarian` agent; cited terminal Q&A) → **◆ CHECKPOINT**. Then (after your OK): Gmail OAuth (flagged step) + full backfill.
+
 ## M2 COCKPIT v1 — FEATURE-COMPLETE (Phases 0-5), awaiting Abhijeet DoD sign-off
 All six sections wired to real data; light/neutral theme; 241 v3 tests green; cockpit KeepAlive-live on :5051.
 - **Phase 4 (7ed1997)** Clients live from Airtable via NEW `core/airtable_client.py` (stdlib REST, PAT, MCP-independent — the cloud-data seam seed; engine_writer fills sync slot for M4) · full System (doctor check list + shadow-by-task) · `doctor.check_cockpit` real (token/mode/loopback PASS).
