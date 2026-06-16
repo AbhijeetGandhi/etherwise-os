@@ -1,14 +1,18 @@
-"""Client roster for classification + CRM matching. The clients table (Airtable
-mirror) is empty until M1b lands, so the pilot roster is defined here. Each
-entry's `identifiers` drive BOTH Fathom classification (participant emails/
-names, title) and CRM revenue matching (txn description/company) — include
-domain forms AND any accented/legal-name variants seen in the data.
+"""Client roster for classification + CRM matching + thread linkage. The clients
+table (Airtable mirror) is empty until M1b lands, so the roster is defined here.
+Each entry's `identifiers` drive Fathom classification (participant emails/names,
+title), CRM revenue matching (txn description/company), AND Upwork thread→client
+linkage (counterparty org/user/room-name). Include domain forms AND any accented
+/legal-name variants seen in the data.
 """
 from __future__ import annotations
 
 from typing import List
 
 from core import db
+
+# Abhijeet's Upwork user id — the "our side" of every thread (never a counterparty).
+_OWNER_USER_ID = "1647672547786633216"
 
 PILOT_CLIENTS: List[dict] = [
     {"client_id": "horizons-aba", "name": "Horizons ABA",
@@ -18,23 +22,52 @@ PILOT_CLIENTS: List[dict] = [
      "identifiers": ["adelye.com", "adélye", "adelye"]},
     {"client_id": "endura", "name": "Endura Solutions",
      "identifiers": ["endurasolutions.com.au", "endura solutions", "endura"]},
+    {"client_id": "netfly", "name": "NETFLY",
+     # message-heavy, no Fathom calls — linkage-validation pilot
+     "identifiers": ["netfly", "haleema", "umair"]},
 ]
 
 
 def load_client_map(db_path=None) -> List[dict]:
-    """Return the active client roster. Prefers the clients mirror once
-    populated; falls back to the pilot roster (clients table empty pre-M1b)."""
-    try:
-        with db.connect(db_path) as conn:
-            rows = [dict(r) for r in conn.execute(
-                "SELECT * FROM clients")] if _has_clients(conn) else []
-    except Exception:
-        rows = []
-    if not rows:
-        return PILOT_CLIENTS
-    return PILOT_CLIENTS  # mirror-derived map TBD at M1b; pilots remain source
+    """Return the active client roster (pilot roster until the clients mirror
+    is populated at M1b)."""
+    return PILOT_CLIENTS
 
 
-def _has_clients(conn) -> bool:
-    n = conn.execute("SELECT COUNT(*) c FROM clients").fetchone()["c"]
-    return n > 0
+def _match(hay: str, client_map: List[dict]):
+    hay = (hay or "").lower()
+    for c in client_map:
+        for ident in c.get("identifiers", []):
+            if ident.lower() in hay:
+                return c["client_id"], c["name"]
+    return None, None
+
+
+def link_threads(db_path, client_map: List[dict]) -> dict:
+    """Set threads.client_id by matching each thread's COUNTERPARTY (non-owner
+    sender org/user names) + room_name/topic against the roster identifiers.
+    Idempotent; returns {linked, by_client}. Lets message-heavy clients with no
+    Fathom calls still get their Upwork signal."""
+    linked = 0
+    by_client: dict = {}
+    with db.connect(db_path) as conn:
+        threads = [dict(r) for r in conn.execute(
+            "SELECT id, room_name, topic FROM threads")]
+        for t in threads:
+            parties = conn.execute(
+                "SELECT GROUP_CONCAT(DISTINCT sender_org_name) o,"
+                " GROUP_CONCAT(DISTINCT sender_user_name) u FROM messages"
+                " WHERE thread_id=? AND sender_user_id != ?",
+                (t["id"], _OWNER_USER_ID)).fetchone()
+            hay = " ".join(filter(None, [
+                t.get("room_name"), t.get("topic"),
+                parties["o"] if parties else None,
+                parties["u"] if parties else None]))
+            cid, _ = _match(hay, client_map)
+            if not cid:
+                continue
+            conn.execute("UPDATE threads SET client_id=? WHERE id=?",
+                         (cid, t["id"]))
+            linked += 1
+            by_client[cid] = by_client.get(cid, 0) + 1
+    return {"linked": linked, "by_client": by_client}

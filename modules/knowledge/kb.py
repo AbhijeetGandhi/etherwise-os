@@ -14,6 +14,8 @@ CATEGORIES = ("overview", "people", "numbers", "timeline", "architecture",
               "stack", "commitment", "quote", "other")
 # proposal-writer may only use these (SCHEMA Rule 2)
 TRUSTED_TAGS = ("CONFIRMED", "CROSS-VERIFIED")
+# scope routes a fact to its artifact: client dossier vs proof-points wiki
+SCOPES = ("client", "agency", "cross-client")
 
 _WS = re.compile(r"\s+")
 
@@ -38,4 +40,7 @@ def validate_fact(fact: dict) -> dict:
             f" (must be one of {CONFIDENCE_TAGS})")
     if not (fact.get("fact_text") or "").strip():
         raise UncitedFact("empty fact_text")
+    scope = fact.get("scope", "client")
+    if scope not in SCOPES:
+        raise UncitedFact(f"invalid scope {scope!r} (must be one of {SCOPES})")
     return fact

@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""One-shot pilot ingest for ONE client (kept under the $0.50 per-run cap by
-running a single client per process). Usage: kb-pilot-run <client_id> [max].
+"""Pilot ingest, staged so each invocation stays under the $0.50 per-run cap
+(config is not agent-writable). One STAGE per process:
+
+  kb-pilot-run fathom <client_id> [max]   # extract recent Fathom calls
+  kb-pilot-run upwork <client_id>          # extract linked Upwork threads
+  kb-pilot-run crm    <client_id>          # deterministic CRM numbers (cheap)
+
 Phase-5 full backfill stays gated; this is the pilot path only.
 """
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from modules.knowledge import pipeline, clients, crm  # noqa: E402
+from modules.knowledge import pipeline, clients, crm, upwork_msgs  # noqa: E402
 from core import config  # noqa: E402
 
 ZIP = Path(__file__).resolve().parents[2] / "assets" / \
@@ -15,19 +20,24 @@ ZIP = Path(__file__).resolve().parents[2] / "assets" / \
 
 
 def main():
-    cid = sys.argv[1]
-    cap = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+    stage, cid = sys.argv[1], sys.argv[2]
     cmap = clients.load_client_map(config.DB_PATH)
     client = next(c for c in cmap if c["client_id"] == cid)
+    name = client["name"]
 
-    res = pipeline.process_zip(ZIP, config.DB_PATH, cmap, {cid},
-                               max_per_client=cap)
-    facts = sum((r.get("facts") or {}).get("inserted", 0)
-                for r in res if r.get("status") == "ingested")
-    print(f"{cid}: {len(res)} fathom calls, {facts} facts")
-    crmres = crm.ingest_crm(config.DB_PATH, cid, client["name"],
-                            client["identifiers"])
-    print(f"{cid}: CRM {crmres}")
+    if stage == "fathom":
+        cap = int(sys.argv[3]) if len(sys.argv) > 3 else 8
+        res = pipeline.process_zip(ZIP, config.DB_PATH, cmap, {cid},
+                                   max_per_client=cap)
+        facts = sum((r.get("facts") or {}).get("inserted", 0)
+                    for r in res if r.get("status") == "ingested")
+        print(f"{cid} fathom: {len(res)} calls, {facts} facts")
+    elif stage == "upwork":
+        print(f"{cid} upwork: {upwork_msgs.ingest_client_threads(config.DB_PATH, cid, name)}")
+    elif stage == "crm":
+        print(f"{cid} crm: {crm.ingest_crm(config.DB_PATH, cid, name, client['identifiers'])}")
+    else:
+        sys.exit(f"unknown stage {stage!r}")
 
 
 if __name__ == "__main__":

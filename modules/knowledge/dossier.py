@@ -31,15 +31,18 @@ def _slug(name: str, client_id: str) -> str:
 
 
 def render_dossier(client_name: str, client_id: str, facts: List[dict],
-                   sources: List[dict], now_iso: str) -> str:
-    """Pure render. facts: rows with category/fact_text/citation/confidence.
-    sources: rows with source_type/source_ref/title/occurred_dt/density."""
+                   sources: List[dict], now_iso: str, routed: int = 0) -> str:
+    """Pure render. facts: rows with category/fact_text/citation/confidence
+    (client-scoped only). sources: source_type/source_ref/title/occurred_dt.
+    routed: count of agency/cross-client facts sent to proof-points instead."""
     trusted = [f for f in facts if f["confidence"] in kb.TRUSTED_TAGS]
+    routed_note = (f" · {routed} agency/other-client facts routed to "
+                   "proof-points" if routed else "")
     lines = [
         f"# {client_name} — Dossier",
         "",
-        f"_Compiled {now_iso} · {len(facts)} facts "
-        f"({len(trusted)} trusted) from {len(sources)} sources._",
+        f"_Compiled {now_iso} · {len(facts)} client facts "
+        f"({len(trusted)} trusted) from {len(sources)} sources{routed_note}._",
         "",
         "> Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED**"
         " are client-facing; _INFERRED_ is internal-only.",
@@ -80,14 +83,20 @@ def compile_dossier(db_path, client_id: str, client_name: str, now_iso: str,
     dossier_dir = dossier_dir or (config.KNOWLEDGE_DIR / "dossiers")
     dossier_dir.mkdir(parents=True, exist_ok=True)
     with db.connect(db_path) as conn:
+        # client dossier carries ONLY client-scoped facts; agency/cross-client
+        # facts are routed to the proof-points wiki (proof_points.py)
         facts = [dict(r) for r in conn.execute(
             "SELECT category, fact_text, citation, confidence FROM facts"
-            " WHERE client_id=? ORDER BY id", (client_id,))]
+            " WHERE client_id=? AND scope='client' ORDER BY id", (client_id,))]
+        routed = conn.execute(
+            "SELECT COUNT(*) c FROM facts WHERE client_id=? AND scope!='client'",
+            (client_id,)).fetchone()["c"]
         sources = [dict(r) for r in conn.execute(
             "SELECT source_type, source_ref, title, occurred_dt, density FROM"
             " sources WHERE client_id=? ORDER BY occurred_dt", (client_id,))]
 
-    md = render_dossier(client_name, client_id, facts, sources, now_iso)
+    md = render_dossier(client_name, client_id, facts, sources, now_iso,
+                        routed=routed)
     path = dossier_dir / f"{_slug(client_name, client_id)}.md"
     path.write_text(md)
 

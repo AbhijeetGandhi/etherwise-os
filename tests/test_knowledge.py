@@ -14,7 +14,7 @@ from unittest import mock
 from core import db
 from core import claude_gateway as gw
 from modules.knowledge import (kb, ingest, extract, index, crm, dossier,
-                               librarian)
+                               librarian, clients, proof_points, upwork_msgs)
 
 CLIENT_MAP = [
     {"client_id": "recHorizons", "name": "Horizons ABA",
@@ -350,6 +350,114 @@ class TestLibrarian(KBCase):
                                    db_path=self.db_path, client_id="adelye")
         self.assertFalse(out["grounded"])
         self.assertEqual(out["citations"], [])
+
+
+# ── thread→client linkage by counterparty ────────────────────────────────────
+class TestLinkage(KBCase):
+    def seed_thread(self, tid, room, org, user, owner_only=False):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name) VALUES (?,?)",
+                         (tid, room))
+            # counterparty message
+            if not owner_only:
+                conn.execute(
+                    "INSERT INTO messages (id, thread_id, message, sender_user_id,"
+                    " sender_user_name, sender_org_name) VALUES"
+                    " (?,?,?,?,?,?)", (tid + "_m1", tid, "hi", "999", user, org))
+            # our own message (must never drive linkage)
+            conn.execute(
+                "INSERT INTO messages (id, thread_id, message, sender_user_id,"
+                " sender_user_name, sender_org_name) VALUES (?,?,?,?,?,?)",
+                (tid + "_m0", tid, "reply", clients._OWNER_USER_ID,
+                 "Abhijeet G.", "Etherwise"))
+
+    def test_links_by_counterparty_org(self):
+        cmap = [{"client_id": "netfly", "name": "NETFLY",
+                 "identifiers": ["netfly", "haleema"]}]
+        self.seed_thread("room_a", "Haleema Umair, NETFLY", "NETFLY", "Haleema U.")
+        self.seed_thread("room_b", "Some Other Co", "Random LLC", "Bob R.")
+        out = clients.link_threads(self.db_path, cmap)
+        self.assertEqual(out["linked"], 1)
+        rows = self.rows("SELECT id, client_id FROM threads ORDER BY id")
+        self.assertEqual(rows[0]["client_id"], "netfly")     # room_a
+        self.assertIsNone(rows[1]["client_id"])              # room_b unmatched
+
+    def test_owner_messages_do_not_link(self):
+        cmap = [{"client_id": "etherwise", "name": "Etherwise",
+                 "identifiers": ["etherwise"]}]
+        self.seed_thread("room_c", "Client Co", "Client Co", "Cara C.",
+                         owner_only=True)
+        out = clients.link_threads(self.db_path, cmap)
+        self.assertEqual(out["linked"], 0)    # only owner spoke -> no counterparty
+
+
+# ── scope routing: client→dossier, agency/cross→proof-points ─────────────────
+class TestScopeRouting(KBCase):
+    FACTS = [
+        {"category": "stack", "fact_text": "Client uses Airtable.",
+         "citation": "f/1 @ 1", "confidence": "CONFIRMED", "scope": "client"},
+        {"category": "overview", "fact_text": "Agency does no-code automation.",
+         "citation": "f/1 @ 2", "confidence": "CONFIRMED", "scope": "agency"},
+        {"category": "architecture", "fact_text": "Built a voice agent for OtherCo.",
+         "citation": "f/1 @ 3", "confidence": "CONFIRMED", "scope": "cross-client"},
+    ]
+
+    def seed(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash, client_id) VALUES"
+                         " ('fathom','f/1','h','adelye')")
+            sid = conn.execute("SELECT id FROM sources").fetchone()["id"]
+        return index.index_facts(self.db_path, sid, "adelye", self.FACTS)
+
+    def test_scope_persisted(self):
+        res = self.seed()
+        self.assertEqual(res["inserted"], 3)
+        scopes = {r["scope"] for r in self.rows("SELECT scope FROM facts")}
+        self.assertEqual(scopes, {"client", "agency", "cross-client"})
+
+    def test_dossier_only_client_scope(self):
+        self.seed()
+        out = dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                      "2026-06-17", dossier_dir=self.tmp / "dz")
+        self.assertEqual(out["facts"], 1)                # only the client fact
+        md = Path(out["path"]).read_text()
+        self.assertIn("Client uses Airtable.", md)
+        self.assertNotIn("no-code automation", md)       # agency -> routed out
+        self.assertNotIn("voice agent for OtherCo", md)  # cross -> routed out
+        self.assertIn("routed to proof-points", md)
+
+    def test_proof_points_gets_non_client(self):
+        self.seed()
+        out = proof_points.compile_proof_points(self.db_path, "2026-06-17",
+                                                out_dir=self.tmp / "kb")
+        self.assertEqual(out["agency"], 1)
+        self.assertEqual(out["cross"], 1)
+        md = Path(out["path"]).read_text()
+        self.assertIn("no-code automation", md)
+        self.assertIn("voice agent for OtherCo", md)
+        self.assertNotIn("Client uses Airtable.", md)    # client stays in dossier
+
+    def test_invalid_scope_rejected(self):
+        with self.assertRaises(kb.UncitedFact):
+            kb.validate_fact({"fact_text": "x", "citation": "y",
+                              "confidence": "CONFIRMED", "scope": "bogus"})
+
+
+# ── upwork thread → cited source ──────────────────────────────────────────────
+class TestUpworkThread(KBCase):
+    def test_build_thread_text_anchored(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name) VALUES"
+                         " ('room_x','NETFLY')")
+            conn.execute(
+                "INSERT INTO messages (id, thread_id, message, created_dt,"
+                " sender_user_name, direction) VALUES"
+                " ('m1','room_x','Can you build outreach?','2026-05-01T10:00:00Z',"
+                " 'Haleema U.','Inbound')")
+        text = upwork_msgs.build_thread_text(self.db_path, "room_x")
+        self.assertIn("[2026-05-01T10:00:00] Haleema U.: Can you build outreach?",
+                      text)
 
 
 if __name__ == "__main__":

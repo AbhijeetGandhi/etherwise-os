@@ -53,6 +53,24 @@ def ingest_thread(db_path, thread_id: str, client_id: Optional[str],
     res = {"status": "ingested", "source_id": sid, "client_id": client_id,
            "source_ref": ref, "text": text}
     if extract_facts:
-        facts = extract.extract_facts(res, text, db_path=db_path)
-        res["facts"] = index.index_facts(db_path, sid, client_id, facts)
+        try:
+            facts = extract.extract_facts(res, text, db_path=db_path)
+            res["facts"] = index.index_facts(db_path, sid, client_id, facts)
+        except Exception as e:               # one bad thread must not abort
+            res["facts"] = {"inserted": 0, "rejected": 0, "error": str(e)[:200]}
     return res
+
+
+def ingest_client_threads(db_path, client_id: str, client_name: str) -> dict:
+    """Ingest every thread linked to a client (threads.client_id, set by
+    clients.link_threads). Returns counts. Idempotent via content hash."""
+    with db.connect(db_path) as conn:
+        tids = [r["id"] for r in conn.execute(
+            "SELECT id FROM threads WHERE client_id=?", (client_id,))]
+    threads = facts = 0
+    for tid in tids:
+        r = ingest_thread(db_path, tid, client_id, client_name)
+        if r.get("status") == "ingested":
+            threads += 1
+            facts += (r.get("facts") or {}).get("inserted", 0)
+    return {"threads_ingested": threads, "facts": facts, "linked": len(tids)}

@@ -27,9 +27,11 @@ def index_facts(db_path, source_id: int, client_id: Optional[str],
             try:
                 conn.execute(
                     "INSERT INTO facts (source_id, client_id, category,"
-                    " fact_text, citation, confidence) VALUES (?,?,?,?,?,?)",
+                    " fact_text, citation, confidence, scope)"
+                    " VALUES (?,?,?,?,?,?,?)",
                     (source_id, client_id, f.get("category") or "other",
-                     f["fact_text"], f["citation"], f["confidence"]))
+                     f["fact_text"], f["citation"], f["confidence"],
+                     f.get("scope") or "client"))
                 inserted += 1
             except Exception:           # DB-level backstop (CHECK/NOT NULL)
                 rejected += 1
