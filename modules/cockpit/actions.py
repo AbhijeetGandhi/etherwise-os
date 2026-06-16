@@ -8,12 +8,19 @@ send stays a human action in Upwork (copy + open thread, client-side).
 from __future__ import annotations
 
 import os
+import json
 import subprocess
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
 from core import config, db
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ASK_CLI = _REPO_ROOT / "bin" / "kb-ask"
+_ASK_TIMEOUT_S = 45
+_ASK_MAX_LEN = 500
 
 # Wake/rail = kick a launchd job. ALLOWLIST only — never an arbitrary label
 # (the cockpit must not become a launchd-exec surface). This map IS the
@@ -54,6 +61,31 @@ def rail(db_path: Optional[Path], body: dict) -> dict:
     if name not in RAIL_JOBS:
         raise ValueError(f"unknown rail: {name!r} (allowed: {sorted(RAIL_JOBS)})")
     return {**_kick(RAIL_JOBS[name]), "rail": name}
+
+def ask(db_path: Optional[Path], body: dict) -> dict:
+    """POST /api/ask — proxy the kb-librarian. The model call runs in a CHILD
+    process (bin/kb-ask), never in the cockpit server (view+action plane rule).
+    body: {question, client?}. Returns {answer, grounded, citations, ...}."""
+    question = ((body or {}).get("question") or "").strip()
+    if not question:
+        raise ValueError("question required")
+    if len(question) > _ASK_MAX_LEN:
+        question = question[:_ASK_MAX_LEN]
+    client = (body or {}).get("client") or ""
+    args = [sys.executable, str(_ASK_CLI), question]
+    if client:
+        args.append(str(client))
+    proc = subprocess.run(args, capture_output=True, text=True,
+                          cwd=str(_REPO_ROOT), timeout=_ASK_TIMEOUT_S)
+    if proc.returncode != 0:
+        return {"grounded": False, "answer": "",
+                "error": (proc.stderr.strip()[:300] or "librarian failed")}
+    try:
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"grounded": False, "answer": "",
+                "error": "librarian returned no answer"}
+
 
 VALID_ACTIONS = {"done", "snooze", "dismiss"}
 STATE_FOR = {"done": "done", "snooze": "snoozed", "dismiss": "dismissed"}

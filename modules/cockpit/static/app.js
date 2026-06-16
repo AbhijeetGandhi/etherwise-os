@@ -68,6 +68,7 @@ async function nudge(itemKey, action, snoozeDays) {
 
 const fmtUsd = (n) => "$" + (n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const esc = (s) => { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; };
 const pill = (text, cls) => text ? el("span", "pill " + (cls || ""), text) : document.createTextNode("");
 function ago(days) {
   if (days == null) return "";
@@ -338,13 +339,120 @@ const RENDERERS = {
   Knowledge: async (view) => {
     const d = await api("/api/knowledge");
     view.appendChild(el("h2", "section", "Knowledge"));
-    placeholder(view, d.message || "Arrives with M3.");
+    if (d.status === "stub") { placeholder(view, d.message); return; }
+
+    const t = d.totals || {};
+    const strip = el("div", "grid");
+    strip.appendChild(card("Facts", `<div class="metric">${t.facts || 0}</div>`
+      + `<div class="muted">${t.client_facts || 0} client · ${t.agency_facts || 0} agency · ${t.cross_facts || 0} cross</div>`));
+    strip.appendChild(card("Sources", `<div class="metric">${t.sources || 0}</div>`));
     const f = d.fathom || {};
-    view.appendChild(card("Fathom poller",
-      `<div class="muted">High-water mark: ${f.cursor || "—"}</div>`
-      + `<div class="muted">Last successful poll: ${f.last_poll || "never"}</div>`));
+    strip.appendChild(card("Fathom poller",
+      `<div class="muted">HWM: ${esc(f.cursor) || "—"}</div>`
+      + `<div class="muted">Last poll: ${esc(f.last_poll) || "never"}</div>`));
+    const pp = d.proof_points || {};
+    strip.appendChild(card("Proof-points",
+      `<div class="metric">${(pp.agency || 0) + (pp.cross || 0)}</div>`
+      + `<div class="muted">${pp.agency || 0} agency · ${pp.cross || 0} cross-client</div>`));
+    view.appendChild(strip);
+
+    // Ask box — proxies the kb-librarian (model runs out-of-process)
+    const ask = el("div", "card");
+    ask.appendChild(el("h3", null, "Ask the librarian"));
+    ask.appendChild(el("div", "muted", "Cited answers only — it refuses when the kb is silent."));
+    const arow = el("div", "unlock-row");
+    const sel = el("select", "kb-select");
+    sel.appendChild(new Option("All clients", ""));
+    (d.dossiers || []).forEach((x) => sel.appendChild(new Option(x.client_name, x.client_id)));
+    const qi = el("input", "unlock-input"); qi.placeholder = "e.g. what is their stack?";
+    const ab = el("button", "action primary", "Ask");
+    const out = el("div", "kb-answer");
+    const doAsk = async () => {
+      const question = qi.value.trim(); if (!question) return;
+      ab.disabled = true; ab.textContent = "Asking…"; out.innerHTML = "";
+      try {
+        const r = await fetch("/api/ask", { method: "POST",
+          headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+          body: JSON.stringify({ question, client: sel.value }) });
+        const a = await r.json();
+        if (a.error) { out.appendChild(el("div", "unlock-err", esc(a.error))); }
+        else {
+          out.appendChild(el("div", a.grounded ? "" : "muted", esc(a.answer)));
+          (a.citations || []).forEach((c) => out.appendChild(el("div", "kb-cite", esc(c))));
+        }
+      } catch (e) { out.appendChild(el("div", "unlock-err", "ask failed")); }
+      ab.disabled = false; ab.textContent = "Ask";
+    };
+    ab.onclick = doAsk;
+    qi.onkeydown = (e) => { if (e.key === "Enter") doAsk(); };
+    arow.append(sel, qi, ab);
+    ask.append(arow, out);
+    view.appendChild(ask);
+
+    // Search box — FTS over cited facts
+    const search = el("div", "card");
+    search.appendChild(el("h3", null, "Search facts"));
+    const srow = el("div", "unlock-row");
+    const si = el("input", "unlock-input"); si.placeholder = "full-text search across all dossiers";
+    const sbtn = el("button", "action", "Search");
+    const sres = el("div", "kb-results");
+    const doSearch = async () => {
+      const q = si.value.trim(); if (!q) return;
+      sbtn.disabled = true; sres.innerHTML = "";
+      try {
+        const r = await api("/api/knowledge?q=" + encodeURIComponent(q));
+        const rows = r.results || [];
+        if (!rows.length) sres.appendChild(el("div", "muted", "No matches."));
+        rows.forEach((x) => sres.appendChild(factLine(x, true)));
+      } catch (e) { sres.appendChild(el("div", "unlock-err", "search failed")); }
+      sbtn.disabled = false;
+    };
+    sbtn.onclick = doSearch;
+    si.onkeydown = (e) => { if (e.key === "Enter") doSearch(); };
+    srow.append(si, sbtn);
+    search.append(srow, sres);
+    view.appendChild(search);
+
+    // Dossier browser
+    view.appendChild(el("h2", "section", "Dossiers"));
+    const detail = el("div", "kb-detail");
+    const grid = el("div", "grid");
+    (d.dossiers || []).forEach((x) => {
+      const c = card(esc(x.client_name),
+        `<div class="metric">${x.fact_count}</div>`
+        + `<div class="muted">${x.source_count} sources · compiled ${esc((x.last_compiled_at||"").slice(0,10))}</div>`);
+      c.style.cursor = "pointer";
+      c.onclick = () => openDossier(x.client_id, detail);
+      grid.appendChild(c);
+    });
+    view.appendChild(grid);
+    view.appendChild(detail);
   },
 };
+
+function factLine(x, showClient) {
+  const trusted = x.confidence === "CONFIRMED" || x.confidence === "CROSS-VERIFIED";
+  const who = showClient && x.client_id ? `<span class="pill">${esc(x.client_id)}</span> ` : "";
+  const tag = `<span class="pill ${trusted ? "ok" : ""}">${esc(x.confidence)}</span>`;
+  return el("div", "kb-fact", `${who}${esc(x.fact_text)} ${tag}`
+    + `<div class="kb-cite">${esc(x.citation)}</div>`);
+}
+
+async function openDossier(clientId, host) {
+  host.innerHTML = "";
+  const d = await api("/api/knowledge?client=" + encodeURIComponent(clientId));
+  const m = d.meta || {};
+  host.appendChild(el("h3", "section", esc(m.client_name || clientId)
+    + ` — ${(d.facts || []).length} client facts`));
+  const byCat = {};
+  (d.facts || []).forEach((x) => { (byCat[x.category] = byCat[x.category] || []).push(x); });
+  Object.keys(byCat).forEach((cat) => {
+    host.appendChild(el("h4", null, esc(cat)));
+    byCat[cat].forEach((x) => host.appendChild(factLine(x, false)));
+  });
+  host.appendChild(el("div", "muted", `Sources: ${(d.sources || []).map((s) => esc(s.source_ref)).join(" · ")}`));
+  host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
 
 function toast(msg, isError) {
   let host = document.getElementById("toasts");

@@ -93,3 +93,11 @@ button.action.primary{background:var(--accent);color:#fff;border-color:var(--acc
 .unlock-err{color:var(--fail);font-weight:600}
 code{background:var(--bg);border:1px solid var(--line);border-radius:4px;
   padding:1px 5px;font-size:12px}
+/* Knowledge — ask/search/dossier */
+.kb-select{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.kb-answer{margin-top:10px;line-height:1.5;white-space:pre-wrap}
+.kb-results{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.kb-detail{margin-top:8px}
+.kb-detail h4{margin:14px 0 4px;text-transform:capitalize;color:var(--accent);font-size:13px}
+.kb-fact{padding:6px 0;border-bottom:1px solid var(--line);font-size:14px;line-height:1.45}
+.kb-cite{color:var(--muted);font-size:12px;margin-top:2px;font-family:ui-monospace,Menlo,monospace}

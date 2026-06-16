@@ -519,18 +519,112 @@ class TestKnowledgeReader(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_stub_with_fathom_status(self):
+    def _seed_kb(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash, client_id) VALUES"
+                         " ('fathom','fathom/1','h1','adelye')")
+            sid = conn.execute("SELECT id FROM sources").fetchone()["id"]
+            for txt, scope in [("Adelye uses Make.com", "client"),
+                               ("Agency does no-code automation", "agency"),
+                               ("Built voice agent for OtherCo", "cross-client")]:
+                conn.execute(
+                    "INSERT INTO facts (source_id, client_id, category,"
+                    " fact_text, citation, confidence, scope) VALUES"
+                    " (?,?,?,?,?,?,?)", (sid, "adelye", "stack", txt,
+                    "fathom/1 @ 1", "CONFIRMED", scope))
+            conn.execute("INSERT INTO dossier_index (client_id, client_name,"
+                         " dossier_path, fact_count, source_count,"
+                         " last_compiled_at) VALUES ('adelye','Adelye','p',1,1,"
+                         "'2026-06-17')")
+
+    def test_overview_counts_and_fathom(self):
+        self._seed_kb()
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO sync_cursors (name, value) VALUES"
                          " ('fathom_created_after','2026-06-10T00:00:00Z')")
         out = data.knowledge(self.db_path)
-        self.assertEqual(out["status"], "stub")
-        self.assertIn("M3", out["message"])
+        self.assertEqual(out["mode"], "overview")
+        self.assertEqual(out["totals"]["facts"], 3)
+        self.assertEqual(out["totals"]["client_facts"], 1)
+        self.assertEqual(out["proof_points"], {"agency": 1, "cross": 1})
         self.assertEqual(out["fathom"]["cursor"], "2026-06-10T00:00:00Z")
+        self.assertEqual(out["dossiers"][0]["client_id"], "adelye")
 
-    def test_no_cursor_yet(self):
-        out = data.knowledge(self.db_path)
-        self.assertIsNone(out["fathom"]["cursor"])
+    def test_dossier_detail_client_scope_only(self):
+        self._seed_kb()
+        out = data.knowledge(self.db_path, client="adelye")
+        self.assertEqual(out["mode"], "dossier")
+        texts = [f["fact_text"] for f in out["facts"]]
+        self.assertEqual(texts, ["Adelye uses Make.com"])  # agency/cross excluded
+
+    def test_search_fts(self):
+        self._seed_kb()
+        out = data.knowledge(self.db_path, q="Make.com")
+        self.assertEqual(out["mode"], "search")
+        self.assertTrue(any("Make.com" in r["fact_text"] for r in out["results"]))
+
+    def test_search_empty_terms(self):
+        self._seed_kb()
+        self.assertEqual(data.knowledge(self.db_path, q="!!!")["results"], [])
+
+
+class TestAskAction(unittest.TestCase):
+    def _proc(self, stdout="", rc=0, stderr=""):
+        import subprocess
+        return subprocess.CompletedProcess([], rc, stdout=stdout, stderr=stderr)
+
+    def test_ask_requires_question(self):
+        with self.assertRaises(ValueError):
+            actions.ask(None, {"question": "  "})
+
+    def test_ask_returns_librarian_json(self):
+        payload = {"answer": "They use Make.", "grounded": True,
+                   "citations": ["fathom/1 @ 1"]}
+        with mock.patch.object(actions.subprocess, "run",
+                               return_value=self._proc(json.dumps(payload))):
+            out = actions.ask(None, {"question": "stack?", "client": "adelye"})
+        self.assertTrue(out["grounded"])
+        self.assertEqual(out["citations"], ["fathom/1 @ 1"])
+
+    def test_ask_nonzero_rc_is_error_not_raise(self):
+        with mock.patch.object(actions.subprocess, "run",
+                               return_value=self._proc("", rc=1, stderr="boom")):
+            out = actions.ask(None, {"question": "x"})
+        self.assertFalse(out["grounded"])
+        self.assertIn("boom", out["error"])
+
+    def test_ask_model_call_is_out_of_process(self):
+        # the cockpit action must shell out, never import the gateway in-process
+        called = {}
+        def fake_run(args, **kw):
+            called["args"] = args
+            return self._proc(json.dumps({"grounded": False, "answer": ""}))
+        with mock.patch.object(actions.subprocess, "run", side_effect=fake_run):
+            actions.ask(None, {"question": "hi"})
+        self.assertIn("kb-ask", " ".join(called["args"]))
+
+
+class TestKnowledgeServerParams(CockpitServerCase):
+    def test_query_params_reach_reader(self):
+        status, body = self.get("/api/knowledge?q=anything")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["mode"], "search")
+
+    def test_client_param_dossier_mode(self):
+        status, body = self.get("/api/knowledge?client=adelye")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["mode"], "dossier")
+
+    def test_no_param_overview(self):
+        status, body = self.get("/api/knowledge")
+        self.assertEqual(json.loads(body)["mode"], "overview")
+
+    def test_db_path_query_cannot_redirect(self):
+        # ?db_path= must be ignored (db_path is the fixed positional arg)
+        status, body = self.get("/api/knowledge?db_path=/etc/passwd")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["mode"], "overview")
 
 
 def seed_money(db_path):

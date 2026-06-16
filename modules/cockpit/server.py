@@ -10,6 +10,7 @@ Tests use make_server(host, port, db_path, token) on an ephemeral port.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import secrets
@@ -17,6 +18,7 @@ import stat
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import parse_qs, urlparse
 
 from core import config
 from modules.cockpit import actions, data
@@ -38,6 +40,7 @@ POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
     "/api/wake": actions.wake,    # allowlisted launchd kick
     "/api/rail": actions.rail,    # allowlisted rail trigger
+    "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
 }
 
 
@@ -95,8 +98,17 @@ class Handler(BaseHTTPRequestHandler):
             if fn is None:
                 self._json(404, {"error": "unknown endpoint"})
                 return
+            # pass through only query params the reader actually declares
+            # (keyword-only), so adding ?client=/?q= can't break other routes
+            raw = parse_qs(urlparse(self.path).query)
+            params = {k: v[0] for k, v in raw.items()}
+            # keyword-only params only — db_path stays the fixed positional arg,
+            # so no ?db_path= query can redirect the read off the server's DB
+            accepted = {p.name for p in inspect.signature(fn).parameters.values()
+                        if p.kind == p.KEYWORD_ONLY}
+            kwargs = {k: v for k, v in params.items() if k in accepted}
             try:
-                self._json(200, fn(self.server.db_path))
+                self._json(200, fn(self.server.db_path, **kwargs))
             except Exception as exc:  # noqa: BLE001
                 self._json(500, {"error": repr(exc)})
             return

@@ -110,27 +110,92 @@ _HOT = config.HOT_LEAD_THRESHOLD
 _RECENT_HOT_DAYS = 7    # Today shows actionable-now hot leads; backlog -> Pipeline
 
 
-def knowledge(db_path: Optional[Path] = None) -> dict:
-    """Knowledge panel — honest stub until M3 (ingestion). Surfaces the
-    Fathom poller's high-water-mark + last run so the IA slot isn't empty."""
+import re as _re
+
+_FTS_TERM = _re.compile(r"[A-Za-z0-9]+")
+
+
+def _fathom_status(conn) -> dict:
+    row = conn.execute("SELECT value FROM sync_cursors WHERE name="
+                       "'fathom_created_after'").fetchone()
+    last = conn.execute(
+        "SELECT completed_at FROM runs WHERE task_name='fathom_poll' AND"
+        " status='completed' ORDER BY id DESC LIMIT 1").fetchone()
+    return {"cursor": row["value"] if row else None,
+            "last_poll": last["completed_at"] if last else None}
+
+
+def knowledge(db_path: Optional[Path] = None, *, client: Optional[str] = None,
+              q: Optional[str] = None) -> dict:
+    """Knowledge panel — live kb (M3). Three modes (all READ-ONLY, no model):
+    - default: dossier index + totals + scope split + proof-points + Fathom tile
+    - ?client=<id>: that client's dossier markdown + facts grouped by category
+    - ?q=<text>: FTS search over cited facts (optionally client-scoped).
+    The 'ask' box is a POST (actions.ask) that runs the librarian out-of-process.
+    """
     conn = _ro(db_path)
     try:
-        row = conn.execute("SELECT value FROM sync_cursors WHERE name="
-                           "'fathom_created_after'").fetchone()
-        last = conn.execute(
-            "SELECT completed_at, status FROM runs WHERE task_name="
-            "'fathom_poll' AND status='completed' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        if q:
+            return {"mode": "search", "q": q,
+                    "results": _kb_search(conn, q, client)}
+        if client:
+            return _kb_dossier(conn, client)
+        return _kb_overview(conn)
     finally:
         conn.close()
+
+
+def _kb_overview(conn) -> dict:
+    dossiers = [dict(r) for r in conn.execute(
+        "SELECT client_id, client_name, fact_count, source_count,"
+        " last_compiled_at FROM dossier_index ORDER BY fact_count DESC")]
+    totals = conn.execute(
+        "SELECT (SELECT COUNT(*) FROM facts) facts,"
+        " (SELECT COUNT(*) FROM sources) sources,"
+        " (SELECT COUNT(*) FROM facts WHERE scope='client') client_facts,"
+        " (SELECT COUNT(*) FROM facts WHERE scope='agency') agency_facts,"
+        " (SELECT COUNT(*) FROM facts WHERE scope='cross-client') cross_facts"
+    ).fetchone()
     return {
-        "status": "stub",
-        "message": "Knowledge ingestion arrives with M3 (Fathom/Loom "
-                   "transcripts → classify → extract → cite). The Fathom "
-                   "poller is staged; nothing indexed yet.",
-        "fathom": {"cursor": row["value"] if row else None,
-                   "last_poll": last["completed_at"] if last else None},
+        "mode": "overview",
+        "dossiers": dossiers,
+        "totals": dict(totals),
+        "proof_points": {"agency": totals["agency_facts"],
+                         "cross": totals["cross_facts"]},
+        "fathom": _fathom_status(conn),
     }
+
+
+def _kb_dossier(conn, client: str) -> dict:
+    row = conn.execute(
+        "SELECT client_id, client_name, dossier_path, fact_count, source_count,"
+        " last_compiled_at FROM dossier_index WHERE client_id=?",
+        (client,)).fetchone()
+    facts = [dict(r) for r in conn.execute(
+        "SELECT category, fact_text, citation, confidence, scope FROM facts"
+        " WHERE client_id=? AND scope='client' ORDER BY category, id",
+        (client,))]
+    sources = [dict(r) for r in conn.execute(
+        "SELECT source_type, source_ref, title, occurred_dt FROM sources"
+        " WHERE client_id=? ORDER BY occurred_dt", (client,))]
+    return {"mode": "dossier", "client": client,
+            "meta": dict(row) if row else None,
+            "facts": facts, "sources": sources}
+
+
+def _kb_search(conn, q: str, client: Optional[str]) -> list:
+    terms = " OR ".join(dict.fromkeys(_FTS_TERM.findall(q.lower())))
+    if not terms:
+        return []
+    sql = ("SELECT f.client_id, f.category, f.fact_text, f.citation,"
+           " f.confidence, f.scope FROM facts_fts JOIN facts f"
+           " ON f.id = facts_fts.rowid WHERE facts_fts MATCH ?")
+    args: list = [terms]
+    if client:
+        sql += " AND f.client_id=?"
+        args.append(client)
+    sql += " ORDER BY rank LIMIT 40"
+    return [dict(r) for r in conn.execute(sql, args)]
 
 
 def clients(db_path: Optional[Path] = None, *, client=None,
