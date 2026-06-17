@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.kb-daily</string>
+  <!-- Framework Python (FDA-granted); NO WorkingDirectory and logs OUTSIDE
+       ~/Desktop — both required or launchd fails to spawn (exit 78) or Python
+       dies on '.' in sys.path. June-14 TCC pattern (proven by the upwork jobs). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>-m</string>
+    <string>modules.knowledge.daily</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/kb-daily.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/kb-daily.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- daily 05:15 IST — after Abhijeet's 12pm-4am work window, machine quiet -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>5</integer>
+    <key>Minute</key><integer>15</integer>
+  </dict>
+</dict>
+</plist>

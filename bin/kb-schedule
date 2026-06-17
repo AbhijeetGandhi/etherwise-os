@@ -1,0 +1,41 @@
+#!/bin/bash
+# Etherwise knowledge scheduler: load | unload | status | run-now
+# Manages the daily brain-update job (poll Fathom/Gmail -> ingest -> extract ->
+# recompile). Run interactively (terminal has FDA), not from launchd.
+set -u
+LABEL="io.etherwise.v3.kb-daily"
+PLIST_SRC="/Users/abhijeet/Desktop/Etherwise/etherwise-v3/launchd/$LABEL.plist"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG="$HOME/Library/Logs/Etherwise-v3/kb-daily.log"
+
+cmd="${1:-status}"
+case "$cmd" in
+  load)
+    mkdir -p "$HOME/Library/Logs/Etherwise-v3"
+    cp "$PLIST_SRC" "$PLIST"
+    launchctl unload "$PLIST" 2>/dev/null
+    launchctl load -w "$PLIST"
+    echo "loaded $LABEL (daily 05:15 IST)"
+    ;;
+  unload)
+    launchctl unload "$PLIST" 2>/dev/null
+    echo "unloaded $LABEL"
+    ;;
+  reload)
+    cp "$PLIST_SRC" "$PLIST"
+    launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null \
+      || { launchctl unload "$PLIST" 2>/dev/null; launchctl load -w "$PLIST"; }
+    echo "reloaded $LABEL"
+    ;;
+  run-now)
+    launchctl kickstart -k "gui/$(id -u)/$LABEL" && echo "kicked $LABEL — tail $LOG"
+    ;;
+  status)
+    launchctl list | grep "$LABEL" || echo "not loaded"
+    ;;
+  log)
+    tail -n 40 "$LOG" 2>/dev/null || echo "no log yet"
+    ;;
+  *)
+    echo "usage: bin/kb-schedule {load|unload|reload|run-now|status|log}"; exit 1;;
+esac

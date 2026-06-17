@@ -460,5 +460,77 @@ class TestUpworkThread(KBCase):
                       text)
 
 
+# ── loom parser ───────────────────────────────────────────────────────────────
+class TestLoomParse(KBCase):
+    def test_parses_loom_export_item(self):
+        p = ingest.parse_loom({"id": "abc123", "name": "Pitch video",
+                               "date": "2026-04-07T23:09:30Z",
+                               "transcript": "Hey, I build automations."})
+        self.assertEqual(p["source_type"], "loom")
+        self.assertEqual(p["source_ref"], "loom/abc123")
+        self.assertEqual(p["title"], "Pitch video")
+        self.assertEqual(p["participants"], [])           # single-narrator
+        self.assertIn("automations", p["text"])
+        self.assertIn("loom.com/share/abc123", p["url"])
+
+    def test_loom_ingests_and_is_searchable(self):
+        import json as _json
+        p = self.inbox.parent / "loom"
+        p.mkdir(parents=True, exist_ok=True)
+        f = p / "v1.json"
+        f.write_text(_json.dumps({"id": "v1", "name": "demo",
+                                  "date": "2026-04-01",
+                                  "transcript": "We automate invoice reconciliation."}))
+        r = ingest.ingest_file(f, db_path=self.db_path, client_map=[],
+                               source_type="loom")
+        self.assertEqual(r["status"], "ingested")
+        hits = index.search_sources(self.db_path, "invoice")
+        self.assertTrue(any(h["source_ref"] == "loom/v1" for h in hits))
+
+
+# ── daily orchestrator (polls mocked; no network/LLM) ────────────────────────
+class TestDaily(KBCase):
+    def _ctx(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(db_path=self.db_path)
+
+    def test_runs_phases_and_excludes_loom_from_extract(self):
+        from modules.knowledge import daily
+        # seed an unextracted fathom source + an unextracted loom source
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash, client_id, raw_path, status) VALUES"
+                         " ('loom','loom/x','h1','adelye','/nope','ingested')")
+        captured = {}
+
+        def fake_extract_pending(db_path):
+            # confirm the SQL filter excludes loom
+            with db.connect(db_path) as conn:
+                rows = conn.execute("SELECT source_type FROM sources WHERE"
+                                    " status='ingested' AND source_type IN"
+                                    " ('fathom','email')").fetchall()
+            captured["fathom_email_pending"] = len(rows)
+            return {"extracted": 0, "facts": 0, "touched": [], "pending": 0}
+
+        from core import config as _config
+        with mock.patch.object(_config, "KNOWLEDGE_INBOX", self.tmp / "inbox"), \
+             mock.patch.object(daily, "_poll_fathom", return_value={"saved": 0}), \
+             mock.patch.object(daily, "_poll_email",
+                               return_value={"skipped": "gmail not connected"}), \
+             mock.patch.object(daily, "_extract_pending",
+                               side_effect=fake_extract_pending):
+            out = daily.run_daily(self._ctx())
+        self.assertEqual(captured["fathom_email_pending"], 0)  # loom excluded
+        self.assertIn("compile", out)
+        self.assertEqual(out["email"], {"skipped": "gmail not connected"})
+
+    def test_email_poll_skipped_when_no_token(self):
+        from modules.knowledge import daily, email_poll
+        with mock.patch.object(email_poll, "TOKEN_FILE",
+                               Path("/nonexistent/gmail.json")):
+            self.assertEqual(daily._poll_email(self._ctx())["skipped"],
+                             "gmail not connected")
+
+
 if __name__ == "__main__":
     unittest.main()

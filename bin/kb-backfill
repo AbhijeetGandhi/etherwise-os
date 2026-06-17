@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Historical backfill — two phases so the cheap part runs anytime and the
+costly part is bounded + resumable:
+
+  kb-backfill ingest  [fathom|loom|all]   # Phase A: source rows + FTS, NO LLM
+  kb-backfill extract [fathom|loom|all]   # Phase B: extract status='ingested'
+  kb-backfill compile                      # recompile all dossiers + proof-points
+
+Phase A is free (no model) and makes everything full-text searchable. Phase B is
+the gated Sonnet spend (~$0.046/source); it only touches not-yet-extracted
+sources, so a killed run resumes by re-running. The full Fathom run (~327 calls
+≈ $15) needs the one-time cap bump (var/proposed-diffs/2026-06-17-...).
+"""
+import json
+import sys
+import zipfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.knowledge import ingest, extract, index, clients, crm, dossier, \
+    proof_points  # noqa: E402
+
+ASSETS = Path(__file__).resolve().parents[2] / "assets"
+FATHOM_ZIP = ASSETS / "Fathom_Transcripts_2026-04-08_09_37_19.zip"
+LOOM_JSON = ASSETS / "loom-transcripts-all.json"
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _ist_now():
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M IST")
+
+
+def _fathom_items():
+    z = zipfile.ZipFile(FATHOM_ZIP)
+    for name in z.namelist():
+        if name.endswith(".json"):
+            try:
+                yield json.loads(z.read(name))
+            except Exception:
+                continue
+
+
+def _loom_items():
+    yield from json.loads(LOOM_JSON.read_text())
+
+
+SOURCES = {"fathom": ("fathom", _fathom_items),
+           "loom": ("loom", _loom_items)}
+
+
+def phase_ingest(which):
+    cmap = clients.load_client_map(config.DB_PATH)
+    total = {"ingested": 0, "duplicate": 0}
+    for key in (["fathom", "loom"] if which == "all" else [which]):
+        stype, items = SOURCES[key]
+        inbox = config.KNOWLEDGE_INBOX / key
+        inbox.mkdir(parents=True, exist_ok=True)
+        n = {"ingested": 0, "duplicate": 0}
+        for payload in items():
+            parsed = ingest._PARSERS[stype](payload)
+            rid = parsed["source_ref"].split("/")[-1]
+            occ = (parsed["occurred_dt"] or "unknown")[:10]
+            path = inbox / f"{occ}__{rid}.json"
+            path.write_text(json.dumps(payload, default=str))
+            r = ingest.ingest_file(path, db_path=config.DB_PATH,
+                                   client_map=cmap, source_type=stype)
+            n[r["status"]] = n.get(r["status"], 0) + 1
+        print(f"  {key}: {n}")
+        for k in total:
+            total[k] += n.get(k, 0)
+    print(f"INGEST total: {total}")
+
+
+def phase_extract(which):
+    clause = "" if which == "all" else " AND source_type=?"
+    args = [] if which == "all" else [which]
+    with db.connect(config.DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, source_type, source_ref, client_id, raw_path FROM"
+            " sources WHERE status='ingested'" + clause, args)]
+    print(f"extracting {len(rows)} sources (status=ingested)…")
+    done = facts = 0
+    for s in rows:
+        payload = json.loads(Path(s["raw_path"]).read_text())
+        parsed = ingest._PARSERS[s["source_type"]](payload)
+        out = extract.extract_facts(
+            {"source_ref": s["source_ref"], "client_id": s["client_id"]},
+            parsed["text"], db_path=config.DB_PATH)
+        res = index.index_facts(config.DB_PATH, s["id"], s["client_id"], out)
+        done += 1
+        facts += res["inserted"]
+        if done % 25 == 0:
+            print(f"  …{done}/{len(rows)} sources, {facts} facts")
+    print(f"EXTRACT done: {done} sources, {facts} facts")
+
+
+def phase_compile():
+    now = _ist_now()
+    cmap = clients.load_client_map(config.DB_PATH)
+    for c in cmap:
+        crm.ingest_crm(config.DB_PATH, c["client_id"], c["name"],
+                       c["identifiers"])
+        out = dossier.compile_dossier(config.DB_PATH, c["client_id"],
+                                      c["name"], now)
+        print(f"  dossier {c['client_id']}: {out['facts']} facts")
+    print("  proof-points:",
+          proof_points.compile_proof_points(config.DB_PATH, now))
+
+
+def main():
+    phase = sys.argv[1] if len(sys.argv) > 1 else "ingest"
+    which = sys.argv[2] if len(sys.argv) > 2 else "all"
+    if phase == "ingest":
+        phase_ingest(which)
+    elif phase == "extract":
+        phase_extract(which)
+    elif phase == "compile":
+        phase_compile()
+    else:
+        sys.exit(f"unknown phase {phase!r}")
+
+
+if __name__ == "__main__":
+    main()

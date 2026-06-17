@@ -96,7 +96,25 @@ def parse_email(payload: dict) -> dict:
     return email_poll.parse_email(payload)
 
 
-_PARSERS = {"fathom": parse_fathom, "email": parse_email}
+def parse_loom(payload: dict) -> dict:
+    """Loom export item -> normalized source dict. Loom recordings are single-
+    narrator with a plain-text transcript (no speaker/timestamp segments), so
+    extraction anchors on verbatim quotes rather than timestamps. No participant
+    list — classification is by title (most Looms are outbound, so they land as
+    agency/proof-points via scope, not a client dossier)."""
+    vid = str(payload.get("id") or "")
+    return {
+        "source_type": "loom",
+        "source_ref": f"loom/{vid}",
+        "title": payload.get("name"),
+        "occurred_dt": payload.get("date") or payload.get("createdAt"),
+        "participants": [],
+        "text": payload.get("transcript") or "",
+        "url": f"https://www.loom.com/share/{vid}" if vid else None,
+    }
+
+
+_PARSERS = {"fathom": parse_fathom, "email": parse_email, "loom": parse_loom}
 
 
 def ingest_file(path: Path, db_path=None, client_map=None,
