@@ -311,6 +311,74 @@ class TestDossier(KBCase):
         idx = self.rows("SELECT * FROM dossier_index WHERE client_id='adelye'")
         self.assertEqual(idx[0]["fact_count"], 3)
 
+    def test_anti_clobber_refuses_empty_overwrite(self):
+        # the 2026-06-18 02:07 incident: a transient empty read must NOT destroy
+        # a populated dossier
+        dz = self.tmp / "dz"
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash, client_id) VALUES"
+                         " ('fathom','fathom/1','h1','adelye')")
+            sid = conn.execute("SELECT id FROM sources").fetchone()["id"]
+        index.index_facts(self.db_path, sid, "adelye", self.FACTS)
+        good = dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                       "2026-06-16", dossier_dir=dz)
+        before = Path(good["path"]).read_text()
+        # now simulate a transient empty db view: wipe facts, recompile
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM facts")
+        out = dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                      "2026-06-17", dossier_dir=dz)
+        self.assertEqual(out["status"], "skipped_empty")
+        self.assertEqual(out["prev_facts"], 3)
+        self.assertEqual(Path(good["path"]).read_text(), before)  # untouched
+        idx = self.rows("SELECT fact_count FROM dossier_index WHERE"
+                        " client_id='adelye'")
+        self.assertEqual(idx[0]["fact_count"], 3)                 # index intact
+
+    def test_file_guard_blocks_wrong_db_clobber(self):
+        # the real 2026-06-18 cause: a compile against an EMPTY db (no index
+        # row) writing to a dir whose .md is already populated must NOT clobber
+        dz = self.tmp / "dz"
+        dz.mkdir()
+        (dz / "adelye.md").write_text("# Adelye\n\n## Stack\n\n- Real fact "
+                                      "[CONFIRMED · f/1 @ 1]\n")
+        out = dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                      "2026-06-17", dossier_dir=dz)
+        self.assertEqual(out["status"], "skipped_empty")        # file guard fired
+        self.assertIn("Real fact", (dz / "adelye.md").read_text())
+
+    def test_force_empty_allows_real_emptying(self):
+        dz = self.tmp / "dz"
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO dossier_index (client_id, client_name,"
+                         " fact_count) VALUES ('adelye','Adelye',5)")
+        out = dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                      "2026-06-17", dossier_dir=dz,
+                                      force_empty=True)
+        self.assertEqual(out["status"], "compiled")
+        self.assertEqual(out["facts"], 0)
+
+    def test_proof_points_anti_clobber(self):
+        kbdir = self.tmp / "kb"
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash) VALUES ('fathom','f/1','h')")
+            sid = conn.execute("SELECT id FROM sources").fetchone()["id"]
+        index.index_facts(self.db_path, sid, None, [
+            {"category": "overview", "fact_text": "Agency does automation.",
+             "citation": "f/1 @ 1", "confidence": "CONFIRMED", "scope": "agency"}])
+        first = proof_points.compile_proof_points(self.db_path, "2026-06-16",
+                                                  out_dir=kbdir)
+        self.assertEqual(first["agency"], 1)
+        before = (kbdir / "proof-points.md").read_text()
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM facts")
+        out = proof_points.compile_proof_points(self.db_path, "2026-06-17",
+                                                out_dir=kbdir)
+        self.assertEqual(out["status"], "skipped_empty")
+        self.assertEqual((kbdir / "proof-points.md").read_text(), before)
+
 
 # ── librarian: cites when grounded, refuses when kb is silent ─────────────────
 class TestLibrarian(KBCase):
@@ -514,6 +582,7 @@ class TestDaily(KBCase):
 
         from core import config as _config
         with mock.patch.object(_config, "KNOWLEDGE_INBOX", self.tmp / "inbox"), \
+             mock.patch.object(_config, "KNOWLEDGE_DIR", self.tmp / "kb"), \
              mock.patch.object(daily, "_poll_fathom", return_value={"saved": 0}), \
              mock.patch.object(daily, "_poll_email",
                                return_value={"skipped": "gmail not connected"}), \

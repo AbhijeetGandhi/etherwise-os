@@ -52,8 +52,14 @@ def render_proof_points(agency: List[dict], cross: List[dict],
 
 
 def compile_proof_points(db_path, now_iso: str,
-                         out_dir: Optional[Path] = None) -> dict:
-    """Gather all agency/cross-client facts and write the proof-points wiki."""
+                         out_dir: Optional[Path] = None,
+                         force_empty: bool = False) -> dict:
+    """Gather all agency/cross-client facts and write the proof-points wiki.
+
+    GUARD (force_empty=False): never clobber a populated wiki with an empty
+    render — if the query returns 0 facts but the existing file already has
+    fact bullets, treat it as a transient read and SKIP (mirrors the dossier
+    anti-clobber guard; the 2026-06-18 02:07 incident)."""
     out_dir = out_dir or config.KNOWLEDGE_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     with db.connect(db_path) as conn:
@@ -63,7 +69,12 @@ def compile_proof_points(db_path, now_iso: str,
         cross = [dict(r) for r in conn.execute(
             "SELECT category, fact_text, citation, confidence FROM facts"
             " WHERE scope='cross-client' ORDER BY category, id")]
-    md = render_proof_points(agency, cross, now_iso)
     path = out_dir / "proof-points.md"
-    path.write_text(md)
-    return {"path": str(path), "agency": len(agency), "cross": len(cross)}
+    if not agency and not cross and not force_empty and path.exists() \
+            and "\n- " in path.read_text():     # existing file has fact bullets
+        return {"path": str(path), "status": "skipped_empty",
+                "agency": 0, "cross": 0,
+                "reason": "refused to overwrite populated wiki with 0 facts"}
+    path.write_text(render_proof_points(agency, cross, now_iso))
+    return {"path": str(path), "status": "compiled",
+            "agency": len(agency), "cross": len(cross)}

@@ -78,8 +78,17 @@ def render_dossier(client_name: str, client_id: str, facts: List[dict],
 
 
 def compile_dossier(db_path, client_id: str, client_name: str, now_iso: str,
-                    dossier_dir: Optional[Path] = None) -> dict:
-    """Query the client's facts + sources, render, write file, update index."""
+                    dossier_dir: Optional[Path] = None,
+                    force_empty: bool = False) -> dict:
+    """Query the client's facts + sources, render, write file, update index.
+
+    GUARD (force_empty=False): never clobber a populated dossier with an empty
+    render. A compile that reads 0 client facts while dossier_index still
+    records >0 is almost always a transient/incomplete read (db mid-write,
+    locked, or a future bug) — not a real emptying. We SKIP the file write +
+    index update and return status 'skipped_empty' so a momentary glitch can't
+    destroy a good dossier. (The 2026-06-18 02:07 incident.) A real emptying
+    passes force_empty=True."""
     dossier_dir = dossier_dir or (config.KNOWLEDGE_DIR / "dossiers")
     dossier_dir.mkdir(parents=True, exist_ok=True)
     with db.connect(db_path) as conn:
@@ -94,10 +103,23 @@ def compile_dossier(db_path, client_id: str, client_name: str, now_iso: str,
         sources = [dict(r) for r in conn.execute(
             "SELECT source_type, source_ref, title, occurred_dt, density FROM"
             " sources WHERE client_id=? ORDER BY occurred_dt", (client_id,))]
+        prev = conn.execute("SELECT fact_count FROM dossier_index WHERE"
+                            " client_id=?", (client_id,)).fetchone()
+    prev_count = prev["fact_count"] if prev else 0
+    path = dossier_dir / f"{_slug(client_name, client_id)}.md"
+
+    # anti-clobber: an empty render must never overwrite a dossier that is
+    # already populated — either per the index (this db) OR per the existing
+    # FILE (guards a compile run against the wrong/transient db, which is how
+    # the 2026-06-18 incident clobbered the real dir from a temp-db compile).
+    file_populated = path.exists() and "\n- " in path.read_text()
+    if not facts and not force_empty and (prev_count > 0 or file_populated):
+        return {"client_id": client_id, "status": "skipped_empty",
+                "facts": 0, "prev_facts": prev_count,
+                "reason": "refused to overwrite populated dossier with 0 facts"}
 
     md = render_dossier(client_name, client_id, facts, sources, now_iso,
                         routed=routed)
-    path = dossier_dir / f"{_slug(client_name, client_id)}.md"
     path.write_text(md)
 
     with db.connect(db_path) as conn:
@@ -109,5 +131,5 @@ def compile_dossier(db_path, client_id: str, client_name: str, now_iso: str,
             " source_count=excluded.source_count,"
             " last_compiled_at=excluded.last_compiled_at",
             (client_id, client_name, str(path), len(facts), len(sources), now_iso))
-    return {"client_id": client_id, "path": str(path),
+    return {"client_id": client_id, "path": str(path), "status": "compiled",
             "facts": len(facts), "sources": len(sources)}
