@@ -1,6 +1,6 @@
 # Adelye — Dossier
 
-_Compiled 2026-06-18 02:40 IST · 363 client facts (363 trusted) from 27 sources · 19 agency/other-client facts routed to proof-points._
+_Compiled 2026-06-22 03:51 IST · 363 client facts (363 trusted) from 27 sources · 19 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

@@ -74,6 +74,103 @@ class TestIsoDt(unittest.TestCase):
         self.assertIsNone(sync_state.iso_dt(""))
 
 
+def vp_node(pid="p9", status="Submitted", title="Roomless job", rate="1200"):
+    """A live vendorProposals node (the 2nd-pass shape, mirrors ROOM_LIST)."""
+    return {"id": pid, "coverLetter": "cover", "viewedByClient": True,
+            "status": {"status": status, "reason": None},
+            "terms": {"chargeRate": {"rawValue": rate, "currency": "USD",
+                                     "displayValue": f"${rate}"}},
+            "marketplaceJobPosting": {"id": "j" + pid, "content": {"title": title}},
+            "organization": {"name": "RoomlessCo", "location": {"country": "US"}},
+            "auditDetails": {"createdDateTime": {"rawValue": "2026-06-15T00:00:00Z"},
+                             "modifiedDateTime": {"rawValue": "2026-06-16T00:00:00Z"}}}
+
+
+class FakeClient:
+    """Stand-in for UpworkClient.graphql — pages of vendorProposals, or a raise."""
+    def __init__(self, pages=None, raises=None):
+        self.pages = pages or []
+        self.raises = raises
+        self.calls = 0
+
+    def graphql(self, query, variables=None, tolerate_errors=False):
+        self.calls += 1
+        if self.raises:
+            raise self.raises
+        idx = min(self.calls - 1, len(self.pages) - 1)
+        nodes, has_next = self.pages[idx]
+        return {"vendorProposals": {
+            "totalCount": len(nodes),
+            "edges": [{"node": n} for n in nodes],
+            "pageInfo": {"hasNextPage": has_next, "endCursor": str(self.calls)}}}
+
+
+class _Ctx:
+    def __init__(self, db_path):
+        self.db_path = db_path
+        self.logs = []
+
+    def log(self, m):
+        self.logs.append(m)
+
+
+class TestSubmittedProposals(M1bCase):
+    def test_scope_blocked_auto_skips(self):
+        # the v2 token lacks the scope -> INACTIVE, never fails, no rows touched
+        client = FakeClient(raises=Exception(
+            "Query.vendorProposals — doesn't have enough oauth2 permissions"))
+        out = sync_state.sync_submitted_proposals(_Ctx(self.db_path), client)
+        self.assertEqual(out["status"], "scope_blocked")
+        self.assertTrue(out["armed"])
+        self.assertEqual(self.rows("SELECT COUNT(*) c FROM proposals")[0]["c"], 0)
+
+    def test_active_inserts_roomless(self):
+        client = FakeClient(pages=[([vp_node(pid="roomless1")], False)])
+        out = sync_state.sync_submitted_proposals(_Ctx(self.db_path), client)
+        self.assertEqual(out["status"], "active")
+        r = self.rows("SELECT id, thread_id, job_title, charge_rate FROM"
+                      " proposals WHERE id='roomless1'")[0]
+        self.assertIsNone(r["thread_id"])              # roomless
+        self.assertEqual(r["job_title"], "Roomless job")
+        self.assertEqual(r["charge_rate"], 1200.0)
+
+    def test_room_having_keeps_room_gets_telemetry(self):
+        # the 1st (roomList) pass already inserted this WITH a room
+        with db.connect(self.db_path) as conn:
+            sync_state.upsert_proposal(conn, vp(pid="hasroom", status="Submitted"),
+                                       "thread-77")
+        client = FakeClient(pages=[([vp_node(pid="hasroom", status="Viewed")], False)])
+        sync_state.sync_submitted_proposals(_Ctx(self.db_path), client)
+        r = self.rows("SELECT thread_id, upwork_status FROM proposals"
+                      " WHERE id='hasroom'")[0]
+        self.assertEqual(r["thread_id"], "thread-77")  # room PRESERVED (COALESCE)
+        self.assertEqual(r["upwork_status"], "Viewed")  # telemetry filled
+
+    def test_terminal_preserved(self):
+        with db.connect(self.db_path) as conn:
+            sync_state.upsert_proposal(conn, vp(pid="won1", status="Won"), "t1")
+            conn.execute("UPDATE proposals SET status='Won' WHERE id='won1'")
+        client = FakeClient(pages=[([vp_node(pid="won1", status="Declined")], False)])
+        sync_state.sync_submitted_proposals(_Ctx(self.db_path), client)
+        self.assertEqual(self.rows("SELECT status FROM proposals WHERE id='won1'")
+                         [0]["status"], "Won")          # never flipped
+
+    def test_pagination_walks_pages(self):
+        client = FakeClient(pages=[([vp_node(pid="a")], True),
+                                   ([vp_node(pid="b")], False)])
+        out = sync_state.sync_submitted_proposals(_Ctx(self.db_path), client)
+        self.assertEqual(out["seen"], 2)
+        self.assertEqual(client.calls, 2)
+
+    def test_normalizer_maps_fields(self):
+        p = sync_state._vp_node_to_proposal(vp_node(pid="n1", title="T"))
+        self.assertEqual(p["id"], "n1")
+        self.assertEqual(p["status"]["status"], "Submitted")
+        self.assertEqual(p["job"], {"id": "jn1", "title": "T"})
+        self.assertEqual(p["client"]["companyName"], "RoomlessCo")
+        self.assertEqual(p["createdDateTime"], "2026-06-15T00:00:00Z")
+
+
 class TestSyncUpserts(M1bCase):
     def test_proposal_stores_iso_not_epoch(self):
         with db.connect(self.db_path) as conn:

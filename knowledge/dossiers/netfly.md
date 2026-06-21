@@ -1,6 +1,6 @@
 # NETFLY — Dossier
 
-_Compiled 2026-06-18 02:40 IST · 11 client facts (11 trusted) from 2 sources · 5 agency/other-client facts routed to proof-points._
+_Compiled 2026-06-22 03:51 IST · 11 client facts (11 trusted) from 4 sources · 5 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -37,3 +37,5 @@ _Compiled 2026-06-18 02:40 IST · 11 client facts (11 trusted) from 2 sources ·
 
 - `upwork/room_6fd04d54fde0021b6cb46b320a16bf21` · — · upwork · Upwork thread room_6fd04d54fde0021b6cb46b320a16bf21
 - `crm/netfly` · — · crm · CRM numbers — NETFLY
+- `fathom/153250099` · 2026-06-08 · fathom · Impromptu Zoom Meeting
+- `fathom/155692198` · 2026-06-16 · fathom · Impromptu Zoom Meeting

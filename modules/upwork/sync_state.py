@@ -186,6 +186,76 @@ def upsert_transaction(conn, row: dict, profile: str) -> str:
     return "inserted"
 
 
+# ── submitted-proposals 2nd pass (ARMED, INACTIVE until cutover) ──────────────
+
+# substrings that mean "the token lacks the vendorProposals scope" (not a real
+# failure) — the pass auto-skips until the cutover re-OAuth grants the scope.
+_SCOPE_HINTS = ("vendorproposals", "oauth2 permissions", "scope", "permission")
+
+
+def _vp_node_to_proposal(node: dict) -> dict:
+    """vendorProposals node -> the dict upsert_proposal expects. Field set
+    mirrors ROOM_LIST.vendorProposal (pinned from M3-era introspection)."""
+    mjp = node.get("marketplaceJobPosting") or {}
+    org = node.get("organization") or {}
+    audit = node.get("auditDetails") or {}
+    return {
+        "id": node["id"],
+        "status": {"status": (node.get("status") or {}).get("status")},
+        "chargeRate": (node.get("terms") or {}).get("chargeRate"),
+        "coverLetter": node.get("coverLetter"),
+        "job": {"id": mjp.get("id"),
+                "title": (mjp.get("content") or {}).get("title")},
+        "client": {"companyName": org.get("name"),
+                   "country": (org.get("location") or {}).get("country"),
+                   "totalSpent": None},
+        "createdDateTime": (audit.get("createdDateTime") or {}).get("rawValue"),
+        "modifiedDateTime": (audit.get("modifiedDateTime") or {}).get("rawValue"),
+    }
+
+
+def sync_submitted_proposals(ctx, client, page_size: int = 100,
+                             max_pages: int = 20) -> dict:
+    """2nd pass: enumerate ALL submitted proposals (incl. roomless ones the
+    roomList pass can't see — the freeze at 74 since June 9) and upsert keyed on
+    id (= roomList vendorProposal.id = the My-Proposals applicationUID). Terminal
+    statuses protected; thread_id/cover_letter COALESCE-preserved so room-having
+    rows keep their room and only gain telemetry. AUTO-SKIPS (status
+    'scope_blocked') until the cutover re-OAuth grants the vendorProposals scope;
+    activates with NO code change the moment the scoped token exists."""
+    dbp = ctx.db_path or config.DB_PATH
+    metrics: dict = {}
+    after, pages, seen = "0", 0, 0
+    while pages < max_pages:
+        pages += 1
+        try:
+            data = client.graphql(queries.SUBMITTED_PROPOSALS,
+                                  {"first": page_size, "after": after})
+        except Exception as exc:                    # noqa: BLE001
+            if any(h in str(exc).lower() for h in _SCOPE_HINTS):
+                ctx.log("submitted-proposals: scope not yet granted — INACTIVE"
+                        " (activates at cutover re-OAuth)")
+                return {"status": "scope_blocked", "armed": True}
+            raise
+        conn_data = (data.get("vendorProposals") or {})
+        edges = conn_data.get("edges") or []
+        with db.connect(dbp) as conn:
+            for e in edges:
+                node = e.get("node") or e
+                if not node.get("id"):
+                    continue
+                seen += 1
+                r = upsert_proposal(conn, _vp_node_to_proposal(node),
+                                    thread_id=None)   # COALESCE preserves rooms
+                metrics[r] = metrics.get(r, 0) + 1
+        page_info = conn_data.get("pageInfo") or {}
+        if not page_info.get("hasNextPage") or not edges:
+            break
+        after = page_info.get("endCursor") or after
+    ctx.log(f"submitted-proposals: {seen} seen, {json.dumps(metrics)}")
+    return {"status": "active", "seen": seen, "pages": pages, **metrics}
+
+
 # ── task ──────────────────────────────────────────────────────────────────────
 
 def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14) -> dict:
@@ -216,6 +286,15 @@ def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14) -> dict:
                     metrics["offers"][r] = metrics["offers"].get(r, 0) + 1
     ctx.log(f"rooms-state: {len(rooms)} rooms,"
             f" {json.dumps(metrics['proposals'])} proposals")
+
+    # 2nd pass: catch submitted-but-roomless proposals (the freeze since June 9).
+    # ARMED but INACTIVE — auto-skips until the cutover re-OAuth grants the
+    # vendorProposals scope; never fails the sync on the scope error.
+    try:
+        metrics["submitted_proposals"] = sync_submitted_proposals(ctx, client)
+    except Exception as exc:                        # noqa: BLE001
+        ctx.log(f"submitted-proposals pass errored (non-fatal): {exc!r}")
+        metrics["submitted_proposals"] = {"status": "error", "error": str(exc)[:200]}
 
     end_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     start_iso = (datetime.now(timezone.utc) - timedelta(days=lookback_days)

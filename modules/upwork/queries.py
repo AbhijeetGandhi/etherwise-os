@@ -288,6 +288,45 @@ query OfferById($id: ID!) {
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Submitted proposals — the 2nd sync pass (ARMED, INACTIVE until cutover)
+# ─────────────────────────────────────────────────────────────────────────
+# roomList only returns proposals that have a chat room; submitted-but-roomless
+# proposals are invisible to it (the freeze at 74 since June 9). vendorProposals
+# enumerates ALL submitted proposals. It is OAuth-SCOPE-BLOCKED for the v2-owned
+# token ("[Query.vendorProposals]"); the cutover re-OAuth adds the scope and this
+# activates automatically (sync_submitted_proposals auto-skips on the scope error
+# until then). Schema pinned from M3-era introspection (2026-06-16); the node
+# field set mirrors ROOM_LIST.vendorProposal. The query BODY is identical whether
+# called via the API token or the browser session — only the transport differs.
+SUBMITTED_PROPOSALS = """
+query SubmittedProposals($first: Int!, $after: String!) {
+  vendorProposals(
+    sortAttribute: CREATED_DATE_TIME_DESC
+    pagination: { first: $first, after: $after }
+  ) {
+    totalCount
+    edges {
+      node {
+        id
+        coverLetter
+        viewedByClient
+        status { status reason }
+        terms { chargeRate { rawValue currency displayValue } }
+        marketplaceJobPosting { id content { title } }
+        organization { name location { country } }
+        auditDetails {
+          createdDateTime { rawValue }
+          modifiedDateTime { rawValue }
+        }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Transactions — dual-ACE for state-sync
 # ─────────────────────────────────────────────────────────────────────────
 
