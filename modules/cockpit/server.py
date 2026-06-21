@@ -35,6 +35,7 @@ GET_ROUTES: dict = {
     "/api/knowledge": data.knowledge,
     "/api/system": data.system,
     "/api/money": data.money,
+    "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
 }
 POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
@@ -42,6 +43,7 @@ POST_ROUTES: dict = {
     "/api/rail": actions.rail,    # allowlisted rail trigger
     "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
     "/api/note": actions.note,    # Quick Capture -> CoS notes inbox
+    "/api/cos-nudge": actions.cos_nudge,  # act on a real M4 nudge
 }
 
 

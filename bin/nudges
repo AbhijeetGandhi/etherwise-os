@@ -1,0 +1,32 @@
+#!/bin/bash
+# Terminal Nudge Queue (/nudges). List the ranked CoS queue, or act on one.
+#   bin/nudges                       list grouped queue
+#   bin/nudges done <dedup_key>      mark done
+#   bin/nudges snooze <dedup_key> [days]
+#   bin/nudges dismiss <dedup_key>
+cd "$(dirname "$0")/.." && PYTHONPATH="$PWD" python3 -c "
+import sys
+from modules.chief_of_staff import nudges as eng
+from core import config
+a = sys.argv[1:]
+if not a:
+    q = eng.grouped_queue(config.DB_PATH)
+    print(f'NUDGE QUEUE — {q[\"total\"]} active\n')
+    for i, e in enumerate(q['entries'][:40], 1):
+        tag = f'[{e[\"count\"]}x {e[\"kind\"]}]' if e.get('grouped') else f'[{e[\"kind\"]}]'
+        due = f'  due {e[\"due\"][:10]}' if e.get('due') else ''
+        key = '' if e.get('grouped') else f'   ({e[\"dedup_key\"]})'
+        print(f'  {i:2}. {tag} {e[\"title\"]}{due}  u={e[\"urgency\"]:.0f}{key}')
+    sys.exit(0)
+action = a[0]; key = a[1] if len(a) > 1 else None
+state = {'done':'done','snooze':'snoozed','dismiss':'dismissed'}.get(action)
+if not state or not key:
+    print('usage: bin/nudges [done|snooze|dismiss] <dedup_key> [days]'); sys.exit(1)
+su = None
+if action == 'snooze':
+    from datetime import datetime, timedelta
+    days = int(a[2]) if len(a) > 2 else 3
+    su = (datetime.now(config.TZ).date() + timedelta(days=days)).isoformat()
+out = eng.set_state(config.DB_PATH, state=state, dedup_key=key, snooze_until=su)
+print(f'{state}: {out[\"updated\"]} updated')
+" "$@"

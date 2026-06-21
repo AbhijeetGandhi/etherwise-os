@@ -3,7 +3,7 @@
 // localStorage, stripped from the URL; sent as X-Cockpit-Token on every API
 // call. No send actions anywhere (drafts-only).
 
-const SECTIONS = ["Today", "Pipeline", "Money", "Clients", "Knowledge", "System"];
+const SECTIONS = ["Today", "Nudges", "Pipeline", "Money", "Clients", "Knowledge", "System"];
 const TOKEN_KEY = "ew_cockpit_token";
 
 function bootToken() {
@@ -359,6 +359,69 @@ const RENDERERS = {
     });
     view.appendChild(t);
     view.appendChild(el("div", "muted", "Source: Airtable Clients · deeper per-client health (owed replies, hours vs cap) arrives with the comms mirror."));
+  },
+  Nudges: async (view) => {
+    const d = await api("/api/nudges");
+    view.appendChild(el("h2", "section", `Nudge Queue (${d.total || 0})`));
+    view.appendChild(el("div", "muted", "Chief of Staff — ranked by urgency. It surfaces; you decide."));
+
+    const cosAct = async (dedupKey, action) => {
+      await fetch("/api/cos-nudge", { method: "POST",
+        headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+        body: JSON.stringify({ dedup_key: dedupKey, action }) });
+      show("Nudges");
+    };
+    const actions = (dedupKey) => {
+      const row = el("div", "fu-actions");
+      [["Done", "done"], ["Snooze", "snooze"], ["Dismiss", "dismiss"]].forEach(([lbl, a]) => {
+        const b = el("button", "action", lbl);
+        b.onclick = () => cosAct(dedupKey, a);
+        row.appendChild(b);
+      });
+      return row;
+    };
+
+    (d.entries || []).forEach((e) => {
+      const card = el("div", "card");
+      const head = el("div", "fu-row");
+      const left = el("div", "fu-left");
+      left.appendChild(el("div", null,
+        `<span class="pill">${esc(e.kind)}</span> <b>${esc(e.title)}</b>`
+        + (e.due ? ` <span class="muted">· due ${esc(e.due.slice(0,10))}</span>` : "")));
+      if (e.action) left.appendChild(el("div", "muted", esc(e.action)));
+      head.appendChild(left);
+      const ur = el("div", "muted"); ur.textContent = "u=" + Math.round(e.urgency);
+      head.appendChild(ur);
+      card.appendChild(head);
+      if (e.grouped) {
+        const det = el("details");
+        det.appendChild(el("summary", "muted", `expand ${e.count} items`));
+        (e.items || []).forEach((it) => {
+          const r = el("div", "fu-row");
+          const l = el("div", "fu-left");
+          l.appendChild(el("div", null, esc(it.title)
+            + (it.due ? ` <span class="muted">· due ${esc((it.due||"").slice(0,10))}</span>` : "")));
+          r.appendChild(l);
+          r.appendChild(actions(it.dedup_key));
+          det.appendChild(r);
+        });
+        card.appendChild(det);
+      } else {
+        card.appendChild(actions(e.dedup_key));
+      }
+      view.appendChild(card);
+    });
+    if (!(d.entries || []).length) placeholder(view, "Queue is clear. ✓");
+
+    // brief replay
+    const lb = d.latest_brief;
+    if (lb) {
+      view.appendChild(el("h2", "section", "Latest brief (draft)"));
+      const bc = el("div", "card");
+      bc.appendChild(el("div", "muted", esc(lb.name)));
+      bc.appendChild(el("div", null, lb.html));   // server-rendered, our own HTML
+      view.appendChild(bc);
+    }
   },
   Knowledge: async (view) => {
     const d = await api("/api/knowledge");

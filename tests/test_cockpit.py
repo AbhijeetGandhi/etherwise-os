@@ -589,6 +589,22 @@ class TestNoteAction(unittest.TestCase):
         with self.assertRaises(ValueError):
             actions.note(self.db_path, {"text": "  "})
 
+    def test_cos_nudge_acts_on_real_table(self):
+        from modules.chief_of_staff import nudges as eng
+        eng.write_nudge(self.db_path, source="sales", dept="sales",
+                        kind="owed_reply", title="x", dedup_key="followup:t9")
+        out = actions.cos_nudge(self.db_path, {"dedup_key": "followup:t9",
+                                               "action": "done"})
+        self.assertTrue(out["ok"])
+        with db.connect(self.db_path) as conn:
+            st = conn.execute("SELECT state FROM nudges WHERE dedup_key="
+                              "'followup:t9'").fetchone()["state"]
+        self.assertEqual(st, "done")
+
+    def test_cos_nudge_rejects_bad_action(self):
+        with self.assertRaises(ValueError):
+            actions.cos_nudge(self.db_path, {"dedup_key": "x", "action": "send"})
+
 
 class TestAskAction(unittest.TestCase):
     def _proc(self, stdout="", rc=0, stderr=""):

@@ -161,6 +161,8 @@ COS_HOTLEAD_RECENT_DAYS = 7        # only nudge Looms for leads scored in last N
 COS_WON_OUTCOME_RECENT_DAYS = 30   # only chase outcome reasons for recent wins
 COS_SWEEP_OPUS_MAXITEMS = 30       # cap nudges sent to Opus (top by urgency) + a
                                    # by-kind summary of the rest -> bounded cost
+COS_QUEUE_GROUP_MIN = 5            # cockpit queue collapses a kind into ONE
+                                   # expandable group once it exceeds N items
 
 # ── Airtable (decision #5: extend base appgE1QoEOXvbrUE4) ────────────────────
 AIRTABLE_BASE = "appgE1QoEOXvbrUE4"

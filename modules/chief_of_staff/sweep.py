@@ -17,7 +17,8 @@ from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
 from core import config, db, runner
-from modules.chief_of_staff import rules, nudges, commitments, capture
+from modules.chief_of_staff import (rules, nudges, commitments, capture,
+                                    interrupts)
 
 TASK_NAME = "cos_sweep"
 
@@ -170,6 +171,7 @@ def opus_correlate(db_path, active: List[dict], context: dict) -> dict:
 def run_sweep(ctx, _opus: Callable = opus_correlate,
               _commitments: Optional[Callable] = commitments.extract_new,
               _capture: Optional[Callable] = capture.classify_new,
+              _interrupts: Optional[Callable] = interrupts.check_hot_leads,
               now: Optional[datetime] = None) -> dict:
     db_path = ctx.db_path or config.DB_PATH
     now = now or datetime.now(config.TZ)
@@ -184,6 +186,15 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
                 fn(db_path)
             except Exception:
                 pass
+
+    # hot-lead interrupts fire independently of the empty-skip (a new hot lead
+    # is interrupt-worthy even if the nudge picture is otherwise unchanged).
+    # SHADOW-GATED inside check_hot_leads: records intent, does not email.
+    if _interrupts:
+        try:
+            _interrupts(ctx, now)
+        except Exception:
+            pass
 
     candidates = rules.gather(db_path, now)
     # 1. write/refresh candidates

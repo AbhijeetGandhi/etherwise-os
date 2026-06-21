@@ -106,9 +106,11 @@ def classify_new(db_path, limit: int = 20, now: Optional[datetime] = None,
 
 
 def _classify_one(db_path, note: dict) -> Optional[dict]:
+    today = datetime.now(config.TZ).strftime("%Y-%m-%d")
     result = runner.claude_call(
         task_name="cos_capture", model_key=MODEL_KEY, system=SYSTEM,
-        schema=SCHEMA, user_content=note["text"],
+        schema=SCHEMA,
+        user_content=f"Today is {today}.\nNote: {note['text']}",
         purpose="capture classify", max_output_tokens=300, db_path=db_path)
     return result.parsed
 

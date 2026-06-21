@@ -512,6 +512,81 @@ class TestCapture(CoSCase):
         cap.assert_called_once()
 
 
+# ── grouped queue (cockpit/terminal display) ─────────────────────────────────
+class TestGroupedQueue(CoSCase):
+    def test_groups_high_count_kinds(self):
+        for i in range(8):                       # > COS_QUEUE_GROUP_MIN
+            self.nudge(kind="hotlead_no_loom", dedup_key=f"h{i}", score=20)
+        self.nudge(kind="system", dedup_key="s1", dept="system")
+        q = nudges.grouped_queue(self.db_path, now=dt())
+        groups = [e for e in q["entries"] if e.get("grouped")]
+        singles = [e for e in q["entries"] if not e.get("grouped")]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["count"], 8)
+        self.assertEqual(len(groups[0]["items"]), 8)
+        self.assertTrue(any(s["kind"] == "system" for s in singles))
+        self.assertEqual(q["total"], 9)
+
+    def test_ranked_by_urgency(self):
+        self.nudge(kind="stale_dossier", dedup_key="d", dept="knowledge")
+        self.nudge(kind="commitment_due", dedup_key="c")
+        q = nudges.grouped_queue(self.db_path, now=dt())
+        self.assertEqual(q["entries"][0]["kind"], "commitment_due")
+
+
+# ── hot-lead interrupts (shadow-gated) ───────────────────────────────────────
+class TestInterrupts(CoSCase):
+    class Ctx:
+        def __init__(self, db_path, shadow):
+            self.db_path, self.shadow = db_path, shadow
+            self.writes = []
+
+        def record_shadow_write(self, **kw):
+            self.writes.append(kw)
+
+    def seed_lead(self, jid="101", score=24):    # numeric id (prod shape)
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,status,"
+                         "first_scored_at) VALUES (?,?,?,'Scored',"
+                         "'2026-06-22T08:00:00')", (jid, f"Lead {jid}", score))
+
+    def test_shadow_records_no_send(self):
+        from modules.chief_of_staff import interrupts
+        self.seed_lead()
+        ctx = self.Ctx(self.db_path, shadow=True)
+        send = mock.Mock()
+        out = interrupts.check_hot_leads(ctx, now=dt(), _send=send)
+        self.assertEqual(out["drafted_shadow"], 1)
+        self.assertEqual(out["sent"], 0)
+        send.assert_not_called()                 # HOLD in shadow
+        self.assertEqual(ctx.writes[0]["target"], "email")
+        self.assertEqual(ctx.writes[0]["entity"], "hot_lead_interrupt")
+
+    def test_live_sends(self):
+        from modules.chief_of_staff import interrupts
+        self.seed_lead()
+        ctx = self.Ctx(self.db_path, shadow=False)
+        send = mock.Mock()
+        out = interrupts.check_hot_leads(ctx, now=dt(), _send=send)
+        self.assertEqual(out["sent"], 1)
+        send.assert_called_once()
+
+    def test_interrupts_once_then_cursor_holds(self):
+        from modules.chief_of_staff import interrupts
+        self.seed_lead()
+        ctx = self.Ctx(self.db_path, shadow=True)
+        interrupts.check_hot_leads(ctx, now=dt())
+        out2 = interrupts.check_hot_leads(ctx, now=dt())   # cursor advanced
+        self.assertEqual(out2["hot_leads"], 0)             # not re-interrupted
+
+    def test_below_threshold_ignored(self):
+        from modules.chief_of_staff import interrupts
+        self.seed_lead(jid="102", score=10)                # < HOT_LEAD_THRESHOLD
+        ctx = self.Ctx(self.db_path, shadow=True)
+        out = interrupts.check_hot_leads(ctx, now=dt())
+        self.assertEqual(out["hot_leads"], 0)
+
+
 # ── guard: nothing in the sweep path auto-sends a client message ─────────────
 class TestNoAutoSend(CoSCase):
     def test_no_send_calls_in_module(self):

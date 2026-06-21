@@ -62,6 +62,32 @@ def rail(db_path: Optional[Path], body: dict) -> dict:
         raise ValueError(f"unknown rail: {name!r} (allowed: {sorted(RAIL_JOBS)})")
     return {**_kick(RAIL_JOBS[name]), "rail": name}
 
+_COS_STATE = {"done": "done", "snooze": "snoozed", "dismiss": "dismissed"}
+
+
+def cos_nudge(db_path: Optional[Path], body: dict) -> dict:
+    """POST /api/cos-nudge — act on a REAL M4 nudge (the action layer over the
+    nudges table; replaces the proto nudge_state path). body: {dedup_key,
+    action: done|snooze|dismiss, snooze_days?, note?}."""
+    from modules.chief_of_staff import nudges as eng
+    action = (body or {}).get("action")
+    if action not in _COS_STATE:
+        raise ValueError(f"invalid nudge action: {action!r}")
+    dedup_key = (body or {}).get("dedup_key")
+    if not dedup_key:
+        raise ValueError("dedup_key required")
+    snooze_until = None
+    if action == "snooze":
+        days = (body or {}).get("snooze_days") or DEFAULT_SNOOZE_DAYS
+        base = date.fromisoformat(__import__("datetime").datetime.now(
+            config.TZ).strftime("%Y-%m-%d"))
+        snooze_until = (base + timedelta(days=days)).isoformat()
+    out = eng.set_state(db_path, state=_COS_STATE[action], dedup_key=dedup_key,
+                        snooze_until=snooze_until, note=(body or {}).get("note"))
+    return {"ok": out["updated"] > 0, "dedup_key": dedup_key,
+            "state": _COS_STATE[action]}
+
+
 def note(db_path: Optional[Path], body: dict) -> dict:
     """POST /api/note — Quick Capture from the cockpit. Drops raw text into the
     CoS notes inbox; the next sweep classifies it (nudge/commitment/kb/idea).

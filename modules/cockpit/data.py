@@ -125,6 +125,18 @@ def _fathom_status(conn) -> dict:
             "last_poll": last["completed_at"] if last else None}
 
 
+def nudges(db_path: Optional[Path] = None) -> dict:
+    """The Chief-of-Staff Nudge Queue — real M4 nudges, ranked + grouped
+    (replaces the proto follow-up/hot-lead suppression). Read-only; the queue's
+    done/snooze/dismiss go through actions.cos_nudge -> nudges.set_state. Also
+    surfaces the latest draft brief for the cockpit replay."""
+    from modules.chief_of_staff import nudges as eng, brief as cos_brief
+    q = eng.grouped_queue(db_path or config.DB_PATH)
+    latest = cos_brief.latest_brief()
+    return {"entries": q["entries"], "total": q["total"],
+            "latest_brief": latest}
+
+
 def knowledge(db_path: Optional[Path] = None, *, client: Optional[str] = None,
               q: Optional[str] = None) -> dict:
     """Knowledge panel — live kb (M3). Three modes (all READ-ONLY, no model):

@@ -211,3 +211,33 @@ def top_n(db_path, n: Optional[int] = None, *,
     """The brief's lead items: top-N active nudges by urgency."""
     n = n or config.COS_BRIEF_TOPN
     return active_nudges(db_path, now=now)[:n]
+
+
+def grouped_queue(db_path, *, now: Optional[datetime] = None) -> dict:
+    """Display queue for the cockpit/terminal: active nudges ranked by urgency,
+    with high-volume kinds collapsed into ONE expandable group (e.g. '98 leads
+    need Looms') so the queue stays scannable. Returns {entries, total}. Each
+    entry is either a single nudge (grouped=False) or a group with items[]."""
+    active = active_nudges(db_path, now=now)
+    by_kind: dict = {}
+    for n in active:
+        by_kind.setdefault(n["kind"], []).append(n)
+    entries = []
+    for kind, items in by_kind.items():
+        items.sort(key=lambda r: r["urgency_live"], reverse=True)
+        if len(items) > config.COS_QUEUE_GROUP_MIN:
+            entries.append({
+                "grouped": True, "kind": kind, "count": len(items),
+                "dept": items[0]["dept"],
+                "title": f"{len(items)} {kind.replace('_', ' ')} items",
+                "urgency": items[0]["urgency_live"],   # rank by the hottest
+                "items": items})
+        else:
+            for it in items:
+                entries.append({"grouped": False, "kind": kind,
+                                "dept": it["dept"], "title": it["title"],
+                                "action": it.get("action"), "due": it.get("due"),
+                                "dedup_key": it["dedup_key"],
+                                "urgency": it["urgency_live"]})
+    entries.sort(key=lambda e: e["urgency"], reverse=True)
+    return {"entries": entries, "total": len(active)}
