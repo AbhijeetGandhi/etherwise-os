@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
 from core import config, db, runner
-from modules.chief_of_staff import rules, nudges
+from modules.chief_of_staff import rules, nudges, commitments
 
 TASK_NAME = "cos_sweep"
 
@@ -168,10 +168,20 @@ def opus_correlate(db_path, active: List[dict], context: dict) -> dict:
 # ── the sweep ─────────────────────────────────────────────────────────────────
 
 def run_sweep(ctx, _opus: Callable = opus_correlate,
+              _commitments: Optional[Callable] = commitments.extract_new,
               now: Optional[datetime] = None) -> dict:
     db_path = ctx.db_path or config.DB_PATH
     now = now or datetime.now(config.TZ)
     nowiso = now.strftime("%Y-%m-%dT%H:%M:%S")
+
+    # extract commitments from NEW sources first (cursor-bounded; the gated full
+    # backfill is separate) so freshly-promised, due-dated items can surface this
+    # same sweep. A Sonnet hiccup must not break the sweep.
+    if _commitments:
+        try:
+            _commitments(db_path)
+        except Exception:
+            pass
 
     candidates = rules.gather(db_path, now)
     # 1. write/refresh candidates

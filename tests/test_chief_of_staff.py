@@ -3,6 +3,7 @@ past-due + commitment-never), state transitions, urgency ranking, snooze
 visibility. No network; pure stdlib on a temp DB."""
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 import unittest
@@ -12,7 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 from core import config, db, runner
-from modules.chief_of_staff import nudges, rules, sweep
+from core import claude_gateway as gw
+from modules.chief_of_staff import nudges, rules, sweep, commitments
 
 
 def dt(y=2026, m=6, d=22, hh=12, mm=0):
@@ -290,6 +292,13 @@ class TestSweep(CoSCase):
         sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=14))
         self.assertEqual(spy.call_count, 2)
 
+    def test_sweep_runs_commitment_extraction(self):
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [], "priorities": [], "narrative": ""})
+        cspy = mock.Mock(return_value={"sources": 0, "inserted": 0})
+        sweep.run_sweep(self._ctx(), _opus=spy, _commitments=cspy, now=dt())
+        cspy.assert_called_once()
+
     def test_opus_correlations_become_nudges(self):
         self.seed_one_candidate()
         spy = mock.Mock(return_value={"correlations": [
@@ -315,12 +324,95 @@ class TestSweep(CoSCase):
         self.assertEqual(r[0]["state"], "decayed")       # condition gone
 
 
+# ── commitments: Sonnet extraction (mocked) + nag-only-ours ──────────────────
+class TestCommitments(CoSCase):
+    def seed_source(self, text="We'll have the register done Friday.", sid_ref="fathom/x"):
+        with db.connect(self.db_path) as conn:
+            cur = conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, occurred_dt, status) VALUES ('fathom',?,?,'adelye',"
+                "'2026-06-20T10:00:00','extracted')", (sid_ref, sid_ref))
+            sid = cur.lastrowid
+            conn.execute("INSERT INTO source_fts (text, source_id) VALUES (?,?)",
+                         (text, sid))
+        return sid
+
+    def gw_result(self, commitments):
+        return gw.GatewayResult(
+            text=json.dumps({"commitments": commitments}),
+            parsed={"commitments": commitments}, model="claude-sonnet-4-6",
+            route="payg", usage={}, cost_usd=0.01, stop_reason="end_turn",
+            duration_ms=5)
+
+    def test_extract_persists_cited_due_dated(self):
+        sid = self.seed_source()
+        payload = [
+            {"who": "us", "text": "Deliver the mythical register",
+             "due": "2026-06-26", "quote": "register done Friday"},
+            {"who": "client", "text": "Provide TechEdge API access",
+             "due": None, "quote": "I'll get you access"},
+        ]
+        with mock.patch.object(commitments.runner, "claude_call",
+                               return_value=self.gw_result(payload)):
+            out = commitments.extract_from_source(self.db_path, sid)
+        self.assertEqual(out["inserted"], 2)
+        rows = self.rows("SELECT * FROM commitments ORDER BY who")
+        self.assertEqual(rows[1]["who"], "us")
+        self.assertEqual(rows[1]["due"], "2026-06-26")
+        self.assertIn("fathom/x @", rows[1]["source_cite"])   # cited
+        self.assertEqual(rows[0]["who"], "client")
+
+    def test_extract_idempotent(self):
+        sid = self.seed_source()
+        payload = [{"who": "us", "text": "Deliver register", "due": "2026-06-26",
+                    "quote": "register done Friday"}]
+        with mock.patch.object(commitments.runner, "claude_call",
+                               return_value=self.gw_result(payload)):
+            commitments.extract_from_source(self.db_path, sid)
+            again = commitments.extract_from_source(self.db_path, sid)
+        self.assertEqual(again["inserted"], 0)                # dedup
+        self.assertEqual(len(self.rows("SELECT * FROM commitments")), 1)
+
+    def test_drops_uncited(self):
+        sid = self.seed_source()
+        payload = [{"who": "us", "text": "vague thing", "due": None, "quote": ""}]
+        with mock.patch.object(commitments.runner, "claude_call",
+                               return_value=self.gw_result(payload)):
+            out = commitments.extract_from_source(self.db_path, sid)
+        self.assertEqual(out["inserted"], 0)                  # no quote anchor
+
+    def test_rule_nags_only_ours(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO commitments (who,text,due,source_cite,"
+                         "dedup_key,state) VALUES"
+                         " ('us','ours due','2026-06-23','c1','k1','open'),"
+                         " ('client','theirs due','2026-06-23','c2','k2','open')")
+        c = rules.rule_commitments_due(self.db_path, dt(d=22))
+        self.assertEqual([x["title"] for x in c], ["Commitment due: ours due"])
+
+    def test_extract_new_advances_cursor(self):
+        s1 = self.seed_source(sid_ref="fathom/a")
+        s2 = self.seed_source(sid_ref="fathom/b")
+        calls = []
+        def fake(db_path, sid, **kw):
+            calls.append(sid)
+            return {"inserted": 1}
+        out = commitments.extract_new(self.db_path, _extract=fake)
+        self.assertEqual(calls, [s1, s2])
+        self.assertEqual(out["cursor"], s2)
+        # re-run: cursor advanced, nothing new
+        calls.clear()
+        commitments.extract_new(self.db_path, _extract=fake)
+        self.assertEqual(calls, [])
+
+
 # ── guard: nothing in the sweep path auto-sends a client message ─────────────
 class TestNoAutoSend(CoSCase):
     def test_no_send_calls_in_module(self):
         import inspect
-        from modules.chief_of_staff import nudges as n, rules as r, sweep as s
-        for mod in (n, r, s):
+        from modules.chief_of_staff import (nudges as n, rules as r, sweep as s,
+                                            commitments as cm)
+        for mod in (n, r, s, cm):
             src = inspect.getsource(mod)
             for bad in ("smtplib", "sendmail", "send_gmail", ".send("):
                 self.assertNotIn(bad, src, f"{mod.__name__} must not send")
