@@ -9,8 +9,10 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from core import config, db
-from modules.chief_of_staff import nudges
+from unittest import mock
+
+from core import config, db, runner
+from modules.chief_of_staff import nudges, rules, sweep
 
 
 def dt(y=2026, m=6, d=22, hh=12, mm=0):
@@ -167,6 +169,161 @@ class TestSnooze(CoSCase):
                          snooze_until="2026-06-25T00:00:00")
         self.assertEqual(len(nudges.active_nudges(self.db_path, now=dt(d=23))), 0)
         self.assertEqual(len(nudges.active_nudges(self.db_path, now=dt(d=26))), 1)
+
+
+# ── rules emit expected candidates from fixtures ─────────────────────────────
+class TestRules(CoSCase):
+    def seed_owed(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name, latest_message_dt)"
+                         " VALUES ('t1','Acme chat','2026-06-18T10:00:00Z')")
+            conn.execute("INSERT INTO drafts (thread_id, draft_kind, body,"
+                         " sent_status) VALUES ('t1','followup','ping','pending')")
+
+    def test_owed_reply_fires_after_idle(self):
+        self.seed_owed()
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))   # 4d idle >= 1
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0]["dedup_key"], "followup:t1")
+        self.assertEqual(c[0]["kind"], "owed_reply")
+
+    def test_owed_reply_silent_when_fresh(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, latest_message_dt) VALUES"
+                         " ('t2','2026-06-22T09:00:00Z')")
+            conn.execute("INSERT INTO drafts (thread_id, draft_kind, sent_status)"
+                         " VALUES ('t2','followup','pending')")
+        self.assertEqual(rules.rule_owed_replies(self.db_path, dt(d=22)), [])
+
+    def test_hotlead_no_loom(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,status,"
+                         "fixed_budget,first_scored_at) VALUES ('j1','Big build',"
+                         "26,1,'Scored',8000,'2026-06-22T08:00:00')")
+        c = rules.rule_hotlead_no_loom(self.db_path, dt())
+        self.assertEqual(c[0]["dedup_key"], "hotlead_no_loom:j1")
+        self.assertEqual(c[0]["money_at_stake"], 8000)
+        self.assertEqual(c[0]["score"], 26)
+
+    def test_won_no_outcome(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO proposals (id,status,job_title,modified_dt) VALUES"
+                         " ('p1','Won','Vapi build','2026-06-20'),"
+                         " ('p2','Won','x','2026-06-20')")
+            conn.execute("UPDATE proposals SET status_reason='referral' WHERE id='p2'")
+        c = rules.rule_won_no_outcome(self.db_path, dt())
+        self.assertEqual([x["dedup_key"] for x in c], ["won_outcome:p1"])
+
+    def test_lost_pattern_by_category(self):
+        with db.connect(self.db_path) as conn:
+            for i in range(3):
+                conn.execute("INSERT INTO scored_jobs (id,category) VALUES (?, 'n8n')",
+                             (f"j{i}",))
+                conn.execute("INSERT INTO proposals (id,status,marketplace_job_id)"
+                             " VALUES (?,?,?)", (f"p{i}", "Expired", f"j{i}"))
+        c = rules.rule_lost_pattern(self.db_path, dt())
+        self.assertEqual(c[0]["dedup_key"], "lost_pattern:n8n")
+        self.assertEqual(c[0]["payload"]["losses"], 3)
+
+    def test_stale_dossier_unextracted_sources(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type,source_ref,content_hash,"
+                         "client_id,status) VALUES ('fathom','f/1','h1','adelye',"
+                         "'ingested'),('fathom','f/2','h2','adelye','ingested')")
+        c = rules.rule_stale_dossier(self.db_path, dt())
+        self.assertEqual(c[0]["dedup_key"], "stale_dossier:adelye")
+        self.assertEqual(c[0]["payload"]["ingested"], 2)
+
+    def test_system_failed_run_and_spend(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO runs (task_name,started_at,status) VALUES"
+                         " ('upwork_scan','2026-06-22T11:00:00','failed')")
+            conn.execute("INSERT INTO claude_usage (called_at,ist_date,task_name,"
+                         "model,billing_route,total_cost_usd) VALUES"
+                         " ('x','2026-06-22','cos_sweep','claude-opus-4-8','payg',4.6)")
+        c = rules.rule_system(self.db_path, dt(hh=12))
+        keys = {x["dedup_key"] for x in c}
+        self.assertIn("system:run:1", keys)
+        self.assertTrue(any(k.startswith("system:spend:") for k in keys))
+
+
+# ── sweep: empty-skip + Opus-on-change ───────────────────────────────────────
+class TestSweep(CoSCase):
+    def _ctx(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(db_path=self.db_path)
+
+    def seed_one_candidate(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,status,first_scored_at)"
+                         " VALUES ('j1','Lead',24,1,'Scored','2026-06-22T08:00:00')")
+
+    def test_empty_skip_no_opus_when_nothing(self):
+        spy = mock.Mock(return_value={"correlations": [], "priorities": [], "narrative": ""})
+        with self.assertRaises(runner.TaskSkip):
+            sweep.run_sweep(self._ctx(), _opus=spy, now=dt())
+        spy.assert_not_called()                         # no active -> no Opus
+
+    def test_opus_fires_on_first_material_change(self):
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [], "priorities": ["hotlead_no_loom:j1"], "narrative": "one lead"})
+        out = sweep.run_sweep(self._ctx(), _opus=spy, now=dt())
+        spy.assert_called_once()
+        self.assertEqual(out["candidates"], 1)
+
+    def test_second_sweep_unchanged_empty_skips(self):
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [], "priorities": [], "narrative": ""})
+        sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=12))      # fires
+        with self.assertRaises(runner.TaskSkip):
+            sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=14))  # unchanged
+        spy.assert_called_once()                        # Opus only once
+
+    def test_change_refires_opus(self):
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [], "priorities": [], "narrative": ""})
+        sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=12))
+        with db.connect(self.db_path) as conn:           # new candidate appears
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j2','Lead2',23,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=14))
+        self.assertEqual(spy.call_count, 2)
+
+    def test_opus_correlations_become_nudges(self):
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [
+            {"kind": "escalate_client", "dept": "sales", "title": "Escalate Acme",
+             "action": "call", "dedup_key": "escalate_client:acme", "rationale": "quiet"}],
+            "priorities": [], "narrative": "x"})
+        out = sweep.run_sweep(self._ctx(), _opus=spy, now=dt())
+        self.assertEqual(out["correlations"], 1)
+        row = self.rows("SELECT * FROM nudges WHERE dedup_key='escalate_client:acme'")
+        self.assertEqual(row[0]["source"], "sweep")
+
+    def test_vanished_condition_clears(self):
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [], "priorities": [], "narrative": ""})
+        sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=12))
+        with db.connect(self.db_path) as conn:           # job acted on -> no longer candidate
+            conn.execute("UPDATE scored_jobs SET clickup_task_id='c1' WHERE id='j1'")
+        try:
+            sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=14))
+        except runner.TaskSkip:
+            pass
+        r = self.rows("SELECT state FROM nudges WHERE dedup_key='hotlead_no_loom:j1'")
+        self.assertEqual(r[0]["state"], "decayed")       # condition gone
+
+
+# ── guard: nothing in the sweep path auto-sends a client message ─────────────
+class TestNoAutoSend(CoSCase):
+    def test_no_send_calls_in_module(self):
+        import inspect
+        from modules.chief_of_staff import nudges as n, rules as r, sweep as s
+        for mod in (n, r, s):
+            src = inspect.getsource(mod)
+            for bad in ("smtplib", "sendmail", "send_gmail", ".send("):
+                self.assertNotIn(bad, src, f"{mod.__name__} must not send")
 
 
 if __name__ == "__main__":

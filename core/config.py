@@ -150,6 +150,17 @@ COS_DECAY_TTL_DAYS = {
 }
 COS_BRIEF_TOPN = 3                 # brief leads with the top-N nudges by urgency
 COS_BRIEFS_DIR = V3_ROOT / "var" / "briefs"   # shadow draft artifacts (no send)
+# Sweep rule thresholds (Abhijeet, 2026-06-22)
+COS_FOLLOWUP_IDLE_DAYS = 1         # owed_reply: nudge once a thread sits idle >= N days
+COS_LOST_STATUSES = ("Lost", "Expired", "Withdrawn")  # what counts as a loss
+COS_LOST_PATTERN_MIN = 3           # 3+ losses in one category -> scoring nudge
+COS_COMMITMENT_DUE_DAYS = 2        # commitment within N days (or overdue) escalates
+COS_SPEND_WARN_FRACTION = 0.8      # system nudge when today's spend >= 80% of cap
+COS_SYSTEM_FAIL_WINDOW_H = 24      # failed runs within N hours surface as a nudge
+COS_HOTLEAD_RECENT_DAYS = 7        # only nudge Looms for leads scored in last N days
+COS_WON_OUTCOME_RECENT_DAYS = 30   # only chase outcome reasons for recent wins
+COS_SWEEP_OPUS_MAXITEMS = 30       # cap nudges sent to Opus (top by urgency) + a
+                                   # by-kind summary of the rest -> bounded cost
 
 # ── Airtable (decision #5: extend base appgE1QoEOXvbrUE4) ────────────────────
 AIRTABLE_BASE = "appgE1QoEOXvbrUE4"
