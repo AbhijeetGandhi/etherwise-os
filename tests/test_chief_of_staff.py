@@ -406,13 +406,67 @@ class TestCommitments(CoSCase):
         self.assertEqual(calls, [])
 
 
+# ── briefs: full-digest render + draft-only ──────────────────────────────────
+class TestBrief(CoSCase):
+    def seed_state(self):
+        # 4 nudges across depts + a due-soon and an overdue commitment
+        for k, dk, dept in [("commitment_due", "c:1", "knowledge"),
+                            ("owed_reply", "f:1", "sales"),
+                            ("hotlead_no_loom", "h:1", "sales"),
+                            ("system", "s:1", "system")]:
+            nudges.write_nudge(self.db_path, source=dept, dept=dept, kind=k,
+                               title=f"{k} item", dedup_key=dk, now=dt())
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO commitments (who,text,due,source_cite,"
+                         "dedup_key,state) VALUES"
+                         " ('us','Ship the register','2026-06-20','cite1','k1','open'),"
+                         " ('us','Send the POC','2026-06-23','cite2','k2','open'),"
+                         " ('client','Grant access',NULL,'cite3','k3','open')")
+
+    def _narr(self, db_path, brief):
+        return {"headline": "AM brief test", "narrative": "Two things matter."}
+
+    def test_build_brief_digest_and_top3(self):
+        self.seed_state()
+        from modules.chief_of_staff import brief
+        b = brief.build_brief(self.db_path, "am", now=dt(d=22))
+        self.assertEqual(len(b["top"]), config.COS_BRIEF_TOPN)
+        self.assertEqual(b["top"][0]["kind"], "commitment_due")     # highest base
+        self.assertEqual(len(b["commitments"]["overdue"]), 1)       # 2026-06-20 < 22
+        self.assertEqual(len(b["commitments"]["due_soon"]), 1)      # 2026-06-23
+        self.assertEqual(b["commitments"]["awaiting_client"], 1)
+
+    def test_write_brief_creates_draft_no_send(self):
+        self.seed_state()
+        from modules.chief_of_staff import brief
+        with mock.patch.object(config, "COS_BRIEFS_DIR", self.tmp / "briefs"):
+            b = brief.write_brief(self.db_path, "am", now=dt(d=22),
+                                  _narrate=self._narr)
+        self.assertTrue(Path(b["path"]).exists())
+        body = Path(b["path"]).read_text()
+        self.assertIn("DRAFT", body)
+        self.assertIn("commitment_due item", body)                  # digest rendered
+        self.assertIn("OVERDUE", body)
+
+    def test_all_quiet_skips_opus(self):
+        from modules.chief_of_staff import brief
+        spy = mock.Mock()
+        b = brief.build_brief(self.db_path, "pm", now=dt())          # empty db
+        narr = brief.narrate.__wrapped__ if hasattr(brief.narrate, "__wrapped__") else None
+        # narrate must NOT call the model when nothing to say
+        with mock.patch.object(brief.runner, "claude_call", spy):
+            out = brief.narrate(self.db_path, b)
+        spy.assert_not_called()
+        self.assertIn("all quiet", out["headline"])
+
+
 # ── guard: nothing in the sweep path auto-sends a client message ─────────────
 class TestNoAutoSend(CoSCase):
     def test_no_send_calls_in_module(self):
         import inspect
         from modules.chief_of_staff import (nudges as n, rules as r, sweep as s,
-                                            commitments as cm)
-        for mod in (n, r, s, cm):
+                                            commitments as cm, brief as br)
+        for mod in (n, r, s, cm, br):
             src = inspect.getsource(mod)
             for bad in ("smtplib", "sendmail", "send_gmail", ".send("):
                 self.assertNotIn(bad, src, f"{mod.__name__} must not send")

@@ -1,0 +1,27 @@
+#!/bin/bash
+# Etherwise Chief-of-Staff scheduler: load | unload | status | run-now | log
+# Manages cos-sweep (2-hourly 12PM-4AM IST) + cos-brief-am (11:00) + cos-brief-pm (20:00).
+# Run interactively (terminal has FDA), not from launchd.
+set -u
+JOBS="io.etherwise.v3.cos-sweep io.etherwise.v3.cos-brief-am io.etherwise.v3.cos-brief-pm"
+SRC="/Users/abhijeet/Desktop/Etherwise/etherwise-v3/launchd"
+DST="$HOME/Library/LaunchAgents"
+LOG="$HOME/Library/Logs/Etherwise-v3"
+cmd="${1:-status}"
+case "$cmd" in
+  load)
+    mkdir -p "$LOG"
+    for j in $JOBS; do cp "$SRC/$j.plist" "$DST/$j.plist"
+      launchctl unload "$DST/$j.plist" 2>/dev/null
+      launchctl load -w "$DST/$j.plist" && echo "loaded $j"; done ;;
+  unload)
+    for j in $JOBS; do launchctl unload "$DST/$j.plist" 2>/dev/null && echo "unloaded $j"; done ;;
+  run-now)
+    j="io.etherwise.v3.${2:-cos-sweep}"
+    launchctl kickstart -k "gui/$(id -u)/$j" && echo "kicked $j" ;;
+  status)
+    for j in $JOBS; do launchctl list | grep "$j" || echo "$j not loaded"; done ;;
+  log)
+    tail -n 30 "$LOG/cos-sweep.log" 2>/dev/null; echo "---"; tail -n 20 "$LOG/cos-brief-am.log" 2>/dev/null ;;
+  *) echo "usage: bin/cos-schedule {load|unload|run-now [cos-sweep|cos-brief-am|cos-brief-pm]|status|log}"; exit 1;;
+esac

@@ -1,0 +1,3 @@
+#!/bin/bash
+# Run one Chief-of-Staff sweep now (rules -> empty-skip -> Opus correlate/rank).
+cd "$(dirname "$0")/.." && PYTHONPATH="$PWD" python3 -m modules.chief_of_staff.sweep "$@"

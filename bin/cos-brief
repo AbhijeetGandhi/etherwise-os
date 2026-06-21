@@ -1,0 +1,4 @@
+#!/bin/bash
+# Render the AM/PM brief now (draft to var/briefs + prints the /brief text).
+# Usage: bin/cos-brief [am|pm]
+cd "$(dirname "$0")/.." && PYTHONPATH="$PWD" python3 -m modules.chief_of_staff.brief "${1:-am}"
