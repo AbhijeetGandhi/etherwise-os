@@ -228,11 +228,32 @@ class TestCeilings(GatewayTestCase):
         self.seed_spend(config.DAILY_HARD_LIMIT_USD + 0.10)
         with mock.patch.object(gw, "_payg_transport") as t:
             with self.assertRaises(gw.ClaudeBudgetExceeded):
-                self.call()
+                self.call(task_name="upwork_scan")        # priority -> hard cap
             t.assert_not_called()
         self.assertEqual(len(self.anomaly_rows("budget_hard_cap")), 1)
         self.assertEqual(self.anomaly_rows("budget_hard_cap")[0]["severity"],
                          "critical")
+
+    # ── budget-contention guard: reserve for the revenue scan ──
+    def test_reserve_blocks_nonpriority_early(self):
+        # spend past (cap - reserve) but under cap: a backfill is blocked...
+        self.seed_spend(config.DAILY_HARD_LIMIT_USD - config.BUDGET_RESERVE_USD
+                        + 0.05)
+        with mock.patch.object(gw, "_payg_transport") as t:
+            with self.assertRaises(gw.ClaudeBudgetExceeded) as ctx:
+                self.call(task_name="kb_extract")
+            t.assert_not_called()
+        self.assertEqual(ctx.exception.scope, "daily_hard")
+        self.assertEqual(len(self.anomaly_rows("budget_reserve_guard")), 1)
+
+    def test_reserve_lets_revenue_scan_through(self):
+        # ...but the scan (priority) still runs in the reserved band
+        self.seed_spend(config.DAILY_HARD_LIMIT_USD - config.BUDGET_RESERVE_USD
+                        + 0.05)
+        with mock.patch.object(gw, "_payg_transport",
+                               return_value=fake_response()):
+            self.call(task_name="upwork_scan")            # not raised
+        self.assertEqual(len(self.usage_rows()), 1)
 
     def test_daily_soft_cap_warns_once_and_proceeds(self):
         self.seed_spend(config.DAILY_SOFT_LIMIT_USD + 0.10)
@@ -265,7 +286,7 @@ class TestCeilings(GatewayTestCase):
     def test_daily_hard_cap_scope(self):
         self.seed_spend(config.DAILY_HARD_LIMIT_USD + 0.10)
         with self.assertRaises(gw.ClaudeBudgetExceeded) as ctx:
-            self.call()
+            self.call(task_name="upwork_scan")            # priority
         self.assertEqual(ctx.exception.scope, "daily_hard")
 
     def test_reset_run_clears_per_run_spend(self):

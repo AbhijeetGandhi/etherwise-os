@@ -63,6 +63,11 @@ DAILY_HARD_LIMIT_USD = 5.00                       # ClaudeBudgetExceeded
 PER_RUN_MAX_USD = 0.50                            # single invocation kill-switch
 PER_RUN_MAX_TOOL_CALLS = 40                       # NemoClaw lesson: die in-run, not at daily cap
 PER_RUN_MAX_OUTPUT_TOKENS = 8_000
+# Budget-contention guard (2026-06-22): the revenue-engine Upwork pipeline gets
+# the full daily cap; all other tasks (backfills, CoS, KB) are blocked one
+# reserve early, so a heavy backfill can't starve the scan again (June-18).
+BUDGET_RESERVE_USD = 1.00
+BUDGET_PRIORITY_PREFIXES = ("upwork_", "scan_jobs", "poll_inbox")
 
 # ── Claude API (gateway) ─────────────────────────────────────────────────────
 # $/MTok: (input, output, cache_read, cache_write_1h)
@@ -210,6 +215,13 @@ ACE_IDS = {"personal": "70275816", "agency": "121356955"}
 PROFILE_RATE_USD = 32.50
 HARD_FLOOR_HOURLY = 30.0       # v4.9: NO exceptions
 HARD_FLOOR_FIXED = 500.0       # v4.9: NO exceptions
+# Category-priority (whale) gate exemptions (v2.3 policy — these mirror the
+# scoring prompt and are now CODE-ENFORCED: any one lifts the gate. The 2026-06-22
+# shadow audit found the model applies these numeric thresholds unreliably,
+# capping 9 leads with raw 16-31 to 15 -> lead loss. Code now overrides.
+GATE_HOURLY_EXEMPT_USD = 45.0
+GATE_FIXED_EXEMPT_USD = 3000.0
+GATE_WHALE_SPEND_USD = 50000.0
 
 # ── Email ────────────────────────────────────────────────────────────────────
 NOTIFY_EMAIL = "contact@etherwise.io"

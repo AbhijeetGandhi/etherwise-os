@@ -169,21 +169,46 @@ def score_job(job: dict, task_name: str, db_path=None) -> dict:
         max_output_tokens=700, db_path=db_path)
     v = result.parsed
     effective = v["effective_total"]
+    gated = bool(v.get("gated"))
+    raw = v.get("raw_total")
     gate_note = None
-    if v.get("gated"):
+    # CODE-ENFORCE the whale-gate EXEMPTION (v2.3). The model identifies whether a
+    # job centers on GHL/Vapi/Retell (the gated category), but it applies the
+    # numeric exemption unreliably -> capping real Hot leads (2026-06-22 audit:
+    # 9 leads with raw 16-31 wrongly gated to 15). If the model gated a job that
+    # OBJECTIVELY clears an exemption, lift the gate and restore the raw score.
+    if gated and _gate_exempt(job):
+        gated = False
+        if raw is not None:
+            effective = raw
+        gate_note = (f"gate lifted by code — exemption met"
+                     f" (hourly_max ${job.get('hourly_max')},"
+                     f" fixed ${job.get('fixed_budget')},"
+                     f" spent ${job.get('client_total_spent')}); raw {raw}")
+    if gated:
         if effective > _GATE_CAP:
             effective = _GATE_CAP          # model failed the cap — code wins
         gate_note = (f"gated: capped at {_GATE_CAP}"
-                     f" (raw {v.get('raw_total')})")
+                     f" (raw {raw})")
     breakdown = {k: v.get(k) for k in (
         "skill_fit", "budget", "client_quality", "competition",
         "description_quality", "base_total", "bonuses", "raw_total",
         "recommendation")}
     breakdown["gate"] = gate_note
     breakdown["total"] = effective
-    return {"score": effective, "gated": bool(v.get("gated")),
+    return {"score": effective, "gated": gated,
             "loom_flag": 1 if effective >= config.LOOM_FLAG_THRESHOLD else 0,
             "breakdown": breakdown}
+
+
+def _gate_exempt(job: dict) -> bool:
+    """Objective whale-gate exemptions (v2.3): ANY one lifts the category gate.
+    Code-enforced because the model applies these numeric thresholds unreliably
+    (Hot-lead loss). Mirrors the scoring prompt's exemption clause."""
+    return ((job.get("hourly_max") or 0) >= config.GATE_HOURLY_EXEMPT_USD
+            or (job.get("fixed_budget") or 0) >= config.GATE_FIXED_EXEMPT_USD
+            or (job.get("client_total_spent") or 0)
+            >= config.GATE_WHALE_SPEND_USD)
 
 
 # ── proposal drafting (>=16 at scan time, M1 decision) ───────────────────────

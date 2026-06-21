@@ -1,0 +1,8 @@
+#!/bin/bash
+# Daily shadow-diff for the just-completed scan-day. The work window is
+# 12PM-4AM IST (spans midnight), so at 05:00 the COMPLETE prior ist_date is
+# "yesterday" in machine-local (IST) time. Run from launchd.
+set -u
+DIR="/Users/abhijeet/Desktop/Etherwise/etherwise-v3"
+DAY=$(date -v-1d +%Y-%m-%d)
+cd "$DIR" && PYTHONPATH="$DIR" /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python bin/shadow-diff --date "$DAY"

@@ -286,14 +286,27 @@ def _log_usage(db_path: Optional[Path], called_at: str, ist_date: str,
 def _check_ceilings(db_path: Optional[Path], task_name: str,
                     ist_date: str) -> None:
     spent_today = _daily_spend(db_path, ist_date)
-    if spent_today >= config.DAILY_HARD_LIMIT_USD:
+    # Budget-contention guard (2026-06-22): reserve headroom for the revenue
+    # engine so a heavy backfill can't starve the scan (the June-18 lesson).
+    # Priority (Upwork pipeline) tasks get the full cap; everything else is
+    # blocked one reserve early, leaving that reserve for the scan.
+    is_priority = any(task_name.startswith(p)
+                      for p in config.BUDGET_PRIORITY_PREFIXES)
+    effective_cap = (config.DAILY_HARD_LIMIT_USD if is_priority
+                     else config.DAILY_HARD_LIMIT_USD - config.BUDGET_RESERVE_USD)
+    if spent_today >= effective_cap:
         _record_anomaly_once(
-            db_path, task_name, "budget_hard_cap", "critical",
+            db_path, task_name,
+            "budget_hard_cap" if is_priority else "budget_reserve_guard",
+            "critical" if is_priority else "warn",
             {"ist_date": ist_date, "spent_usd": round(spent_today, 4),
-             "limit_usd": config.DAILY_HARD_LIMIT_USD})
+             "limit_usd": round(effective_cap, 4), "priority": is_priority})
         raise ClaudeBudgetExceeded(
-            f"daily hard cap: ${spent_today:.2f} >= "
-            f"${config.DAILY_HARD_LIMIT_USD:.2f}", scope="daily_hard")
+            (f"daily hard cap: ${spent_today:.2f} >= ${effective_cap:.2f}"
+             if is_priority else
+             f"reserve guard: ${spent_today:.2f} >= ${effective_cap:.2f}"
+             f" (${config.BUDGET_RESERVE_USD:.2f} reserved for the revenue"
+             f" scan)"), scope="daily_hard")
     if spent_today >= config.DAILY_SOFT_LIMIT_USD:
         _record_anomaly_once(
             db_path, task_name, "budget_soft_cap", "warn",

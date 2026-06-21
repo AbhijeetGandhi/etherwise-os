@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.shadow-diff</string>
+  <!-- June-14 TCC pattern: framework Python via the wrapper, logs outside ~/Desktop -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3/bin/shadow-diff-daily</string>
+  </array>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/shadow-diff.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/shadow-diff.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- 05:00 IST: after the work window's last scan (~4:15), prior date complete -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+</dict>
+</plist>

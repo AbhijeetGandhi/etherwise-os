@@ -138,15 +138,61 @@ class TestScoreJob(unittest.TestCase):
             out = scoring.score_job(job(), task_name="t", db_path=None)
         self.assertEqual(out["loom_flag"], 1)
 
-    def test_gated_verdict_never_exceeds_15(self):
-        bad = self.verdict(effective=19, gated=True)  # model failed the cap
+    def _score(self, verdict, j):
         with mock.patch.object(scoring.runner, "claude_call") as cc:
             cc.return_value = gw.GatewayResult(
-                text="{}", parsed=bad, model="m", route="payg", usage={},
+                text="{}", parsed=verdict, model="m", route="payg", usage={},
                 cost_usd=0.001, stop_reason="end_turn", duration_ms=5)
-            out = scoring.score_job(job(), task_name="t", db_path=None)
+            return scoring.score_job(j, task_name="t", db_path=None)
+
+    def test_gated_verdict_never_exceeds_15(self):
+        bad = self.verdict(effective=19, gated=True)  # raw_total = 25
+        # a job with NO exemption (sub-$45 hourly, tiny spend) stays capped
+        out = self._score(bad, job(hourly_max=40.0, fixed_budget=None,
+                                   client_total_spent=100.0))
         self.assertEqual(out["score"], 15)   # cap enforced in CODE
         self.assertIn("capped", out["breakdown"]["gate"])
+
+    # ── whale-gate EXEMPTION code-enforced (2026-06-22 lead-loss fix) ──
+    def test_gate_lifted_by_hourly_exemption(self):
+        # model wrongly gated a GHL/Vapi job that clears $45/hr -> code lifts it
+        v = self.verdict(effective=15, gated=True)   # model capped to 15
+        v["raw_total"] = 28
+        out = self._score(v, job(hourly_max=47.0, fixed_budget=None,
+                                 client_total_spent=2000.0))
+        self.assertFalse(out["gated"])
+        self.assertEqual(out["score"], 28)           # restored to raw
+        self.assertEqual(out["loom_flag"], 1)        # 28 >= 22
+        self.assertIn("lifted by code", out["breakdown"]["gate"])
+
+    def test_gate_lifted_by_fixed_budget(self):
+        v = self.verdict(effective=15, gated=True); v["raw_total"] = 24
+        out = self._score(v, job(hourly_max=None, contract_type="Fixed",
+                                 fixed_budget=3000.0, client_total_spent=10.0))
+        self.assertFalse(out["gated"])
+        self.assertEqual(out["score"], 24)
+
+    def test_gate_lifted_by_whale_spend(self):
+        v = self.verdict(effective=15, gated=True); v["raw_total"] = 26
+        out = self._score(v, job(hourly_max=40.0, fixed_budget=None,
+                                 client_total_spent=50000.0))
+        self.assertFalse(out["gated"])
+        self.assertEqual(out["score"], 26)
+
+    def test_gate_held_when_no_exemption(self):
+        v = self.verdict(effective=15, gated=True); v["raw_total"] = 28
+        out = self._score(v, job(hourly_max=40.0, fixed_budget=None,
+                                 client_total_spent=100.0))
+        self.assertTrue(out["gated"])
+        self.assertEqual(out["score"], 15)           # legitimately capped
+
+    def test_gate_exempt_helper(self):
+        self.assertTrue(scoring._gate_exempt({"hourly_max": 45}))
+        self.assertTrue(scoring._gate_exempt({"fixed_budget": 3000}))
+        self.assertTrue(scoring._gate_exempt({"client_total_spent": 50000}))
+        self.assertFalse(scoring._gate_exempt({"hourly_max": 44,
+                                               "fixed_budget": 2999,
+                                               "client_total_spent": 49999}))
 
 
 if __name__ == "__main__":
