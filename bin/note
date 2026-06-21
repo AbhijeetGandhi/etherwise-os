@@ -1,0 +1,13 @@
+#!/bin/bash
+# Quick Capture: drop a note into the Chief-of-Staff inbox (next sweep classifies).
+# Usage: bin/note "follow up with Acme about the invoice"
+cd "$(dirname "$0")/.." && PYTHONPATH="$PWD" python3 -c "
+import sys
+from modules.chief_of_staff import capture
+from core import config
+text = ' '.join(sys.argv[1:]).strip()
+if not text:
+    print('usage: bin/note \"<text>\"'); sys.exit(1)
+out = capture.add_note(config.DB_PATH, text, source='terminal')
+print(f'captured note #{out[\"id\"]} — will be classified next sweep')
+" "$@"

@@ -569,6 +569,27 @@ class TestKnowledgeReader(unittest.TestCase):
         self.assertEqual(data.knowledge(self.db_path, q="!!!")["results"], [])
 
 
+class TestNoteAction(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-note-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_quick_capture_adds_note(self):
+        out = actions.note(self.db_path, {"text": "follow up with Acme"})
+        self.assertEqual(out["source"], "cockpit")
+        with db.connect(self.db_path) as conn:
+            r = conn.execute("SELECT state, source FROM notes").fetchone()
+        self.assertEqual((r["state"], r["source"]), ("new", "cockpit"))
+
+    def test_empty_note_rejected(self):
+        with self.assertRaises(ValueError):
+            actions.note(self.db_path, {"text": "  "})
+
+
 class TestAskAction(unittest.TestCase):
     def _proc(self, stdout="", rc=0, stderr=""):
         import subprocess

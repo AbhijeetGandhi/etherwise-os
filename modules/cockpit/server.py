@@ -41,6 +41,7 @@ POST_ROUTES: dict = {
     "/api/wake": actions.wake,    # allowlisted launchd kick
     "/api/rail": actions.rail,    # allowlisted rail trigger
     "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
+    "/api/note": actions.note,    # Quick Capture -> CoS notes inbox
 }
 
 

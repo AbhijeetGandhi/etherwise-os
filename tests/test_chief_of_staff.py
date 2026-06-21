@@ -460,13 +460,66 @@ class TestBrief(CoSCase):
         self.assertIn("all quiet", out["headline"])
 
 
+# ── Quick Capture: add + classify routing ────────────────────────────────────
+class TestCapture(CoSCase):
+    def test_add_note(self):
+        from modules.chief_of_staff import capture
+        out = capture.add_note(self.db_path, "follow up with Acme", "terminal")
+        self.assertEqual(out["id"], 1)
+        r = self.rows("SELECT * FROM notes")[0]
+        self.assertEqual(r["state"], "new")
+        self.assertEqual(r["source"], "terminal")
+
+    def test_empty_note_raises(self):
+        from modules.chief_of_staff import capture
+        with self.assertRaises(ValueError):
+            capture.add_note(self.db_path, "   ")
+
+    def test_classify_routes_each_bucket(self):
+        from modules.chief_of_staff import capture
+        capture.add_note(self.db_path, "fix the broken automation")   # nudge
+        capture.add_note(self.db_path, "promised client the POC Friday")  # commitment
+        capture.add_note(self.db_path, "Acme uses Make + Airtable")   # kb_note
+        capture.add_note(self.db_path, "maybe build a Loom library")  # idea
+        plan = {1: {"bucket": "nudge", "title": "Fix automation", "action": "do it",
+                    "due": None, "who": "us"},
+                2: {"bucket": "commitment", "title": "Deliver POC",
+                    "action": None, "due": "2026-06-27", "who": "us"},
+                3: {"bucket": "kb_note", "title": "Acme stack", "action": None,
+                    "due": None, "who": "us"},
+                4: {"bucket": "idea", "title": "Loom library", "action": None,
+                    "due": None, "who": "us"}}
+        out = capture.classify_new(self.db_path,
+                                   _classify=lambda db, n: plan[n["id"]], now=dt())
+        self.assertEqual((out["nudge"], out["commitment"], out["kb_note"], out["idea"]),
+                         (1, 1, 1, 1))
+        # nudge + commitment rows created; kb_note/idea stay as notes
+        self.assertEqual(len(self.rows("SELECT * FROM nudges WHERE source='capture'")), 1)
+        self.assertEqual(len(self.rows("SELECT * FROM commitments")), 1)
+        self.assertEqual(len(self.rows("SELECT * FROM notes WHERE state='new'")), 0)
+        self.assertEqual(len(capture.ideas(self.db_path)), 1)
+
+    def test_sweep_invokes_capture(self):
+        from types import SimpleNamespace
+        ospy = mock.Mock(return_value={"correlations": [], "priorities": [], "narrative": ""})
+        cap = mock.Mock(return_value={"classified": 0})
+        try:                              # empty queue -> TaskSkip after capture runs
+            sweep.run_sweep(SimpleNamespace(db_path=self.db_path), _opus=ospy,
+                            _commitments=mock.Mock(return_value={}), _capture=cap,
+                            now=dt())
+        except runner.TaskSkip:
+            pass
+        cap.assert_called_once()
+
+
 # ── guard: nothing in the sweep path auto-sends a client message ─────────────
 class TestNoAutoSend(CoSCase):
     def test_no_send_calls_in_module(self):
         import inspect
         from modules.chief_of_staff import (nudges as n, rules as r, sweep as s,
-                                            commitments as cm, brief as br)
-        for mod in (n, r, s, cm, br):
+                                            commitments as cm, brief as br,
+                                            capture as cp)
+        for mod in (n, r, s, cm, br, cp):
             src = inspect.getsource(mod)
             for bad in ("smtplib", "sendmail", "send_gmail", ".send("):
                 self.assertNotIn(bad, src, f"{mod.__name__} must not send")

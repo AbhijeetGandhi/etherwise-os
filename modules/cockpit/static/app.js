@@ -168,6 +168,30 @@ const RENDERERS = {
     const m = d.metrics || {};
     view.appendChild(el("h2", "section", "Today"));
 
+    // ── Quick Capture (zero-friction; next sweep classifies) ──
+    const qc = el("div", "card");
+    const qrow = el("div", "unlock-row");
+    const qi = el("input", "unlock-input");
+    qi.placeholder = "Quick capture — note, to-do, idea… (Enter)";
+    const qb = el("button", "action", "Capture");
+    const doCapture = async () => {
+      const text = qi.value.trim(); if (!text) return;
+      qb.disabled = true;
+      try {
+        const r = await fetch("/api/note", { method: "POST",
+          headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+          body: JSON.stringify({ text }) });
+        if (r.ok) { qi.value = ""; toast("Captured — classified next sweep"); }
+        else toast("Capture failed", true);
+      } catch (e) { toast("Capture failed", true); }
+      qb.disabled = false;
+    };
+    qb.onclick = doCapture;
+    qi.onkeydown = (e) => { if (e.key === "Enter") doCapture(); };
+    qrow.append(qi, qb);
+    qc.appendChild(qrow);
+    view.appendChild(qc);
+
     // ── Actions (top) ──
     const fu = el("div", "card");
     fu.appendChild(el("h3", null, `Follow-ups due (${(d.follow_ups||[]).length})`));

@@ -62,6 +62,17 @@ def rail(db_path: Optional[Path], body: dict) -> dict:
         raise ValueError(f"unknown rail: {name!r} (allowed: {sorted(RAIL_JOBS)})")
     return {**_kick(RAIL_JOBS[name]), "rail": name}
 
+def note(db_path: Optional[Path], body: dict) -> dict:
+    """POST /api/note — Quick Capture from the cockpit. Drops raw text into the
+    CoS notes inbox; the next sweep classifies it (nudge/commitment/kb/idea).
+    Local only — no external write."""
+    from modules.chief_of_staff import capture
+    text = ((body or {}).get("text") or "").strip()
+    if not text:
+        raise ValueError("text required")
+    return capture.add_note(db_path, text, source="cockpit")
+
+
 def ask(db_path: Optional[Path], body: dict) -> dict:
     """POST /api/ask — proxy the kb-librarian. The model call runs in a CHILD
     process (bin/kb-ask), never in the cockpit server (view+action plane rule).
