@@ -513,5 +513,50 @@ class TestPush(TmpDbCase):
         self.assertEqual(row["status"], "Drafted")
 
 
+class TestChromeEvalResilience(unittest.TestCase):
+    """Retry transient Chrome unresponsiveness instead of failing the scan
+    (caught the osascript-timeout failures of 2026-06-14..19)."""
+
+    def _proc(self, rc=0, out="ok"):
+        import subprocess
+        return subprocess.CompletedProcess([], rc, stdout=out, stderr="")
+
+    def test_retries_then_succeeds(self):
+        import subprocess
+        from unittest import mock
+        calls = []
+        def fake_run(*a, **k):
+            calls.append(1)
+            if len(calls) <= fb.OSASCRIPT_RETRIES:        # time out, then succeed
+                raise subprocess.TimeoutExpired(cmd="osascript",
+                                                timeout=fb.OSASCRIPT_TIMEOUT)
+            return self._proc(out="result")
+        with mock.patch.object(fb.subprocess, "run", side_effect=fake_run):
+            out = fb.chrome_eval("1", _sleep=lambda s: None)
+        self.assertEqual(out, "result")
+        self.assertEqual(len(calls), fb.OSASCRIPT_RETRIES + 1)
+
+    def test_persistent_timeout_raises_clear(self):
+        import subprocess
+        from unittest import mock
+        def always_timeout(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="osascript", timeout=1)
+        with mock.patch.object(fb.subprocess, "run", side_effect=always_timeout):
+            with self.assertRaises(fb.BridgeError) as cm:
+                fb.chrome_eval("1", _sleep=lambda s: None)
+        self.assertIn("timed out", str(cm.exception))
+
+    def test_nonzero_rc_does_not_retry(self):
+        from unittest import mock
+        calls = []
+        def fake_run(*a, **k):
+            calls.append(1)
+            return self._proc(rc=1)
+        with mock.patch.object(fb.subprocess, "run", side_effect=fake_run):
+            with self.assertRaises(fb.BridgeError):
+                fb.chrome_eval("1", _sleep=lambda s: None)
+        self.assertEqual(len(calls), 1)                   # a real error fails fast
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

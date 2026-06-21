@@ -50,6 +50,19 @@ FEEDS = ("most_recent", "best_matches", "my_feed")        # exact, lowercase
 ID_RE = re.compile(r"^\d{15,25}$")
 HOST = "https://www.upwork.com/jobs/"
 OSASCRIPT_TIMEOUT = 45
+OSASCRIPT_RETRIES = 2          # transient Chrome unresponsiveness: retry the eval
+OSASCRIPT_BACKOFF_S = 4        # before failing the whole scan (was 0 retries)
+_PING = 'tell application "Google Chrome" to get URL of active tab of front window'
+
+
+def chrome_responsive(timeout: int = 8) -> bool:
+    """Cheap liveness probe — is Chrome running and answering AppleScript?"""
+    try:
+        proc = subprocess.run(["osascript", "-e", _PING],
+                              capture_output=True, text=True, timeout=timeout)
+        return proc.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
 
 
 class BridgeError(Exception):
@@ -104,13 +117,21 @@ DUMP_JS = r"""
 """
 
 
-def chrome_eval(js: str, tab_ref=None) -> str:
+def chrome_eval(js: str, tab_ref=None, _sleep=None) -> str:
     """Execute JS via osascript; returns the JS result.
 
     tab_ref=None targets the ACTIVE tab (v4.14.x scanner-prompt behavior).
     tab_ref=(window_id, tab_index) targets a specific tab WITHOUT focusing
     it — the M1a shadow pipeline uses a dedicated parked tab and must never
-    touch the user's active tab."""
+    touch the user's active tab.
+
+    Resilient to TRANSIENT Chrome unresponsiveness (page mid-render, GC, a busy
+    firehose tab): a timed-out eval is retried OSASCRIPT_RETRIES times with
+    backoff before the scan fails. A persistently dead Chrome still raises, with
+    a clear reason (caught 17% scan failures 2026-06-14..19)."""
+    if _sleep is None:
+        import time as _t
+        _sleep = _t.sleep
     if tab_ref is None:
         target = "active tab of front window"
     else:
@@ -118,22 +139,32 @@ def chrome_eval(js: str, tab_ref=None) -> str:
         target = f"tab {int(tab_index)} of window id {int(window_id)}"
     script = (f'tell application "Google Chrome" to execute {target}'
               ' javascript (item 1 of argv)')
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", "on run argv", "-e", script, "-e", "end run",
-             js],
-            capture_output=True, text=True, timeout=OSASCRIPT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        raise BridgeError("osascript timed out — is Chrome responsive?")
-    if proc.returncode != 0:
-        err = proc.stderr.strip()
-        hint = ""
-        if "JavaScript through AppleScript" in err or "1743" in err \
-                or "not allowed" in err.lower():
-            hint = (" — enable Chrome menu: View > Developer >"
-                    " Allow JavaScript from Apple Events, then retry")
-        raise BridgeError(f"osascript failed: {err[:300]}{hint}")
-    return proc.stdout.strip()
+    last_timeout = None
+    for attempt in range(OSASCRIPT_RETRIES + 1):
+        try:
+            proc = subprocess.run(
+                ["osascript", "-e", "on run argv", "-e", script, "-e", "end run",
+                 js],
+                capture_output=True, text=True, timeout=OSASCRIPT_TIMEOUT)
+        except subprocess.TimeoutExpired as e:
+            last_timeout = e
+            if attempt < OSASCRIPT_RETRIES:
+                _sleep(OSASCRIPT_BACKOFF_S)
+                continue
+            alive = "" if chrome_responsive() else " (Chrome not responding to" \
+                " AppleScript — may be hung/closed/updating)"
+            raise BridgeError(
+                f"osascript timed out after {OSASCRIPT_RETRIES + 1} attempts"
+                f"{alive}") from last_timeout
+        if proc.returncode != 0:
+            err = proc.stderr.strip()
+            hint = ""
+            if "JavaScript through AppleScript" in err or "1743" in err \
+                    or "not allowed" in err.lower():
+                hint = (" — enable Chrome menu: View > Developer >"
+                        " Allow JavaScript from Apple Events, then retry")
+            raise BridgeError(f"osascript failed: {err[:300]}{hint}")
+        return proc.stdout.strip()
 
 
 # ── tile parsing (pure, unit-tested against real card text) ──────────────────
