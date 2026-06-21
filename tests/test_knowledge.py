@@ -226,6 +226,24 @@ class TestAssetParse(KBCase):
         self.assertIn("sam@endurasolutions.com.au", parsed["participants"])
         self.assertIn("[00:00:05] Sam: We need RPA.", parsed["text"])
 
+    def test_live_api_speaker_object(self):
+        # the live Fathom API gives speaker as an OBJECT (not a string) and
+        # leaves participants empty -> kb_daily crashed on .strip() (2026-06-18..21)
+        payload = {
+            "recording_id": 156775218, "title": "Client sync",
+            "created_at": "2026-06-19T10:00:00Z", "participants": [],
+            "transcript": [
+                {"timestamp": "00:00:01",
+                 "speaker": {"display_name": "Sam",
+                             "matched_calendar_invitee_email": "sam@adelye.com"},
+                 "text": "We need the register."},
+                {"timestamp": "00:00:05", "speaker": None, "text": "ok"}],
+        }
+        parsed = ingest.parse_fathom(payload)   # must NOT raise
+        self.assertIn("[00:00:01] Sam: We need the register.", parsed["text"])
+        self.assertIn("sam@adelye.com", parsed["participants"])  # seeds classify
+        self.assertIn("Sam", parsed["participants"])
+
     def test_asset_classifies_by_email_domain(self):
         client_map = [{"client_id": "endura", "name": "Endura Solutions",
                        "identifiers": ["endurasolutions.com.au", "endura"]}]

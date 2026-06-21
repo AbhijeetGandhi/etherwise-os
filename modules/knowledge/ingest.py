@@ -18,22 +18,42 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 
 # ── parsers (per source) ──────────────────────────────────────────────────────
 
+def _seg_speaker(seg: dict):
+    """Speaker can be a plain string (export zip) OR an object (live API:
+    {display_name, matched_calendar_invitee_email, ...}). Return (name, email)."""
+    sp = seg.get("speaker")
+    if isinstance(sp, dict):
+        name = (sp.get("display_name") or sp.get("name") or "").strip()
+        email = (sp.get("matched_calendar_invitee_email")
+                 or sp.get("email") or "").strip()
+        return name, email
+    return (str(sp).strip() if sp else ""), ""
+
+
 def parse_fathom(payload: dict) -> dict:
-    """Fathom meeting JSON -> normalized source dict. Handles BOTH the API
-    poller shape and the historical export (asset zip): transcript segments
-    may carry a `timestamp` (used as citation anchors); participants may be
-    [{name, email}] (email domains drive classification)."""
+    """Fathom meeting JSON -> normalized source dict. Handles BOTH the live API
+    poller shape AND the historical export (asset zip). Transcript segments may
+    carry a `timestamp` (citation anchors); `speaker` may be a string (export)
+    or an object {display_name, matched_calendar_invitee_email} (API). The live
+    API leaves `participants` empty, so transcript speakers (names + matched
+    emails) seed classification instead."""
     rid = str(payload.get("recording_id") or payload.get("id") or "")
     tx = payload.get("transcript") or []
     lines, spoken = [], set()
     if isinstance(tx, list):
         for seg in tx:
-            sp = (seg.get("speaker") or "").strip()
-            ts = (seg.get("timestamp") or "").strip()
+            if not isinstance(seg, dict):
+                continue
+            sp, email = _seg_speaker(seg)
+            ts_raw = seg.get("timestamp")
+            ts = (str(ts_raw).strip() if ts_raw else "")
             if sp:
                 spoken.add(sp)
+            if email:
+                spoken.add(email)          # email domain drives classification
             prefix = f"[{ts}] " if ts else ""
-            lines.append(f"{prefix}{sp}: {seg.get('text', '')}".strip())
+            txt = seg.get("text", "")
+            lines.append(f"{prefix}{sp}: {txt if isinstance(txt, str) else ''}".strip())
         text = "\n".join(lines)
     else:
         text = str(tx)
@@ -41,9 +61,10 @@ def parse_fathom(payload: dict) -> dict:
     parts = []
     for p in (payload.get("participants") or []):
         if isinstance(p, dict):
-            parts.append((p.get("name") or "").strip())
-            if p.get("email"):
-                parts.append(p["email"].strip())
+            parts.append((p.get("name") or p.get("display_name") or "").strip())
+            email = p.get("email") or p.get("matched_calendar_invitee_email")
+            if email:
+                parts.append(str(email).strip())
         elif p:
             parts.append(str(p).strip())
     participants = sorted({x for x in parts if x} or spoken)
