@@ -119,6 +119,38 @@ INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately
 HOT_LEAD_THRESHOLD = 16
 LOOM_FLAG_THRESHOLD = 22
 
+# ── Chief of Staff (M4) — nudge scoring + decay (design spec §6) ──────────────
+# urgency = COS_URGENCY_BASE[kind] * recency_decay(age) * stake_mult(money|score)
+# Tunable here ONLY (single source of truth). Higher base = ranks higher.
+COS_URGENCY_BASE = {
+    "commitment_due":  100,   # an open promise; overdue escalates further
+    "hotlead_no_loom":  80,   # high-score lead with no custom Loom yet
+    "deadline":         70,   # dated event within window (payroll/renewal — M5+)
+    "owed_reply":       60,   # owed Upwork reply past the anti-spam window
+    "escalate_client":  55,   # Opus cross-signal: quiet client + overdue commitment
+    "lost_pattern":     50,   # 3+ losses in one category/tool -> scoring nudge
+    "won_no_outcome":   40,   # won proposal, outcome reason not captured
+    "system":           35,   # job failed / spend near cap / model deprecation
+    "stale_dossier":    20,   # dossier not refreshed in a while
+    "capture":          30,   # a captured note awaiting classification/action
+}
+COS_RECENCY_HALFLIFE_DAYS = 7.0   # urgency decays by half every 7 days of age
+# decay TTL in days per kind: None = never (until done); 0 = clears past its due
+COS_DECAY_TTL_DAYS = {
+    "owed_reply":       7,
+    "hotlead_no_loom":  3,
+    "deadline":         0,        # auto-clears once past `due`
+    "commitment_due":   None,     # never decays until the commitment is done
+    "lost_pattern":     14,
+    "won_no_outcome":   14,
+    "stale_dossier":    30,
+    "system":           7,
+    "escalate_client":  7,
+    "capture":          14,
+}
+COS_BRIEF_TOPN = 3                 # brief leads with the top-N nudges by urgency
+COS_BRIEFS_DIR = V3_ROOT / "var" / "briefs"   # shadow draft artifacts (no send)
+
 # ── Airtable (decision #5: extend base appgE1QoEOXvbrUE4) ────────────────────
 AIRTABLE_BASE = "appgE1QoEOXvbrUE4"
 AT = {
