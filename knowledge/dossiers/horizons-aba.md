@@ -1,6 +1,6 @@
 # Horizons ABA — Dossier
 
-_Compiled 2026-06-22 03:51 IST · 993 client facts (988 trusted) from 72 sources · 69 agency/other-client facts routed to proof-points._
+_Compiled 2026-06-22 05:15 IST · 993 client facts (988 trusted) from 74 sources · 69 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -1098,3 +1098,5 @@ _Compiled 2026-06-22 03:51 IST · 993 client facts (988 trusted) from 72 sources
 - `fathom/132140999` · 2026-03-23 · fathom · Run Payroll
 - `loom/d3049903d3374a459d824fabc5f8e00a` · 2026-04-05 · loom · Showcasing My Automation Engineering Project for Horizons EPA 🚀
 - `fathom/136054650` · 2026-04-07 · fathom · Run Payroll - Jillian was hourly from 16-22, salary 23rd and on
+- `fathom/143773864` · 2026-05-05 · fathom · Abhi Kara Alex - Payroll Automation
+- `fathom/144147901` · 2026-05-06 · fathom · Run Payroll

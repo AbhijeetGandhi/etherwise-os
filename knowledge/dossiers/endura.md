@@ -1,6 +1,6 @@
 # Endura Solutions — Dossier
 
-_Compiled 2026-06-22 03:51 IST · 90 client facts (90 trusted) from 12 sources · 78 agency/other-client facts routed to proof-points._
+_Compiled 2026-06-22 05:15 IST · 90 client facts (90 trusted) from 12 sources · 78 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
