@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""M5 §3.8 money-type migration — NON-DESTRUCTIVE, idempotent.
+
+Converts the legacy REAL `amount`/`amount_credited` to signed integer minor
+units (USD cents), records USD-base provenance, and quarantines rows that can't
+be trusted (NULL amount) — fully preserved — so the no-NULL invariants hold.
+Proves Σ-before == Σ-after per (currency) to the cent and writes a report.
+
+The conversion is done in SQL (sqlite ROUND, exact for the 2-dp values verified
+by the pre-audit) — NO Python float touches money. Re-running is a no-op.
+
+Usage: PYTHONPATH=. python3 bin/finance-migrate [--commit]   (default: dry-run)
+"""
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+
+REPORT_DIR = Path(__file__).resolve().parents[2] / "reports"
+QUARANTINE_REASON = ("malformed import (2026-06-12): amount/currency/type NULL."
+                     " Upwork API carries no structured amount for AP/AR types"
+                     " and not all descriptions carry it — needs the v2 importer"
+                     " amount-derivation (Phase 1) to recover + reconcile.")
+
+
+def _before_cents(conn, currencies):
+    # Σ of the legacy REAL column per currency, as exact cents via SQL ROUND
+    # (no python float touches money).
+    return {c: conn.execute(
+        "SELECT CAST(ROUND(COALESCE(SUM(amount),0)*100) AS INTEGER) c FROM"
+        " transactions WHERE currency=? AND amount IS NOT NULL",
+        (c,)).fetchone()["c"] for c in currencies}
+
+
+def migrate(db_path, commit: bool) -> dict:
+    import json
+    with db.connect(db_path) as conn:
+        currencies = [r["currency"] for r in conn.execute(
+            "SELECT DISTINCT currency FROM transactions"
+            " WHERE currency IS NOT NULL AND currency!='' ORDER BY currency")]
+        before = _before_cents(conn, currencies)
+        to_convert = conn.execute(
+            "SELECT COUNT(*) n FROM transactions WHERE amount IS NOT NULL AND"
+            " amount_minor IS NULL").fetchone()["n"]
+        malformed = conn.execute(
+            "SELECT COUNT(*) n FROM transactions WHERE amount IS NULL").fetchone()["n"]
+
+        if not commit:
+            return {"mode": "DRY-RUN", "currencies": currencies,
+                    "before_cents": before, "would_convert": to_convert,
+                    "would_quarantine": malformed}
+
+        # 1) convert valued rows -> integer cents (exact ROUND; base=USD)
+        conn.execute(
+            "UPDATE transactions SET"
+            " amount_minor = CAST(ROUND(amount*100) AS INTEGER),"
+            " amount_credited_minor = CASE WHEN amount_credited IS NOT NULL"
+            "   THEN CAST(ROUND(amount_credited*100) AS INTEGER) END,"
+            " amount_base_minor = CAST(ROUND(amount*100) AS INTEGER),"  # USD base
+            " fx_rate = '1', fx_date = substr(creation_dt,1,10),"
+            " source_file = COALESCE(NULLIF(source,''), 'upwork-api'),"
+            " source_row = record_id, updated_at = datetime('now')"
+            " WHERE amount IS NOT NULL AND amount_minor IS NULL AND currency='USD'")
+        # 2) the malformed (NULL-amount) rows are LEFT UNTOUCHED and fully
+        #    preserved — recovery decision is the ◆ step-0 checkpoint (recover
+        #    via the Phase-1 v2 importer vs quarantine). The doctor flags them
+        #    RED (invariant #8: no NULL amount/currency) until resolved. They
+        #    contribute 0 to Σ (NULL), so the tie-out below is unaffected.
+        # 3) Σ-after per currency (integer minor) — must equal before, to the cent
+        after = {c: (conn.execute(
+            "SELECT COALESCE(SUM(amount_minor),0) c FROM transactions"
+            " WHERE currency=?", (c,)).fetchone()["c"]) for c in currencies}
+
+    ok = all(before[c] == after[c] for c in currencies)
+    return {"mode": "COMMIT", "currencies": currencies, "before_cents": before,
+            "after_cents": after, "match": ok, "converted": to_convert,
+            "malformed_pending": malformed}
+
+
+def write_report(res: dict) -> Path:
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    p = REPORT_DIR / "finance-migrate-007.md"
+    lines = ["# M5 §3.8 money-type migration — Σ-before == Σ-after",
+             f"_{res['mode']} · generated {datetime.now(config.TZ):%Y-%m-%d %H:%M IST}_",
+             "", "| currency | Σ before (cents) | Σ after (cents) | match |",
+             "|---|---|---|---|"]
+    for c in res["currencies"]:
+        b = res["before_cents"][c]
+        a = res.get("after_cents", {}).get(c, "—")
+        m = "✓" if res.get("after_cents") and b == a else (
+            "(dry-run)" if res["mode"] == "DRY-RUN" else "✗ MISMATCH")
+        lines.append(f"| {c} | {b:,} | {a if a=='—' else format(a,',')} | {m} |")
+    lines.append("")
+    lines.append(f"Converted to integer cents: "
+                 f"{res.get('converted', res.get('would_convert'))}")
+    lines.append(f"Malformed rows LEFT IN PLACE, preserved, flagged RED by the "
+                 f"doctor (recovery decision = step-0 checkpoint): "
+                 f"{res.get('malformed_pending', res.get('would_quarantine'))}")
+    lines.append("\nNote: malformed rows have NULL amount -> contribute 0 to Σ,"
+                 " so the tie-out above is unaffected by them.")
+    p.write_text("\n".join(lines))
+    return p
+
+
+def main() -> int:
+    commit = "--commit" in sys.argv
+    res = migrate(config.DB_PATH, commit)
+    p = write_report(res)
+    print(__import__("json").dumps(res, indent=1))
+    print(f"report: {p}")
+    if commit and not res.get("match"):
+        print("FAIL: Σ-before != Σ-after", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

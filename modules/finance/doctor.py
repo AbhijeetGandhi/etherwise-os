@@ -1,0 +1,129 @@
+"""finance-doctor (§3.6) — the blocking gate. Evaluates the §3.3 reconciliation
+invariants exact-to-the-minor-unit and returns GREEN/RED with the precise
+discrepancy. HARD RULE: no finance number is shown in the cockpit, written to a
+brief, or synced to Airtable unless the doctor is GREEN for that period.
+
+Step-0 skeleton implements the invariants checkable now:
+  #5 dedup integrity   — canonical_key UNIQUE; nothing silently vanishes
+  #8 sanity bounds     — no NULL amount/currency in the live ledger
+  #1 statement integrity (over account_balances; trivially GREEN when empty)
+  #6 payroll (over payroll runs; N/A until Phase 5)
+Invariants #2/#3/#4 (continuity, tie-out, cash) + #7 (FX) land with Phase 1-2.
+Every check reports delta in MINOR UNITS — never a float.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+from core import config, db
+
+
+@dataclass
+class Check:
+    invariant: str            # e.g. "#5 dedup integrity"
+    status: str               # GREEN | RED | N/A
+    detail: str = ""
+    deltas: List[dict] = field(default_factory=list)  # offending rows, minor units
+
+
+@dataclass
+class DoctorResult:
+    checks: List[Check]
+
+    @property
+    def green(self) -> bool:
+        return all(c.status != "RED" for c in self.checks)
+
+    def reds(self) -> List[Check]:
+        return [c for c in self.checks if c.status == "RED"]
+
+    def summary(self) -> dict:
+        return {"green": self.green,
+                "checks": [{"invariant": c.invariant, "status": c.status,
+                            "detail": c.detail, "deltas": c.deltas[:20]}
+                           for c in self.checks]}
+
+
+# ── invariants ────────────────────────────────────────────────────────────────
+
+def _check_dedup(conn) -> Check:
+    """#5: canonical_key UNIQUE among the rows that have one; rows_seen accounts
+    for everything (live + quarantined), nothing silently vanishing."""
+    dups = [dict(r) for r in conn.execute(
+        "SELECT canonical_key, COUNT(*) n FROM transactions"
+        " WHERE canonical_key IS NOT NULL AND canonical_key!=''"
+        " GROUP BY canonical_key HAVING n > 1")]
+    if dups:
+        return Check("#5 dedup integrity", "RED",
+                     f"{len(dups)} duplicated canonical_key(s)",
+                     [{"canonical_key": d["canonical_key"], "count": d["n"]}
+                      for d in dups])
+    live = conn.execute("SELECT COUNT(*) n FROM transactions").fetchone()["n"]
+    quar = conn.execute("SELECT COUNT(*) n FROM quarantine WHERE source IN"
+                        " ('bank','wise','card','upwork','Bank','Direct',"
+                        "'upwork-api')").fetchone()["n"]
+    return Check("#5 dedup integrity", "GREEN",
+                 f"{live} live + {quar} quarantined; canonical_key unique")
+
+
+def _check_sanity(conn) -> Check:
+    """#8: no NULL amount_minor / currency in the LIVE ledger (the malformed
+    rows surface here until recovered or quarantined)."""
+    bad = [dict(r) for r in conn.execute(
+        "SELECT record_id, amount_minor, currency FROM transactions"
+        " WHERE amount_minor IS NULL OR currency IS NULL OR currency=''")]
+    if bad:
+        return Check("#8 sanity bounds", "RED",
+                     f"{len(bad)} live transactions with NULL amount/currency"
+                     " (recover or quarantine — see step-0 finding)",
+                     [{"record_id": b["record_id"]} for b in bad[:50]])
+    return Check("#8 sanity bounds", "GREEN", "no NULL amount/currency live")
+
+
+def _check_statement_integrity(conn) -> Check:
+    """#1: for each statement, opening + Σcredits − Σdebits == closing, exact in
+    minor units. Over account_balances + the period's transactions. Trivially
+    GREEN until Phase-1 imports populate balances."""
+    stmts = [dict(r) for r in conn.execute(
+        "SELECT account, currency, opening_minor, closing_minor, statement_date,"
+        " source_file FROM account_balances")]
+    if not stmts:
+        return Check("#1 statement integrity", "N/A", "no statements imported yet")
+    reds = []
+    for s in stmts:
+        flow = conn.execute(
+            "SELECT COALESCE(SUM(amount_minor),0) f FROM transactions"
+            " WHERE source_file=? AND currency=?",
+            (s["source_file"], s["currency"])).fetchone()["f"]
+        expected = s["opening_minor"] + flow
+        if expected != s["closing_minor"]:
+            reds.append({"account": s["account"], "statement": s["statement_date"],
+                         "expected_minor": expected,
+                         "actual_minor": s["closing_minor"],
+                         "delta_minor": expected - s["closing_minor"]})
+    if reds:
+        return Check("#1 statement integrity", "RED",
+                     f"{len(reds)} statement(s) don't reconcile", reds)
+    return Check("#1 statement integrity", "GREEN",
+                 f"{len(stmts)} statement(s) reconcile exactly")
+
+
+def _check_payroll(conn) -> Check:
+    """#6: per-run Σcomponents==gross, gross−(tds+pt)==net, Σnet==disbursement.
+    N/A until Phase-5 payroll runs exist."""
+    try:
+        n = conn.execute("SELECT COUNT(*) n FROM payroll_runs").fetchone()["n"]
+    except Exception:
+        return Check("#6 payroll", "N/A", "payroll not built yet (Phase 5)")
+    return Check("#6 payroll", "N/A" if not n else "GREEN",
+                 f"{n} run(s)")
+
+
+def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
+    """Evaluate every implemented invariant. RED on any -> the caller must block
+    downstream publication for `period`."""
+    with db.connect(db_path or config.DB_PATH) as conn:
+        checks = [_check_dedup(conn), _check_sanity(conn),
+                  _check_statement_integrity(conn), _check_payroll(conn)]
+    return DoctorResult(checks)

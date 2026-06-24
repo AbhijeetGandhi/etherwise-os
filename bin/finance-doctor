@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""finance-doctor — the blocking gate (§3.6). GREEN/RED on the §3.3 invariants.
+No finance number publishes unless this is GREEN. Exit 1 on RED (CI/sync gate).
+
+Usage: PYTHONPATH=. python3 bin/finance-doctor [--period YYYY-MM]
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config  # noqa: E402
+from modules.finance import doctor  # noqa: E402
+
+
+def main() -> int:
+    period = None
+    if "--period" in sys.argv:
+        period = sys.argv[sys.argv.index("--period") + 1]
+    res = doctor.run(config.DB_PATH, period=period)
+    for c in res.checks:
+        mark = {"GREEN": "✓", "RED": "✗", "N/A": "·"}.get(c.status, "?")
+        print(f"  {mark} {c.invariant}: {c.status} — {c.detail}")
+        for d in c.deltas[:10]:
+            print(f"      {d}")
+    print(json.dumps({"green": res.green,
+                      "reds": [c.invariant for c in res.reds()]}))
+    return 0 if res.green else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
