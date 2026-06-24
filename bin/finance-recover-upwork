@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Upwork recovery + dedup + sign correction (2026-06-25). REPRODUCIBLE +
+idempotent — re-running is a no-op once clean. Authoritative source = the staged
+Upwork transaction-history CSV exports (Personal + Agency) in finance-inbox/upwork/.
+
+Three corrections, all re-derived from the CSV (never flipped blindly):
+ 1. DEDUP across namespaces: the 40 recovered stubs (record_id 'personal:<ref>',
+    NULL canonical_key) that duplicate an already-keyed canonical row
+    (canonical_key 'upwork:<ref>') are quarantined (preserved). Their twins are
+    the keepers.
+ 2. KEY the genuinely-new stubs (no twin) with canonical_key 'upwork:<ref>' so
+    they're covered by dedup.
+ 3. SIGN/VALUE correction: any canonical row whose Ref ID is in the CSV and whose
+    amount_minor != the CSV's signed Amount-$ is corrected to the CSV value. This
+    fixes the systematic +signed 'Connect Purchase' fees (should be debits).
+
+Usage: PYTHONPATH=. python3 bin/finance-recover-upwork [--commit]   (default dry-run)
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money  # noqa: E402
+from modules.finance.importers import upwork_csv  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "upwork"
+STUB_SOURCE = "upwork-personal-2026-06-24.csv"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-recover-upwork.md"
+
+
+def _csv_map() -> dict:
+    """{ref_id: {amount_minor, type, date}} from the staged exports; assert each
+    reconciles (running balance) before trusting it."""
+    out, recon = {}, []
+    for f in sorted(INBOX.glob("*.csv")):
+        rows = upwork_csv.parse(f.read_text())
+        r = upwork_csv.reconcile_running_balance(rows)
+        recon.append({"file": f.name, "ok": r["ok"], "breaks": len(r["breaks"]),
+                      "quarantine": len(r["quarantine"])})
+        for row in rows:
+            if row["amount_minor"] is not None:
+                out[row["ref_id"]] = {"amount_minor": row["amount_minor"],
+                                      "type": row["type"], "date": row["date"]}
+    return out, recon
+
+
+def run(commit: bool) -> dict:
+    cmap, recon = _csv_map()
+    if any(not r["ok"] for r in recon):
+        return {"abort": "a CSV did not reconcile — refusing to proceed", "recon": recon}
+    quarantined, keyed, corrected, new_net = [], [], [], 0
+    with db.connect(config.DB_PATH) as conn:
+        # 1+2: dedup the recovered stubs
+        stubs = [dict(r) for r in conn.execute(
+            "SELECT record_id, amount_minor FROM transactions WHERE source_file=?",
+            (STUB_SOURCE,))]
+        for s in stubs:
+            ref = s["record_id"].split(":")[-1]
+            twin = conn.execute(
+                "SELECT record_id FROM transactions WHERE canonical_key=? AND"
+                " record_id!=?", (f"upwork:{ref}", s["record_id"])).fetchone()
+            if twin:
+                quarantined.append({"stub": s["record_id"],
+                                    "twin": twin["record_id"], "ref": ref})
+                if commit:
+                    row = dict(conn.execute("SELECT * FROM transactions WHERE"
+                                            " record_id=?", (s["record_id"],)).fetchone())
+                    conn.execute(
+                        "INSERT INTO quarantine (source, reason, payload_json)"
+                        " VALUES ('upwork', ?, ?)",
+                        (f"recovery duplicate of canonical {twin['record_id']}"
+                         f" (Ref {ref}); double-count fix 2026-06-25",
+                         json.dumps(row, default=str)))
+                    conn.execute("DELETE FROM transactions WHERE record_id=?",
+                                 (s["record_id"],))
+            else:
+                keyed.append({"record_id": s["record_id"], "ref": ref})
+                new_net += s["amount_minor"]
+                if commit:
+                    conn.execute("UPDATE transactions SET canonical_key=?,"
+                                 " updated_at=datetime('now') WHERE record_id=?",
+                                 (f"upwork:{ref}", s["record_id"]))
+        # 3: sign/value correction of canonical rows vs the authoritative CSV
+        canon = [dict(r) for r in conn.execute(
+            "SELECT record_id, canonical_key, amount_minor, type FROM transactions"
+            " WHERE canonical_key LIKE 'upwork:%'")]
+        for c in canon:
+            ref = c["canonical_key"].split(":")[-1]
+            src = cmap.get(ref)
+            if src and src["amount_minor"] != c["amount_minor"]:
+                corrected.append({"record_id": c["record_id"], "type": c["type"],
+                                  "was": c["amount_minor"], "now": src["amount_minor"]})
+                if commit:
+                    conn.execute("UPDATE transactions SET amount_minor=?,"
+                                 " amount_base_minor=?, updated_at=datetime('now')"
+                                 " WHERE record_id=?",
+                                 (src["amount_minor"], src["amount_minor"],
+                                  c["record_id"]))
+    return {"mode": "COMMIT" if commit else "DRY-RUN", "recon": recon,
+            "quarantined": len(quarantined), "keyed_new": len(keyed),
+            "sign_corrected": len(corrected),
+            "new_17_net_minor": new_net,
+            "new_17_net": str(money.from_minor(new_net)),
+            "correction_swing": str(money.from_minor(
+                sum(c["now"] - c["was"] for c in corrected))),
+            "_quar": quarantined, "_corr": corrected}
+
+
+def main() -> int:
+    res = run("--commit" in sys.argv)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# Upwork recovery + dedup + sign correction\n\n```\n"
+                      + json.dumps({k: v for k, v in res.items()
+                                    if not k.startswith("_")}, indent=1)
+                      + "\n```\n")
+    print(json.dumps({k: v for k, v in res.items() if not k.startswith("_")}, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

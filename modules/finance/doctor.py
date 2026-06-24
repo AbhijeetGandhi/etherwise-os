@@ -131,10 +131,29 @@ def _check_payroll(conn) -> Check:
                  f"{n} run(s)")
 
 
+def _check_type_sign(conn) -> Check:
+    """#9 type-sign sanity (added 2026-06-25): a category whose sign is fixed by
+    its economic meaning must carry that sign. A 'Connect Purchase' is always a
+    fee (debit) -> amount_minor <= 0. The Upwork sync recorded many as +income
+    (a $4.5K P&L distortion); this catches the class. Rows are corrected from the
+    authoritative CSV; any still + (e.g. out of the export range) stay RED until
+    their source statement is available — never silently passed."""
+    bad = [dict(r) for r in conn.execute(
+        "SELECT record_id, amount_minor FROM transactions"
+        " WHERE type='Connect Purchase' AND amount_minor > 0")]
+    if bad:
+        return Check("#9 type-sign sanity", "RED",
+                     f"{len(bad)} 'Connect Purchase' rows are + (income) but are"
+                     " fees (debits) — correct from source",
+                     [{"record_id": b["record_id"], "amount_minor": b["amount_minor"]}
+                      for b in bad[:50]])
+    return Check("#9 type-sign sanity", "GREEN", "fee-type signs correct")
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
     with db.connect(db_path or config.DB_PATH) as conn:
-        checks = [_check_dedup(conn), _check_sanity(conn),
+        checks = [_check_dedup(conn), _check_sanity(conn), _check_type_sign(conn),
                   _check_statement_integrity(conn), _check_payroll(conn)]
     return DoctorResult(checks)

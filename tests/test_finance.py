@@ -139,6 +139,26 @@ class DoctorCase(unittest.TestCase):
         self.assertEqual(c5.status, "RED")
         self.assertIn("NULL canonical_key", c5.detail)
 
+    def test_connect_purchase_sign_red_9(self):
+        # a Connect Purchase is a fee (debit); a + one is the sync bug -> RED
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, amount_minor,"
+                         " currency, canonical_key, type) VALUES"
+                         " ('c1', 4500, 'USD', 'upwork:c1', 'Connect Purchase')")
+        res = doctor.run(self.db_path)
+        self.assertFalse(res.green)
+        c9 = [c for c in res.checks if c.invariant == "#9 type-sign sanity"][0]
+        self.assertEqual(c9.status, "RED")
+
+    def test_connect_purchase_negative_green_9(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, amount_minor,"
+                         " currency, canonical_key, type) VALUES"
+                         " ('c1', -4500, 'USD', 'upwork:c1', 'Connect Purchase')")
+        res = doctor.run(self.db_path)
+        c9 = [c for c in res.checks if c.invariant == "#9 type-sign sanity"][0]
+        self.assertEqual(c9.status, "GREEN")
+
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:
             # opening 100.00 + flow (+50.00 −20.00) = closing 130.00
