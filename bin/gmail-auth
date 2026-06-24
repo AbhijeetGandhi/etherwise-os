@@ -1,32 +1,72 @@
 #!/usr/bin/env python3
 """Gmail OAuth consent — GATED, run WITH Abhijeet (browser step).
 
-This mints .credentials/gmail-api.json for email_poll.py (read-only Gmail).
-It is the one human-in-the-loop step Phase 4 cannot automate. Prereqs Abhijeet
-provides once:
-  1. A Google Cloud project with the Gmail API enabled.
-  2. An OAuth client (type: Desktop app) -> client_id + client_secret.
-  3. Scope: https://www.googleapis.com/auth/gmail.readonly (READ-ONLY).
-Put client_id/secret in .credentials/gmail-oauth-client.json:
-  {"client_id": "...", "client_secret": "..."}
+Mints .credentials/gmail-api.json for email_poll.py (read-only Gmail). Uses the
+loopback-redirect flow: Google retired the OOB copy/paste flow and blocks it for
+OAuth clients created after Feb 2022. Desktop-type clients are allowed a
+127.0.0.1 loopback redirect on any port without pre-registering it, so this
+binds a one-shot local server, opens the consent URL, and captures the redirect
+automatically — no code pasting.
 
-Then run this; it prints a consent URL, you approve in the browser, paste back
-the code, and it writes the token. stdlib only; no send scope is ever requested.
+Prereqs Abhijeet provides once:
+  1. Google Cloud project with the Gmail API enabled.
+  2. OAuth client (type: Desktop app) -> client_id + client_secret in
+     .credentials/gmail-oauth-client.json: {"client_id":"...","client_secret":"..."}
+  3. Scope: https://www.googleapis.com/auth/gmail.readonly (READ-ONLY).
+stdlib only; no send/modify scope is ever requested.
 """
 import json
+import socket
 import sys
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config  # noqa: E402
 
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
-REDIRECT = "urn:ietf:wg:oauth:2.0:oob"   # manual copy/paste (no local server)
 CLIENT_FILE = config.CREDENTIALS_DIR / "gmail-oauth-client.json"
 TOKEN_FILE = config.CREDENTIALS_DIR / "gmail-api.json"
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def exchange_code(cfg: dict, code: str, redirect: str, _open=None) -> dict:
+    """Trade the auth code for tokens. Raises if no refresh_token (re-consent
+    needed). Network call injectable for tests."""
+    _open = _open or urllib.request.urlopen
+    data = urllib.parse.urlencode({
+        "code": code, "client_id": cfg["client_id"],
+        "client_secret": cfg["client_secret"], "redirect_uri": redirect,
+        "grant_type": "authorization_code"}).encode()
+    req = urllib.request.Request("https://oauth2.googleapis.com/token",
+                                 data=data, method="POST")
+    with _open(req, timeout=30) as resp:
+        tok = json.loads(resp.read().decode())
+    if "refresh_token" not in tok:
+        raise RuntimeError(
+            "no refresh_token returned — revoke this app at "
+            "myaccount.google.com/permissions and re-run "
+            "(prompt=consent is required to mint one).")
+    return tok
+
+
+def build_token(cfg: dict, tok: dict, now: datetime) -> dict:
+    """The token record persisted for email_poll (read-only scope only)."""
+    return {"client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
+            "refresh_token": tok["refresh_token"],
+            "access_token": tok["access_token"],
+            "expiry": (now + timedelta(seconds=tok.get("expires_in", 3000) - 60)
+                       ).isoformat()}
 
 
 def main():
@@ -34,33 +74,51 @@ def main():
         sys.exit(f"missing {CLIENT_FILE} — add client_id/client_secret first "
                  "(see this script's docstring).")
     cfg = json.loads(CLIENT_FILE.read_text())
+
+    port = _free_port()
+    redirect = f"http://127.0.0.1:{port}/"
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + \
         urllib.parse.urlencode({
-            "client_id": cfg["client_id"], "redirect_uri": REDIRECT,
+            "client_id": cfg["client_id"], "redirect_uri": redirect,
             "response_type": "code", "scope": SCOPE,
             "access_type": "offline", "prompt": "consent"})
-    print("\n1) Open this URL and approve (read-only Gmail):\n")
+
+    captured = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if "code" in qs or "error" in qs:
+                captured["code"] = (qs.get("code") or [None])[0]
+                captured["error"] = (qs.get("error") or [None])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<h2>Etherwise: Gmail connected. "
+                             b"You can close this tab.</h2>")
+
+        def log_message(self, *a):  # silence the default request logging
+            pass
+
+    httpd = HTTPServer(("127.0.0.1", port), Handler)
+    print("\n1) Open this URL in your browser and approve (read-only Gmail):\n")
     print(auth_url)
-    code = input("\n2) Paste the code here: ").strip()
+    print("\n   waiting for the approval to come back...")
+    while "code" not in captured and "error" not in captured:
+        httpd.handle_request()
+    httpd.server_close()
 
-    data = urllib.parse.urlencode({
-        "code": code, "client_id": cfg["client_id"],
-        "client_secret": cfg["client_secret"], "redirect_uri": REDIRECT,
-        "grant_type": "authorization_code"}).encode()
-    req = urllib.request.Request("https://oauth2.googleapis.com/token",
-                                 data=data, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        tok = json.loads(resp.read().decode())
+    if captured.get("error") or not captured.get("code"):
+        sys.exit(f"\nconsent failed: {captured.get('error') or 'no code returned'}")
 
-    out = {"client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
-           "refresh_token": tok["refresh_token"],
-           "access_token": tok["access_token"],
-           "expiry": (datetime.now(timezone.utc)
-                      + timedelta(seconds=tok.get("expires_in", 3000) - 60)
-                      ).isoformat()}
+    try:
+        tok = exchange_code(cfg, captured["code"], redirect)
+    except RuntimeError as e:
+        sys.exit(f"\n{e}")
+    out = build_token(cfg, tok, datetime.now(timezone.utc))
     TOKEN_FILE.write_text(json.dumps(out))
     TOKEN_FILE.chmod(0o600)
-    print(f"\nwrote {TOKEN_FILE} (600). email_poll.py can now read client mail.")
+    print(f"\n✓ wrote {TOKEN_FILE} (600). email_poll.py can now read client mail.")
 
 
 if __name__ == "__main__":
