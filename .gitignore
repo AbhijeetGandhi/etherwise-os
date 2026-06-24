@@ -30,3 +30,6 @@ __pycache__/
 # Editor
 .vscode/
 .idea/
+
+# Finance statement drops — personal/financial data, NEVER committed
+finance-inbox/
