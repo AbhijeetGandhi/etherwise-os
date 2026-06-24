@@ -48,8 +48,11 @@ class DoctorResult:
 # ── invariants ────────────────────────────────────────────────────────────────
 
 def _check_dedup(conn) -> Check:
-    """#5: canonical_key UNIQUE among the rows that have one; rows_seen accounts
-    for everything (live + quarantined), nothing silently vanishing."""
+    """#5: canonical_key UNIQUE *and PRESENT*. A NULL/empty canonical_key is now
+    a FAILURE (not just a duplicate non-null key): such a row is invisible to
+    dedup and can silently double-count an already-keyed twin across namespaces
+    — exactly the 2026-06-25 recovery double-count. Strengthened so the doctor
+    catches that class."""
     dups = [dict(r) for r in conn.execute(
         "SELECT canonical_key, COUNT(*) n FROM transactions"
         " WHERE canonical_key IS NOT NULL AND canonical_key!=''"
@@ -59,6 +62,14 @@ def _check_dedup(conn) -> Check:
                      f"{len(dups)} duplicated canonical_key(s)",
                      [{"canonical_key": d["canonical_key"], "count": d["n"]}
                       for d in dups])
+    nullkey = [dict(r) for r in conn.execute(
+        "SELECT record_id FROM transactions WHERE canonical_key IS NULL"
+        " OR canonical_key=''")]
+    if nullkey:
+        return Check("#5 dedup integrity", "RED",
+                     f"{len(nullkey)} transactions with NULL canonical_key"
+                     " (invisible to dedup — can double-count a keyed twin)",
+                     [{"record_id": r["record_id"]} for r in nullkey[:50]])
     live = conn.execute("SELECT COUNT(*) n FROM transactions").fetchone()["n"]
     quar = conn.execute("SELECT COUNT(*) n FROM quarantine WHERE source IN"
                         " ('bank','wise','card','upwork','Bank','Direct',"

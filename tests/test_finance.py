@@ -123,12 +123,21 @@ class DoctorCase(unittest.TestCase):
     def test_dup_canonical_key_red_5(self):
         with db.connect(self.db_path) as conn:
             self._txn(conn, "t1", 100, "USD", "dup")
-            # bypass the UNIQUE index is impossible; simulate via direct dup check
-            # by inserting with NULL then forcing — instead assert the index holds
-        # the UNIQUE index prevents dups; the check is GREEN when keys are unique
+        # the UNIQUE index prevents dups; #5 is GREEN when keys are unique+present
         res = doctor.run(self.db_path)
         self.assertNotIn("#5 dedup integrity",
                          [c.invariant for c in res.reds()])
+
+    def test_null_canonical_key_red_5(self):
+        # the 2026-06-25 class: a NULL canonical_key is invisible to dedup and can
+        # double-count a keyed twin -> strengthened #5 must FAIL on it
+        with db.connect(self.db_path) as conn:
+            self._txn(conn, "t1", 100, "USD", None)      # NULL key
+        res = doctor.run(self.db_path)
+        self.assertFalse(res.green)
+        c5 = [c for c in res.checks if c.invariant == "#5 dedup integrity"][0]
+        self.assertEqual(c5.status, "RED")
+        self.assertIn("NULL canonical_key", c5.detail)
 
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:
