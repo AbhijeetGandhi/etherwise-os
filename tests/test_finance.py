@@ -184,5 +184,64 @@ class TestMigrationInvariance(DoctorCase):
         self.assertEqual(after, dec_sum)
 
 
+# ── Phase 1: Upwork-CSV importer (v2 parser as spec, integer-minor) ──────────
+class TestUpworkCsv(unittest.TestCase):
+    HEADER = ("Date,Transaction ID,Transaction type,Transaction summary,"
+              "Transaction summary details,Description 1,Description 2,"
+              "Description 3,Agency team,Freelancer,Client team,Account name,PO,"
+              "Ref ID,Amount $,Amount in local currency,Currency,"
+              "Current balance $,Payment method")
+
+    def _csv(self, rows):
+        from modules.finance.importers import upwork_csv  # noqa
+        return self.HEADER + "\n" + "\n".join(rows)
+
+    def test_parse_integer_minor_and_keys(self):
+        from modules.finance.importers import upwork_csv
+        rows = upwork_csv.parse(self._csv([
+            '"May 30, 2026",923117156,Connects,300 Connects,,300 Connects fee,,,'
+            ',,,Abhijeet Gandhi,,923117156,-45.00,,,343.32,']))
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["amount_minor"], -4500)       # integer cents, signed
+        self.assertEqual(r["balance_minor"], 34332)
+        self.assertEqual(r["canonical_key"], "upwork:923117156")
+        self.assertEqual(r["date"], "2026-05-30")
+        self.assertEqual(r["currency"], "USD")
+
+    def test_blank_amount_is_none_not_fabricated(self):
+        from modules.finance.importers import upwork_csv
+        rows = upwork_csv.parse(self._csv([
+            '"Jun 1, 2026",1,Subscription,Subscription Renewal,,,,,,,,'
+            'Abhijeet Gandhi,,930000001,,,,100.00,']))
+        self.assertIsNone(rows[0]["amount_minor"])       # never 0/guessed
+
+    def test_running_balance_reconciles(self):
+        from modules.finance.importers import upwork_csv
+        # chronological: +100.00 -> bal 100.00 ; -45.00 -> bal 55.00
+        rows = upwork_csv.parse(self._csv([
+            '"Jun 1, 2026",1,Hourly,wk,,,,,,,,A,,111,100.00,,,100.00,',
+            '"Jun 2, 2026",2,Connects,300,,,,,,,,A,,222,-45.00,,,55.00,']))
+        rec = upwork_csv.reconcile_running_balance(rows)
+        self.assertTrue(rec["ok"], rec)
+
+    def test_running_balance_break_caught(self):
+        from modules.finance.importers import upwork_csv
+        rows = upwork_csv.parse(self._csv([
+            '"Jun 1, 2026",1,Hourly,wk,,,,,,,,A,,111,100.00,,,100.00,',
+            '"Jun 2, 2026",2,Connects,300,,,,,,,,A,,222,-45.00,,,99.99,']))  # wrong
+        rec = upwork_csv.reconcile_running_balance(rows)
+        self.assertFalse(rec["ok"])
+        self.assertEqual(rec["breaks"][0]["delta_minor"], 5500 - 9999)
+
+    def test_blank_amount_quarantines_and_breaks_chain(self):
+        from modules.finance.importers import upwork_csv
+        rows = upwork_csv.parse(self._csv([
+            '"Jun 1, 2026",1,Subscription,x,,,,,,,,A,,111,,,,100.00,']))
+        rec = upwork_csv.reconcile_running_balance(rows)
+        self.assertFalse(rec["ok"])
+        self.assertEqual(rec["quarantine"][0]["ref_id"], "111")
+
+
 if __name__ == "__main__":
     unittest.main()
