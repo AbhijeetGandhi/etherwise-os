@@ -46,15 +46,16 @@ def _csv_map() -> dict:
     return out, recon
 
 
-def run(commit: bool) -> dict:
+def run(commit: bool, flip_remaining: bool = False) -> dict:
     cmap, recon = _csv_map()
     if any(not r["ok"] for r in recon):
         return {"abort": "a CSV did not reconcile — refusing to proceed", "recon": recon}
-    quarantined, keyed, corrected, new_net = [], [], [], 0
+    quarantined, keyed, corrected, flipped, new_net = [], [], [], [], 0
     with db.connect(config.DB_PATH) as conn:
         # 1+2: dedup the recovered stubs
         stubs = [dict(r) for r in conn.execute(
-            "SELECT record_id, amount_minor FROM transactions WHERE source_file=?",
+            "SELECT record_id, amount_minor FROM transactions WHERE source_file=?"
+            " AND (canonical_key IS NULL OR canonical_key='')",  # skip already-keyed
             (STUB_SOURCE,))]
         for s in stubs:
             ref = s["record_id"].split(":")[-1]
@@ -98,18 +99,39 @@ def run(commit: bool) -> dict:
                                  " WHERE record_id=?",
                                  (src["amount_minor"], src["amount_minor"],
                                   c["record_id"]))
+        # (b) FALLBACK — opt-in, for date slices Upwork won't export. A Connect
+        # Purchase is categorically a fee (debit); flip any still-+ row to
+        # negative on that invariant (logged as invariant-corrected, NOT a guess).
+        # Only those NOT found in any CSV (genuinely un-sourceable) are flipped.
+        if flip_remaining:
+            stuck = [dict(r) for r in conn.execute(
+                "SELECT record_id, canonical_key, amount_minor FROM transactions"
+                " WHERE type='Connect Purchase' AND amount_minor > 0")]
+            for s in stuck:
+                if s["canonical_key"].split(":")[-1] in cmap:
+                    continue                     # in a CSV -> handled above
+                flipped.append({"record_id": s["record_id"],
+                                "was": s["amount_minor"], "now": -s["amount_minor"]})
+                if commit:
+                    conn.execute("UPDATE transactions SET amount_minor=?,"
+                                 " amount_base_minor=?, updated_at=datetime('now')"
+                                 " WHERE record_id=?",
+                                 (-s["amount_minor"], -s["amount_minor"],
+                                  s["record_id"]))
     return {"mode": "COMMIT" if commit else "DRY-RUN", "recon": recon,
+            "flipped_invariant": len(flipped),
             "quarantined": len(quarantined), "keyed_new": len(keyed),
             "sign_corrected": len(corrected),
             "new_17_net_minor": new_net,
             "new_17_net": str(money.from_minor(new_net)),
             "correction_swing": str(money.from_minor(
                 sum(c["now"] - c["was"] for c in corrected))),
-            "_quar": quarantined, "_corr": corrected}
+            "_quar": quarantined, "_corr": corrected, "_flip": flipped}
 
 
 def main() -> int:
-    res = run("--commit" in sys.argv)
+    res = run("--commit" in sys.argv,
+              flip_remaining="--flip-remaining-connects" in sys.argv)
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("# Upwork recovery + dedup + sign correction\n\n```\n"
                       + json.dumps({k: v for k, v in res.items()
