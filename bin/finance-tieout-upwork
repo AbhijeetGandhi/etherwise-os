@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Phase 2 — Upwork ledger <-> statement tie-out (#3), and the withdrawal-sign
+forcing it implies. REPRODUCIBLE + idempotent. Authoritative source = the staged
+full-history Upwork CSV exports (Personal + Agency) in finance-inbox/upwork/.
+
+Principle (Abhijeet 2026-06-25): the STATEMENT is the authority for a
+transaction's sign, NOT a hard-coded rule. The CSV running balance already
+reconciles (0 breaks); so the DB's authoritative state is "every Upwork row's
+amount_minor == its CSV amount_minor". Where they differ, the DB is wrong and is
+corrected TO the statement.
+
+Phase-2 step 1 = the WITHDRAWAL class only: the Upwork sync recorded the 65
+APPayment disbursements as + (a transfer-convention sign error); the statement
+has them - (money leaving the Upwork balance). Forcing them to the CSV sign
+makes the disbursement legs tie out. Withdrawals sit in a transfers bucket
+EXCLUDED from P&L (built next); a one-legged transfer goes RED there.
+
+This script does NOT touch the cross-currency INR leg (needs the real IDFC
+statement) — that both-legs tie-out comes when the IDFC export is dropped.
+
+Reports the full Upwork tie-out status so nothing is hidden: refs where DB still
+!= CSV after the flip, and CSV refs missing from the DB (the held transfer legs).
+
+Usage: PYTHONPATH=. python3 bin/finance-tieout-upwork [--apply]   (default dry-run)
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money  # noqa: E402
+from modules.finance.importers import upwork_csv  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "upwork"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-tieout-upwork.md"
+
+
+def _csv_map():
+    by_ref, recon = {}, []
+    for f in sorted(INBOX.glob("*fullhistory*.csv")):
+        rows = upwork_csv.parse(f.read_text())
+        r = upwork_csv.reconcile_running_balance(rows)
+        recon.append({"file": f.name, "ok": r["ok"], "breaks": len(r["breaks"]),
+                      "quarantine": len(r["quarantine"])})
+        for row in rows:
+            if row["amount_minor"] is not None:
+                by_ref[row["ref_id"]] = row
+    return by_ref, recon
+
+
+def run(apply: bool) -> dict:
+    by_ref, recon = _csv_map()
+    if not recon:
+        return {"abort": "no *fullhistory*.csv in finance-inbox/upwork/"}
+    if any(not r["ok"] for r in recon):
+        return {"abort": "a CSV did not reconcile — refusing to proceed", "recon": recon}
+
+    flip, swing = [], 0
+    with db.connect(config.DB_PATH) as conn:
+        rows = {r["canonical_key"].split(":", 1)[1]: dict(r) for r in conn.execute(
+            "SELECT canonical_key, amount_minor, upwork_type FROM transactions"
+            " WHERE canonical_key LIKE 'upwork:%'")}
+        # WITHDRAWAL class only (APPayment): force DB sign to the statement.
+        for ref, e in rows.items():
+            src = by_ref.get(ref)
+            if (e["upwork_type"] == "APPayment" and src
+                    and e["amount_minor"] is not None
+                    and e["amount_minor"] != src["amount_minor"]):
+                flip.append({"ref": ref, "was": e["amount_minor"],
+                             "now": src["amount_minor"]})
+                swing += src["amount_minor"] - e["amount_minor"]
+                if apply:
+                    conn.execute(
+                        "UPDATE transactions SET amount_minor=?, amount_base_minor=?,"
+                        " updated_at=datetime('now') WHERE canonical_key=?",
+                        (src["amount_minor"], src["amount_minor"], f"upwork:{ref}"))
+
+        # Full Upwork tie-out status (#3), simulating the post-flip DB state.
+        flip_refs = {f["ref"] for f in flip}
+        after = {ref: (by_ref[ref]["amount_minor"] if ref in flip_refs
+                       else e["amount_minor"]) for ref, e in rows.items()}
+        mismatch = [{"ref": ref, "db": after[ref],
+                     "csv": by_ref[ref]["amount_minor"]}
+                    for ref in after if ref in by_ref
+                    and after[ref] is not None
+                    and after[ref] != by_ref[ref]["amount_minor"]]
+        missing_from_db = [r for r in by_ref if r not in rows]
+
+    return {
+        "mode": "APPLY" if apply else "DRY-RUN",
+        "recon": recon,
+        "withdrawals_to_flip": len(flip),
+        "swing_usd": str(money.from_minor(swing)),
+        "post_flip_tieout_mismatches": len(mismatch),
+        "post_flip_csv_refs_missing_from_db": len(missing_from_db),
+        "_flip_sample": flip[:6],
+        "_mismatch": mismatch[:20],
+        "_missing": missing_from_db[:20],
+    }
+
+
+def main() -> int:
+    res = run("--apply" in sys.argv)
+    public = {k: v for k, v in res.items() if not k.startswith("_")}
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    body = "# Upwork statement tie-out (#3) + withdrawal-sign flip\n\n```\n"
+    body += json.dumps(public, indent=1) + "\n```\n"
+    for title, key in [("Flip sample (ref, was, now — minor units)", "_flip_sample"),
+                       ("Remaining DB!=CSV after flip (held items)", "_mismatch"),
+                       ("CSV refs missing from DB (held transfer legs)", "_missing")]:
+        if res.get(key):
+            body += f"\n## {title}\n\n```\n" + json.dumps(res[key], indent=1) + "\n```\n"
+    REPORT.write_text(body)
+    print(json.dumps(public, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
