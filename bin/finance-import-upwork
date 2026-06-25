@@ -91,6 +91,14 @@ def _insert(conn, row) -> None:
 # sign consistently — so we never create a mixed-sign ledger (Abhijeet, 2026-06-25).
 TRANSFER_RAW = {"Withdrawal", "Withdrawal Fee"}
 
+# Value-mismatch refs Abhijeet explicitly approved to correct from the
+# authoritative CSV (2026-06-26). 832312551: the API stored -$2.20 under the
+# Contract-earning Ref; the CSV says it is the +$22.00 earning (the -$2.20
+# service fee is correctly its sibling 832312552). Re-derived fully from CSV.
+# (831998237 is a withdrawal mis-pairing -> NOT here; folded into the Phase-2
+# transfer rebuild with the rest of the held withdrawal class.)
+APPROVED_VALUE_FIXES = {"832312551"}
+
 
 def run(commit: bool) -> dict:
     by_ref, recon = _load()
@@ -100,9 +108,9 @@ def run(commit: bool) -> dict:
         return {"abort": "a CSV did not reconcile — refusing to proceed", "recon": recon}
 
     new_inserted, new_transfer_held = [], []
-    gst_corrected, withdrawals_held, value_diffs = [], [], []
+    gst_corrected, withdrawals_held, value_diffs, value_fixed = [], [], [], []
     new_by_type, new_by_year = Counter(), Counter()
-    new_net = gst_swing = 0
+    new_net = gst_swing = value_fix_swing = 0
     with db.connect(config.DB_PATH) as conn:
         existing = {r["canonical_key"].split(":", 1)[1]: dict(r)
                     for r in conn.execute(
@@ -130,6 +138,17 @@ def run(commit: bool) -> dict:
                 elif e["upwork_type"] == "APPayment":   # withdrawal -> Phase-2 #3 tie-out
                     withdrawals_held.append({"ref": ref, "db": e["amount_minor"],
                                              "csv": row["amount_minor"]})
+                elif ref in APPROVED_VALUE_FIXES:   # approved correct-from-CSV
+                    value_fixed.append({"ref": ref, "was": e["amount_minor"],
+                                        "now": row["amount_minor"], "type": row["type"]})
+                    value_fix_swing += row["amount_minor"] - e["amount_minor"]
+                    if commit:
+                        conn.execute(
+                            "UPDATE transactions SET amount_minor=?,"
+                            " amount_base_minor=?, type=?, description=?,"
+                            " updated_at=datetime('now') WHERE record_id=?",
+                            (row["amount_minor"], row["amount_minor"], row["type"],
+                             row["description"], ref))
                 else:                            # genuine value mismatch -> Abhijeet decides
                     value_diffs.append({"ref": ref, "db_type": e["type"],
                                         "db_minor": e["amount_minor"],
@@ -163,6 +182,8 @@ def run(commit: bool) -> dict:
         "new_transfer_HELD_for_phase2": len(new_transfer_held),
         "gst_charges_corrected": len(gst_corrected),
         "gst_swing_usd": str(money.from_minor(gst_swing)),
+        "value_fixed_approved": len(value_fixed),
+        "value_fix_swing_usd": str(money.from_minor(value_fix_swing)),
         "withdrawals_HELD_for_phase2": len(withdrawals_held),
         "value_diffs_for_abhijeet": len(value_diffs),
         "db_only_not_in_csv": db_only,
