@@ -324,5 +324,196 @@ class TestWiseCsv(unittest.TestCase):
         self.assertTrue(wise_csv.reconcile_running_balance(rows)["ok"])
 
 
+# ── Phase 1b: IDFC bank xlsx importer (import-all + classify; nothing dropped) ─
+def _make_idfc_xlsx(grid):
+    """Build a minimal IDFC-shaped xlsx (only the two members the reader opens:
+    sharedStrings.xml + worksheets/sheet1.xml). grid is a list of rows; each row
+    a list of cell values. A numeric-looking str -> numeric cell; other str ->
+    shared string; None -> omitted cell (tests the position-aware reader)."""
+    import io
+    import zipfile
+
+    shared, shared_idx = [], {}
+
+    def _col(n):
+        s = ""
+        n += 1
+        while n:
+            n, rem = divmod(n - 1, 26)
+            s = chr(65 + rem) + s
+        return s
+
+    sheet_rows = []
+    for ri, row in enumerate(grid, 1):
+        cells = []
+        for ci, val in enumerate(row):
+            if val is None:
+                continue
+            ref = f"{_col(ci)}{ri}"
+            if re.fullmatch(r"-?\d+(\.\d+)?", str(val)):
+                cells.append(f'<c r="{ref}"><v>{val}</v></c>')
+            else:
+                if val not in shared_idx:
+                    shared_idx[val] = len(shared)
+                    shared.append(val)
+                cells.append(f'<c r="{ref}" t="s"><v>{shared_idx[val]}</v></c>')
+        sheet_rows.append(f'<row r="{ri}">' + "".join(cells) + "</row>")
+
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    sheet_xml = (f'<?xml version="1.0"?><worksheet {ns}><sheetData>'
+                 + "".join(sheet_rows) + "</sheetData></worksheet>")
+    ss_xml = (f'<?xml version="1.0"?><sst {ns} count="{len(shared)}">'
+              + "".join(f"<si><t>{s}</t></si>" for s in shared) + "</sst>")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/sharedStrings.xml", ss_xml)
+        z.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return buf.getvalue()
+
+
+class TestBankXlsx(unittest.TestCase):
+    HDR = ["Transaction Date", "Value Date", "Particulars", "Cheque No",
+           "Debit", "Credit", "Balance"]
+
+    # oldest-first chain; opening 100000 implied (first bal - first amount)
+    TXNS = [
+        ["02-May-2026", "02-May-2026", "NEFT received from CLIENT", "", "", "50000.00", "150000.00"],
+        ["03-May-2026", "03-May-2026", "Auto sweep in from 60600000", "", "", "30000.00", "180000.00"],
+        ["03-May-2026", "03-May-2026", "Sweepout FD 999 booked", "", "30000.00", "", "150000.00"],
+        ["05-May-2026", "05-May-2026", "WISE PAYMENTS INDIA PVT", "", "", "80000.00", "230000.00"],
+        ["06-May-2026", "06-May-2026", "NEFT PAYMENT ESCROW UPWORK", "", "", "40000.00", "270000.00"],
+        ["10-May-2026", "10-May-2026", "Ecom/123/RazorpaySo/456/", "", "15000.00", "", "255000.00"],
+        ["12-May-2026", "12-May-2026", "NEFT Salary may EMP1", "", "25000.00", "", "230000.00"],
+        ["15-May-2026", "15-May-2026", "ATM CASH WITHDRAWAL", "", "5000.00", "", "225000.00"],
+        ["18-May-2026", "18-May-2026", "IMPS to ABHIJEET ASHOK GANDHI", "", "12000.00", "", "213000.00"],
+        ["20-May-2026", "20-May-2026", "Google Workspace subscription", "", "8000.00", "", "205000.00"],
+    ]
+
+    def _xlsx(self):
+        grid = [["ACCOUNT NUMBER", "60606200234"],
+                ["CUSTOMER NAME", "ETHERWISE"],
+                ["STATEMENT PERIOD", "01-May-2026 TO 31-May-2026"]]
+        grid += [[]] * 10
+        grid.append(self.HDR)
+        grid += self.TXNS
+        grid.append(["Total", "95000.00", "200000.00"])
+        return _make_idfc_xlsx(grid)
+
+    def test_imports_all_rows_none_dropped(self):
+        from modules.finance.importers import bank_xlsx
+        out = bank_xlsx.parse(self._xlsx())
+        self.assertEqual(len(out["rows"]), len(self.TXNS))   # nothing dropped
+        self.assertEqual(out["meta"]["account_number"], "60606200234")
+        self.assertEqual(out["meta"]["period_start"], "2026-05-01")
+
+    def test_classification_buckets(self):
+        from modules.finance.importers import bank_xlsx
+        rows = bank_xlsx.parse(self._xlsx())["rows"]
+        cat = {r["description"]: r["category"] for r in rows}
+        self.assertEqual(cat["NEFT received from CLIENT"], "income")
+        self.assertEqual(cat["Auto sweep in from 60600000"], "internal_sweep")
+        self.assertEqual(cat["Sweepout FD 999 booked"], "internal_sweep")
+        self.assertEqual(cat["WISE PAYMENTS INDIA PVT"], "transfer_in")
+        self.assertEqual(cat["NEFT PAYMENT ESCROW UPWORK"], "transfer_in")
+        self.assertEqual(cat["Ecom/123/RazorpaySo/456/"], "cc_settlement")
+        self.assertEqual(cat["NEFT Salary may EMP1"], "salary")
+        self.assertEqual(cat["ATM CASH WITHDRAWAL"], "owner_draw")
+        self.assertEqual(cat["IMPS to ABHIJEET ASHOK GANDHI"], "owner_draw")
+        self.assertEqual(cat["Google Workspace subscription"], "expense")
+
+    def test_signed_integer_paise_and_balances(self):
+        from modules.finance.importers import bank_xlsx
+        out = bank_xlsx.parse(self._xlsx())
+        rows = {r["description"]: r for r in out["rows"]}
+        self.assertEqual(rows["NEFT received from CLIENT"]["amount_minor"], 5000000)
+        self.assertEqual(rows["Google Workspace subscription"]["amount_minor"], -800000)
+        self.assertEqual(rows["NEFT received from CLIENT"]["currency"], "INR")
+        self.assertEqual(out["meta"]["opening_balance_minor"], 10000000)
+        self.assertEqual(out["meta"]["closing_balance_minor"], 20500000)
+
+    def test_running_balance_reconciles(self):
+        from modules.finance.importers import bank_xlsx
+        rows = bank_xlsx.parse(self._xlsx())["rows"]
+        self.assertTrue(bank_xlsx.reconcile_running_balance(rows)["ok"])
+
+    def test_tampered_balance_breaks(self):
+        from modules.finance.importers import bank_xlsx
+        txns = [r[:] for r in self.TXNS]
+        txns[4][6] = "271000.00"        # corrupt one Balance
+        grid = [["ACCOUNT NUMBER", "60606200234"]] + [[]] * 12 + [self.HDR] + txns
+        rows = bank_xlsx.parse(_make_idfc_xlsx(grid))["rows"]
+        self.assertFalse(bank_xlsx.reconcile_running_balance(rows)["ok"])
+
+    def test_canonical_key_matches_legacy_hash(self):
+        import hashlib
+        from modules.finance.importers import bank_xlsx
+        rows = {r["description"]: r for r in bank_xlsx.parse(self._xlsx())["rows"]}
+        # legacy v2 format: md5(date|signed-amount-2dp|DESC.upper())[:16]
+        norm = "2026-05-02|50000.00|NEFT RECEIVED FROM CLIENT"
+        expect = "bank:" + hashlib.md5(norm.encode()).hexdigest()[:16]
+        self.assertEqual(rows["NEFT received from CLIENT"]["canonical_key"], expect)
+
+    def test_unparseable_amount_quarantines_not_drops(self):
+        from modules.finance.importers import bank_xlsx
+        grid = [["ACCOUNT NUMBER", "60606200234"]] + [[]] * 12 + [self.HDR]
+        grid.append(["07-May-2026", "07-May-2026", "garbled row", "", "", "NaN-amt", "9999.00"])
+        out = bank_xlsx.parse(_make_idfc_xlsx(grid))
+        self.assertEqual(len(out["quarantine"]), 1)          # surfaced
+        self.assertEqual(len(out["rows"]), 1)                # present, not dropped
+        self.assertIsNone(out["rows"][0]["amount_minor"])    # never fabricated
+
+    def test_position_aware_reader_no_column_shift(self):
+        # a debit-only row that OMITS the Credit cell (col F) must not slide
+        # Balance (col G) left into the Credit slot.
+        from modules.finance.importers import bank_xlsx
+        grid = [["ACCOUNT NUMBER", "60606200234"]] + [[]] * 12 + [self.HDR]
+        grid.append(["09-May-2026", "09-May-2026", "Rent debit", "", "11000.00", None, "44000.00"])
+        rows = bank_xlsx.parse(_make_idfc_xlsx(grid))["rows"]
+        self.assertEqual(rows[0]["amount_minor"], -1100000)  # debit, not +balance
+        self.assertEqual(rows[0]["balance_minor"], 4400000)
+
+
+# ── Phase 1b: FX pinning (§3.10) — injectable fetch, Decimal only ────────────
+class TestFxPin(unittest.TestCase):
+    def _fetch(self, date, base, quote):
+        return (Decimal("0.012"), date)             # 1 INR = 0.012 USD
+
+    def test_inr_pins_to_usd_cents(self):
+        from modules.finance import fx
+        rows = [{"currency": "INR", "amount_minor": 5000000,     # ₹50,000 paise
+                 "value_date": "2026-05-02", "date": "2026-05-02"}]
+        fx.pin_base(rows, fetch=self._fetch)
+        self.assertEqual(rows[0]["amount_base_minor"], 60000)    # $600.00 cents
+        self.assertEqual(rows[0]["fx_rate"], "0.012")
+        self.assertEqual(rows[0]["fx_date"], "2026-05-02")
+
+    def test_usd_row_rate_one_no_fetch(self):
+        from modules.finance import fx
+        called = []
+        rows = [{"currency": "USD", "amount_minor": 161500, "date": "2026-05-30"}]
+        fx.pin_base(rows, fetch=lambda *a: called.append(a) or (Decimal("1"), a[0]))
+        self.assertEqual(rows[0]["amount_base_minor"], 161500)
+        self.assertEqual(rows[0]["fx_rate"], "1")
+        self.assertEqual(called, [])                  # base currency never fetched
+
+    def test_realized_rate_respected_not_refetched(self):
+        from modules.finance import fx
+        called = []
+        # a Wise transfer leg already carrying its realized rate
+        rows = [{"currency": "USD", "amount_minor": -158223, "fx_rate": "94.965",
+                 "date": "2026-05-30"}]
+        fx.pin_base(rows, base_currency="ZZZ",
+                    fetch=lambda *a: called.append(a) or (Decimal("1"), a[0]))
+        self.assertEqual(called, [])                  # realized rate not refetched
+        self.assertEqual(rows[0]["fx_rate"], "94.965")
+
+    def test_quarantined_row_skipped(self):
+        from modules.finance import fx
+        rows = [{"currency": "INR", "amount_minor": None, "date": "2026-05-02"}]
+        res = fx.pin_base(rows, fetch=self._fetch)
+        self.assertEqual(res["skipped"], 1)
+        self.assertNotIn("amount_base_minor", rows[0])
+
+
 if __name__ == "__main__":
     unittest.main()
