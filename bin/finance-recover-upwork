@@ -83,10 +83,14 @@ def run(commit: bool, flip_remaining: bool = False) -> dict:
                     conn.execute("UPDATE transactions SET canonical_key=?,"
                                  " updated_at=datetime('now') WHERE record_id=?",
                                  (f"upwork:{ref}", s["record_id"]))
-        # 3: sign/value correction of canonical rows vs the authoritative CSV
+        # 3: sign correction SCOPED to the proven bug class — 'Connect Purchase'
+        # (doctor #9). A blanket value-match over the full history wrongly
+        # "corrects" withdrawals (APPayment) and subscriptions, whose canonical
+        # sign is a §3.10 transfer/convention question, NOT this bug. Those are
+        # surfaced for a separate decision, never auto-flipped here.
         canon = [dict(r) for r in conn.execute(
             "SELECT record_id, canonical_key, amount_minor, type FROM transactions"
-            " WHERE canonical_key LIKE 'upwork:%'")]
+            " WHERE canonical_key LIKE 'upwork:%' AND type='Connect Purchase'")]
         for c in canon:
             ref = c["canonical_key"].split(":")[-1]
             src = cmap.get(ref)

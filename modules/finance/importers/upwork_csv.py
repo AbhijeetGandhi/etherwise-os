@@ -83,26 +83,34 @@ def parse(text: str) -> List[dict]:
 
 
 def reconcile_running_balance(rows: List[dict]) -> dict:
-    """Statement integrity for an Upwork export (§3.3 #1/#3): in chronological
-    order, each row's running balance must equal the previous balance plus the
-    row's amount, exact to the cent. Returns {ok, breaks:[...], quarantine:[...]}.
-    Rows with a blank amount quarantine and force a break (not silently passed).
+    """Statement integrity for an Upwork export (§3.3 #1/#3) in the CSV's NATIVE
+    order — that is Upwork's authoritative sequence, so same-day transactions tie
+    out exactly (re-sorting by date breaks settlement triples that share a date).
+    `Current balance $` is the balance AFTER each row. Upwork exports newest-
+    first; consecutive rows (i newer, i+1 older) satisfy
+    balance[i] − amount[i] == balance[i+1]. Oldest-first exports are detected and
+    handled symmetrically. A blank amount quarantines + breaks the chain.
     """
-    chrono = sorted(rows, key=lambda r: (r["date"] or "", r["ref_id"]))
+    dated = [r for r in rows if r["date"]]
+    newest_first = (len(dated) < 2) or (dated[0]["date"] >= dated[-1]["date"])
     breaks, quarantine = [], []
-    prev_bal = None
-    for r in chrono:
-        if r["amount_minor"] is None:
-            quarantine.append({"ref_id": r["ref_id"], "reason": "blank Amount $"})
-            prev_bal = None                          # chain broken here
+    for i in range(len(rows) - 1):
+        cur, nxt = rows[i], rows[i + 1]
+        if cur["amount_minor"] is None:
+            quarantine.append({"ref_id": cur["ref_id"], "reason": "blank Amount $"})
             continue
-        if r["balance_minor"] is not None and prev_bal is not None:
-            expected = prev_bal + r["amount_minor"]
-            if expected != r["balance_minor"]:
-                breaks.append({"ref_id": r["ref_id"],
-                               "expected_minor": expected,
-                               "actual_minor": r["balance_minor"],
-                               "delta_minor": expected - r["balance_minor"]})
-        prev_bal = r["balance_minor"]
+        if cur["balance_minor"] is None or nxt["balance_minor"] is None:
+            continue
+        if newest_first:                 # cur newer: bal[cur] − amt[cur] == bal[nxt]
+            expected, actual = cur["balance_minor"] - cur["amount_minor"], nxt["balance_minor"]
+        else:                            # cur older: bal[cur] + amt[nxt] == bal[nxt]
+            if nxt["amount_minor"] is None:
+                continue
+            expected, actual = cur["balance_minor"] + nxt["amount_minor"], nxt["balance_minor"]
+        if expected != actual:
+            breaks.append({"ref_id": cur["ref_id"], "expected_minor": expected,
+                           "actual_minor": actual, "delta_minor": expected - actual})
+    if rows and rows[-1]["amount_minor"] is None:
+        quarantine.append({"ref_id": rows[-1]["ref_id"], "reason": "blank Amount $"})
     return {"ok": not breaks and not quarantine, "breaks": breaks,
             "quarantine": quarantine, "rows": len(rows)}

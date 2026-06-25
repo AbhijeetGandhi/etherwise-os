@@ -254,6 +254,20 @@ class TestUpworkCsv(unittest.TestCase):
         rec = upwork_csv.reconcile_running_balance(rows)
         self.assertTrue(rec["ok"], rec)
 
+    def test_same_day_settlement_triple_reconciles(self):
+        # newest-first (Upwork's native order): an earning + its fee + WHT on the
+        # SAME date must reconcile — re-sorting by (date,ref) used to false-break
+        from modules.finance.importers import upwork_csv
+        rows = upwork_csv.parse(self._csv([
+            # newest first: bal after each. start 0; +100 earning -> 100; -10 fee
+            # -> 90; -5 wht -> 85 ... listed newest(top)->oldest
+            '"Jun 2, 2026",3,WHT,wht,,,,,,,,A,,303,-5.00,,,85.00,',
+            '"Jun 2, 2026",2,Service Fee,fee,,,,,,,,A,,302,-10.00,,,90.00,',
+            '"Jun 2, 2026",1,Hourly,wk,,,,,,,,A,,301,100.00,,,100.00,',
+            '"Jun 1, 2026",0,Hourly,prev,,,,,,,,A,,300,0.00,,,0.00,']))
+        rec = upwork_csv.reconcile_running_balance(rows)
+        self.assertTrue(rec["ok"], rec)
+
     def test_running_balance_break_caught(self):
         from modules.finance.importers import upwork_csv
         rows = upwork_csv.parse(self._csv([
