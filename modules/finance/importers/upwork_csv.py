@@ -83,34 +83,8 @@ def parse(text: str) -> List[dict]:
 
 
 def reconcile_running_balance(rows: List[dict]) -> dict:
-    """Statement integrity for an Upwork export (§3.3 #1/#3) in the CSV's NATIVE
-    order — that is Upwork's authoritative sequence, so same-day transactions tie
-    out exactly (re-sorting by date breaks settlement triples that share a date).
-    `Current balance $` is the balance AFTER each row. Upwork exports newest-
-    first; consecutive rows (i newer, i+1 older) satisfy
-    balance[i] − amount[i] == balance[i+1]. Oldest-first exports are detected and
-    handled symmetrically. A blank amount quarantines + breaks the chain.
-    """
-    dated = [r for r in rows if r["date"]]
-    newest_first = (len(dated) < 2) or (dated[0]["date"] >= dated[-1]["date"])
-    breaks, quarantine = [], []
-    for i in range(len(rows) - 1):
-        cur, nxt = rows[i], rows[i + 1]
-        if cur["amount_minor"] is None:
-            quarantine.append({"ref_id": cur["ref_id"], "reason": "blank Amount $"})
-            continue
-        if cur["balance_minor"] is None or nxt["balance_minor"] is None:
-            continue
-        if newest_first:                 # cur newer: bal[cur] − amt[cur] == bal[nxt]
-            expected, actual = cur["balance_minor"] - cur["amount_minor"], nxt["balance_minor"]
-        else:                            # cur older: bal[cur] + amt[nxt] == bal[nxt]
-            if nxt["amount_minor"] is None:
-                continue
-            expected, actual = cur["balance_minor"] + nxt["amount_minor"], nxt["balance_minor"]
-        if expected != actual:
-            breaks.append({"ref_id": cur["ref_id"], "expected_minor": expected,
-                           "actual_minor": actual, "delta_minor": expected - actual})
-    if rows and rows[-1]["amount_minor"] is None:
-        quarantine.append({"ref_id": rows[-1]["ref_id"], "reason": "blank Amount $"})
-    return {"ok": not breaks and not quarantine, "breaks": breaks,
-            "quarantine": quarantine, "rows": len(rows)}
+    """Upwork statement integrity (§3.3 #1/#3) — delegates to the shared
+    native-order reconcile (modules.finance.importers.statement). Upwork rows
+    carry ref_id, used as the break/quarantine label key."""
+    from modules.finance.importers import statement
+    return statement.reconcile_running_balance(rows)

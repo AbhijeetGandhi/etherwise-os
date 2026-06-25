@@ -283,7 +283,45 @@ class TestUpworkCsv(unittest.TestCase):
             '"Jun 1, 2026",1,Subscription,x,,,,,,,,A,,111,,,,100.00,']))
         rec = upwork_csv.reconcile_running_balance(rows)
         self.assertFalse(rec["ok"])
-        self.assertEqual(rec["quarantine"][0]["ref_id"], "111")
+        self.assertEqual(rec["quarantine"][0]["key"], "111")
+
+
+# ── Phase 1b: Wise importer (classify income/transfer/fee, integer-minor) ────
+class TestWiseCsv(unittest.TestCase):
+    HEADER = ('"TransferWise ID",Date,"Date Time",Amount,Currency,Description,'
+              '"Payment Reference","Running Balance","Exchange From","Exchange To",'
+              '"Exchange Rate","Payer Name","Payee Name","Payee Account Number",'
+              'Merchant,"Card Last Four Digits","Card Holder Full Name",Attachment,'
+              'Note,"Total fees","Exchange To Amount","Transaction Type",'
+              '"Transaction Details Type"')
+
+    def _csv(self, rows):
+        return self.HEADER + "\n" + "\n".join(rows)
+
+    def test_classify_income_transfer_fee(self):
+        from modules.finance.importers import wise_csv
+        rows = wise_csv.parse(self._csv([
+            'TRANSFER-1,"30-05-2026",,1615.00,USD,"Received money from CMF Publishing",,1615.00,,,,,,,,,,,,0,,CREDIT,',
+            'TRANSFER-2,"30-05-2026",,-1582.23,USD,"Sent money to Etherwise (fee: 32.77)",,0.00,,,94.96500,,,,,,,,,32.77,,DEBIT,',
+            'FEE-TRANSFER-2,"30-05-2026",,-32.77,USD,"Wise Charges for: TRANSFER-2",,1582.23,,,,,,,,,,,,0,,DEBIT,']))
+        kinds = {r["wise_id"]: r["kind"] for r in rows}
+        self.assertEqual(kinds["TRANSFER-1"], "income")
+        self.assertEqual(kinds["TRANSFER-2"], "transfer_out")  # has realized fx
+        self.assertEqual(kinds["FEE-TRANSFER-2"], "fee")
+        t2 = [r for r in rows if r["wise_id"] == "TRANSFER-2"][0]
+        self.assertEqual(t2["amount_minor"], -158223)         # integer cents
+        self.assertEqual(t2["fx_rate"], "94.96500")            # realized, pinned
+        self.assertEqual(t2["canonical_key"], "wise:TRANSFER-2")
+        self.assertEqual(t2["date"], "2026-05-30")
+
+    def test_running_balance_reconciles(self):
+        from modules.finance.importers import wise_csv
+        # newest-first: +1615 -> 1615 ; -32.77 fee -> 1582.23 ; -1582.23 -> 0
+        rows = wise_csv.parse(self._csv([
+            'T3,"30-05-2026",,-1582.23,USD,"Sent money to Etherwise",,0.00,,,94.9,,,,,,,,,0,,DEBIT,',
+            'T2,"30-05-2026",,-32.77,USD,"Wise Charges",,1582.23,,,,,,,,,,,,0,,DEBIT,',
+            'T1,"30-05-2026",,1615.00,USD,"Received money from X",,1615.00,,,,,,,,,,,,0,,CREDIT,']))
+        self.assertTrue(wise_csv.reconcile_running_balance(rows)["ok"])
 
 
 if __name__ == "__main__":
