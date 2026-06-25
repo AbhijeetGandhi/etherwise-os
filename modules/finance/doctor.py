@@ -133,21 +133,33 @@ def _check_payroll(conn) -> Check:
 
 def _check_type_sign(conn) -> Check:
     """#9 type-sign sanity (added 2026-06-25): a category whose sign is fixed by
-    its economic meaning must carry that sign. A 'Connect Purchase' is always a
-    fee (debit) -> amount_minor <= 0. The Upwork sync recorded many as +income
-    (a $4.5K P&L distortion); this catches the class. Rows are corrected from the
-    authoritative CSV; any still + (e.g. out of the export range) stay RED until
-    their source statement is available — never silently passed."""
+    its economic meaning must carry that sign — a deduction is always a debit
+    (amount_minor <= 0). Two proven classes the Upwork sync recorded as +income:
+      - 'Connect Purchase' (a $4.5K P&L distortion), identified by type;
+      - GST CHARGES (India tax invoiced to us = a debit), identified by
+        accounting_subtype='GST' AND upwork_type='ARInvoice'. Added after the
+        full-history import surfaced 19 positive GST charges (-$118.98). A GST
+        REFUND (upwork_type='APAdjustment', e.g. ref 794900371 +$3.30, confirmed
+        positive by the statement) is LEGITIMATELY positive and is NOT flagged —
+        the sign tracks charge-vs-refund, not the GST label (statement is the
+        authority, not a blunt rule).
+    Rows are corrected from the authoritative CSV; any still + (e.g. out of the
+    export range) stay RED until their source statement is available — never
+    silently passed. Withdrawals are NOT here: their sign is a transfer
+    convention resolved by the #3 statement tie-out, not a fixed-sign rule."""
     bad = [dict(r) for r in conn.execute(
-        "SELECT record_id, amount_minor FROM transactions"
-        " WHERE type='Connect Purchase' AND amount_minor > 0")]
+        "SELECT record_id, amount_minor, accounting_subtype, type FROM transactions"
+        " WHERE (type='Connect Purchase'"
+        "        OR (accounting_subtype='GST' AND upwork_type='ARInvoice'))"
+        " AND amount_minor > 0")]
     if bad:
         return Check("#9 type-sign sanity", "RED",
-                     f"{len(bad)} 'Connect Purchase' rows are + (income) but are"
-                     " fees (debits) — correct from source",
-                     [{"record_id": b["record_id"], "amount_minor": b["amount_minor"]}
+                     f"{len(bad)} fee/tax rows (Connect Purchase / GST charge) are"
+                     " + (income) but are deductions (debits) — correct from source",
+                     [{"record_id": b["record_id"], "amount_minor": b["amount_minor"],
+                       "subtype": b["accounting_subtype"], "type": b["type"]}
                       for b in bad[:50]])
-    return Check("#9 type-sign sanity", "GREEN", "fee-type signs correct")
+    return Check("#9 type-sign sanity", "GREEN", "fee/tax-type signs correct")
 
 
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:

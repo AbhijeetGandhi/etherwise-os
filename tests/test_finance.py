@@ -159,6 +159,29 @@ class DoctorCase(unittest.TestCase):
         c9 = [c for c in res.checks if c.invariant == "#9 type-sign sanity"][0]
         self.assertEqual(c9.status, "GREEN")
 
+    def test_gst_charge_positive_red_9(self):
+        # a GST CHARGE (ARInvoice) is a tax debit; a + one is the sync bug -> RED
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, amount_minor,"
+                         " currency, canonical_key, type, upwork_type,"
+                         " accounting_subtype) VALUES"
+                         " ('g1', 360, 'USD', 'upwork:g1', 'Other', 'ARInvoice', 'GST')")
+        res = doctor.run(self.db_path)
+        c9 = [c for c in res.checks if c.invariant == "#9 type-sign sanity"][0]
+        self.assertEqual(c9.status, "RED")
+
+    def test_gst_refund_positive_green_9(self):
+        # a GST REFUND (APAdjustment) is money back -> legitimately +; NOT flagged
+        # (the sign tracks charge-vs-refund, not the GST label — statement authority)
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, amount_minor,"
+                         " currency, canonical_key, type, upwork_type,"
+                         " accounting_subtype) VALUES"
+                         " ('g2', 330, 'USD', 'upwork:g2', 'Other', 'APAdjustment', 'GST')")
+        res = doctor.run(self.db_path)
+        c9 = [c for c in res.checks if c.invariant == "#9 type-sign sanity"][0]
+        self.assertEqual(c9.status, "GREEN")
+
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:
             # opening 100.00 + flow (+50.00 −20.00) = closing 130.00

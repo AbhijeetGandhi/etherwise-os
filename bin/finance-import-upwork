@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Full Upwork transaction-history import (Phase 1b). REPRODUCIBLE + idempotent.
+
+Authoritative source = the staged full-history exports (Personal + Agency) in
+finance-inbox/upwork/. Each CSV must reconcile (running balance, native order)
+before it is trusted — a non-reconciling CSV aborts the run.
+
+What it does (dry-run by default; --commit to write):
+  * NEW: a CSV Ref ID not present in the DB (neither record_id nor
+    canonical_key 'upwork:<ref>') is inserted with the CSV's SIGNED Amount $ as
+    authoritative (the same convention the recovery used). Integer cents only.
+  * DISCREPANCY (report-only, NEVER auto-overwritten here): a Ref already in the
+    DB whose amount_minor != the CSV value. The recovery already corrected the
+    'Connect Purchase' class; any OTHER mismatch is surfaced for an explicit
+    decision (it may be a §3.10 transfer-sign convention, not a bug), never
+    silently changed by an import.
+  * DB-ONLY: an 'upwork:' row with no CSV twin (e.g. outside the export window)
+    is counted and left untouched.
+
+Provenance: source='Upwork-CSV', source_file=<export>, source_row=<line>,
+canonical_key='upwork:<ref>', fx_rate='1', amount_base_minor==amount_minor (USD
+base). No float anywhere. No external writes (shadow): SQLite only.
+
+Usage: PYTHONPATH=. python3 bin/finance-import-upwork [--commit]   (default dry-run)
+"""
+import csv as _csv
+import io
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money  # noqa: E402
+from modules.finance.importers import upwork_csv  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "upwork"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-upwork.md"
+
+
+def _profile_for(filename: str) -> str:
+    return "Agency" if "agency" in filename.lower() else "Personal"
+
+
+def _load() -> tuple:
+    """Return ({ref: row}, recon[]) from the full-history exports. row carries
+    profile + source_file + source_row; only reconciling files are trusted."""
+    by_ref, recon = {}, []
+    for f in sorted(INBOX.glob("*fullhistory*.csv")):
+        text = f.read_text()
+        rows = upwork_csv.parse(text)
+        r = upwork_csv.reconcile_running_balance(rows)
+        recon.append({"file": f.name, "rows": len(rows), "ok": r["ok"],
+                      "breaks": len(r["breaks"]), "quarantine": len(r["quarantine"])})
+        # row index for provenance (header is line 1; DictReader rows start at 2)
+        line_of = {}
+        for i, raw in enumerate(_csv.DictReader(io.StringIO(text)), start=2):
+            ref = (raw.get("Ref ID") or "").strip()
+            if ref:
+                line_of.setdefault(ref, i)
+        prof = _profile_for(f.name)
+        for row in rows:
+            if row["amount_minor"] is None:
+                continue                       # blank-amount rows quarantine, not import
+            row = dict(row)
+            row["profile"] = prof
+            row["source_file"] = f.name
+            row["source_row"] = line_of.get(row["ref_id"])
+            by_ref[row["ref_id"]] = row        # later file wins; refs are unique per acct
+    return by_ref, recon
+
+
+def _insert(conn, row) -> None:
+    ref = row["ref_id"]
+    amt = row["amount_minor"]
+    conn.execute(
+        "INSERT INTO transactions (record_id, type, upwork_type, description,"
+        " currency, amount_minor, amount_credited_minor, amount_base_minor,"
+        " fx_rate, fx_date, creation_dt, profile, source, source_file,"
+        " source_row, canonical_key, dedup_key) VALUES"
+        " (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (ref, row["type"], row["type_raw"], row["description"], "USD",
+         amt, amt, amt, "1", row["date"], (row["date"] or "") + "T00:00:00+0000",
+         row["profile"], "Upwork-CSV", row["source_file"], row["source_row"],
+         f"upwork:{ref}", f"upwork-csv:{ref}"))
+
+
+# New rows that are part of a transfer (withdrawal principal + its fee) are HELD
+# for Phase 2, where the #3 statement tie-out forces the whole transfer class's
+# sign consistently — so we never create a mixed-sign ledger (Abhijeet, 2026-06-25).
+TRANSFER_RAW = {"Withdrawal", "Withdrawal Fee"}
+
+
+def run(commit: bool) -> dict:
+    by_ref, recon = _load()
+    if not recon:
+        return {"abort": "no *fullhistory*.csv in finance-inbox/upwork/"}
+    if any(not r["ok"] for r in recon):
+        return {"abort": "a CSV did not reconcile — refusing to proceed", "recon": recon}
+
+    new_inserted, new_transfer_held = [], []
+    gst_corrected, withdrawals_held, value_diffs = [], [], []
+    new_by_type, new_by_year = Counter(), Counter()
+    new_net = gst_swing = 0
+    with db.connect(config.DB_PATH) as conn:
+        existing = {r["canonical_key"].split(":", 1)[1]: dict(r)
+                    for r in conn.execute(
+                        "SELECT canonical_key, amount_minor, upwork_type,"
+                        " accounting_subtype, type FROM transactions"
+                        " WHERE canonical_key LIKE 'upwork:%'")}
+        ids = {r["record_id"] for r in conn.execute("SELECT record_id FROM transactions")}
+        for ref, row in by_ref.items():
+            e = existing.get(ref)
+            if e is not None:
+                if e["amount_minor"] is None or e["amount_minor"] == row["amount_minor"]:
+                    continue
+                is_gst_charge = (e["accounting_subtype"] == "GST"
+                                 and e["upwork_type"] == "ARInvoice")
+                if is_gst_charge:               # proven fee-sign bug class -> fix from CSV
+                    gst_corrected.append({"ref": ref, "was": e["amount_minor"],
+                                          "now": row["amount_minor"]})
+                    gst_swing += row["amount_minor"] - e["amount_minor"]
+                    if commit:
+                        conn.execute(
+                            "UPDATE transactions SET amount_minor=?,"
+                            " amount_base_minor=?, updated_at=datetime('now')"
+                            " WHERE record_id=?",
+                            (row["amount_minor"], row["amount_minor"], ref))
+                elif e["upwork_type"] == "APPayment":   # withdrawal -> Phase-2 #3 tie-out
+                    withdrawals_held.append({"ref": ref, "db": e["amount_minor"],
+                                             "csv": row["amount_minor"]})
+                else:                            # genuine value mismatch -> Abhijeet decides
+                    value_diffs.append({"ref": ref, "db_type": e["type"],
+                                        "db_minor": e["amount_minor"],
+                                        "csv_minor": row["amount_minor"],
+                                        "csv_type": row["type_raw"],
+                                        "csv_desc": row["description"]})
+                continue
+            if ref in ids:                       # record_id exists without upwork: key
+                value_diffs.append({"ref": ref, "note": "record_id exists, no upwork: key"})
+                continue
+            if row["type_raw"] in TRANSFER_RAW:  # new transfer leg -> held for Phase 2
+                new_transfer_held.append({"ref": ref, "type_raw": row["type_raw"],
+                                          "amount": str(money.from_minor(row["amount_minor"]))})
+                continue
+            new_inserted.append(row)             # safe non-transfer new row
+            new_net += row["amount_minor"]
+            new_by_type[row["type"]] += 1
+            new_by_year[(row["date"] or "????")[:4]] += 1
+            if commit:
+                _insert(conn, row)
+
+    db_only = sum(1 for ref in existing if ref not in by_ref)
+    return {
+        "mode": "COMMIT" if commit else "DRY-RUN",
+        "recon": recon,
+        "csv_refs": len(by_ref),
+        "new_inserted": len(new_inserted),
+        "new_net_usd": str(money.from_minor(new_net)),
+        "new_by_type": dict(new_by_type),
+        "new_by_year": dict(sorted(new_by_year.items())),
+        "new_transfer_HELD_for_phase2": len(new_transfer_held),
+        "gst_charges_corrected": len(gst_corrected),
+        "gst_swing_usd": str(money.from_minor(gst_swing)),
+        "withdrawals_HELD_for_phase2": len(withdrawals_held),
+        "value_diffs_for_abhijeet": len(value_diffs),
+        "db_only_not_in_csv": db_only,
+        "_new_transfer_held": new_transfer_held,
+        "_value_diffs": value_diffs,
+        "_withdrawals_held_sample": withdrawals_held[:5],
+    }
+
+
+def main() -> int:
+    res = run("--commit" in sys.argv)
+    public = {k: v for k, v in res.items() if not k.startswith("_")}
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    body = "# Full Upwork import (Phase 1b)\n\n```\n" + json.dumps(public, indent=1) + "\n```\n"
+    if res.get("_value_diffs"):
+        body += "\n## Value mismatches — HELD for Abhijeet (not overwritten)\n\n```\n"
+        body += json.dumps(res["_value_diffs"], indent=1) + "\n```\n"
+    if res.get("_new_transfer_held"):
+        body += "\n## New transfer-leg rows — HELD for Phase 2\n\n```\n"
+        body += json.dumps(res["_new_transfer_held"], indent=1) + "\n```\n"
+    REPORT.write_text(body)
+    print(json.dumps(public, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
