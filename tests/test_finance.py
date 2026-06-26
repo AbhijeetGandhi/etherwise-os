@@ -605,5 +605,58 @@ class TestTransfers(unittest.TestCase):
         self.assertNotIn({"upwork_type": "APPayment"}, kept)
 
 
+# ── Phase 3: P&L category map ────────────────────────────────────────────────
+class TestPnl(unittest.TestCase):
+    def test_bucket_map(self):
+        from modules.finance import pnl
+        b = pnl.bucket
+        self.assertEqual(b({"type": "Hourly Earning"}), "revenue")
+        self.assertEqual(b({"category": "income"}), "revenue")
+        self.assertEqual(b({"type": "Refund"}), "refund")
+        self.assertEqual(b({"type": "Connect Purchase"}), "platform_fee")
+        self.assertEqual(b({"accounting_subtype": "Service Fee"}), "platform_fee")
+        self.assertEqual(b({"upwork_type": "Service Fee"}), "platform_fee")   # either field
+        self.assertEqual(b({"category": "fee"}), "platform_fee")              # Wise
+        self.assertEqual(b({"accounting_subtype": "WHT"}), "tax")
+        self.assertEqual(b({"accounting_subtype": "GST"}), "tax")
+        self.assertEqual(b({"category": "salary"}), "payroll")
+        self.assertEqual(b({"type": "Salary"}), "payroll")                   # legacy bank
+        self.assertEqual(b({"category": "expense"}), "opex")
+        self.assertEqual(b({"type": "Other Expense"}), "opex")
+        self.assertEqual(b({"type": "Tools / SaaS"}), "opex")
+
+    def test_bucket_excludes_and_owner_draw(self):
+        from modules.finance import pnl
+        b = pnl.bucket
+        self.assertEqual(b({"category": "transfer_in"}), "transfer")
+        self.assertEqual(b({"upwork_type": "APPayment"}), "transfer")
+        self.assertEqual(b({"type": "Withdrawal"}), "transfer")
+        self.assertEqual(b({"category": "internal_sweep"}), "sweep")
+        self.assertEqual(b({"category": "cc_settlement"}), "cc_settlement")
+        self.assertEqual(b({"category": "owner_draw"}), "owner_draw")        # below the line
+        self.assertEqual(b({"type": "Personal"}), "owner_draw")
+        self.assertEqual(b({"type": "Mystery"}), "uncategorized")            # flagged
+
+    def test_compute_operating_profit_and_exclusions(self):
+        from modules.finance import pnl
+        rows = [
+            {"type": "Hourly Earning", "amount_base_minor": 100000, "source": "Upwork"},
+            {"category": "income", "amount_base_minor": 50000, "source": "Wise"},
+            {"category": "expense", "amount_base_minor": -30000, "source": "IDFC"},
+            {"accounting_subtype": "Service Fee", "amount_base_minor": -10000, "source": "Upwork"},
+            {"category": "owner_draw", "amount_base_minor": -20000, "source": "IDFC"},   # below line
+            {"category": "internal_sweep", "amount_base_minor": -999999, "source": "IDFC"},  # excluded
+            {"category": "transfer_in", "amount_base_minor": 888888, "source": "IDFC"},      # excluded
+            {"type": "Mystery", "amount_base_minor": -123, "source": "Bank"},               # flagged
+        ]
+        r = pnl.compute(rows)
+        # operating = 100000 + 50000 - 30000 - 10000 = 110000 ; draws/sweeps/transfers OUT
+        self.assertEqual(r["operating_profit_minor"], 110000)
+        self.assertEqual(r["owner_draw_minor"], -20000)
+        self.assertEqual(r["excluded_minor"]["sweep"], -999999)
+        self.assertEqual(r["excluded_minor"]["transfer"], 888888)
+        self.assertEqual(r["uncategorized_count"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

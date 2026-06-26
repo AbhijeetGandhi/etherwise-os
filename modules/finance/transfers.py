@@ -25,7 +25,12 @@ _KINDS = {"transfer_out", "transfer_in"}
 
 
 def is_transfer_leg(row: dict) -> bool:
-    if (row.get("accounting_subtype") or "") in _SUBTYPES:
+    # the subtype label can live in accounting_subtype OR upwork_type, depending on
+    # whether the row came via the API or a CSV import.
+    if ((row.get("accounting_subtype") or "") in _SUBTYPES
+            or (row.get("upwork_type") or "") in _SUBTYPES):
+        return True
+    if (row.get("type") or "") == "Withdrawal":      # a withdrawal IS a transfer leg
         return True
     if (row.get("upwork_type") or "") == "APPayment":
         return True

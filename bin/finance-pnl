@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Phase 3 — P&L / burn / runway (§3). READ-ONLY. GATED on the doctor: nothing is
+reported unless finance-doctor is GREEN (no finance number is published on RED).
+
+Operating P&L = revenue + refund - platform_fee - tax - payroll - opex, via the
+pnl category map (the single authority). Owner draws are shown BELOW the line
+(equity, visible, not in operating P&L). Transfers / FD sweeps / cc_settlement
+are EXCLUDED. Unmapped rows are surfaced as `uncategorized` (flagged), never
+hidden in Other. Money is the pinned USD presentation; no float.
+
+Cash position is read from account_balances (native currency). Burn = trailing-
+12-month operating profit / 12; runway = cash / monthly burn (only when burning).
+
+Usage: PYTHONPATH=. python3 bin/finance-pnl [--period-months N]
+"""
+import datetime
+import json
+import sys
+from decimal import Decimal
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money, pnl, doctor  # noqa: E402
+
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-pnl.md"
+
+
+def _max_date(rows):
+    ds = [(_r.get("creation_dt") or "")[:10] for _r in rows]
+    return max(d for d in ds if d)
+
+
+def run(period_months: int = 12) -> dict:
+    dr = doctor.run(config.DB_PATH)
+    if not dr.green:
+        return {"abort": "doctor is RED — P&L blocked", "reds": [c.invariant for c in dr.reds()]}
+
+    with db.connect(config.DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT record_id, source, type, category, accounting_subtype,"
+            " amount_base_minor, creation_dt FROM transactions"
+            " WHERE canonical_key IS NOT NULL")]
+        bals = [dict(r) for r in conn.execute(
+            "SELECT account, currency, closing_minor, statement_date, source_file"
+            " FROM account_balances")]
+        # most-recent pinned INR->USD rate, to value the IDFC INR cash in USD
+        fxr = conn.execute("SELECT fx_rate FROM transactions WHERE source='IDFC'"
+                           " AND fx_rate IS NOT NULL AND fx_rate!='1'"
+                           " ORDER BY fx_date DESC LIMIT 1").fetchone()
+    inr_usd = Decimal(fxr["fx_rate"]) if fxr else Decimal("0")
+
+    allp = pnl.compute(rows)
+    # trailing window
+    hi = _max_date(rows)
+    lo = (datetime.date.fromisoformat(hi) - datetime.timedelta(days=30 * period_months)).isoformat()
+    trail = pnl.compute([r for r in rows if (r.get("creation_dt") or "")[:10] >= lo])
+    monthly_op = trail["operating_profit_minor"] / period_months
+
+    # cash position
+    cash_usd = 0
+    cash_lines = []
+    for b in bals:
+        usd = b["closing_minor"] if b["currency"] == "USD" else money.apply_rate(
+            b["closing_minor"], inr_usd)
+        cash_usd += usd
+        cash_lines.append({"account": b["account"], "currency": b["currency"],
+                           "closing": str(money.from_minor(b["closing_minor"])),
+                           "usd": str(money.from_minor(usd))})
+
+    runway = None
+    if monthly_op < 0:
+        runway = round(cash_usd / abs(monthly_op), 1)
+
+    def m(x):
+        return str(money.from_minor(int(x)))
+    return {
+        "doctor": "GREEN",
+        "period_all_time": f"...{hi}",
+        "net_revenue": m(allp["net_revenue_minor"]),
+        "operating_costs": m(allp["operating_costs_minor"]),
+        "operating_profit": m(allp["operating_profit_minor"]),
+        "by_bucket_usd": {k: m(v) for k, v in sorted(allp["by_bucket_minor"].items())},
+        "owner_draw_below_line": m(allp["owner_draw_minor"]),
+        "excluded_usd": {k: m(v) for k, v in allp["excluded_minor"].items()},
+        "uncategorized_count": allp["uncategorized_count"],
+        "legacy_v2_rows": allp["legacy_v2_rows"],
+        "cash_position": cash_lines,
+        "cash_total_usd": m(cash_usd),
+        "inr_usd_rate_used": str(inr_usd),
+        f"trailing_{period_months}mo_operating_profit": m(trail["operating_profit_minor"]),
+        "monthly_operating_profit": m(monthly_op),
+        "runway_months": runway if runway is not None else "profitable (no burn)",
+        "_uncategorized": allp["_uncategorized"],
+    }
+
+
+def main() -> int:
+    pm = 12
+    if "--period-months" in sys.argv:
+        pm = int(sys.argv[sys.argv.index("--period-months") + 1])
+    res = run(pm)
+    public = {k: v for k, v in res.items() if not k.startswith("_")}
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    body = "# P&L / burn / runway (Phase 3)\n\n```\n" + json.dumps(public, indent=1) + "\n```\n"
+    if res.get("_uncategorized"):
+        body += "\n## Uncategorized (FLAGGED — never silently in Other)\n\n```\n" \
+                + json.dumps(res["_uncategorized"], indent=1) + "\n```\n"
+    REPORT.write_text(body)
+    print(json.dumps(public, indent=1))
+    return 0 if "abort" not in res else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
