@@ -118,11 +118,19 @@ def _is_internal_sweep(desc: str) -> bool:
 
 
 def _is_already_tracked_credit(desc: str) -> bool:
-    """Inbound rows whose economic event is already booked via another source:
-    WISE/TRANSFERWISE (the Wise USD->INR transfer's INR leg) and PAYMENT ESCROW
-    (Upwork's INR NEFT payout, inbound — not a transfer this system initiates)."""
+    """Inbound rows whose economic event is already booked via another source —
+    i.e. the INR leg of a transfer, NOT new income. Upwork remits earnings to
+    this account under THREE descriptions, all of them the INR leg of an Upwork
+    withdrawal (the earning itself is already on the Upwork ledger):
+      - 'Upwork Escrow Inc'            (direct NEFT, via INDB routing)
+      - 'WISE PAYMENTS IPL ... ESCROW' (Upwork's Wise Payments India rail)
+      - 'PAYMENT ESCROW INC'           (older NEFT label)
+    Plus genuine Wise USD->INR transfers (WISE/TRANSFERWISE) from our own account.
+    Missing 'Upwork Escrow Inc' here mis-booked 25 such remittances as income — a
+    revenue double-count, since the earning is already counted on the Upwork side."""
     s = (desc or "").upper()
-    return any(k in s for k in ("WISE", "TRANSFERWISE", "TW INDIA", "PAYMENT ESCROW"))
+    return any(k in s for k in ("UPWORK ESCROW", "PAYMENT ESCROW", "WISE",
+                                "TRANSFERWISE", "TW INDIA"))
 
 
 def _is_credit_card_bill_payment(desc: str) -> bool:
@@ -233,7 +241,9 @@ def parse(path_or_bytes: Path | str | bytes) -> dict:
 
     rows: List[dict] = []
     quarantine: List[dict] = []
-    for r in raw[header_idx + 1:end_idx]:
+    seen: dict = {}                  # base hash -> count, for collision suffixing
+    for i, r in enumerate(raw[header_idx + 1:end_idx]):
+        src_row = header_idx + 1 + i
         if not r or len(r) < 7:
             continue
         date, value_date, desc, _cheque, debit, credit, balance = r[:7]
@@ -261,7 +271,15 @@ def parse(path_or_bytes: Path | str | bytes) -> dict:
             continue
         kind = "debit" if (debit_minor or 0) > 0 else "credit"
         amount_minor = (credit_minor or 0) - (debit_minor or 0)   # signed paise
-        ck = f"bank:{bank_hash(date_iso, amount_minor, desc)}"
+        # Base hash is stable cross-statement (date|amount|desc). Same-day
+        # IDENTICAL lines (e.g. 5x identical auto-sweeps) collide -> suffix the
+        # repeats by occurrence (-1, -2, ...) so each distinct statement line is
+        # its own row and none is silently dropped; the first occurrence keeps the
+        # bare hash. Occurrence order is the file's native order -> stable + idempotent.
+        base = bank_hash(date_iso, amount_minor, desc)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        ck = f"bank:{base}" if n == 0 else f"bank:{base}-{n}"
         rows.append({
             "date": date_iso,
             "value_date": _iso_date(value_date) or date_iso,
@@ -272,6 +290,7 @@ def parse(path_or_bytes: Path | str | bytes) -> dict:
             "kind": kind,
             "category": classify_category(desc, kind),
             "canonical_key": ck,
+            "source_row": src_row,
             "key": ck,                       # reconcile label
         })
 

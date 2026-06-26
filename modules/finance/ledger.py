@@ -65,6 +65,24 @@ def insert_upwork_csv_row(conn, row: dict) -> None:
     conn.execute(f"INSERT INTO transactions ({_COLS}) VALUES ({qs})", _values(row))
 
 
+def insert_bank_row(conn, row: dict, *, source_file: str) -> None:
+    """INSERT one classified IDFC statement row (INR). amount_minor is signed INR
+    paise; amount_base_minor/fx_rate/fx_date are the pinned USD presentation
+    (set by fx.pin_base before this call). category drives the P&L bucket +
+    transfers. record_id == canonical_key (the bank:<hash> line key), matching the
+    existing bank-row convention."""
+    ck = row["canonical_key"]
+    conn.execute(
+        "INSERT INTO transactions (record_id, type, accounting_subtype, category,"
+        " description, currency, amount_minor, amount_credited_minor,"
+        " amount_base_minor, fx_rate, fx_date, creation_dt, source, source_file,"
+        " source_row, canonical_key, dedup_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (ck, row["category"], row["category"], row["category"], row["description"],
+         "INR", row["amount_minor"], row["amount_minor"], row.get("amount_base_minor"),
+         row.get("fx_rate"), row.get("fx_date"), row["date"], "IDFC", source_file,
+         row.get("source_row"), ck, ck))
+
+
 def correct_upwork_csv_row(conn, row: dict) -> None:
     """Re-derive an EXISTING row fully from the authoritative CSV (amount, type,
     description) — used to repair a mis-paired transfer leg. Keyed by record_id."""

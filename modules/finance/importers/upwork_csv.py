@@ -79,6 +79,10 @@ def parse(text: str) -> List[dict]:
             "type": CSV_TYPE_MAP.get(type_raw, "Other"),
             "amount_minor": amount_minor(r.get("Amount $")),
             "currency": "USD",                       # Amount $ is always USD
+            # realized settlement in local currency (e.g. a Withdrawal's INR) —
+            # the §3.10 cross-currency tie-out matches this to the IDFC +INR leg.
+            "local_amount_minor": amount_minor(r.get("Amount in local currency")),
+            "local_currency": (r.get("Currency") or "").strip() or None,
             "balance_minor": amount_minor(r.get("Current balance $")),
             "description": " · ".join(p for p in (summary, desc1) if p),
             "account_name": (r.get("Account name") or "").strip(),

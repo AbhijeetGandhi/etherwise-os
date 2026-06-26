@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Phase 2 — IDFC statement import into the ledger. REPRODUCIBLE + idempotent.
+Source = finance-inbox/bank/*.xlsx (the IDFC portal export).
+
+Decided with Abhijeet (2026-06-26):
+  - The v3 statement is AUTHORITATIVE + complete (all rows incl sweeps/transfers)
+    + INR + pinned FX + 0-break reconcile. The legacy v2 `bank:` rows in the
+    statement window are a lossy (USD, INR discarded) FILTERED version that can't
+    be deduped (v2 hashed on USD) -> they are QUARANTINED (preserved), then the
+    v3 rows are imported fresh. v2 rows OUTSIDE the window stay as legacy.
+  - FX: each INR row's USD presentation (amount_base_minor) is pinned ONCE from
+    frankfurter on its value date (cached per date, never re-fetched).
+
+Reconcile-before-commit: the statement must reconcile (0 balance breaks) or the
+run aborts. account_balances gets the opening/closing for the #1 tie-out. Inserts
+are canonical-key-guarded (idempotent). --apply does the network FX pinning;
+dry-run is network-free.
+
+Usage: PYTHONPATH=. python3 bin/finance-import-idfc [--apply]   (default dry-run)
+"""
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money, ledger, fx  # noqa: E402
+from modules.finance.importers import bank_xlsx  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "bank"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-idfc.md"
+ACCOUNT = "idfc"
+
+
+def run(apply: bool) -> dict:
+    files = sorted(INBOX.glob("*.xlsx"))
+    if not files:
+        return {"abort": "no .xlsx in finance-inbox/bank/"}
+    f = files[-1]                      # newest statement
+    out = bank_xlsx.parse(f)
+    rows, meta, qrows = out["rows"], out["meta"], out["quarantine"]
+    rec = bank_xlsx.reconcile_running_balance(rows)
+    if not rec["ok"]:
+        return {"abort": "statement did not reconcile — refusing to import",
+                "breaks": rec["breaks"][:10], "quarantine_parse": len(qrows)}
+
+    good = [r for r in rows if r["amount_minor"] is not None]
+    dates = [r["date"] for r in good]
+    win_lo, win_hi = min(dates), max(dates)
+
+    # Decide the work read-only first, so FX is pinned ONLY for genuinely-new rows
+    # (a reclassify-only re-run then does zero network).
+    with db.connect(config.DB_PATH) as conn:
+        existing_bank = {r["canonical_key"] for r in conn.execute(
+            "SELECT canonical_key FROM transactions WHERE canonical_key LIKE 'bank:%'"
+            " AND source='IDFC'")}
+    to_insert = [r for r in good if r["canonical_key"] not in existing_bank]
+    pin = {"pinned": 0, "fetched_dates": []}
+    if apply and to_insert:             # pin USD presentation (network, per date)
+        pin = fx.pin_base(to_insert, base_currency="USD", date_field="value_date")
+
+    superseded, inserted = 0, 0
+    with db.connect(config.DB_PATH) as conn:
+        # 1) quarantine the in-window LEGACY bank rows (preserve, never delete
+        #    silently). Identify legacy by source (v3 rows are source='IDFC'), NOT
+        #    by key — 19 v2 rows share a key with a v3 row but hold the stale USD
+        #    amount and must not survive in the INR set. Idempotent: on re-run the
+        #    v3 rows (source='IDFC') are excluded, and the v2 rows are already gone.
+        v2 = [dict(r) for r in conn.execute(
+            "SELECT * FROM transactions WHERE canonical_key LIKE 'bank:%'"
+            " AND date(creation_dt) BETWEEN ? AND ?"
+            " AND (source IS NULL OR source != 'IDFC')", (win_lo, win_hi))]
+        superseded = len(v2)
+        if apply:
+            for r in v2:
+                conn.execute(
+                    "INSERT INTO quarantine (source, reason, payload_json)"
+                    " VALUES ('bank', ?, ?)",
+                    (f"superseded by v3 IDFC import {f.name} (legacy v2 USD/filtered"
+                     f" row in statement window {win_lo}..{win_hi})",
+                     json.dumps(r, default=str)))
+                conn.execute("DELETE FROM transactions WHERE record_id=?",
+                             (r["record_id"],))
+
+        # 2) insert the v3 rows (canonical-key guarded -> idempotent). Exclude the
+        #    keys we are quarantining so the count is accurate even in dry-run
+        #    (those keys are freed before the inserts run under --apply).
+        have = {r["canonical_key"] for r in conn.execute(
+            "SELECT canonical_key FROM transactions WHERE canonical_key LIKE 'bank:%'")}
+        have -= {r["canonical_key"] for r in v2}
+        reclassified = 0
+        for r in good:
+            if r["canonical_key"] in have:
+                # already imported -> self-heal the category from the current
+                # classifier (e.g. the Upwork-Escrow fix) without re-pinning FX.
+                if apply:
+                    cur = conn.execute("SELECT category FROM transactions WHERE"
+                                       " record_id=?", (r["canonical_key"],)).fetchone()
+                    if cur and cur["category"] != r["category"]:
+                        reclassified += 1
+                        conn.execute("UPDATE transactions SET category=?, type=?,"
+                                     " accounting_subtype=?, updated_at=datetime('now')"
+                                     " WHERE record_id=?",
+                                     (r["category"], r["category"], r["category"],
+                                      r["canonical_key"]))
+                continue
+            inserted += 1
+            if apply:
+                ledger.insert_bank_row(conn, r, source_file=f.name)
+
+        # 3) parse-quarantine rows (malformed) -> quarantine table, never dropped
+        if apply:
+            for q in qrows:
+                conn.execute("INSERT INTO quarantine (source, reason, payload_json)"
+                             " VALUES ('bank', ?, ?)",
+                             (f"IDFC parse: {q['reason']} ({f.name})",
+                              json.dumps(q, default=str)))
+
+        # 4) account_balances for the #1 statement-integrity tie-out
+        if apply and "opening_balance_minor" in meta:
+            conn.execute(
+                "INSERT OR IGNORE INTO account_balances (account, currency,"
+                " opening_minor, closing_minor, statement_date, source_file)"
+                " VALUES (?,?,?,?,?,?)",
+                (ACCOUNT, "INR", meta["opening_balance_minor"],
+                 meta["closing_balance_minor"], meta.get("period_end") or win_hi, f.name))
+
+    res = {"mode": "APPLY" if apply else "DRY-RUN", "file": f.name,
+           "window": f"{win_lo}..{win_hi}", "statement_rows": len(good),
+           "reconcile_ok": rec["ok"], "parse_quarantine": len(qrows),
+           "category_breakdown": dict(Counter(r["category"] for r in good)),
+           "v2_superseded_quarantined": superseded, "v3_inserted": inserted,
+           "reclassified": reclassified if apply else 0,
+           "opening_inr": str(money.from_minor(meta.get("opening_balance_minor", 0))),
+           "closing_inr": str(money.from_minor(meta.get("closing_balance_minor", 0)))}
+    if apply:
+        res["fx_pinned"] = pin["pinned"]
+        res["fx_dates_fetched"] = len(pin["fetched_dates"])
+    return res
+
+
+def main() -> int:
+    res = run("--apply" in sys.argv)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# IDFC import (Phase 2)\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
+    print(json.dumps(res, indent=1))
+    return 0 if "abort" not in res else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

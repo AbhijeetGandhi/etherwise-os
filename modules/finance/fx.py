@@ -28,8 +28,9 @@ def frankfurter_fetch(date: str, base: str, quote: str) -> tuple[Decimal, str]:
     """Return (rate, realized_date) for 1 `base` -> `quote` on `date`.
     frankfurter snaps weekends/holidays to the last business day and reports the
     actual date in the payload, which we pin as fx_date. Decimal only."""
-    url = f"{FRANKFURTER}/{date}?from={base}&to={quote}"
-    with urllib.request.urlopen(url, timeout=20) as resp:
+    url = f"{FRANKFURTER}/{date}?base={base}&symbols={quote}"
+    req = urllib.request.Request(url, headers={"User-Agent": "etherwise-finance/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     rate = data.get("rates", {}).get(quote)
     if rate is None:

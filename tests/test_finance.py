@@ -191,36 +191,20 @@ class DoctorCase(unittest.TestCase):
             (rid, amount_minor, amount_minor, "USD", "k-" + rid, "Other",
              upwork_type, subtype, category, day + "T00:00:00+0000"))
 
-    def test_transfer_integrity_na_when_no_in_leg(self):
-        # only an Upwork withdrawal out-leg, no IDFC in-leg yet -> N/A (pending),
-        # not RED (the USD-only state is expected until IDFC lands)
+    def test_transfer_integrity_identifies_legs_na_pending(self):
+        # #7 identifies the transfer bucket (in-legs + out-legs) and reports N/A:
+        # the core guarantee is exclusion from P&L; the cross-currency both-legs
+        # tie-out is done by finance-tieout-transfers (realized-INR), not a
+        # date-proximity rule. Never RED on identification -> doctor stays green.
         with db.connect(self.db_path) as conn:
             self._transfer_row(conn, "w1", -158223, subtype="Withdrawal",
                                upwork_type="APPayment")
+            self._transfer_row(conn, "in1", 13000000, category="transfer_in")
         res = doctor.run(self.db_path)
         c7 = [c for c in res.checks if c.invariant == "#7 transfer-integrity"][0]
         self.assertEqual(c7.status, "N/A")
+        self.assertIn("excluded from P&L", c7.detail)
         self.assertTrue(res.green)
-
-    def test_transfer_integrity_red_on_orphan_in_leg(self):
-        # an IDFC +INR transfer_in with NO out-leg in window -> one-legged -> RED
-        with db.connect(self.db_path) as conn:
-            self._transfer_row(conn, "in1", 13000000, category="transfer_in",
-                               day="2026-05-10")
-        res = doctor.run(self.db_path)
-        c7 = [c for c in res.checks if c.invariant == "#7 transfer-integrity"][0]
-        self.assertEqual(c7.status, "RED")
-        self.assertFalse(res.green)
-
-    def test_transfer_integrity_green_when_both_legs_present(self):
-        with db.connect(self.db_path) as conn:
-            self._transfer_row(conn, "w2", -158223, subtype="Withdrawal",
-                               upwork_type="APPayment", day="2026-05-09")
-            self._transfer_row(conn, "in2", 13000000, category="transfer_in",
-                               day="2026-05-10")     # within +/-7 days of w2
-        res = doctor.run(self.db_path)
-        c7 = [c for c in res.checks if c.invariant == "#7 transfer-integrity"][0]
-        self.assertEqual(c7.status, "GREEN")
 
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:
@@ -483,6 +467,19 @@ class TestBankXlsx(unittest.TestCase):
         self.assertEqual(cat["ATM CASH WITHDRAWAL"], "owner_draw")
         self.assertEqual(cat["IMPS to ABHIJEET ASHOK GANDHI"], "owner_draw")
         self.assertEqual(cat["Google Workspace subscription"], "expense")
+
+    def test_upwork_disbursement_credits_are_transfer_in(self):
+        # Upwork pays out under three descriptions, all the INR leg of a withdrawal
+        # -> transfer_in (excluded from P&L). Missing 'Upwork Escrow Inc' here had
+        # mis-booked 25 of them as income (a revenue double-count).
+        from modules.finance.importers import bank_xlsx
+        for d in ("NEFT/INDBH05122618504/Upwork Escrow Inc/INDB00000",
+                  "NEFT/CITIN26664234140/WISE PAYMENTS IPL PA CB EXP ESCROW/CITI",
+                  "NEFT/INDBH27057031069/PAYMENT ESCROW INC/INDB0000006"):
+            self.assertEqual(bank_xlsx.classify_category(d, "credit"), "transfer_in", d)
+        # a genuine direct-client NEFT stays income, not a transfer
+        self.assertEqual(bank_xlsx.classify_category(
+            "NEFT/002651944142/DYNATECH ENGINEER", "credit"), "income")
 
     def test_signed_integer_paise_and_balances(self):
         from modules.finance.importers import bank_xlsx

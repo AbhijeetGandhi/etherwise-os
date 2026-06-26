@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Phase 2 — cross-currency transfer tie-out (§3.10). READ-ONLY report.
+
+A transfer reconciles across BOTH legs. The Upwork disbursement legs tie out by
+REALIZED settlement amount, not a date-proximity rule: an Upwork Withdrawal
+carries 'Amount in local currency' (the INR it settled to), which appears in the
+IDFC statement as a +INR transfer_in credit (Upwork Escrow Inc / WISE PAYMENTS
+IPL / PAYMENT ESCROW) on the same/near date. Match = exact realized INR within a
+small date window.
+
+Reports:
+  - Upwork withdrawals (in the IDFC window) tied to an IDFC transfer_in leg.
+  - Unmatched withdrawals (investigate / out of window).
+  - IDFC transfer_in legs NOT matched by an Upwork withdrawal -> these are the
+    Etherwise Wise USD->INR transfers, PENDING the Wise v3 re-import to tie out.
+Nothing is written; the doctor's #7 references this. No float.
+
+Usage: PYTHONPATH=. python3 bin/finance-tieout-transfers
+"""
+import datetime
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money  # noqa: E402
+from modules.finance.importers import upwork_csv  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "upwork"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-tieout-transfers.md"
+WINDOW_DAYS = 12
+
+
+def _days(a, b):
+    return abs((datetime.date.fromisoformat(a) - datetime.date.fromisoformat(b)).days)
+
+
+def run() -> dict:
+    # Upwork withdrawals with a realized INR settlement
+    wd = []
+    for f in sorted(INBOX.glob("*fullhistory*.csv")):
+        for r in upwork_csv.parse(f.read_text()):
+            if (r.get("type_raw") == "Withdrawal" and r.get("local_currency") == "INR"
+                    and r.get("local_amount_minor")):
+                wd.append({"ref": r["ref_id"], "date": r["date"],
+                           "inr": abs(r["local_amount_minor"])})
+
+    with db.connect(config.DB_PATH) as conn:
+        ins = [dict(r) for r in conn.execute(
+            "SELECT record_id, creation_dt, amount_minor, amount_base_minor, description"
+            " FROM transactions WHERE category='transfer_in'")]
+    win = sorted(i["creation_dt"][:10] for i in ins if i["creation_dt"])
+    lo, hi = (win[0], win[-1]) if win else (None, None)
+
+    matched, unmatched_wd = [], []
+    used = set()
+    for w in wd:
+        if not (lo and lo <= w["date"] <= hi):
+            continue                       # only withdrawals inside the IDFC window
+        hit = next((i for i in ins if i["record_id"] not in used
+                    and i["amount_minor"] == w["inr"]
+                    and i["creation_dt"] and _days(i["creation_dt"][:10], w["date"]) <= WINDOW_DAYS),
+                   None)
+        if hit:
+            used.add(hit["record_id"])
+            matched.append({"ref": w["ref"], "inr": str(money.from_minor(w["inr"])),
+                            "idfc": hit["record_id"]})
+        else:
+            unmatched_wd.append({"ref": w["ref"], "date": w["date"],
+                                 "inr": str(money.from_minor(w["inr"]))})
+
+    pending_wise = [i for i in ins if i["record_id"] not in used]
+    in_window_wd = [w for w in wd if lo and lo <= w["date"] <= hi]
+    return {
+        "idfc_window": f"{lo}..{hi}",
+        "upwork_withdrawals_in_window": len(in_window_wd),
+        "tied_out": len(matched),
+        "unmatched_withdrawals": len(unmatched_wd),
+        "idfc_transfer_in_total": len(ins),
+        "idfc_transfer_in_pending_wise": len(pending_wise),
+        "pending_wise_usd": str(money.from_minor(
+            sum(i.get("amount_base_minor") or 0 for i in pending_wise))),
+        "_unmatched_withdrawals": unmatched_wd[:20],
+    }
+
+
+def main() -> int:
+    res = run()
+    public = {k: v for k, v in res.items() if not k.startswith("_")}
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    body = "# Cross-currency transfer tie-out (Phase 2)\n\n```\n" + json.dumps(public, indent=1) + "\n```\n"
+    if res.get("_unmatched_withdrawals"):
+        body += "\n## Unmatched in-window withdrawals (investigate)\n\n```\n" \
+                + json.dumps(res["_unmatched_withdrawals"], indent=1) + "\n```\n"
+    REPORT.write_text(body)
+    print(json.dumps(public, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
