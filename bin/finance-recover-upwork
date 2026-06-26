@@ -52,11 +52,15 @@ def run(commit: bool, flip_remaining: bool = False) -> dict:
         return {"abort": "a CSV did not reconcile — refusing to proceed", "recon": recon}
     quarantined, keyed, corrected, flipped, new_net = [], [], [], [], 0
     with db.connect(config.DB_PATH) as conn:
-        # 1+2: dedup the recovered stubs
+        # 1+2: dedup the namespaced sync stubs. Generalized from the original
+        # STUB_SOURCE file to ANY 'personal:'/'agency:<ref>' NULL-key stub, because
+        # the live Upwork sync keeps minting these stub twins (M1 bug #2) — this is
+        # the standing guard until the M1 cutover fix. Each stub whose ref has a
+        # valued 'upwork:<ref>' twin is quarantined (preserved); the twin is the keeper.
         stubs = [dict(r) for r in conn.execute(
-            "SELECT record_id, amount_minor FROM transactions WHERE source_file=?"
-            " AND (canonical_key IS NULL OR canonical_key='')",  # skip already-keyed
-            (STUB_SOURCE,))]
+            "SELECT record_id, amount_minor FROM transactions"
+            " WHERE (record_id LIKE 'personal:%' OR record_id LIKE 'agency:%')"
+            " AND (canonical_key IS NULL OR canonical_key='')")]
         for s in stubs:
             ref = s["record_id"].split(":")[-1]
             twin = conn.execute(
@@ -71,8 +75,25 @@ def run(commit: bool, flip_remaining: bool = False) -> dict:
                     conn.execute(
                         "INSERT INTO quarantine (source, reason, payload_json)"
                         " VALUES ('upwork', ?, ?)",
-                        (f"recovery duplicate of canonical {twin['record_id']}"
-                         f" (Ref {ref}); double-count fix 2026-06-25",
+                        (f"sync stub-twin duplicate of canonical {twin['record_id']}"
+                         f" (Ref {ref}); double-count fix (M1 bug #2)",
+                         json.dumps(row, default=str)))
+                    conn.execute("DELETE FROM transactions WHERE record_id=?",
+                                 (s["record_id"],))
+            elif s["amount_minor"] is None:
+                # no valued twin AND no amount -> cannot be valued from the DB; keep
+                # in quarantine until a CSV export covers its ref. NEVER key a
+                # NULL-amount row (that would pass dedup but fail #8 sanity).
+                quarantined.append({"stub": s["record_id"], "ref": ref,
+                                    "awaiting_source": True})
+                if commit:
+                    row = dict(conn.execute("SELECT * FROM transactions WHERE"
+                                            " record_id=?", (s["record_id"],)).fetchone())
+                    conn.execute(
+                        "INSERT INTO quarantine (source, reason, payload_json)"
+                        " VALUES ('upwork', ?, ?)",
+                        (f"sync stub (Ref {ref}) NULL amount, no twin — awaiting a"
+                         " CSV export covering its date (M1 bug #2)",
                          json.dumps(row, default=str)))
                     conn.execute("DELETE FROM transactions WHERE record_id=?",
                                  (s["record_id"],))

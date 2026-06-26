@@ -13,6 +13,7 @@ Every check reports delta in MINOR UNITS — never a float.
 """
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -162,10 +163,55 @@ def _check_type_sign(conn) -> Check:
     return Check("#9 type-sign sanity", "GREEN", "fee/tax-type signs correct")
 
 
+def _check_transfer_integrity(conn) -> Check:
+    """#7 transfer-integrity (§3.10): a transfer moves money between our OWN
+    accounts, so both legs must reconcile and the bucket is EXCLUDED from P&L. The
+    Upwork withdrawal legs are now reconciled to the statement (withdrawal
+    principal + its fee line). The CROSS-CURRENCY reconcile (Upwork/Wise -USD leg
+    <-> IDFC +INR leg at the realized rate) needs the IDFC statement: once any
+    `transfer_in` leg exists, an orphan transfer_in (no out-leg within +/-7 days)
+    is RED. Until IDFC is v3-imported there are no in-legs, so the out-legs are
+    PENDING (N/A) — not RED (the USD-only aggregate is expected, per Abhijeet)."""
+    from modules.finance import transfers
+    rows = [dict(r) for r in conn.execute(
+        "SELECT record_id, creation_dt, amount_base_minor, amount_minor, type,"
+        " upwork_type, accounting_subtype, category, description FROM transactions"
+        " WHERE upwork_type='APPayment' OR accounting_subtype IN"
+        " ('Withdrawal','Withdrawal Fee') OR category='transfer_in'"
+        " OR lower(description) LIKE '%withdrawal fee%'")]
+    legs = [r for r in rows if transfers.is_transfer_leg(r)]
+    ins = [r for r in legs if (r.get("category") or "") == "transfer_in"]
+    outs = [r for r in legs if transfers.leg_role(r) == "out_principal"]
+    if not ins:
+        return Check("#7 transfer-integrity", "N/A",
+                     f"{len(outs)} transfer-out legs identified + excluded from P&L;"
+                     " cross-currency both-legs reconcile pending IDFC v3-import")
+
+    def _day(r):
+        return (r.get("creation_dt") or "")[:10]
+    out_days = sorted(_day(o) for o in outs if _day(o))
+    orphans = []
+    for inc in ins:
+        d = _day(inc)
+        near = any(abs((datetime.date.fromisoformat(od)
+                        - datetime.date.fromisoformat(d)).days) <= 7
+                   for od in out_days if od and d)
+        if not near:
+            orphans.append({"record_id": inc["record_id"],
+                            "amount_base_minor": inc.get("amount_base_minor")})
+    if orphans:
+        return Check("#7 transfer-integrity", "RED",
+                     f"{len(orphans)} one-legged transfer(s): a +INR transfer_in"
+                     " with no -USD out-leg within +/-7 days", orphans[:20])
+    return Check("#7 transfer-integrity", "GREEN",
+                 f"{len(ins)} in-legs each pair an out-leg; transfers excluded from P&L")
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
     with db.connect(db_path or config.DB_PATH) as conn:
         checks = [_check_dedup(conn), _check_sanity(conn), _check_type_sign(conn),
-                  _check_statement_integrity(conn), _check_payroll(conn)]
+                  _check_statement_integrity(conn), _check_transfer_integrity(conn),
+                  _check_payroll(conn)]
     return DoctorResult(checks)

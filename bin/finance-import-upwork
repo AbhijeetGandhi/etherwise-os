@@ -23,8 +23,6 @@ base). No float anywhere. No external writes (shadow): SQLite only.
 
 Usage: PYTHONPATH=. python3 bin/finance-import-upwork [--commit]   (default dry-run)
 """
-import csv as _csv
-import io
 import json
 import sys
 from collections import Counter
@@ -32,58 +30,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import money  # noqa: E402
+from modules.finance import money, ledger  # noqa: E402
 from modules.finance.importers import upwork_csv  # noqa: E402
 
 INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "upwork"
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-upwork.md"
 
 
-def _profile_for(filename: str) -> str:
-    return "Agency" if "agency" in filename.lower() else "Personal"
-
-
 def _load() -> tuple:
-    """Return ({ref: row}, recon[]) from the full-history exports. row carries
-    profile + source_file + source_row; only reconciling files are trusted."""
-    by_ref, recon = {}, []
-    for f in sorted(INBOX.glob("*fullhistory*.csv")):
-        text = f.read_text()
-        rows = upwork_csv.parse(text)
-        r = upwork_csv.reconcile_running_balance(rows)
-        recon.append({"file": f.name, "rows": len(rows), "ok": r["ok"],
-                      "breaks": len(r["breaks"]), "quarantine": len(r["quarantine"])})
-        # row index for provenance (header is line 1; DictReader rows start at 2)
-        line_of = {}
-        for i, raw in enumerate(_csv.DictReader(io.StringIO(text)), start=2):
-            ref = (raw.get("Ref ID") or "").strip()
-            if ref:
-                line_of.setdefault(ref, i)
-        prof = _profile_for(f.name)
-        for row in rows:
-            if row["amount_minor"] is None:
-                continue                       # blank-amount rows quarantine, not import
-            row = dict(row)
-            row["profile"] = prof
-            row["source_file"] = f.name
-            row["source_row"] = line_of.get(row["ref_id"])
-            by_ref[row["ref_id"]] = row        # later file wins; refs are unique per acct
-    return by_ref, recon
+    return ledger.load_fullhistory(INBOX)
 
 
 def _insert(conn, row) -> None:
-    ref = row["ref_id"]
-    amt = row["amount_minor"]
-    conn.execute(
-        "INSERT INTO transactions (record_id, type, upwork_type, description,"
-        " currency, amount_minor, amount_credited_minor, amount_base_minor,"
-        " fx_rate, fx_date, creation_dt, profile, source, source_file,"
-        " source_row, canonical_key, dedup_key) VALUES"
-        " (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (ref, row["type"], row["type_raw"], row["description"], "USD",
-         amt, amt, amt, "1", row["date"], (row["date"] or "") + "T00:00:00+0000",
-         row["profile"], "Upwork-CSV", row["source_file"], row["source_row"],
-         f"upwork:{ref}", f"upwork-csv:{ref}"))
+    ledger.insert_upwork_csv_row(conn, row)
 
 
 # New rows that are part of a transfer (withdrawal principal + its fee) are HELD

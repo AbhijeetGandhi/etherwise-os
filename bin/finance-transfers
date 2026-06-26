@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Phase 2 — transfer-leg rebuild. REPRODUCIBLE + idempotent. Authoritative
+source = the staged full-history Upwork CSV exports in finance-inbox/upwork/.
+
+Brings every Upwork TRANSFER leg (Withdrawal principal + Withdrawal Fee) into
+the DB exactly as the statement has it, so the disbursement class fully ties out
+(#3) and the transfers bucket is complete:
+  - MISSING transfer-leg ref  -> insert from CSV (ledger.insert_upwork_csv_row).
+  - MIS-PAIRED leg (DB amount != CSV) -> re-derive fully from CSV
+    (ledger.correct_upwork_csv_row). This repairs 831998237: the DB stored the
+    -$0.99 fee under the -$101.27 principal's Ref; the statement says 831998237
+    is the -$101.27 principal and 831998238 is the -$0.99 fee.
+Also backfills accounting_subtype on the earlier Upwork-CSV inserts (so the
+transfers classifier + Phase-3 P&L see a consistent subtype).
+
+Non-transfer rows are untouched (import handles those). Cross-currency INR legs
+are NOT created here (they come from the real IDFC statement). No float.
+
+Usage: PYTHONPATH=. python3 bin/finance-transfers [--apply]   (default dry-run)
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money, ledger  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "upwork"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-transfers.md"
+
+TRANSFER_RAW = {"Withdrawal", "Withdrawal Fee"}
+
+
+def run(apply: bool) -> dict:
+    by_ref, recon = ledger.load_fullhistory(INBOX)
+    if not recon:
+        return {"abort": "no *fullhistory*.csv in finance-inbox/upwork/"}
+    if any(not r["ok"] for r in recon):
+        return {"abort": "a CSV did not reconcile — refusing to proceed", "recon": recon}
+
+    inserted, corrected = [], []
+    with db.connect(config.DB_PATH) as conn:
+        existing = {r["canonical_key"].split(":", 1)[1]: r["amount_minor"]
+                    for r in conn.execute("SELECT canonical_key, amount_minor"
+                                          " FROM transactions WHERE canonical_key LIKE 'upwork:%'")}
+        for ref, row in by_ref.items():
+            if row.get("type_raw") not in TRANSFER_RAW:
+                continue
+            if ref not in existing:
+                inserted.append({"ref": ref, "type": row["type_raw"],
+                                 "amount": str(money.from_minor(row["amount_minor"]))})
+                if apply:
+                    ledger.insert_upwork_csv_row(conn, row)
+            elif existing[ref] is not None and existing[ref] != row["amount_minor"]:
+                corrected.append({"ref": ref, "was": existing[ref],
+                                  "now": row["amount_minor"], "type": row["type_raw"]})
+                if apply:
+                    ledger.correct_upwork_csv_row(conn, row)
+
+        # backfill accounting_subtype on earlier Upwork-CSV inserts (= type label
+        # we stored in upwork_type) so the transfers classifier is consistent
+        backfill = conn.execute(
+            "SELECT count(*) c FROM transactions WHERE source='Upwork-CSV'"
+            " AND accounting_subtype IS NULL").fetchone()["c"]
+        if apply and backfill:
+            conn.execute("UPDATE transactions SET accounting_subtype=upwork_type,"
+                         " updated_at=datetime('now') WHERE source='Upwork-CSV'"
+                         " AND accounting_subtype IS NULL")
+
+    return {"mode": "APPLY" if apply else "DRY-RUN", "recon": recon,
+            "legs_inserted": len(inserted), "legs_corrected": len(corrected),
+            "subtype_backfilled": backfill,
+            "_inserted": inserted, "_corrected": corrected}
+
+
+def main() -> int:
+    res = run("--apply" in sys.argv)
+    public = {k: v for k, v in res.items() if not k.startswith("_")}
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    body = "# Transfer-leg rebuild (Phase 2)\n\n```\n" + json.dumps(public, indent=1) + "\n```\n"
+    for title, key in [("Inserted legs", "_inserted"), ("Corrected (mis-paired) legs", "_corrected")]:
+        if res.get(key):
+            body += f"\n## {title}\n\n```\n" + json.dumps(res[key], indent=1) + "\n```\n"
+    REPORT.write_text(body)
+    print(json.dumps(public, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

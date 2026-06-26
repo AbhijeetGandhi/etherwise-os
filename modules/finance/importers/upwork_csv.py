@@ -72,6 +72,10 @@ def parse(text: str) -> List[dict]:
             "canonical_key": f"upwork:{ref}",
             "date": iso_date(r.get("Date")),
             "type_raw": type_raw,
+            # the Upwork transaction-type label IS the accounting subtype; carry it
+            # so transfer legs (Withdrawal / Withdrawal Fee) stay identifiable and
+            # consistent with the API-sourced rows' accounting_subtype.
+            "accounting_subtype": type_raw or None,
             "type": CSV_TYPE_MAP.get(type_raw, "Other"),
             "amount_minor": amount_minor(r.get("Amount $")),
             "currency": "USD",                       # Amount $ is always USD

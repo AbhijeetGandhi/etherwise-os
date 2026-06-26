@@ -182,6 +182,46 @@ class DoctorCase(unittest.TestCase):
         c9 = [c for c in res.checks if c.invariant == "#9 type-sign sanity"][0]
         self.assertEqual(c9.status, "GREEN")
 
+    def _transfer_row(self, conn, rid, amount_minor, *, category=None,
+                      subtype=None, upwork_type=None, day="2026-05-10"):
+        conn.execute(
+            "INSERT INTO transactions (record_id, amount_minor, amount_base_minor,"
+            " currency, canonical_key, type, upwork_type, accounting_subtype,"
+            " category, creation_dt) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (rid, amount_minor, amount_minor, "USD", "k-" + rid, "Other",
+             upwork_type, subtype, category, day + "T00:00:00+0000"))
+
+    def test_transfer_integrity_na_when_no_in_leg(self):
+        # only an Upwork withdrawal out-leg, no IDFC in-leg yet -> N/A (pending),
+        # not RED (the USD-only state is expected until IDFC lands)
+        with db.connect(self.db_path) as conn:
+            self._transfer_row(conn, "w1", -158223, subtype="Withdrawal",
+                               upwork_type="APPayment")
+        res = doctor.run(self.db_path)
+        c7 = [c for c in res.checks if c.invariant == "#7 transfer-integrity"][0]
+        self.assertEqual(c7.status, "N/A")
+        self.assertTrue(res.green)
+
+    def test_transfer_integrity_red_on_orphan_in_leg(self):
+        # an IDFC +INR transfer_in with NO out-leg in window -> one-legged -> RED
+        with db.connect(self.db_path) as conn:
+            self._transfer_row(conn, "in1", 13000000, category="transfer_in",
+                               day="2026-05-10")
+        res = doctor.run(self.db_path)
+        c7 = [c for c in res.checks if c.invariant == "#7 transfer-integrity"][0]
+        self.assertEqual(c7.status, "RED")
+        self.assertFalse(res.green)
+
+    def test_transfer_integrity_green_when_both_legs_present(self):
+        with db.connect(self.db_path) as conn:
+            self._transfer_row(conn, "w2", -158223, subtype="Withdrawal",
+                               upwork_type="APPayment", day="2026-05-09")
+            self._transfer_row(conn, "in2", 13000000, category="transfer_in",
+                               day="2026-05-10")     # within +/-7 days of w2
+        res = doctor.run(self.db_path)
+        c7 = [c for c in res.checks if c.invariant == "#7 transfer-integrity"][0]
+        self.assertEqual(c7.status, "GREEN")
+
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:
             # opening 100.00 + flow (+50.00 −20.00) = closing 130.00
@@ -536,6 +576,36 @@ class TestFxPin(unittest.TestCase):
         res = fx.pin_base(rows, fetch=self._fetch)
         self.assertEqual(res["skipped"], 1)
         self.assertNotIn("amount_base_minor", rows[0])
+
+
+# ── Phase 2: transfers bucket classifier (§3.10) ─────────────────────────────
+class TestTransfers(unittest.TestCase):
+    def test_is_transfer_leg_markers(self):
+        from modules.finance import transfers
+        self.assertTrue(transfers.is_transfer_leg({"upwork_type": "APPayment"}))
+        self.assertTrue(transfers.is_transfer_leg({"accounting_subtype": "Withdrawal"}))
+        self.assertTrue(transfers.is_transfer_leg({"accounting_subtype": "Withdrawal Fee"}))
+        self.assertTrue(transfers.is_transfer_leg({"kind": "transfer_out"}))
+        self.assertTrue(transfers.is_transfer_leg({"category": "transfer_in"}))
+        self.assertTrue(transfers.is_transfer_leg({"description": "Bank Transfer · Withdrawal fee"}))
+        # NOT transfers
+        self.assertFalse(transfers.is_transfer_leg({"type": "Hourly Earning"}))
+        self.assertFalse(transfers.is_transfer_leg({"accounting_subtype": "GST"}))
+        self.assertFalse(transfers.is_transfer_leg({"category": "expense"}))
+
+    def test_leg_role(self):
+        from modules.finance import transfers
+        self.assertEqual(transfers.leg_role({"upwork_type": "APPayment"}), "out_principal")
+        self.assertEqual(transfers.leg_role({"accounting_subtype": "Withdrawal Fee"}), "fee")
+        self.assertEqual(transfers.leg_role({"category": "transfer_in"}), "in_principal")
+
+    def test_exclude_from_pnl(self):
+        from modules.finance import transfers
+        rows = [{"type": "Hourly Earning"}, {"upwork_type": "APPayment"},
+                {"accounting_subtype": "Withdrawal Fee"}, {"category": "income"}]
+        kept = list(transfers.exclude_from_pnl(rows))
+        self.assertEqual(len(kept), 2)               # the 2 non-transfer rows
+        self.assertNotIn({"upwork_type": "APPayment"}, kept)
 
 
 if __name__ == "__main__":
