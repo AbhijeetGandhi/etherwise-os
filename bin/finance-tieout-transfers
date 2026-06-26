@@ -49,7 +49,7 @@ def _out_legs():
                     and r.get("local_amount_minor")):
                 legs.append({"src": "upwork", "ref": r["ref_id"], "date": r["date"],
                              "inr": abs(r["local_amount_minor"])})
-    for f in sorted(WISE.glob("*_USD_*.csv")):
+    for f in sorted(WISE.glob("*.csv")):     # all Wise sub-accounts (USD + AUD ...)
         for r in wise_csv.parse(f.read_text()):
             if (r.get("kind") == "transfer_out" and r.get("local_currency") == "INR"
                     and r.get("local_amount_minor")):

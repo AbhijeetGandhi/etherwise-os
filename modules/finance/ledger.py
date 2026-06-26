@@ -84,20 +84,25 @@ def insert_bank_row(conn, row: dict, *, source_file: str) -> None:
 
 
 def insert_wise_row(conn, row: dict, *, source_file: str) -> None:
-    """INSERT one classified Wise row. USD base -> amount_base_minor == amount_minor,
-    fx_rate '1' (the Exchange Rate on a transfer_out is the realized USD->INR rate,
-    kept for the INR-leg tie-out, NOT used to re-value the USD leg). kind ->
+    """INSERT one classified Wise row. For the USD account: amount_base_minor ==
+    amount_minor, base-rate '1'. For a non-USD sub-account (e.g. AUD): the caller
+    pins amount_base_minor (USD) + `_base_rate` (currency->USD) first. fx_rate here
+    is the BASE-currency rate; the realized USD/AUD->INR rate is NOT stored (the
+    INR-leg tie-out re-derives it from the CSV's Exchange To Amount). kind ->
     category (income|transfer_out|fee); transfer_out is excluded from P&L."""
     wid = row["wise_id"]
     amt = row["amount_minor"]
+    base = row.get("amount_base_minor")
+    base = amt if base is None else base
     conn.execute(
         "INSERT INTO transactions (record_id, type, accounting_subtype, category,"
         " description, currency, amount_minor, amount_credited_minor,"
         " amount_base_minor, fx_rate, fx_date, creation_dt, source, source_file,"
         " canonical_key, dedup_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (wid, row["kind"], row["kind"], row["kind"], row["description"],
-         row.get("currency") or "USD", amt, amt, amt, "1", row.get("date"),
-         row.get("date"), "Wise", source_file, f"wise:{wid}", f"wise:{wid}"))
+         row.get("currency") or "USD", amt, amt, base, row.get("_base_rate") or "1",
+         row.get("date"), row.get("date"), "Wise", source_file,
+         f"wise:{wid}", f"wise:{wid}"))
 
 
 def correct_upwork_csv_row(conn, row: dict) -> None:

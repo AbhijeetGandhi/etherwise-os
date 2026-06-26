@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import money, ledger  # noqa: E402
+from modules.finance import money, ledger, fx  # noqa: E402
 from modules.finance.importers import wise_csv  # noqa: E402
 
 INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "wise"
@@ -30,26 +30,40 @@ REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-wise.
 
 
 def run(apply: bool) -> dict:
-    usd = sorted(INBOX.glob("*_USD_*.csv"))
-    if not usd:
-        return {"abort": "no *_USD_*.csv in finance-inbox/wise/"}
-    f = usd[-1]
-    rows = [r for r in wise_csv.parse(f.read_text()) if r["amount_minor"] is not None]
-    rec = wise_csv.reconcile_running_balance(rows)
-    if not rec["ok"]:
-        return {"abort": "Wise USD statement did not reconcile — refusing to import",
-                "breaks": rec["breaks"][:10], "quarantine": rec["quarantine"][:10]}
-
-    # other non-empty sub-accounts -> deferred (need FX), reported not dropped
-    deferred = {}
-    for o in INBOX.glob("*.csv"):
-        if "_USD_" in o.name:
+    # every non-empty per-currency Wise statement (USD active account + e.g. AUD)
+    files = []
+    for f in sorted(INBOX.glob("*.csv")):
+        rows = [r for r in wise_csv.parse(f.read_text()) if r["amount_minor"] is not None]
+        if not rows:
             continue
-        n = len([r for r in wise_csv.parse(o.read_text()) if r["amount_minor"] is not None])
-        if n:
-            deferred[o.name] = n
+        rec = wise_csv.reconcile_running_balance(rows)
+        if not rec["ok"]:
+            return {"abort": f"Wise statement {f.name} did not reconcile",
+                    "breaks": rec["breaks"][:10], "quarantine": rec["quarantine"][:10]}
+        for r in rows:
+            r["_file"] = f.name
+        files.append((f, rows))
+    if not files:
+        return {"abort": "no non-empty *.csv in finance-inbox/wise/"}
+    all_rows = [r for _, rows in files for r in rows]
 
-    superseded, inserted = 0, 0
+    # FX-pin non-USD rows to the USD base (per currency+date, cached). The USD
+    # account is base (amount_base == amount). The realized ->INR rate stays in the
+    # CSV (Exchange To Amount) for the tie-out; this is the base-currency rate only.
+    nonusd = [r for r in all_rows if (r.get("currency") or "USD") != "USD"]
+    fetched = 0
+    if apply and nonusd:
+        cache = {}
+        for r in nonusd:
+            ck = (r["currency"], r["date"])
+            if ck not in cache:
+                cache[ck] = fx.frankfurter_fetch(r["date"], r["currency"], "USD")
+                fetched += 1
+            rate, _ = cache[ck]
+            r["amount_base_minor"] = money.apply_rate(r["amount_minor"], rate)
+            r["_base_rate"] = str(rate)
+
+    superseded = inserted = reclassified = 0
     with db.connect(config.DB_PATH) as conn:
         # quarantine the legacy v2 Wise rows (source != 'Wise'); keys overlap with
         # v3 (same TransferWise ID) so they must go before the v3 inserts.
@@ -61,7 +75,7 @@ def run(apply: bool) -> dict:
             for r in v2:
                 conn.execute("INSERT INTO quarantine (source, reason, payload_json)"
                              " VALUES ('wise', ?, ?)",
-                             (f"superseded by v3 Wise import {f.name} (v2 row mislabeled"
+                             ("superseded by v3 Wise import (v2 row mislabeled"
                               " 'Fixed Earning'; reclassified income/transfer_out/fee)",
                               json.dumps(r, default=str)))
                 conn.execute("DELETE FROM transactions WHERE record_id=?", (r["record_id"],))
@@ -69,8 +83,7 @@ def run(apply: bool) -> dict:
         have = {r["canonical_key"] for r in conn.execute(
             "SELECT canonical_key FROM transactions WHERE canonical_key LIKE 'wise:%'")}
         have -= {r["canonical_key"] for r in v2}
-        reclassified = 0
-        for r in rows:
+        for r in all_rows:
             ck = r["canonical_key"]
             if ck in have:
                 if apply:
@@ -85,30 +98,30 @@ def run(apply: bool) -> dict:
                 continue
             inserted += 1
             if apply:
-                ledger.insert_wise_row(conn, r, source_file=f.name)
+                ledger.insert_wise_row(conn, r, source_file=r["_file"])
 
-        # account_balances (wise/USD) for the #1 tie-out. Newest-first export:
-        # closing = newest row's running balance; opening = oldest bal - oldest amt.
-        if apply:
-            dated = [r for r in rows if r.get("balance_minor") is not None]
-            if dated:
-                newest_first = dated[0]["date"] >= dated[-1]["date"]
-                first, last = dated[0], dated[-1]
-                closing = (first if newest_first else last)["balance_minor"]
-                opener = (last if newest_first else first)
-                opening = opener["balance_minor"] - opener["amount_minor"]
-                conn.execute(
-                    "INSERT OR IGNORE INTO account_balances (account, currency,"
-                    " opening_minor, closing_minor, statement_date, source_file)"
-                    " VALUES ('wise','USD',?,?,?,?)",
-                    (opening, closing, max(r["date"] for r in dated), f.name))
+        # account_balances only for the USD account (#1 tie-out). Non-USD
+        # sub-accounts net to ~0 (received then swept to IDFC) -> immaterial to cash.
+        usd_rows = [r for r in all_rows if (r.get("currency") or "USD") == "USD"
+                    and r.get("balance_minor") is not None]
+        if apply and usd_rows:
+            nf = usd_rows[0]["date"] >= usd_rows[-1]["date"]
+            first, last = usd_rows[0], usd_rows[-1]
+            closing = (first if nf else last)["balance_minor"]
+            opener = (last if nf else first)
+            conn.execute(
+                "INSERT OR IGNORE INTO account_balances (account, currency,"
+                " opening_minor, closing_minor, statement_date, source_file)"
+                " VALUES ('wise','USD',?,?,?,?)",
+                (opener["balance_minor"] - opener["amount_minor"], closing,
+                 max(r["date"] for r in usd_rows), usd_rows[0]["_file"]))
 
-    return {"mode": "APPLY" if apply else "DRY-RUN", "file": f.name,
-            "usd_rows": len(rows), "reconcile_ok": rec["ok"],
-            "category_breakdown": dict(Counter(r["kind"] for r in rows)),
+    return {"mode": "APPLY" if apply else "DRY-RUN",
+            "files": [f.name for f, _ in files], "total_rows": len(all_rows),
+            "category_breakdown": dict(Counter(r["kind"] for r in all_rows)),
+            "nonusd_rows": len(nonusd), "fx_dates_fetched": fetched,
             "v2_superseded_quarantined": superseded, "v3_inserted": inserted,
-            "reclassified": reclassified if apply else 0,
-            "deferred_subaccounts": deferred}
+            "reclassified": reclassified if apply else 0}
 
 
 def main() -> int:
