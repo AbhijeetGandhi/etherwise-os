@@ -98,7 +98,7 @@ def _check_statement_integrity(conn) -> Check:
     GREEN until Phase-1 imports populate balances."""
     stmts = [dict(r) for r in conn.execute(
         "SELECT account, currency, opening_minor, closing_minor, statement_date,"
-        " source_file FROM account_balances")]
+        " source_file FROM account_balances WHERE source_file NOT LIKE 'derived:%'")]
     if not stmts:
         return Check("#1 statement integrity", "N/A", "no statements imported yet")
     reds = []
@@ -188,11 +188,39 @@ def _check_transfer_integrity(conn) -> Check:
                  " finance-tieout-transfers (Wise re-import pending)")
 
 
+def _check_bucket_reproducibility(conn) -> Check:
+    """#10 P&L reproducibility (added 2026-06-26): the stored pnl_bucket must equal
+    pnl.bucket(row) for every canonical row, so the money picture is re-derivable
+    from the DB (not recomputed ad hoc) and auditable by query. A stale stored
+    bucket (!= recomputed) is RED; rows not yet bucketized are N/A (run
+    finance-bucketize). Guards against the stored-category vs computed-bucket drift
+    that made the P&L non-reproducible."""
+    from modules.finance import pnl
+    rows = [dict(r) for r in conn.execute(
+        "SELECT record_id, source, type, upwork_type, category, accounting_subtype,"
+        " description, pnl_bucket FROM transactions WHERE canonical_key IS NOT NULL")]
+    if not rows or all(r.get("pnl_bucket") is None for r in rows):
+        return Check("#10 P&L reproducibility", "N/A", "not bucketized yet (run finance-bucketize)")
+    null = [r for r in rows if r.get("pnl_bucket") is None]
+    stale = [r for r in rows if r.get("pnl_bucket") is not None
+             and r["pnl_bucket"] != pnl.bucket(r)]
+    if stale:
+        return Check("#10 P&L reproducibility", "RED",
+                     f"{len(stale)} rows: stored pnl_bucket != bucket() — re-bucketize",
+                     [{"record_id": s["record_id"], "stored": s["pnl_bucket"],
+                       "computed": pnl.bucket(s)} for s in stale[:20]])
+    if null:
+        return Check("#10 P&L reproducibility", "N/A",
+                     f"{len(null)} rows not yet bucketized (run finance-bucketize)")
+    return Check("#10 P&L reproducibility", "GREEN",
+                 f"{len(rows)} rows: stored pnl_bucket reproduces bucket()")
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
     with db.connect(db_path or config.DB_PATH) as conn:
         checks = [_check_dedup(conn), _check_sanity(conn), _check_type_sign(conn),
                   _check_statement_integrity(conn), _check_transfer_integrity(conn),
-                  _check_payroll(conn)]
+                  _check_bucket_reproducibility(conn), _check_payroll(conn)]
     return DoctorResult(checks)

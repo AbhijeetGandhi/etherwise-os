@@ -113,8 +113,14 @@ def _iso_date(d: str) -> str:
 # v3 imports these rows (does not drop them); category drives P&L bucketing.
 
 def _is_internal_sweep(desc: str) -> bool:
+    """Bank-side moves between savings and a fixed deposit — NOT economic events,
+    they relocate our own cash into/out of FD principal (it stays our money). The
+    auto-sweep pair ('Auto sweep in from' / 'Sweepout FD ... booked') plus MANUAL
+    FD creation/closure ('FD <acct-no> ETHERWISE'). Missing the manual-FD pattern
+    mis-booked 2 rows (-Rs 5L) as opex AND understated the FD/cash balance."""
     s = desc or ""
-    return s.startswith("Auto sweep in from") or "Sweepout FD" in s
+    return (s.startswith("Auto sweep in from") or "Sweepout FD" in s
+            or bool(re.match(r"FD \d{6,}", s)))
 
 
 def _is_already_tracked_credit(desc: str) -> bool:

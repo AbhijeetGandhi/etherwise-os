@@ -99,7 +99,9 @@ def compute(rows) -> dict:
     uncategorized = []
     legacy_rows = 0
     for r in rows:
-        b = bucket(r)
+        # prefer the PERSISTED bucket (finance-bucketize) so the P&L is reproducible
+        # from stored data; fall back to computing it for un-bucketized rows.
+        b = r.get("pnl_bucket") or bucket(r)
         usd = r.get("amount_base_minor")
         if usd is None:
             uncategorized.append({"record_id": r.get("record_id"),

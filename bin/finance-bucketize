@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Phase 3 — persist the P&L bucket. Writes pnl.bucket(row) to transactions.pnl_bucket
+for every canonical row, so the money picture is REPRODUCIBLE from stored data and
+auditable by query (Abhijeet 2026-06-26: the per-source `category` and the computed
+bucket() disagreed, so the P&L could not be re-derived). bin/finance-pnl reads
+pnl_bucket; the doctor verifies it still matches bucket(). Idempotent.
+
+Usage: PYTHONPATH=. python3 bin/finance-bucketize [--apply]   (default dry-run)
+"""
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import pnl  # noqa: E402
+
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
+
+_COLS = ("record_id, source, type, upwork_type, category, accounting_subtype,"
+         " description, pnl_bucket")
+
+
+def run(apply: bool) -> dict:
+    changed = 0
+    counts = Counter()
+    with db.connect(config.DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT {_COLS} FROM transactions WHERE canonical_key IS NOT NULL")]
+        for r in rows:
+            b = pnl.bucket(r)
+            counts[b] += 1
+            if r.get("pnl_bucket") != b:
+                changed += 1
+                if apply:
+                    conn.execute("UPDATE transactions SET pnl_bucket=?,"
+                                 " updated_at=datetime('now') WHERE record_id=?",
+                                 (b, r["record_id"]))
+    return {"mode": "APPLY" if apply else "DRY-RUN", "rows": len(rows),
+            "changed": changed, "by_bucket": dict(counts)}
+
+
+def main() -> int:
+    res = run("--apply" in sys.argv)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# Bucketize (Phase 3)\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
+    print(json.dumps(res, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

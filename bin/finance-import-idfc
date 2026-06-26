@@ -117,7 +117,7 @@ def run(apply: bool) -> dict:
                              (f"IDFC parse: {q['reason']} ({f.name})",
                               json.dumps(q, default=str)))
 
-        # 4) account_balances for the #1 statement-integrity tie-out
+        # 4) account_balances for the #1 statement-integrity tie-out (SAVINGS)
         if apply and "opening_balance_minor" in meta:
             conn.execute(
                 "INSERT OR IGNORE INTO account_balances (account, currency,"
@@ -126,12 +126,28 @@ def run(apply: bool) -> dict:
                 (ACCOUNT, "INR", meta["opening_balance_minor"],
                  meta["closing_balance_minor"], meta.get("period_end") or win_hi, f.name))
 
+    # 5) DERIVED FD/deposit balance — the savings closing OMITS the linked fixed
+    # deposits. FD principal = -(net internal_sweep) (sweepouts to FD minus
+    # sweep-ins from it, incl. manual FD creation). This assumes FD=0 at window
+    # open; Abhijeet confirms/overrides with the actual current FD balance. Marked
+    # 'derived:' so it's never mistaken for a statement figure.
+    fd_principal = -sum(r["amount_minor"] for r in good if r["category"] == "internal_sweep")
+    if apply:
+        with db.connect(config.DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO account_balances (account, currency,"
+                " opening_minor, closing_minor, statement_date, source_file)"
+                " VALUES ('idfc-fd','INR',0,?,?,?)",
+                (fd_principal, meta.get("period_end") or win_hi,
+                 f"derived:sweep-legs:{f.name}"))
+
     res = {"mode": "APPLY" if apply else "DRY-RUN", "file": f.name,
            "window": f"{win_lo}..{win_hi}", "statement_rows": len(good),
            "reconcile_ok": rec["ok"], "parse_quarantine": len(qrows),
            "category_breakdown": dict(Counter(r["category"] for r in good)),
            "v2_superseded_quarantined": superseded, "v3_inserted": inserted,
            "reclassified": reclassified if apply else 0,
+           "derived_fd_principal_inr": str(money.from_minor(fd_principal)),
            "opening_inr": str(money.from_minor(meta.get("opening_balance_minor", 0))),
            "closing_inr": str(money.from_minor(meta.get("closing_balance_minor", 0)))}
     if apply:

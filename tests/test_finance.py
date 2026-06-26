@@ -206,6 +206,38 @@ class DoctorCase(unittest.TestCase):
         self.assertIn("excluded from P&L", c7.detail)
         self.assertTrue(res.green)
 
+    def test_bucket_reproducibility_10(self):
+        from modules.finance import pnl
+        with db.connect(self.db_path) as conn:
+            self._txn(conn, "b1", 10000, "USD", "k1")
+            conn.execute("UPDATE transactions SET type='Hourly Earning' WHERE record_id='b1'")
+            # not bucketized yet -> #10 N/A
+            res = doctor.run(self.db_path)
+            c10 = [c for c in res.checks if c.invariant == "#10 P&L reproducibility"][0]
+            self.assertEqual(c10.status, "N/A")
+            # stored == bucket() -> GREEN
+            conn.execute("UPDATE transactions SET pnl_bucket='revenue' WHERE record_id='b1'")
+        self.assertEqual([c for c in doctor.run(self.db_path).checks
+                          if c.invariant == "#10 P&L reproducibility"][0].status, "GREEN")
+        # stale stored bucket -> RED (P&L not reproducible)
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE transactions SET pnl_bucket='opex' WHERE record_id='b1'")
+        res = doctor.run(self.db_path)
+        c10 = [c for c in res.checks if c.invariant == "#10 P&L reproducibility"][0]
+        self.assertEqual(c10.status, "RED")
+        self.assertFalse(res.green)
+
+    def test_statement_integrity_skips_derived_balances(self):
+        # a 'derived:' balance (e.g. the FD principal) is an aggregate, not a
+        # statement -> #1 must NOT try to reconcile it against transactions.
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO account_balances (account,currency,opening_minor,"
+                         "closing_minor,statement_date,source_file) VALUES"
+                         " ('idfc-fd','INR',0,5006858,'2026-06-25','derived:sweep-legs:x')")
+        res = doctor.run(self.db_path)
+        c1 = [c for c in res.checks if c.invariant == "#1 statement integrity"][0]
+        self.assertNotEqual(c1.status, "RED")
+
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:
             # opening 100.00 + flow (+50.00 −20.00) = closing 130.00
@@ -480,6 +512,16 @@ class TestBankXlsx(unittest.TestCase):
         # a genuine direct-client NEFT stays income, not a transfer
         self.assertEqual(bank_xlsx.classify_category(
             "NEFT/002651944142/DYNATECH ENGINEER", "credit"), "income")
+
+    def test_manual_fd_creation_is_internal_sweep_not_expense(self):
+        # 'FD <acct> ETHERWISE' moves cash into a fixed deposit -> internal_sweep
+        # (NOT opex); missing this mis-booked -Rs 5L as expense + understated cash.
+        from modules.finance.importers import bank_xlsx
+        self.assertEqual(bank_xlsx.classify_category("FD 10241213363 ETHERWISE", "debit"),
+                         "internal_sweep")
+        # genuine expenses that merely contain 'FD'-ish text stay expense
+        self.assertEqual(bank_xlsx.classify_category(
+            "UPI/DR/609634230935/SHINDE A/FDRL/9763830/UPI", "debit"), "expense")
 
     def test_signed_integer_paise_and_balances(self):
         from modules.finance.importers import bank_xlsx
