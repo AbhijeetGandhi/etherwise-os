@@ -83,6 +83,23 @@ def insert_bank_row(conn, row: dict, *, source_file: str) -> None:
          row.get("source_row"), ck, ck))
 
 
+def insert_wise_row(conn, row: dict, *, source_file: str) -> None:
+    """INSERT one classified Wise row. USD base -> amount_base_minor == amount_minor,
+    fx_rate '1' (the Exchange Rate on a transfer_out is the realized USD->INR rate,
+    kept for the INR-leg tie-out, NOT used to re-value the USD leg). kind ->
+    category (income|transfer_out|fee); transfer_out is excluded from P&L."""
+    wid = row["wise_id"]
+    amt = row["amount_minor"]
+    conn.execute(
+        "INSERT INTO transactions (record_id, type, accounting_subtype, category,"
+        " description, currency, amount_minor, amount_credited_minor,"
+        " amount_base_minor, fx_rate, fx_date, creation_dt, source, source_file,"
+        " canonical_key, dedup_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (wid, row["kind"], row["kind"], row["kind"], row["description"],
+         row.get("currency") or "USD", amt, amt, amt, "1", row.get("date"),
+         row.get("date"), "Wise", source_file, f"wise:{wid}", f"wise:{wid}"))
+
+
 def correct_upwork_csv_row(conn, row: dict) -> None:
     """Re-derive an EXISTING row fully from the authoritative CSV (amount, type,
     description) — used to repair a mis-paired transfer leg. Keyed by record_id."""

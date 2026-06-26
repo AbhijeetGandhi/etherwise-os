@@ -76,6 +76,10 @@ def parse(text: str) -> List[dict]:
             "currency": (r.get("Currency") or "USD").strip() or "USD",
             "balance_minor": _minor(r.get("Running Balance")),
             "fx_rate": fx or None,                        # USD->INR realized rate
+            # realized destination leg of a transfer_out (e.g. INR received at IDFC)
+            # -> the §3.10 cross-currency tie-out matches this to the IDFC +INR leg.
+            "local_amount_minor": _minor(r.get("Exchange To Amount")),
+            "local_currency": (r.get("Exchange To") or "").strip() or None,
             "txn_type": ttype,
             "kind": _classify(desc, wid, ttype, fx),
             "description": desc,

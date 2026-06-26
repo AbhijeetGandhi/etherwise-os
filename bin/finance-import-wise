@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Phase 2 — Wise statement import into the ledger. REPRODUCIBLE + idempotent.
+Source = finance-inbox/wise/*.csv (the Wise per-currency lifetime export).
+
+v2 imported only ~95 Wise rows, ALL mislabeled 'Fixed Earning' (it swept fees +
+USD->INR transfers into revenue — a double-count, since the transfer's INR leg
+arrives at IDFC and the fee is an expense). v3 quarantines those (preserved) and
+imports the full USD statement CLASSIFIED: income / transfer_out / fee. A
+transfer_out's destination INR ('Exchange To Amount') ties out to the IDFC
+WISE-PAYMENTS +INR leg (validated 78/83). USD base -> amount_base == amount.
+
+Non-USD Wise sub-accounts (AUD has a few rows; rest empty) are NOT imported here
+(they would need FX pinning) — reported as deferred, never silently dropped.
+Reconcile-before-commit on the USD running balance.
+
+Usage: PYTHONPATH=. python3 bin/finance-import-wise [--apply]   (default dry-run)
+"""
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import money, ledger  # noqa: E402
+from modules.finance.importers import wise_csv  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "wise"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-wise.md"
+
+
+def run(apply: bool) -> dict:
+    usd = sorted(INBOX.glob("*_USD_*.csv"))
+    if not usd:
+        return {"abort": "no *_USD_*.csv in finance-inbox/wise/"}
+    f = usd[-1]
+    rows = [r for r in wise_csv.parse(f.read_text()) if r["amount_minor"] is not None]
+    rec = wise_csv.reconcile_running_balance(rows)
+    if not rec["ok"]:
+        return {"abort": "Wise USD statement did not reconcile — refusing to import",
+                "breaks": rec["breaks"][:10], "quarantine": rec["quarantine"][:10]}
+
+    # other non-empty sub-accounts -> deferred (need FX), reported not dropped
+    deferred = {}
+    for o in INBOX.glob("*.csv"):
+        if "_USD_" in o.name:
+            continue
+        n = len([r for r in wise_csv.parse(o.read_text()) if r["amount_minor"] is not None])
+        if n:
+            deferred[o.name] = n
+
+    superseded, inserted = 0, 0
+    with db.connect(config.DB_PATH) as conn:
+        # quarantine the legacy v2 Wise rows (source != 'Wise'); keys overlap with
+        # v3 (same TransferWise ID) so they must go before the v3 inserts.
+        v2 = [dict(r) for r in conn.execute(
+            "SELECT * FROM transactions WHERE canonical_key LIKE 'wise:%'"
+            " AND (source IS NULL OR source != 'Wise')")]
+        superseded = len(v2)
+        if apply:
+            for r in v2:
+                conn.execute("INSERT INTO quarantine (source, reason, payload_json)"
+                             " VALUES ('wise', ?, ?)",
+                             (f"superseded by v3 Wise import {f.name} (v2 row mislabeled"
+                              " 'Fixed Earning'; reclassified income/transfer_out/fee)",
+                              json.dumps(r, default=str)))
+                conn.execute("DELETE FROM transactions WHERE record_id=?", (r["record_id"],))
+
+        have = {r["canonical_key"] for r in conn.execute(
+            "SELECT canonical_key FROM transactions WHERE canonical_key LIKE 'wise:%'")}
+        have -= {r["canonical_key"] for r in v2}
+        reclassified = 0
+        for r in rows:
+            ck = r["canonical_key"]
+            if ck in have:
+                if apply:
+                    cur = conn.execute("SELECT category FROM transactions WHERE record_id=?",
+                                       (r["wise_id"],)).fetchone()
+                    if cur and cur["category"] != r["kind"]:
+                        reclassified += 1
+                        conn.execute("UPDATE transactions SET category=?, type=?,"
+                                     " accounting_subtype=?, updated_at=datetime('now')"
+                                     " WHERE record_id=?",
+                                     (r["kind"], r["kind"], r["kind"], r["wise_id"]))
+                continue
+            inserted += 1
+            if apply:
+                ledger.insert_wise_row(conn, r, source_file=f.name)
+
+        # account_balances (wise/USD) for the #1 tie-out. Newest-first export:
+        # closing = newest row's running balance; opening = oldest bal - oldest amt.
+        if apply:
+            dated = [r for r in rows if r.get("balance_minor") is not None]
+            if dated:
+                newest_first = dated[0]["date"] >= dated[-1]["date"]
+                first, last = dated[0], dated[-1]
+                closing = (first if newest_first else last)["balance_minor"]
+                opener = (last if newest_first else first)
+                opening = opener["balance_minor"] - opener["amount_minor"]
+                conn.execute(
+                    "INSERT OR IGNORE INTO account_balances (account, currency,"
+                    " opening_minor, closing_minor, statement_date, source_file)"
+                    " VALUES ('wise','USD',?,?,?,?)",
+                    (opening, closing, max(r["date"] for r in dated), f.name))
+
+    return {"mode": "APPLY" if apply else "DRY-RUN", "file": f.name,
+            "usd_rows": len(rows), "reconcile_ok": rec["ok"],
+            "category_breakdown": dict(Counter(r["kind"] for r in rows)),
+            "v2_superseded_quarantined": superseded, "v3_inserted": inserted,
+            "reclassified": reclassified if apply else 0,
+            "deferred_subaccounts": deferred}
+
+
+def main() -> int:
+    res = run("--apply" in sys.argv)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# Wise import (Phase 2)\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
+    print(json.dumps(res, indent=1))
+    return 0 if "abort" not in res else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

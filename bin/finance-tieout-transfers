@@ -25,9 +25,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
 from modules.finance import money  # noqa: E402
-from modules.finance.importers import upwork_csv  # noqa: E402
+from modules.finance.importers import upwork_csv, wise_csv  # noqa: E402
 
-INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "upwork"
+ROOT = Path(__file__).resolve().parents[1]
+UPWORK = ROOT / "finance-inbox" / "upwork"
+WISE = ROOT / "finance-inbox" / "wise"
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-tieout-transfers.md"
 WINDOW_DAYS = 12
 
@@ -36,16 +38,28 @@ def _days(a, b):
     return abs((datetime.date.fromisoformat(a) - datetime.date.fromisoformat(b)).days)
 
 
-def run() -> dict:
-    # Upwork withdrawals with a realized INR settlement
-    wd = []
-    for f in sorted(INBOX.glob("*fullhistory*.csv")):
+def _out_legs():
+    """Every -USD transfer out-leg that should land at IDFC, with its realized INR.
+    Upwork Withdrawal ('Amount in local currency') + Wise transfer_out ('Exchange
+    To Amount')."""
+    legs = []
+    for f in sorted(UPWORK.glob("*fullhistory*.csv")):
         for r in upwork_csv.parse(f.read_text()):
             if (r.get("type_raw") == "Withdrawal" and r.get("local_currency") == "INR"
                     and r.get("local_amount_minor")):
-                wd.append({"ref": r["ref_id"], "date": r["date"],
-                           "inr": abs(r["local_amount_minor"])})
+                legs.append({"src": "upwork", "ref": r["ref_id"], "date": r["date"],
+                             "inr": abs(r["local_amount_minor"])})
+    for f in sorted(WISE.glob("*_USD_*.csv")):
+        for r in wise_csv.parse(f.read_text()):
+            if (r.get("kind") == "transfer_out" and r.get("local_currency") == "INR"
+                    and r.get("local_amount_minor")):
+                legs.append({"src": "wise", "ref": r["wise_id"], "date": r["date"],
+                             "inr": abs(r["local_amount_minor"])})
+    return legs
 
+
+def run() -> dict:
+    legs = _out_legs()
     with db.connect(config.DB_PATH) as conn:
         ins = [dict(r) for r in conn.execute(
             "SELECT record_id, creation_dt, amount_minor, amount_base_minor, description"
@@ -53,35 +67,38 @@ def run() -> dict:
     win = sorted(i["creation_dt"][:10] for i in ins if i["creation_dt"])
     lo, hi = (win[0], win[-1]) if win else (None, None)
 
-    matched, unmatched_wd = [], []
+    matched = {"upwork": 0, "wise": 0}
+    unmatched_out = []
     used = set()
-    for w in wd:
+    for w in legs:
         if not (lo and lo <= w["date"] <= hi):
-            continue                       # only withdrawals inside the IDFC window
+            continue                       # only out-legs inside the IDFC window
         hit = next((i for i in ins if i["record_id"] not in used
                     and i["amount_minor"] == w["inr"]
                     and i["creation_dt"] and _days(i["creation_dt"][:10], w["date"]) <= WINDOW_DAYS),
                    None)
         if hit:
             used.add(hit["record_id"])
-            matched.append({"ref": w["ref"], "inr": str(money.from_minor(w["inr"])),
-                            "idfc": hit["record_id"]})
+            matched[w["src"]] += 1
         else:
-            unmatched_wd.append({"ref": w["ref"], "date": w["date"],
-                                 "inr": str(money.from_minor(w["inr"]))})
+            unmatched_out.append({"src": w["src"], "ref": w["ref"], "date": w["date"],
+                                  "inr": str(money.from_minor(w["inr"]))})
 
-    pending_wise = [i for i in ins if i["record_id"] not in used]
-    in_window_wd = [w for w in wd if lo and lo <= w["date"] <= hi]
+    orphan_in = [i for i in ins if i["record_id"] not in used]
+    in_window = [w for w in legs if lo and lo <= w["date"] <= hi]
     return {
         "idfc_window": f"{lo}..{hi}",
-        "upwork_withdrawals_in_window": len(in_window_wd),
-        "tied_out": len(matched),
-        "unmatched_withdrawals": len(unmatched_wd),
+        "out_legs_in_window": len(in_window),
+        "tied_out_upwork": matched["upwork"],
+        "tied_out_wise": matched["wise"],
+        "unmatched_out_legs": len(unmatched_out),
         "idfc_transfer_in_total": len(ins),
-        "idfc_transfer_in_pending_wise": len(pending_wise),
-        "pending_wise_usd": str(money.from_minor(
-            sum(i.get("amount_base_minor") or 0 for i in pending_wise))),
-        "_unmatched_withdrawals": unmatched_wd[:20],
+        "idfc_transfer_in_ORPHAN": len(orphan_in),
+        "orphan_in_usd": str(money.from_minor(
+            sum(i.get("amount_base_minor") or 0 for i in orphan_in))),
+        "_unmatched_out": unmatched_out[:25],
+        "_orphan_in": [{"id": i["record_id"], "inr": str(money.from_minor(i["amount_minor"])),
+                        "desc": (i["description"] or "")[:60]} for i in orphan_in[:25]],
     }
 
 
@@ -90,9 +107,10 @@ def main() -> int:
     public = {k: v for k, v in res.items() if not k.startswith("_")}
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     body = "# Cross-currency transfer tie-out (Phase 2)\n\n```\n" + json.dumps(public, indent=1) + "\n```\n"
-    if res.get("_unmatched_withdrawals"):
-        body += "\n## Unmatched in-window withdrawals (investigate)\n\n```\n" \
-                + json.dumps(res["_unmatched_withdrawals"], indent=1) + "\n```\n"
+    for title, key in [("Unmatched out-legs (investigate)", "_unmatched_out"),
+                       ("Orphan IDFC transfer_in (no out-leg)", "_orphan_in")]:
+        if res.get(key):
+            body += f"\n## {title}\n\n```\n" + json.dumps(res[key], indent=1) + "\n```\n"
     REPORT.write_text(body)
     print(json.dumps(public, indent=1))
     return 0
