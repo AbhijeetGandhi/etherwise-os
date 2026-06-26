@@ -124,19 +124,21 @@ def _is_internal_sweep(desc: str) -> bool:
 
 
 def _is_already_tracked_credit(desc: str) -> bool:
-    """Inbound rows whose economic event is already booked via another source —
-    i.e. the INR leg of a transfer, NOT new income. Upwork remits earnings to
-    this account under THREE descriptions, all of them the INR leg of an Upwork
-    withdrawal (the earning itself is already on the Upwork ledger):
-      - 'Upwork Escrow Inc'            (direct NEFT, via INDB routing)
-      - 'WISE PAYMENTS IPL ... ESCROW' (Upwork's Wise Payments India rail)
-      - 'PAYMENT ESCROW INC'           (older NEFT label)
-    Plus genuine Wise USD->INR transfers (WISE/TRANSFERWISE) from our own account.
-    Missing 'Upwork Escrow Inc' here mis-booked 25 such remittances as income — a
-    revenue double-count, since the earning is already counted on the Upwork side."""
+    """Is this inbound credit the INR leg of a TRANSFER (already booked elsewhere),
+    vs new client INCOME? The distinction is RAIL-based, NOT processor-name-based
+    (Abhijeet 2026-06-26) — both Visa and Wise appear on the inward-remittance rail:
+      - NEFT / ESCROW rail  = transfer_in: Upwork's direct remittance ('Upwork
+        Escrow Inc' / 'PAYMENT ESCROW') and Etherwise's own Wise USD->INR transfer
+        ('WISE PAYMENTS IPL ... ESCROW'). The earning/transfer is already on the
+        Upwork/Wise ledger -> exclude from P&L.
+      - IMPS / RDA-Vostro rail = INCOME: foreign client payments delivered via a
+        Rupee Drawing Arrangement ('.../VISAPAYMENTSLIM/...', '.../WISEPAYMENTSLIM/
+        ...RDAVostro'). These have NO matching self-transfer out-leg -> NOT a
+        transfer. (Name-based matching wrongly split Wise-RDA from Visa-RDA.)"""
     s = (desc or "").upper()
-    return any(k in s for k in ("UPWORK ESCROW", "PAYMENT ESCROW", "WISE",
-                                "TRANSFERWISE", "TW INDIA"))
+    if "RDA" in s or "PAYMENTSLIM" in s:        # inward-remittance rail -> income
+        return False
+    return any(k in s for k in ("ESCROW", "WISE PAYMENTS", "TRANSFERWISE", "TW INDIA"))
 
 
 def _is_credit_card_bill_payment(desc: str) -> bool:

@@ -513,6 +513,19 @@ class TestBankXlsx(unittest.TestCase):
         self.assertEqual(bank_xlsx.classify_category(
             "NEFT/002651944142/DYNATECH ENGINEER", "credit"), "income")
 
+    def test_rda_inward_remittance_is_income_rail_based(self):
+        # RAIL-based, not name-based: inward RDA-Vostro remittances are CLIENT
+        # INCOME even when the processor is Wise — Visa-RDA and Wise-RDA both income;
+        # only the NEFT/ESCROW rail is a transfer. (Abhijeet 2026-06-26.)
+        from modules.finance.importers import bank_xlsx
+        for d in ("IMPS/522522564207/WISEPAYMENTSLIM/HDFC0000240/8831/RDAVostro",
+                  "IMPS/610322543022/VISAPAYMENTSLIM/HDFC0000240/RDAVostro"):
+            self.assertEqual(bank_xlsx.classify_category(d, "credit"), "income", d)
+        # the ESCROW rail (own Wise transfer) stays transfer_in
+        self.assertEqual(bank_xlsx.classify_category(
+            "NEFT/CITIN26664234140/WISE PAYMENTS IPL PA CB EXP ESCROW/CITI", "credit"),
+            "transfer_in")
+
     def test_manual_fd_creation_is_internal_sweep_not_expense(self):
         # 'FD <acct> ETHERWISE' moves cash into a fixed deposit -> internal_sweep
         # (NOT opex); missing this mis-booked -Rs 5L as expense + understated cash.
