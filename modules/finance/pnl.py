@@ -70,6 +70,22 @@ def bucket(row: dict) -> str:
         return "opex"
     if t in ("Personal", "Owner Draw"):
         return "owner_draw"
+
+    # LAST RESORT (Abhijeet-approved 2026-06-26): some Upwork rows carry the type
+    # only in the free-text description, no structured field. Derive from it; this
+    # is intentionally last so a structured field always wins. Order: tax/fee
+    # before earnings (a fee line never says 'earnings').
+    return _by_description(row.get("description") or "")
+
+
+def _by_description(desc: str) -> str:
+    d = desc.lower()
+    if "withholding tax" in d or "gst (" in d:
+        return "tax"
+    if "service fee" in d or "membership" in d or "connects" in d:
+        return "platform_fee"
+    if "earnings" in d or "milestone" in d or "bonus" in d:
+        return "revenue"
     return "uncategorized"
 
 

@@ -36,7 +36,8 @@ def is_transfer_leg(row: dict) -> bool:
         return True
     if (row.get("kind") or row.get("category") or "") in _KINDS:
         return True
-    if "withdrawal fee" in (row.get("description") or "").lower():
+    d = (row.get("description") or "").lower()
+    if "withdrawal fee" in d or "disbursement fee" in d:   # the fee leg of a transfer
         return True
     return False
 

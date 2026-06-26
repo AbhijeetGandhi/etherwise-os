@@ -38,8 +38,8 @@ def run(period_months: int = 12) -> dict:
 
     with db.connect(config.DB_PATH) as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT record_id, source, type, category, accounting_subtype,"
-            " amount_base_minor, creation_dt FROM transactions"
+            "SELECT record_id, source, type, upwork_type, category, accounting_subtype,"
+            " description, amount_base_minor, creation_dt FROM transactions"
             " WHERE canonical_key IS NOT NULL")]
         bals = [dict(r) for r in conn.execute(
             "SELECT account, currency, closing_minor, statement_date, source_file"
