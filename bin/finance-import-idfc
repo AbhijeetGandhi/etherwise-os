@@ -33,7 +33,7 @@ REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-idfc.
 ACCOUNT = "idfc"
 
 
-def run(apply: bool) -> dict:
+def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
     files = sorted(INBOX.glob("*.xlsx"))
     if not files:
         return {"abort": "no .xlsx in finance-inbox/bank/"}
@@ -126,20 +126,32 @@ def run(apply: bool) -> dict:
                 (ACCOUNT, "INR", meta["opening_balance_minor"],
                  meta["closing_balance_minor"], meta.get("period_end") or win_hi, f.name))
 
-    # 5) DERIVED FD/deposit balance — the savings closing OMITS the linked fixed
-    # deposits. FD principal = -(net internal_sweep) (sweepouts to FD minus
-    # sweep-ins from it, incl. manual FD creation). This assumes FD=0 at window
-    # open; Abhijeet confirms/overrides with the actual current FD balance. Marked
-    # 'derived:' so it's never mistaken for a statement figure.
+    # 5) FD/deposit balance — the savings closing OMITS the linked fixed deposits.
+    # AUTHORITATIVE (Abhijeet's IDFC-app FD list) wins when given via --fd-balance-inr;
+    # else a DERIVED estimate = -(net internal_sweep) (sweepouts minus sweep-ins,
+    # incl. manual FD creation), which assumes FD=0 at the window open and so
+    # UNDERSTATES if standing FD existed pre-window. The deposit principal (not the
+    # maturity value) is the cash figure. Once an authoritative row exists, plain
+    # re-runs never clobber it.
     fd_principal = -sum(r["amount_minor"] for r in good if r["category"] == "internal_sweep")
+    fd_as_of = fd_as_of or meta.get("period_end") or win_hi
     if apply:
         with db.connect(config.DB_PATH) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO account_balances (account, currency,"
-                " opening_minor, closing_minor, statement_date, source_file)"
-                " VALUES ('idfc-fd','INR',0,?,?,?)",
-                (fd_principal, meta.get("period_end") or win_hi,
-                 f"derived:sweep-legs:{f.name}"))
+            if fd_override is not None:                  # authoritative override
+                conn.execute("DELETE FROM account_balances WHERE account='idfc-fd'")
+                conn.execute(
+                    "INSERT INTO account_balances (account, currency, opening_minor,"
+                    " closing_minor, statement_date, source_file) VALUES"
+                    " ('idfc-fd','INR',0,?,?,?)",
+                    (fd_override, fd_as_of, f"authoritative:idfc-app-fd:{fd_as_of}"))
+            elif not conn.execute("SELECT 1 FROM account_balances WHERE account='idfc-fd'"
+                                  " AND source_file LIKE 'authoritative:%'").fetchone():
+                conn.execute(
+                    "INSERT OR REPLACE INTO account_balances (account, currency,"
+                    " opening_minor, closing_minor, statement_date, source_file)"
+                    " VALUES ('idfc-fd','INR',0,?,?,?)",
+                    (fd_principal, meta.get("period_end") or win_hi,
+                     f"derived:sweep-legs:{f.name}"))
 
     res = {"mode": "APPLY" if apply else "DRY-RUN", "file": f.name,
            "window": f"{win_lo}..{win_hi}", "statement_rows": len(good),
@@ -148,6 +160,8 @@ def run(apply: bool) -> dict:
            "v2_superseded_quarantined": superseded, "v3_inserted": inserted,
            "reclassified": reclassified if apply else 0,
            "derived_fd_principal_inr": str(money.from_minor(fd_principal)),
+           "fd_authoritative_inr": (str(money.from_minor(fd_override))
+                                    if fd_override is not None else None),
            "opening_inr": str(money.from_minor(meta.get("opening_balance_minor", 0))),
            "closing_inr": str(money.from_minor(meta.get("closing_balance_minor", 0)))}
     if apply:
@@ -157,7 +171,12 @@ def run(apply: bool) -> dict:
 
 
 def main() -> int:
-    res = run("--apply" in sys.argv)
+    fd_override = fd_as_of = None
+    if "--fd-balance-inr" in sys.argv:           # authoritative FD principal (INR)
+        fd_override = money.to_minor(sys.argv[sys.argv.index("--fd-balance-inr") + 1])
+    if "--fd-as-of" in sys.argv:
+        fd_as_of = sys.argv[sys.argv.index("--fd-as-of") + 1]
+    res = run("--apply" in sys.argv, fd_override=fd_override, fd_as_of=fd_as_of)
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("# IDFC import (Phase 2)\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
     print(json.dumps(res, indent=1))

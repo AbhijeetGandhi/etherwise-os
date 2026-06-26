@@ -233,10 +233,11 @@ class DoctorCase(unittest.TestCase):
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO account_balances (account,currency,opening_minor,"
                          "closing_minor,statement_date,source_file) VALUES"
-                         " ('idfc-fd','INR',0,5006858,'2026-06-25','derived:sweep-legs:x')")
+                         " ('idfc-fd','INR',0,5006858,'2026-06-25','derived:sweep-legs:x'),"
+                         " ('idfc-fd','INR',0,5868784,'2026-06-26','authoritative:idfc-app-fd:x')")
         res = doctor.run(self.db_path)
         c1 = [c for c in res.checks if c.invariant == "#1 statement integrity"][0]
-        self.assertNotEqual(c1.status, "RED")
+        self.assertNotEqual(c1.status, "RED")   # both derived + authoritative skipped
 
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:

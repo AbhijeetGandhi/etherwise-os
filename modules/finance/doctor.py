@@ -96,9 +96,14 @@ def _check_statement_integrity(conn) -> Check:
     """#1: for each statement, opening + Σcredits − Σdebits == closing, exact in
     minor units. Over account_balances + the period's transactions. Trivially
     GREEN until Phase-1 imports populate balances."""
+    # reconcile only FILE-BACKED statements (opening + Σ txns == closing). Deposit/
+    # aggregate balances (the FD principal) carry a 'derived:'/'authoritative:'
+    # source and have NO transaction flow in the ledger — they are point-in-time
+    # balances, not statements, so #1 must skip them (else they falsely go RED).
     stmts = [dict(r) for r in conn.execute(
         "SELECT account, currency, opening_minor, closing_minor, statement_date,"
-        " source_file FROM account_balances WHERE source_file NOT LIKE 'derived:%'")]
+        " source_file FROM account_balances WHERE source_file NOT LIKE 'derived:%'"
+        " AND source_file NOT LIKE 'authoritative:%'")]
     if not stmts:
         return Check("#1 statement integrity", "N/A", "no statements imported yet")
     reds = []
