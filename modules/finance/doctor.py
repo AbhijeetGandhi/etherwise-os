@@ -126,14 +126,36 @@ def _check_statement_integrity(conn) -> Check:
 
 
 def _check_payroll(conn) -> Check:
-    """#6: per-run Σcomponents==gross, gross−(tds+pt)==net, Σnet==disbursement.
-    N/A until Phase-5 payroll runs exist."""
+    """#6 payroll: per LINE Σcomponents (basic+hra+special+lta) == gross AND
+    gross − (TDS+PT) == net; per RUN Σ(line gross/tds/pt/net) == the run totals.
+    Exact integer paise. N/A until a Phase-5 run exists."""
     try:
-        n = conn.execute("SELECT COUNT(*) n FROM payroll_runs").fetchone()["n"]
+        runs = [dict(r) for r in conn.execute("SELECT * FROM payroll_runs")]
     except Exception:
         return Check("#6 payroll", "N/A", "payroll not built yet (Phase 5)")
-    return Check("#6 payroll", "N/A" if not n else "GREEN",
-                 f"{n} run(s)")
+    if not runs:
+        return Check("#6 payroll", "N/A", "no payroll runs yet")
+    bad = []
+    for run in runs:
+        lines = [dict(r) for r in conn.execute(
+            "SELECT * FROM payroll_lines WHERE run_id=?", (run["id"],))]
+        for ln in lines:
+            comps = ln["basic_minor"] + ln["hra_minor"] + ln["special_minor"] + ln["lta_minor"]
+            if comps != ln["gross_minor"]:
+                bad.append({"run": run["period"], "emp": ln["employee_id"],
+                            "error": "Σcomponents != gross", "delta_minor": comps - ln["gross_minor"]})
+            if ln["gross_minor"] - ln["tds_minor"] - ln["pt_minor"] != ln["net_minor"]:
+                bad.append({"run": run["period"], "emp": ln["employee_id"],
+                            "error": "gross-(tds+pt) != net"})
+        for fld in ("gross_minor", "tds_minor", "pt_minor", "net_minor"):
+            tot = sum(ln[fld] for ln in lines)
+            if tot != run[fld]:
+                bad.append({"run": run["period"], "error": f"Σ{fld} != run {fld}",
+                            "delta_minor": tot - run[fld]})
+    if bad:
+        return Check("#6 payroll", "RED", f"{len(bad)} payroll reconciliation error(s)", bad[:20])
+    return Check("#6 payroll", "GREEN",
+                 f"{len(runs)} run(s) reconcile (Σcomponents=gross, gross-deductions=net, Σnet=run)")
 
 
 def _check_type_sign(conn) -> Check:

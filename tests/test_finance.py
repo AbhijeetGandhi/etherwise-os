@@ -714,5 +714,75 @@ class TestPnl(unittest.TestCase):
         self.assertEqual(r["uncategorized_count"], 1)
 
 
+# ── Phase 5: payroll compute + reconcile (prep-only) ─────────────────────────
+class TestPayroll(unittest.TestCase):
+    def test_split_integer_paise_sums_to_gross(self):
+        from modules.finance import payroll
+        line = payroll.compute_employee(
+            {"employee_id": "E1", "name": "X", "gross_salary": 130000,
+             "monthly_tds": 8905, "monthly_pt": 200})
+        e = line["earnings"]
+        self.assertEqual(e["basic"], 6500000)        # 50% of 130000 in paise
+        self.assertEqual(e["hra"], 3250000)
+        self.assertEqual(e["lta"], 1300000)
+        self.assertEqual(e["special"], 1950000)      # residual = 15%
+        self.assertEqual(sum(e.values()), 13000000)  # == gross exactly
+        self.assertEqual(line["net_minor"], 13000000 - 890500 - 20000)
+        self.assertIsNone(payroll.reconcile_line(line))
+
+    def test_missing_tds_is_surfaced_not_computed(self):
+        from modules.finance import payroll
+        line = payroll.compute_employee(
+            {"employee_id": "E1", "name": "Jay", "gross_salary": 240000,
+             "monthly_tds": None, "monthly_pt": 200})
+        self.assertEqual(line["missing"], ["monthly_tds"])
+        self.assertNotIn("net_minor", line)           # never guessed
+
+    def test_run_blocks_when_input_missing(self):
+        from modules.finance import payroll
+        emps = [
+            {"employee_id": "E1", "name": "Jay", "gross_salary": 240000,
+             "monthly_tds": None, "monthly_pt": 200, "status": "Active"},
+            {"employee_id": "E2", "name": "Sh", "gross_salary": 130000,
+             "monthly_tds": 8905, "monthly_pt": 200, "status": "Active"},
+            {"employee_id": "E9", "name": "Gone", "gross_salary": 50000,
+             "monthly_tds": 0, "monthly_pt": 200, "status": "Withdrawn"}]
+        run = payroll.compute_run(emps, "2026-06")
+        self.assertEqual(run["headcount"], 1)          # only the reconciling active one
+        self.assertEqual(len(run["missing"]), 1)       # Jay surfaced
+        self.assertFalse(run["finalizable"])           # missing input blocks the run
+
+    def test_last_working_day_skips_weekend(self):
+        from modules.finance import payroll
+        self.assertEqual(payroll.last_working_day(2026, 6), "2026-06-30")   # Tue
+        self.assertEqual(payroll.last_working_day(2026, 5), "2026-05-29")   # 31 May = Sun -> Fri
+
+
+class TestDoctorPayroll(DoctorCase):
+    def _run(self, conn, recon=True):
+        conn.execute("INSERT INTO payroll_runs (period,pay_date,headcount,gross_minor,"
+                     "tds_minor,pt_minor,net_minor) VALUES ('2026-06','2026-06-30',1,"
+                     "13000000,890500,20000,12089500)")
+        net = 12089500 if recon else 12000000      # tamper net to break reconcile
+        conn.execute("INSERT INTO payroll_lines (run_id,employee_id,name,gross_minor,"
+                     "basic_minor,hra_minor,special_minor,lta_minor,tds_minor,pt_minor,"
+                     "net_minor) VALUES (1,'E2','Sh',13000000,6500000,3250000,1950000,"
+                     "1300000,890500,20000,?)", (net,))
+
+    def test_payroll_reconciles_green_6(self):
+        with db.connect(self.db_path) as conn:
+            self._run(conn, recon=True)
+        c6 = [c for c in doctor.run(self.db_path).checks if c.invariant == "#6 payroll"][0]
+        self.assertEqual(c6.status, "GREEN")
+
+    def test_payroll_mismatch_red_6(self):
+        with db.connect(self.db_path) as conn:
+            self._run(conn, recon=False)
+        res = doctor.run(self.db_path)
+        c6 = [c for c in res.checks if c.invariant == "#6 payroll"][0]
+        self.assertEqual(c6.status, "RED")
+        self.assertFalse(res.green)
+
+
 if __name__ == "__main__":
     unittest.main()
