@@ -665,24 +665,41 @@ class TestKnowledgeServerParams(CockpitServerCase):
 
 
 def seed_money(db_path):
+    """M5-shaped rows: integer minor units, canonical_key, pnl_bucket (== bucket()),
+    amount_base_minor (base-USD), + account_balances. Keeps the doctor GREEN so the
+    gated money() returns figures. (typ, category, base_minor, dt, source, bucket)"""
     rows = [
-        # (type, amount, creation_dt, profile, currency, description)
-        ("Fixed Earning", 2000.0, "2026-06-10T00:00:00+0000", "Personal"),
-        ("Hourly Earning", 1500.0, "2026-06-12T00:00:00+0000", "Personal"),
-        ("Bonus", 200.0, "2026-06-05T00:00:00+0000", "Agency"),
-        ("Fixed Earning", 4000.0, "2026-05-20T00:00:00+0000", "Personal"),  # last month
-        ("Hourly Earning", -50.0, "2026-06-11T00:00:00+0000", "Personal"),  # refund-ish, amount<=0 excluded
-        ("Salary", -3000.0, "2026-06-01T00:00:00+0000", "Personal"),        # expense, not revenue
-        ("Connect Purchase", 45.0, "2026-06-08T00:00:00+0000", "Personal"),
-        ("Connect Purchase", 45.0, "2026-05-08T00:00:00+0000", "Personal"),
-        ("Fixed Earning", 999.0, "2026-04-10T00:00:00+0000", "Personal"),   # older month (chart)
+        ("Fixed Earning", None, 200000, "2026-06-10", "Upwork", "revenue"),
+        ("Hourly Earning", None, 150000, "2026-06-12", "Wise", "revenue"),   # non-Upwork rev
+        ("Fixed Earning", None, 400000, "2026-05-20", "Upwork", "revenue"),  # last month
+        ("Fixed Earning", None, 99900, "2026-04-10", "Upwork", "revenue"),   # older (chart)
+        ("Other", "expense", -300000, "2026-06-01", "IDFC", "opex"),         # expense, not revenue
+        ("Connect Purchase", None, -4500, "2026-06-08", "Upwork", "platform_fee"),
+        ("Connect Purchase", None, -4500, "2026-05-08", "Upwork", "platform_fee"),
     ]
     with db.connect(db_path) as conn:
-        for i, (typ, amt, dt, prof) in enumerate(rows):
+        for i, (typ, cat, base, dt, src, bucket) in enumerate(rows):
             conn.execute(
-                "INSERT INTO transactions (record_id, type, amount, currency,"
-                " creation_dt, profile, description) VALUES (?,?,?,?,?,?,?)",
-                (f"t{i}", typ, amt, "USD", dt, prof, f"{typ} row"))
+                "INSERT INTO transactions (record_id, canonical_key, type, category,"
+                " amount_minor, amount_base_minor, currency, creation_dt, source,"
+                " pnl_bucket) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (f"t{i}", f"k{i}", typ, cat, base, base, "USD",
+                 dt + "T00:00:00+0000", src, bucket))
+        # an IDFC INR row carrying the pinned INR->USD rate (drives cash conversion)
+        conn.execute(
+            "INSERT INTO transactions (record_id, canonical_key, type, category,"
+            " amount_minor, amount_base_minor, currency, creation_dt, source, fx_rate,"
+            " fx_date, pnl_bucket) VALUES ('fx','kfx','Other','expense',-100000,-1200,"
+            "'INR','2026-06-05T00:00:00+0000','IDFC','0.012','2026-06-05','opex')")
+        # cash: savings + FD (INR) + Wise (USD). 'authoritative:' source so #1 skips
+        # them (aggregates, not statements) -> doctor stays GREEN for this panel test.
+        for acct, ccy, closing in [("idfc", "INR", 50000073),
+                                    ("idfc-fd", "INR", 586878353),
+                                    ("wise", "USD", 0)]:
+            conn.execute(
+                "INSERT INTO account_balances (account, currency, opening_minor,"
+                " closing_minor, statement_date, source_file) VALUES (?,?,?,?,?,?)",
+                (acct, ccy, closing, closing, "2026-06-30", f"authoritative:{acct}"))
 
 
 class TestMoneyReader(unittest.TestCase):
@@ -695,52 +712,76 @@ class TestMoneyReader(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_revenue_this_month_canonical(self):
+    def test_revenue_this_month_from_pnl_bucket(self):
         out = data.money(self.db_path, today="2026-06-15")
-        # 2000 + 1500 + 200 (earnings, amount>0); excludes -50, Salary, Connect
-        self.assertEqual(out["revenue"]["month_usd"], 3700.0)
-        self.assertEqual(out["revenue"]["target_usd"],
-                         config.MONTHLY_REVENUE_TARGET_USD)
+        self.assertFalse(out["blocked"])
+        self.assertEqual(out["doctor"], "GREEN")
+        # June revenue bucket: 2000 (Upwork) + 1500 (Wise) ; excludes opex + connects
+        self.assertEqual(out["revenue"]["month_usd"], 3500.0)
         self.assertEqual(out["revenue"]["month"], "2026-06")
 
-    def test_revenue_last_month(self):
+    def test_revenue_last_month_and_mtd(self):
         out = data.money(self.db_path, today="2026-06-15")
         self.assertEqual(out["revenue"]["last_month"], "2026-05")
         self.assertEqual(out["revenue"]["last_month_usd"], 4000.0)
-
-    def test_last_month_mtd_apples_to_apples(self):
-        # seed_money's May earning is dated May-20; through May-15 (same DOM
-        # as today June-15) it should NOT be counted → MTD=0, full=4000
-        out = data.money(self.db_path, today="2026-06-15")
+        # May earning is dated May-20; through May-15 (same DOM) -> MTD 0
         self.assertEqual(out["revenue"]["last_month_mtd_usd"], 0.0)
-        self.assertEqual(out["revenue"]["last_month_usd"], 4000.0)
 
-    def test_connects_spend(self):
+    def test_connects_spend_signed_fee(self):
         out = data.money(self.db_path, today="2026-06-15")
-        self.assertEqual(out["connects"]["this_month_usd"], 45.0)
-        self.assertEqual(out["connects"]["lifetime_usd"], 90.0)
+        self.assertEqual(out["connects"]["this_month_usd"], -45.0)
+        self.assertEqual(out["connects"]["lifetime_usd"], -90.0)
 
-    def test_transactions_feed(self):
+    def test_transactions_feed_base_usd_and_bucket(self):
         out = data.money(self.db_path, today="2026-06-15")
         self.assertLessEqual(len(out["transactions"]), 15)
         newest = out["transactions"][0]
         self.assertEqual(newest["creation_dt"][:10], "2026-06-12")  # latest
+        self.assertEqual(newest["type"], "revenue")                 # pnl_bucket
+        self.assertEqual(newest["amount"], 1500.0)                  # base-USD
         for key in ("type", "amount", "currency", "profile"):
             self.assertIn(key, newest)
 
     def test_by_month_chart_series(self):
         out = data.money(self.db_path, today="2026-06-15")
         by = {m["month"]: m["usd"] for m in out["revenue"]["by_month"]}
-        self.assertEqual(by.get("2026-06"), 3700.0)
+        self.assertEqual(by.get("2026-06"), 3500.0)
         self.assertEqual(by.get("2026-05"), 4000.0)
         self.assertEqual(by.get("2026-04"), 999.0)
 
-    def test_cash_position_not_fabricated(self):
-        # honest: no bank source in v3 SQLite — flagged, not a fake number
+    def test_cash_position_from_account_balances(self):
         out = data.money(self.db_path, today="2026-06-15")
-        self.assertIn("cash", out)
-        self.assertIsNone(out["cash"]["value_usd"])
-        self.assertTrue(out["cash"]["note"])
+        # savings 500000.73 + FD 5868783.53 INR @ 0.012 + Wise $0
+        self.assertEqual(out["cash"]["value_usd"], 76425.41)
+        accts = {a["account"]: a["usd"] for a in out["cash"]["by_account"]}
+        self.assertEqual(accts["wise"], 0.0)
+        self.assertEqual(round(sum(accts.values()), 2), out["cash"]["value_usd"])
+
+    def test_pnl_matches_finance_pnl(self):
+        # the cockpit panel must equal the audited compute (bin/finance-pnl source)
+        from modules.finance import pnl, money as fmoney
+        import sqlite3
+        c = sqlite3.connect(self.db_path); c.row_factory = sqlite3.Row
+        rows = [dict(r) for r in c.execute(
+            "SELECT type, category, accounting_subtype, upwork_type, description,"
+            " pnl_bucket, amount_base_minor FROM transactions WHERE canonical_key IS NOT NULL")]
+        want = pnl.compute(rows)
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertEqual(out["pnl"]["operating_profit_usd"],
+                         round(float(fmoney.from_minor(want["operating_profit_minor"])), 2))
+        self.assertEqual(out["pnl"]["net_revenue_usd"],
+                         round(float(fmoney.from_minor(want["net_revenue_minor"])), 2))
+
+    def test_doctor_gate_blocks_on_red(self):
+        # a NULL-amount_minor row -> doctor #8 RED -> money() shows nothing
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, type,"
+                         " amount_minor, currency) VALUES ('bad','kbad','Other',NULL,'USD')")
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertTrue(out["blocked"])
+        self.assertEqual(out["doctor"], "RED")
+        self.assertNotIn("revenue", out)         # no figures leak on RED
+        self.assertNotIn("cash", out)
 
 
 if __name__ == "__main__":

@@ -417,10 +417,11 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     finally:
         conn.close()
 
-    rev = money(db_path, today=day)["revenue"]
+    # money() omits 'revenue' when finance-doctor is RED (gated) — tolerate that
+    rev = money(db_path, today=day).get("revenue", {})
     # proto-nudges (v1): a revenue-pacing signal; M4 replaces with real feed
     proto = []
-    if rev["pct_to_target"] is not None and rev["pct_to_target"] < 100:
+    if rev.get("pct_to_target") is not None and rev["pct_to_target"] < 100:
         proto.append({"kind": "pacing",
                       "text": f"Revenue {rev['pct_to_target']}% to "
                               f"${int(rev['target_usd']):,} target ({rev['month']})",
@@ -435,82 +436,127 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             "active": {"proposals": active_props, "interviews": interviews,
                        "contracts": active_contracts},
             "follow_ups_due": follow_ups_due, "hot_leads": hot_count,
-            "revenue": {"mtd_usd": rev["month_usd"],
-                        "target_usd": rev["target_usd"],
-                        "pct": rev["pct_to_target"]},
+            "revenue": {"mtd_usd": rev.get("month_usd"),
+                        "target_usd": rev.get("target_usd"),
+                        "pct": rev.get("pct_to_target")},
         },
     }
 
 
 def money(db_path: Optional[Path] = None,
           today: Optional[str] = None) -> dict:
-    """Money panel from v3 SQLite (Upwork transactions). Revenue uses the
-    canonical earnings definition. Cash position is intentionally NOT
-    fabricated — no bank/Wise balance source exists in v3 SQLite yet."""
+    """Money panel from the AUDITED M5 finance picture. GATED on finance-doctor:
+    nothing is shown unless GREEN (the prime directive — no finance number in the
+    cockpit on RED). Cash = account_balances (IDFC savings + IDFC FD + Wise, all
+    base-USD). Revenue / P&L / burn / runway from pnl_bucket + amount_base_minor
+    (reflects every audit fix + non-Upwork revenue). Reuses modules.finance.pnl so
+    the numbers MATCH bin/finance-pnl exactly. Money is integer minor units; the
+    USD shown is from_minor (presentation only)."""
+    import datetime as _dt
+    from collections import defaultdict
+    from decimal import Decimal
+    from modules.finance import pnl, doctor, money as fmoney
+
     day = today or _ist_today()
-    month = day[:7]
-    dom = day[8:10]                       # day-of-month, for MTD-vs-MTD
-    last_month = _prev_month(month)
-    earn_marks = ",".join("?" * len(EARNING_TYPES))
+    month, dom, last_month = day[:7], day[8:10], _prev_month(day[:7])
+    dbp = db_path or config.DB_PATH
+
+    dr = doctor.run(dbp)
+    if not dr.green:                          # hard gate — show nothing on RED
+        return {"doctor": "RED", "blocked": True,
+                "reds": [c.invariant for c in dr.reds()],
+                "note": "Finance blocked — finance-doctor is RED; no figures "
+                        "are shown until every invariant is GREEN."}
+
     conn = _ro(db_path)
     try:
-        def rev_for(ym: str) -> float:
-            return conn.execute(
-                f"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
-                f" type IN ({earn_marks}) AND amount > 0"
-                f" AND substr(creation_dt,1,7) = ?",
-                (*EARNING_TYPES, ym)).fetchone()[0]
-
-        def rev_through_day(ym: str, dd: str) -> float:
-            # earnings in month ym up to day-of-month dd (apples-to-apples MTD)
-            return conn.execute(
-                f"SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
-                f" type IN ({earn_marks}) AND amount > 0"
-                f" AND substr(creation_dt,1,7) = ?"
-                f" AND substr(creation_dt,9,2) <= ?",
-                (*EARNING_TYPES, ym, dd)).fetchone()[0]
-
-        month_usd = rev_for(month)
-        last_usd = rev_for(last_month)
-        last_mtd_usd = rev_through_day(last_month, dom)  # same-day-of-month
-        by_month = [{"month": r["ym"], "usd": round(r["usd"], 2),
-                     "current": r["ym"] == month}
-                    for r in conn.execute(
-                        f"SELECT substr(creation_dt,1,7) AS ym,"
-                        f" SUM(amount) AS usd FROM transactions WHERE"
-                        f" type IN ({earn_marks}) AND amount > 0"
-                        f" GROUP BY ym ORDER BY ym DESC LIMIT 12",
-                        EARNING_TYPES)][::-1]
-        connects_month = conn.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
-            " type = 'Connect Purchase' AND substr(creation_dt,1,7) = ?",
-            (month,)).fetchone()[0]
-        connects_life = conn.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE"
-            " type = 'Connect Purchase'").fetchone()[0]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT source, type, upwork_type, category, accounting_subtype,"
+            " description, pnl_bucket, amount_base_minor, creation_dt FROM"
+            " transactions WHERE canonical_key IS NOT NULL")]
+        bals = [dict(r) for r in conn.execute(
+            "SELECT account, currency, closing_minor FROM account_balances")]
+        fxr = conn.execute(
+            "SELECT fx_rate FROM transactions WHERE source='IDFC' AND fx_rate"
+            " IS NOT NULL AND fx_rate!='1' ORDER BY fx_date DESC LIMIT 1").fetchone()
         feed = [dict(r) for r in conn.execute(
-            "SELECT creation_dt, type, amount, currency, profile, description"
-            " FROM transactions ORDER BY creation_dt DESC LIMIT 15")]
+            "SELECT creation_dt, pnl_bucket, amount_base_minor, currency, source"
+            " FROM transactions WHERE canonical_key IS NOT NULL"
+            " ORDER BY creation_dt DESC LIMIT 15")]
     finally:
         conn.close()
+
+    inr_usd = Decimal(fxr["fx_rate"]) if fxr else Decimal("0")
+
+    def usd(minor):                           # int minor -> 2dp float for the UI
+        return round(float(fmoney.from_minor(int(minor or 0))), 2)
+
+    def mo(r):
+        return (r.get("creation_dt") or "")[:7]
+
+    # revenue = the pnl 'revenue' bucket (base-USD), MTD-vs-same-day-last-month
+    def rev_minor(pred):
+        return sum(r["amount_base_minor"] or 0 for r in rows
+                   if r.get("pnl_bucket") == "revenue" and pred(r))
+    month_minor = rev_minor(lambda r: mo(r) == month)
+    last_minor = rev_minor(lambda r: mo(r) == last_month)
+    last_mtd_minor = rev_minor(lambda r: mo(r) == last_month
+                               and (r.get("creation_dt") or "")[8:10] <= dom)
+    bm = defaultdict(int)
+    for r in rows:
+        if r.get("pnl_bucket") == "revenue" and mo(r):
+            bm[mo(r)] += r["amount_base_minor"] or 0
+    by_month = [{"month": k, "usd": usd(v), "current": k == month}
+                for k, v in sorted(bm.items())][-12:]
+    tgt = config.MONTHLY_REVENUE_TARGET_USD
+
+    # P&L / burn / runway — reuse the audited compute (matches finance-pnl)
+    allp = pnl.compute(rows)
+    hi = max(((r.get("creation_dt") or "")[:10] for r in rows
+              if r.get("creation_dt")), default=day)
+    lo = (_dt.date.fromisoformat(hi) - _dt.timedelta(days=365)).isoformat()
+    trail = pnl.compute([r for r in rows if (r.get("creation_dt") or "")[:10] >= lo])
+    monthly_op = trail["operating_profit_minor"] / 12
+
+    # cash position from account_balances (IDFC INR -> USD at the pinned rate)
+    cash_minor, cash_lines = 0, []
+    for b in bals:
+        u = b["closing_minor"] if b["currency"] == "USD" \
+            else fmoney.apply_rate(b["closing_minor"], inr_usd)
+        cash_minor += u
+        cash_lines.append({"account": b["account"], "currency": b["currency"],
+                           "closing": str(fmoney.from_minor(b["closing_minor"])),
+                           "usd": usd(u)})
+
+    connects_month = sum(r["amount_base_minor"] or 0 for r in rows
+                         if r.get("type") == "Connect Purchase" and mo(r) == month)
+    connects_life = sum(r["amount_base_minor"] or 0 for r in rows
+                        if r.get("type") == "Connect Purchase")
+    runway = round(cash_minor / abs(monthly_op), 1) if monthly_op < 0 else None
+
     return {
+        "doctor": "GREEN", "blocked": False,
         "revenue": {
-            "month": month, "month_usd": round(month_usd, 2),
-            "target_usd": config.MONTHLY_REVENUE_TARGET_USD,
-            "pct_to_target": round(100 * month_usd
-                                   / config.MONTHLY_REVENUE_TARGET_USD, 1)
-            if config.MONTHLY_REVENUE_TARGET_USD else None,
-            "last_month": last_month, "last_month_usd": round(last_usd, 2),
-            # apples-to-apples: last month through the SAME day-of-month, so
-            # MTD-vs-MTD doesn't read like a crash (redline 3)
-            "last_month_mtd_usd": round(last_mtd_usd, 2),
-            "by_month": by_month,
+            "month": month, "month_usd": usd(month_minor), "target_usd": tgt,
+            "pct_to_target": round(100 * usd(month_minor) / tgt, 1) if tgt else None,
+            "last_month": last_month, "last_month_usd": usd(last_minor),
+            "last_month_mtd_usd": usd(last_mtd_minor), "by_month": by_month,
         },
-        "connects": {"this_month_usd": round(connects_month, 2),
-                     "lifetime_usd": round(connects_life, 2)},
-        "transactions": feed,
-        "cash": {"value_usd": None,
-                 "note": "Arrives with M5 — the finance module will mirror "
-                         "statement running-balances for a real cash "
-                         "position. (Revenue + transactions below are live.)"},
+        "pnl": {
+            "net_revenue_usd": usd(allp["net_revenue_minor"]),
+            "operating_costs_usd": usd(allp["operating_costs_minor"]),
+            "operating_profit_usd": usd(allp["operating_profit_minor"]),
+            "owner_draw_usd": usd(allp["owner_draw_minor"]),
+            "monthly_operating_profit_usd": usd(int(monthly_op)),
+            "runway_months": runway, "uncategorized_count": allp["uncategorized_count"],
+        },
+        "cash": {"value_usd": usd(cash_minor), "by_account": cash_lines,
+                 "as_of": hi, "inr_usd_rate": str(inr_usd),
+                 "note": "savings + fixed deposits + Wise, base-USD"},
+        "connects": {"this_month_usd": usd(connects_month),
+                     "lifetime_usd": usd(connects_life)},
+        # corrected feed: pnl_bucket + base-USD (kept keys type/profile/amount for the UI)
+        "transactions": [{"creation_dt": r["creation_dt"], "type": r["pnl_bucket"],
+                          "amount": usd(r["amount_base_minor"]), "currency": r["currency"],
+                          "profile": r["source"]} for r in feed],
     }

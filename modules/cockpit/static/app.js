@@ -291,8 +291,15 @@ const RENDERERS = {
   },
   Money: async (view) => {
     const d = await api("/api/money");
-    const r = d.revenue || {};
     view.appendChild(el("h2", "section", "Money"));
+    if (d.blocked) {                       // finance-doctor RED -> show nothing
+      view.appendChild(card("Finance blocked",
+        `<div class="metric muted">— doctor RED —</div>`
+        + `<div class="muted">${d.note || ""}</div>`
+        + `<div class="muted" style="font-size:11px">RED: ${(d.reds||[]).join(", ")}</div>`));
+      return;
+    }
+    const r = d.revenue || {};
     const grid = el("div", "grid");
     const pct = Math.min(100, r.pct_to_target || 0);
     grid.appendChild(card("Revenue this month",
@@ -310,9 +317,19 @@ const RENDERERS = {
       `<div class="metric">${fmtUsd(c.this_month_usd)} <small>this month</small></div>`
       + `<div class="muted">${fmtUsd(c.lifetime_usd)} lifetime</div>`));
     const cash = d.cash || {};
+    const cashLines = (cash.by_account || [])
+      .map((a) => `${a.account} ${a.currency} ${a.closing} → ${fmtUsd(a.usd)}`).join("<br>");
     grid.appendChild(card("Cash position",
-      `<div class="metric muted">—</div>`
-      + `<div class="muted" style="font-size:12px">${cash.note || ""}</div>`));
+      `<div class="metric">${fmtUsd(cash.value_usd)}</div>`
+      + `<div class="muted" style="font-size:11px">${cashLines}</div>`
+      + `<div class="muted" style="font-size:11px">${cash.note || ""} · as of ${cash.as_of || ""}</div>`));
+    const p = d.pnl || {};
+    grid.appendChild(card("Profit &amp; runway",
+      `<div class="metric">${fmtUsd(p.operating_profit_usd)} <small>op. profit</small></div>`
+      + `<div class="muted">trailing-12mo ${fmtUsd(p.monthly_operating_profit_usd)}/mo · `
+      + `${p.runway_months == null ? "profitable (no burn)" : p.runway_months + " mo runway"}</div>`
+      + `<div class="muted" style="font-size:11px">owner draws ${fmtUsd(p.owner_draw_usd)} (below the line)`
+      + `${p.uncategorized_count ? " · " + p.uncategorized_count + " uncategorized" : ""}</div>`));
     view.appendChild(grid);
 
     view.appendChild(el("h2", "section", "Revenue by month"));
