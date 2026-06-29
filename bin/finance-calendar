@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Phase 5 — finance-calendar nudges. Read-only. Lists upcoming invoice + payroll
+reminders. Biweekly client anchors are DERIVED from each client's most recent
+ledger receipt (revenue bucket); a client with no dated receipt is flagged.
+
+Usage: PYTHONPATH=. python3 bin/finance-calendar [--days 45] [--today YYYY-MM-DD]
+"""
+import datetime
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import nudges  # noqa: E402
+
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-calendar.md"
+
+
+def run(today: datetime.date, days: int) -> dict:
+    with db.connect(config.DB_PATH) as conn:
+        anchors = {}
+        for c in nudges.CLIENTS:
+            if c["cadence"] != "biweekly":
+                continue
+            row = conn.execute(
+                "SELECT MAX(date(creation_dt)) d FROM transactions WHERE pnl_bucket='revenue'"
+                " AND upper(description) LIKE ?", (f"%{c['token']}%",)).fetchone()
+            anchors[c["token"]] = row["d"] if row and row["d"] else None
+    events = nudges.upcoming(today, days, anchors)
+    return {"today": today.isoformat(), "horizon_days": days,
+            "biweekly_anchors": anchors, "events": events}
+
+
+def main() -> int:
+    today = datetime.date.today()
+    days = 45
+    if "--today" in sys.argv:
+        today = datetime.date.fromisoformat(sys.argv[sys.argv.index("--today") + 1])
+    if "--days" in sys.argv:
+        days = int(sys.argv[sys.argv.index("--days") + 1])
+    res = run(today, days)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# Finance calendar (Phase 5)\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
+    print(json.dumps(res, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
