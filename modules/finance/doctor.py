@@ -189,6 +189,95 @@ def _check_type_sign(conn) -> Check:
     return Check("#9 type-sign sanity", "GREEN", "fee/tax-type signs correct")
 
 
+def _file_stmts(conn):
+    """File-backed statement balances (exclude derived:/authoritative: aggregates
+    like the FD principal — those are not transaction-backed statements)."""
+    return [dict(r) for r in conn.execute(
+        "SELECT account, currency, opening_minor, closing_minor, statement_date,"
+        " source_file FROM account_balances WHERE source_file NOT LIKE 'derived:%'"
+        " AND source_file NOT LIKE 'authoritative:%' ORDER BY account, currency,"
+        " statement_date")]
+
+
+def _check_continuity(conn) -> Check:
+    """#2 continuity: for an account with >1 statement, consecutive periods must be
+    contiguous — closing[i] == opening[i+1] (no missing month, no overlap). N/A
+    until a second statement for some account exists."""
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for s in _file_stmts(conn):
+        groups[(s["account"], s["currency"])].append(s)
+    multi = {k: v for k, v in groups.items() if len(v) > 1}
+    if not multi:
+        return Check("#2 continuity", "N/A", "one statement per account — no period chain yet")
+    breaks = []
+    for (acct, ccy), v in multi.items():
+        for a, b in zip(v, v[1:]):
+            if a["closing_minor"] != b["opening_minor"]:
+                breaks.append({"account": acct, "from": a["statement_date"],
+                               "to": b["statement_date"],
+                               "gap_minor": b["opening_minor"] - a["closing_minor"]})
+    if breaks:
+        return Check("#2 continuity", "RED",
+                     f"{len(breaks)} period gap/overlap (closing != next opening)", breaks)
+    return Check("#2 continuity", "GREEN",
+                 f"{sum(len(v) for v in multi.values())} statements chain contiguously")
+
+
+def _check_ledger_tieout(conn) -> Check:
+    """#3 ledger<->statement tie-out (the key one): the LEDGER reproduces each
+    statement. Per (account, currency) with file-backed statements, the earliest
+    opening + Σ(all ledger amount_minor tagged to those source_files & currency)
+    == the latest closing — exact in minor units. Also: a file-backed statement
+    with ZERO ledger rows is RED (claimed but unbacked)."""
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for s in _file_stmts(conn):
+        groups[(s["account"], s["currency"])].append(s)
+    if not groups:
+        return Check("#3 ledger-statement tie-out", "N/A", "no file-backed statements yet")
+    reds = []
+    for (acct, ccy), v in groups.items():
+        v.sort(key=lambda r: r["statement_date"])
+        sources = [s["source_file"] for s in v]
+        marks = ",".join("?" * len(sources))
+        row = conn.execute(
+            f"SELECT COALESCE(SUM(amount_minor),0) f, COUNT(*) n FROM transactions"
+            f" WHERE currency=? AND source_file IN ({marks})", (ccy, *sources)).fetchone()
+        if row["n"] == 0:
+            reds.append({"account": acct, "error": "statement has no ledger rows"})
+            continue
+        expected = v[0]["opening_minor"] + row["f"]
+        if expected != v[-1]["closing_minor"]:
+            reds.append({"account": acct, "expected_minor": expected,
+                         "actual_minor": v[-1]["closing_minor"],
+                         "delta_minor": expected - v[-1]["closing_minor"]})
+    if reds:
+        return Check("#3 ledger-statement tie-out", "RED",
+                     f"{len(reds)} account(s) where the ledger doesn't reproduce the statement", reds)
+    return Check("#3 ledger-statement tie-out", "GREEN",
+                 f"{len(groups)} account(s): ledger reproduces statement (opening+Σ==closing)")
+
+
+def _check_cash(conn) -> Check:
+    """#4 cash: the cash position is fully SOURCED — every account_balances closing
+    is non-null and traceable, i.e. either a file-backed statement (reconciled by
+    #1/#3) or an explicit 'authoritative:'/'derived:' source (e.g. the FD principal).
+    A closing with no source, or NULL, is an unexplained cash number -> RED."""
+    bals = [dict(r) for r in conn.execute(
+        "SELECT account, currency, closing_minor, source_file FROM account_balances")]
+    if not bals:
+        return Check("#4 cash", "N/A", "no cash balances yet")
+    bad = [{"account": b["account"], "reason": "null closing" if b["closing_minor"] is None
+            else "no source_file"}
+           for b in bals if b["closing_minor"] is None or not b["source_file"]]
+    if bad:
+        return Check("#4 cash", "RED", f"{len(bad)} unexplained cash balance(s)", bad)
+    n_auth = sum(1 for b in bals if (b["source_file"] or "").startswith(("authoritative:", "derived:")))
+    return Check("#4 cash", "GREEN",
+                 f"{len(bals)} cash balance(s) sourced ({len(bals)-n_auth} statement, {n_auth} authoritative)")
+
+
 def _check_transfer_integrity(conn) -> Check:
     """#7 transfer-integrity (§3.10): a transfer moves money between our OWN
     accounts, so the bucket is EXCLUDED from P&L (the core guarantee enforced
@@ -248,6 +337,8 @@ def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     downstream publication for `period`."""
     with db.connect(db_path or config.DB_PATH) as conn:
         checks = [_check_dedup(conn), _check_sanity(conn), _check_type_sign(conn),
-                  _check_statement_integrity(conn), _check_transfer_integrity(conn),
-                  _check_bucket_reproducibility(conn), _check_payroll(conn)]
+                  _check_statement_integrity(conn), _check_continuity(conn),
+                  _check_ledger_tieout(conn), _check_cash(conn),
+                  _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
+                  _check_payroll(conn)]
     return DoctorResult(checks)

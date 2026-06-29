@@ -375,6 +375,7 @@ Build `scripts/feed_bridge.py` + `scripts/clickup_push.py`:
 **Ledger defects to fix with it:** run 2098 logged task_name='scan_jobs' + invented started_at 06:00:00; two runs wrote no ledger row at all.
 
 ## Standing cautions
+- **RESTART AFFECTED SERVICES after editing a running service** (Abhijeet, 2026-06-30): launchd processes (cockpit, scanners, pollers) have NO auto-reload — they keep serving the pre-edit code until restarted, so the live system silently lags the commit. After any edit to code a running service imports, `launchctl kickstart -k gui/$(id -u)/<label>` it as part of the change (cockpit = `io.etherwise.v3.cockpit`). Treat "restart affected services" as a required step of every edit that touches live-served code.
 - v2 OWNS the Upwork OAuth refresh until M1 cutover — v3 reads `../etherwise-os/.credentials/upwork-api.json` READ-ONLY, never refreshes (token-race rule, architecture §9).
 - Stale duplicate creds dir at `../.credentials/` (workspace root) — flagged for deletion with Abhijeet's OK (PL-10, week 2).
 - Agent SDK credit claimable June 15 (one-time opt-in on his Max account — remind him). Fable-class free on Max only through June 22.

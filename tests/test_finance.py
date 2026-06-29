@@ -239,6 +239,64 @@ class DoctorCase(unittest.TestCase):
         c1 = [c for c in res.checks if c.invariant == "#1 statement integrity"][0]
         self.assertNotEqual(c1.status, "RED")   # both derived + authoritative skipped
 
+    def _bal(self, conn, account, opening, closing, date, src, ccy="USD"):
+        conn.execute("INSERT INTO account_balances (account,currency,opening_minor,"
+                     "closing_minor,statement_date,source_file) VALUES (?,?,?,?,?,?)",
+                     (account, ccy, opening, closing, date, src))
+
+    def _stmt_txn(self, conn, rid, amt, src, ccy="USD"):
+        conn.execute("INSERT INTO transactions (record_id, canonical_key, amount_minor,"
+                     " currency, source_file) VALUES (?,?,?,?,?)", (rid, "k-"+rid, amt, ccy, src))
+
+    def test_continuity_gap_red_2(self):
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, "idfc", 0, 10000, "2026-05-31", "may.xlsx")
+            self._bal(conn, "idfc", 9000, 12000, "2026-06-30", "jun.xlsx")  # opening 9000 != prev close 10000
+        res = doctor.run(self.db_path)
+        c2 = [c for c in res.checks if c.invariant == "#2 continuity"][0]
+        self.assertEqual(c2.status, "RED")
+
+    def test_continuity_contiguous_green_2(self):
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, "idfc", 0, 10000, "2026-05-31", "may.xlsx")
+            self._stmt_txn(conn, "m1", 10000, "may.xlsx")
+            self._bal(conn, "idfc", 10000, 12000, "2026-06-30", "jun.xlsx")  # opening==prev close
+            self._stmt_txn(conn, "j1", 2000, "jun.xlsx")
+        c2 = [c for c in doctor.run(self.db_path).checks if c.invariant == "#2 continuity"][0]
+        self.assertEqual(c2.status, "GREEN")
+
+    def test_ledger_tieout_mismatch_red_3(self):
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, "idfc", 0, 10000, "2026-06-30", "jun.xlsx")
+            self._stmt_txn(conn, "j1", 7000, "jun.xlsx")     # 0+7000 != 10000 -> RED
+        res = doctor.run(self.db_path)
+        c3 = [c for c in res.checks if c.invariant == "#3 ledger-statement tie-out"][0]
+        self.assertEqual(c3.status, "RED")
+        self.assertFalse(res.green)
+
+    def test_ledger_tieout_reproduces_green_3(self):
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, "idfc", 0, 10000, "2026-06-30", "jun.xlsx")
+            self._stmt_txn(conn, "j1", 6000, "jun.xlsx")
+            self._stmt_txn(conn, "j2", 4000, "jun.xlsx")     # 0+10000 == 10000
+        c3 = [c for c in doctor.run(self.db_path).checks if c.invariant == "#3 ledger-statement tie-out"][0]
+        self.assertEqual(c3.status, "GREEN")
+
+    def test_cash_unsourced_red_4(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO account_balances (account,currency,opening_minor,"
+                         "closing_minor,statement_date,source_file) VALUES"
+                         " ('mystery','USD',0,5000,'2026-06-30','')")  # no source -> unexplained
+        res = doctor.run(self.db_path)
+        c4 = [c for c in res.checks if c.invariant == "#4 cash"][0]
+        self.assertEqual(c4.status, "RED")
+
+    def test_cash_authoritative_fd_green_4(self):
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, "idfc-fd", 0, 5868784, "2026-06-30", "authoritative:idfc-app-fd", "INR")
+        c4 = [c for c in doctor.run(self.db_path).checks if c.invariant == "#4 cash"][0]
+        self.assertEqual(c4.status, "GREEN")     # FD principal is an authoritative source
+
     def test_statement_integrity(self):
         with db.connect(self.db_path) as conn:
             # opening 100.00 + flow (+50.00 −20.00) = closing 130.00
