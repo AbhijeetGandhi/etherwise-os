@@ -21,8 +21,8 @@ def run(today: datetime.date, days: int) -> dict:
     with db.connect(config.DB_PATH) as conn:
         anchors = {}
         for c in nudges.CLIENTS:
-            if c["cadence"] != "biweekly":
-                continue
+            if c["cadence"] != "biweekly" or not c.get("token"):
+                continue                         # pinned-anchor clients need no lookup
             row = conn.execute(
                 "SELECT MAX(date(creation_dt)) d FROM transactions WHERE pnl_bucket='revenue'"
                 " AND upper(description) LIKE ?", (f"%{c['token']}%",)).fetchone()

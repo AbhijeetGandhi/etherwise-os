@@ -16,11 +16,16 @@ import calendar as _cal
 import datetime
 from typing import Optional
 
+# A biweekly client either pins an explicit `anchor` (first Wise payment, the
+# cycle reference) or derives it from the ledger by `token` (most-recent receipt).
+# Anchors pinned from the Wise ledger (Abhijeet 2026-06-30): Hermon/Abel pays as
+# "Consulting Systems B.V." (first 2025-10-15); Adelye/Chris Cave as "Adélye Ltd."
+# (first 2026-01-12).
 CLIENTS = [
     {"client": "Mike / CMF Publishing", "cadence": "monthly_15_30", "token": "CMF"},
     {"client": "Horizons-ABA / Alexander Apfel", "cadence": "biweekly", "token": "HORIZON"},
-    {"client": "Hermon / Abel", "cadence": "biweekly", "token": "HERMON"},
-    {"client": "Adelye / Chris Cave", "cadence": "biweekly", "token": "ADELYE"},
+    {"client": "Hermon / Abel", "cadence": "biweekly", "anchor": "2025-10-15"},
+    {"client": "Adelye / Chris Cave", "cadence": "biweekly", "anchor": "2026-01-12"},
 ]
 
 
@@ -52,7 +57,7 @@ def upcoming(today: datetime.date, horizon_days: int, anchors: dict) -> list:
                         events.append({"date": d.isoformat(), "type": "invoice",
                                        "who": c["client"], "detail": f"invoice due ({dd}th)"})
         else:  # biweekly
-            a = anchors.get(c["token"])
+            a = c.get("anchor") or anchors.get(c.get("token"))   # pinned wins, else ledger
             if not a:
                 events.append({"date": today.isoformat(), "type": "flag", "who": c["client"],
                                "detail": "biweekly — NO ledger anchor (no dated receipt); "

@@ -32,9 +32,17 @@ def _render_slips(cfg, run) -> dict:
     co = dict(cfg["company"]); co["slip_prefix"] = "ETW"   # no signatory block now
     by_id = {e["employee_id"]: e for e in cfg["employees"]}
     out_dir = SLIPS / run["period"]
-    pdf, locked, unlocked_no_dob, html = [], 0, [], []
+    if out_dir.exists():                      # clear stale slips so a re-run has no leftovers
+        for old in out_dir.glob("*.pdf"):
+            old.unlink()
+        for old in out_dir.glob("*.html"):
+            old.unlink()
+    pdf, locked, unlocked_no_dob, html, skipped = [], 0, [], [], []
     for line in run["lines"]:
         emp = by_id.get(line["employee_id"], {})
+        if not emp.get("pan"):                # no PAN -> no compliant slip (e.g. Ranjana);
+            skipped.append(line["employee_id"])   # still PAID in the run, just no slip
+            continue
         base = out_dir / f"{line['employee_id']}_{(line['name'] or '').replace(' ', '_')}"
         try:
             r = payslip.render_pdf(line, emp, run["period"], run["pay_date"], co, str(base) + ".pdf")
@@ -49,7 +57,7 @@ def _render_slips(cfg, run) -> dict:
                 payslip.render_html(line, emp, run["period"], run["pay_date"], co))
             html.append(str(base) + ".html")
     return {"pdf": len(pdf), "locked": locked, "unlocked_no_dob": unlocked_no_dob,
-            "html_fallback": len(html), "dir": str(out_dir)}
+            "html_fallback": len(html), "skipped_no_pan": skipped, "dir": str(out_dir)}
 
 
 def _checklist(roster_active, run) -> list:

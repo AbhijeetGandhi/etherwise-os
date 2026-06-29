@@ -885,6 +885,23 @@ class TestAuditSurface(unittest.TestCase):
         self.assertIn("#8 sanity bounds", out["reds"])
 
 
+# ── Phase 5/6: finance-calendar nudges (pinned biweekly anchors) ─────────────
+class TestNudges(unittest.TestCase):
+    def test_pinned_anchors_project_biweekly_no_flag(self):
+        import datetime
+        from modules.finance import nudges
+        # Horizons is ledger-derived (token); Hermon/Adelye are pinned anchors
+        ev = nudges.upcoming(datetime.date(2026, 6, 30), 40, anchors={"HORIZON": "2026-06-19"})
+        self.assertEqual([e for e in ev if e["type"] == "flag"], [])      # all anchored -> no flags
+        for who, anchor in [("Hermon", datetime.date(2025, 10, 15)),
+                            ("Adelye", datetime.date(2026, 1, 12))]:
+            dates = [datetime.date.fromisoformat(e["date"]) for e in ev if who in e["who"]]
+            self.assertTrue(dates)                                        # projected
+            for d in dates:                                              # exactly on the 14-day cycle
+                self.assertEqual((d - anchor).days % 14, 0)
+        self.assertTrue(any(e["type"] == "payroll" for e in ev))         # payroll nudge present
+
+
 # ── Phase 6: roster-sync (Airtable -> renderer, graceful fallback) ───────────
 class TestRosterSync(unittest.TestCase):
     def setUp(self):
