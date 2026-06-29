@@ -885,5 +885,54 @@ class TestAuditSurface(unittest.TestCase):
         self.assertIn("#8 sanity bounds", out["reds"])
 
 
+# ── Phase 6: roster-sync (Airtable -> renderer, graceful fallback) ───────────
+class TestRosterSync(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="roster-"))
+        self.path = self.tmp / "employees.json"
+        self.path.write_text(__import__("json").dumps({
+            "company": {"name": "Etherwise"}, "salary_split": {},
+            "employees": [{"employee_id": "E001", "name": "X", "email": "x@e.io",
+                           "gross_salary": 50000, "monthly_tds": 0, "monthly_pt": 200,
+                           "pan": "LOCALPAN1Z", "status": "Active"}]}))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _client(self, fields):
+        class Fake:
+            def list_records(self, base, table, **kw):
+                return [{"fields": fields}]
+        return lambda: Fake()
+
+    def test_airtable_merges_dob_pan_department_over_local(self):
+        from modules.finance import roster
+        cfg = roster.load(self.path, client_factory=self._client(
+            {"Employee ID": "E001", "Date of Birth": "2002-06-27",
+             "PAN": "AIRPAN9999Z", "Department": "Engineering", "Status": "Active"}))
+        e = cfg["employees"][0]
+        self.assertEqual(e["date_of_birth"], "2002-06-27")   # -> PDF password
+        self.assertEqual(e["pan"], "AIRPAN9999Z")            # Airtable wins
+        self.assertEqual(e["department"], "Engineering")
+        self.assertEqual(e["gross_salary"], 50000)           # money NOT overridden
+        self.assertIn("airtable+local", cfg["_roster_source"])
+
+    def test_blank_airtable_value_does_not_clobber_local(self):
+        from modules.finance import roster
+        cfg = roster.load(self.path, client_factory=self._client(
+            {"Employee ID": "E001", "PAN": "", "Status": "Active"}))
+        self.assertEqual(cfg["employees"][0]["pan"], "LOCALPAN1Z")   # blank ignored
+
+    def test_graceful_fallback_when_airtable_unavailable(self):
+        from modules.finance import roster
+
+        def boom():
+            raise RuntimeError("AIRTABLE_API_KEY not found")
+        cfg = roster.load(self.path, client_factory=boom)
+        self.assertTrue(cfg["_roster_source"].startswith("local"))
+        self.assertNotIn("date_of_birth", cfg["employees"][0])       # nothing fabricated
+        self.assertEqual(cfg["employees"][0]["pan"], "LOCALPAN1Z")
+
+
 if __name__ == "__main__":
     unittest.main()

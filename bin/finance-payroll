@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import money, payroll, doctor  # noqa: E402
+from modules.finance import money, payroll, doctor, roster  # noqa: E402
 
 ROSTER = Path(__file__).resolve().parents[2] / "Payroll" / "employees.json"
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-payroll.md"
@@ -56,9 +56,11 @@ def _checklist(roster_active, run) -> list:
     """Pre-disbursement blockers to resolve manually (slips render with '—')."""
     items = []
     for e in roster_active:
-        gaps = [k for k in ("pan", "bank_account", "ifsc") if not e.get(k)]
+        gaps = [k for k in ("pan", "bank_account", "ifsc", "date_of_birth", "department")
+                if not e.get(k)]
         if gaps:
-            items.append(f"{e['employee_id']} {e['name']}: missing {', '.join(gaps)}")
+            items.append(f"{e['employee_id']} {e['name']}: missing {', '.join(gaps)}"
+                         + (" (no DOB -> PDF can't be locked)" if "date_of_birth" in gaps else ""))
     for m in run["missing"]:
         items.append(f"{m['employee_id']} {m['name']}: TDS/PT INPUT missing "
                      f"({', '.join(m['missing'])}) — provide from CA/Airtable, never computed")
@@ -66,7 +68,7 @@ def _checklist(roster_active, run) -> list:
 
 
 def run_payroll(period: str, apply: bool) -> dict:
-    cfg = json.loads(ROSTER.read_text())
+    cfg = roster.load(ROSTER)        # Airtable (DOB/PAN/Dept) over local; graceful fallback
     active = [e for e in cfg["employees"] if e.get("status") == "Active"]
     run = payroll.compute_run(cfg["employees"], period)
     checklist = _checklist(active, run)
@@ -109,6 +111,7 @@ def run_payroll(period: str, apply: bool) -> dict:
     dr = doctor.run(config.DB_PATH)
     return {
         "mode": "APPLY" if apply else "DRY-RUN", "period": period,
+        "roster_source": cfg.get("_roster_source"),
         "pay_date": run["pay_date"], "headcount": run["headcount"],
         "finalizable": run["finalizable"], "written": wrote,
         "gross": m(run["gross_minor"]), "tds": m(run["tds_minor"]),
