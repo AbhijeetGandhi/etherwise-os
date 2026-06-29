@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from core import config, db, runner
+from modules.finance import money as fin_money   # integer-minor signed amounts
 from modules.upwork import queries
 from modules.upwork.upwork_client import UpworkClient
 
@@ -165,22 +166,62 @@ def build_dedup_key(row: dict, profile: str) -> str:
             f":{row.get('description')}")
 
 
+# Sign by Upwork accounting type/subtype — fees, taxes, charges and withdrawals
+# are DEBITS (negative); earnings/payments/bonuses are credits (positive). Derived
+# from the audited ledger (ARInvoice=connects/GST, APPayment=withdrawal,
+# APAdjustment=Service Fee/WHT/GST/Withdrawal Fee). Matches the CSV-authoritative
+# convention + doctor #9; the CSV re-import + doctor remain the backstop.
+_DEBIT_TYPES = {"ARInvoice", "APPayment"}
+_DEBIT_SUBTYPES = {"Service Fee", "WHT", "Withholding Tax", "GST", "Withdrawal Fee",
+                   "Membership Fee", "Connects", "Connect Purchase"}
+
+
+def _signed_amount_minor(row: dict):
+    """Integer minor units (USD cents) with the correct sign, or None when the API
+    gives no amount (AP/AR types) — surfaced by doctor #8, recovered from the CSV;
+    NEVER fabricated."""
+    node = row.get("amount") or {}
+    raw = node.get("amount") if node.get("amount") is not None else node.get("rawValue")
+    if raw in (None, ""):
+        return None
+    minor = abs(fin_money.to_minor(str(raw)))          # Decimal path, no float
+    t = (row.get("type") or "").strip()
+    sub = (row.get("subtype") or row.get("accountingSubtype") or "").strip()
+    return -minor if (t in _DEBIT_TYPES or sub in _DEBIT_SUBTYPES) else minor
+
+
 def upsert_transaction(conn, row: dict, profile: str) -> str:
-    key = build_dedup_key(row, profile)
-    exists = conn.execute("SELECT 1 FROM transactions WHERE record_id=?",
-                          (key,)).fetchone()
-    if exists:
+    """Idempotent transaction upsert. Fixes the 3 M1-cutover bugs:
+      #2 stub-twin minter: key on the CANONICAL namespace `upwork:<recordId>`
+         (record_id=<rid>, canonical_key=upwork:<rid>) — the SAME identity the CSV
+         import uses — so a re-sync DEDUPS against the canonical/CSV row instead of
+         minting a NULL-key `personal:`/`agency:` twin (the double-count root).
+      #1 amount never refreshed: UPDATE now COALESCE-fills amount_minor when NULL
+         (self-heals a malformed/AP-AR row) without clobbering a corrected value.
+      #3 fee sign: amount stored as SIGNED integer minor units via _signed_amount_minor."""
+    rid = row.get("recordId") or row.get("id")
+    canonical = f"upwork:{rid}" if rid else None
+    amt = _signed_amount_minor(row)
+    existing = conn.execute(
+        "SELECT record_id FROM transactions WHERE canonical_key=? OR record_id=?",
+        (canonical, rid)).fetchone() if rid else None
+    if existing:
         conn.execute(
             "UPDATE transactions SET status=?, fully_paid_dt=?,"
+            " amount_minor=COALESCE(amount_minor, ?),"
+            " amount_base_minor=COALESCE(amount_base_minor, ?),"
             " updated_at=datetime('now') WHERE record_id=?",
-            (row.get("status"), row.get("fullyPaidDateTime"), key))
+            (row.get("status"), row.get("fullyPaidDateTime"), amt, amt,
+             existing["record_id"]))
         return "updated"
     conn.execute(
-        """INSERT INTO transactions (record_id, upwork_type, description,
-           amount, currency, creation_dt, fully_paid_dt, status, profile)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        (key, row.get("type"), row.get("description"),
-         money(row.get("amount")), (row.get("amount") or {}).get("currency"),
+        "INSERT INTO transactions (record_id, canonical_key, dedup_key, upwork_type,"
+        " accounting_subtype, description, amount_minor, amount_credited_minor,"
+        " amount_base_minor, currency, creation_dt, fully_paid_dt, status, profile,"
+        " source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Upwork')",
+        (rid, canonical, build_dedup_key(row, profile), row.get("type"),
+         row.get("subtype") or row.get("accountingSubtype"), row.get("description"),
+         amt, amt, amt, (row.get("amount") or {}).get("currency") or "USD",
          row.get("createdDateTime"), row.get("fullyPaidDateTime"),
          row.get("status"), profile))
     return "inserted"

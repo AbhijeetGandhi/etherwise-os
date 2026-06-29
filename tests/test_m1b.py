@@ -207,19 +207,64 @@ class TestSyncUpserts(M1bCase):
         self.assertEqual(row["status"], "Won")            # verdict permanent
         self.assertEqual(row["upwork_status"], "Declined")  # telemetry moves
 
-    def test_transaction_dedup_key_profile_scoped(self):
-        row = {"recordId": "T1", "amount": {"amount": "100"},
+    def test_no_stub_twin_canonical_key(self):
+        # M1 bug #2 fix: a synced txn keys on the CANONICAL namespace, never a
+        # `personal:`/`agency:` twin, and dedups against an existing canonical/CSV row.
+        row = {"recordId": "T1", "type": "APInvoice", "amount": {"amount": "100"},
                "createdDateTime": "2026-06-10"}
-        k1 = sync_state.build_dedup_key(row, "personal")
-        k2 = sync_state.build_dedup_key(row, "agency")
-        self.assertNotEqual(k1, k2)
         with db.connect(self.db_path) as conn:
+            self.assertEqual(sync_state.upsert_transaction(conn, row, "personal"), "inserted")
+            r = conn.execute("SELECT record_id, canonical_key FROM transactions"
+                             " WHERE record_id='T1'").fetchone()
+            self.assertEqual(r["record_id"], "T1")               # not 'personal:T1'
+            self.assertEqual(r["canonical_key"], "upwork:T1")
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM transactions"
+                             " WHERE record_id LIKE 'personal:%'").fetchone()["c"], 0)
+            # re-sync (same rid) dedups; agency re-sync of the SAME rid also dedups
+            self.assertEqual(sync_state.upsert_transaction(conn, row, "personal"), "updated")
+            self.assertEqual(sync_state.upsert_transaction(conn, row, "agency"), "updated")
+            # a pre-existing canonical row (CSV-style) is matched, not twinned
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, amount_minor,"
+                         " currency) VALUES ('T2','upwork:T2',5000,'USD')")
             self.assertEqual(sync_state.upsert_transaction(
-                conn, row, "personal"), "inserted")
-            self.assertEqual(sync_state.upsert_transaction(
-                conn, row, "personal"), "updated")
-            self.assertEqual(sync_state.upsert_transaction(
-                conn, row, "agency"), "inserted")
+                conn, {"recordId": "T2", "type": "APInvoice", "amount": {"amount": "50"}},
+                "personal"), "updated")
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM transactions"
+                             " WHERE canonical_key='upwork:T2'").fetchone()["c"], 1)
+
+    def test_fee_sign_is_debit(self):
+        # M1 bug #3 fix: fees/charges/withdrawals stored NEGATIVE; earnings POSITIVE
+        with db.connect(self.db_path) as conn:
+            sync_state.upsert_transaction(conn, {"recordId": "C1", "type": "ARInvoice",
+                "subtype": "Membership Fee", "amount": {"amount": "45"}}, "personal")
+            sync_state.upsert_transaction(conn, {"recordId": "E1", "type": "APInvoice",
+                "subtype": "Hourly", "amount": {"amount": "1200"}}, "personal")
+            sync_state.upsert_transaction(conn, {"recordId": "W1", "type": "APPayment",
+                "subtype": "Withdrawal", "amount": {"amount": "2000"}}, "personal")
+            amt = {r["record_id"]: r["amount_minor"] for r in conn.execute(
+                "SELECT record_id, amount_minor FROM transactions")}
+        self.assertEqual(amt["C1"], -4500)      # connect fee -> debit
+        self.assertEqual(amt["E1"], 120000)     # hourly earning -> credit
+        self.assertEqual(amt["W1"], -200000)    # withdrawal -> debit
+
+    def test_amount_coalesce_fill_not_clobber(self):
+        # M1 bug #1 fix: UPDATE fills a NULL amount_minor but never overwrites a good one
+        with db.connect(self.db_path) as conn:
+            # malformed first sync: no amount node -> amount_minor NULL (surfaced, not faked)
+            sync_state.upsert_transaction(conn, {"recordId": "M1", "type": "APInvoice"}, "personal")
+            self.assertIsNone(conn.execute("SELECT amount_minor FROM transactions"
+                              " WHERE record_id='M1'").fetchone()["amount_minor"])
+            # re-sync now carries the amount -> COALESCE fills it
+            sync_state.upsert_transaction(conn, {"recordId": "M1", "type": "APInvoice",
+                "amount": {"amount": "300"}}, "personal")
+            self.assertEqual(conn.execute("SELECT amount_minor FROM transactions"
+                             " WHERE record_id='M1'").fetchone()["amount_minor"], 30000)
+            # a corrected value is NOT clobbered by a later (buggy) sync amount
+            conn.execute("UPDATE transactions SET amount_minor=99999 WHERE record_id='M1'")
+            sync_state.upsert_transaction(conn, {"recordId": "M1", "type": "APInvoice",
+                "amount": {"amount": "300"}}, "personal")
+            self.assertEqual(conn.execute("SELECT amount_minor FROM transactions"
+                             " WHERE record_id='M1'").fetchone()["amount_minor"], 99999)
 
 
 # ── poll_inbox classification (verbatim cases) ────────────────────────────────
