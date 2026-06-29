@@ -29,24 +29,27 @@ def _render_slips(cfg, run) -> dict:
     (macOS SIP strips DYLD so Homebrew pango isn't found by the system python),
     falls back to HTML so a slip is always produced. Prep-only artifact."""
     from modules.finance import payslip
-    co = dict(cfg["company"])
-    co.update({"legal_name": "Etherwise", "signatory_name": "Abhijeet Gandhi",
-               "signatory_title": "Founder & Authorised Signatory", "slip_prefix": "ETW"})
+    co = dict(cfg["company"]); co["slip_prefix"] = "ETW"   # no signatory block now
     by_id = {e["employee_id"]: e for e in cfg["employees"]}
     out_dir = SLIPS / run["period"]
-    pdf, html = [], []
+    pdf, locked, unlocked_no_dob, html = [], 0, [], []
     for line in run["lines"]:
         emp = by_id.get(line["employee_id"], {})
         base = out_dir / f"{line['employee_id']}_{(line['name'] or '').replace(' ', '_')}"
         try:
-            pdf.append(payslip.render_pdf(line, emp, run["period"], run["pay_date"],
-                                          co, str(base) + ".pdf"))
+            r = payslip.render_pdf(line, emp, run["period"], run["pay_date"], co, str(base) + ".pdf")
+            pdf.append(r["path"])
+            if r["locked"]:
+                locked += 1
+            else:
+                unlocked_no_dob.append(line["employee_id"])   # DOB missing -> not lockable
         except Exception:
             out_dir.mkdir(parents=True, exist_ok=True)
             (Path(str(base) + ".html")).write_text(
                 payslip.render_html(line, emp, run["period"], run["pay_date"], co))
             html.append(str(base) + ".html")
-    return {"pdf": len(pdf), "html_fallback": len(html), "dir": str(out_dir)}
+    return {"pdf": len(pdf), "locked": locked, "unlocked_no_dob": unlocked_no_dob,
+            "html_fallback": len(html), "dir": str(out_dir)}
 
 
 def _checklist(roster_active, run) -> list:

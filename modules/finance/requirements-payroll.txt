@@ -1,0 +1,8 @@
+# Scoped payroll slip-utility dependencies (modules/finance/payslip.py) — NOT the
+# stdlib-only kernel. Both are imported lazily, only when rendering slips.
+#   WeasyPrint: HTML/CSS -> PDF (needs Pango/Cairo system libs; macOS: brew install pango)
+#   pypdf:      password-protect each slip PDF (employee DOB as DDMMYYYY)
+# Install into a python with working pango + expat (see BUILD_BRIEF: the macOS
+# system python3 is SIP-blocked; use a pyenv/conda python with the libs).
+weasyprint
+pypdf

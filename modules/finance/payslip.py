@@ -7,9 +7,7 @@ PREP-ONLY: renders a document; moves no money.
 """
 from __future__ import annotations
 
-import calendar
 import datetime
-from decimal import Decimal
 from pathlib import Path
 
 from modules.finance import money
@@ -59,6 +57,24 @@ def words(paise):
 
 def _safe(v, d="—"):
     return d if v in (None, "") else str(v)
+
+
+def mask_acct(a):
+    """Privacy: only the last 4 of the bank account on the slip (full number stays
+    in Airtable for disbursement, never printed). '97700100011472' -> '••••1472'."""
+    a = str(a or "").strip()
+    return "••••" + a[-4:] if len(a) >= 4 else "—"
+
+
+def pdf_password(emp):
+    """Payslip PDF lock convention: employee DOB as DDMMYYYY (e.g. 2002-06-27 ->
+    27062002). Returns None if DOB absent — caller SURFACES it, never fabricates."""
+    dob = str(emp.get("date_of_birth") or "").strip()
+    try:
+        yy, mm, dd = dob.split("-")
+        return f"{dd}{mm}{yy}"
+    except ValueError:
+        return None
 
 
 def _font_face():
@@ -127,9 +143,6 @@ def render_html(line: dict, emp: dict, period: str, pay_date: str, co: dict) -> 
             ("Special Allowance", e["special"]), ("LTA", e["lta"])]
     ded = [("Income Tax (TDS)", line["tds_minor"]), ("Professional Tax (PT)", line["pt_minor"])]
     te, td, net = line["gross_minor"], line["tds_minor"] + line["pt_minor"], line["net_minor"]
-    y, m = (int(x) for x in period.split("-"))
-    wd = calendar.monthrange(y, m)[1]
-    lop = int(emp.get("lop_days", 0) or 0)
     ref = f"{co.get('slip_prefix', 'ETW')}/{period}/{emp.get('employee_id')}"
     pl = datetime.datetime.strptime(period, "%Y-%m").strftime("%B %Y")
 
@@ -143,17 +156,15 @@ def render_html(line: dict, emp: dict, period: str, pay_date: str, co: dict) -> 
     def kv(k, v):
         return f"<div class='kv'><span class='k'>{k}</span><span class='v'>{v}</span></div>"
 
-    def cell(n, l):
-        return f"<div class='cell'><div class='n'>{n}</div><div class='l'>{l}</div></div>"
-
     left = ("<h3>Employee</h3>" + kv("Name", _safe(emp.get("name")))
             + kv("Employee ID", _safe(emp.get("employee_id")))
             + kv("Designation", _safe(emp.get("designation")))
+            + kv("Department", _safe(emp.get("department")))
             + kv("Date of Joining", _safe(emp.get("date_of_joining")))
             + kv("PAN", _safe(emp.get("pan"))))
     right = ("<h3>Pay Details</h3>" + kv("Pay Period", pl) + kv("Pay Date", pay_date)
              + kv("Mode of Payment", co.get("pay_mode", "Bank Transfer"))
-             + kv("Bank A/C", _safe(emp.get("bank_account"))) + kv("IFSC", _safe(emp.get("ifsc"))))
+             + kv("Bank A/C", mask_acct(emp.get("bank_account"))))   # last 4 only; no IFSC
 
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{_font_face()}{CSS}</style></head><body><div class="sheet">
@@ -162,7 +173,6 @@ def render_html(line: dict, emp: dict, period: str, pay_date: str, co: dict) -> 
       <div class="ref">Ref: {ref}</div></div></div>
   <div class="rule"></div>
   <div class="info"><div class="col">{left}</div><div class="col">{right}</div></div>
-  <div class="days">{cell(wd, "Working Days")}{cell(lop, "Loss of Pay")}{cell(wd - lop, "Paid Days")}</div>
   <table class="ed"><colgroup><col class="l"><col class="a"><col class="l"><col class="a"></colgroup>
     <thead><tr><th>Earnings</th><th class="r">Amount</th>
       <th class="mid">Deductions</th><th class="r">Amount</th></tr></thead>
@@ -172,21 +182,26 @@ def render_html(line: dict, emp: dict, period: str, pay_date: str, co: dict) -> 
   <div class="net"><span class="lbl">NET PAY</span><span class="val">{fmt(net)}</span></div>
   <div class="words"><b>In words:</b> {words(net)}</div>
   <div class="recon">Net Pay = Total Earnings ({fmt(te)}) &minus; Total Deductions ({fmt(td)})</div>
-  <div class="bottom">
-    <div class="note">This is a computer-generated salary slip and is valid without a physical signature.
-      For any discrepancy, contact {co.get('email','')} within 7 days of issue.</div>
-    <div class="sign"><div class="sp"></div>
-      <div class="ln"><span class="for">For {co.get('legal_name', co.get('name'))}</span></div>
-      <div class="nm">{co.get('signatory_name', '—')}</div>
-      <div class="ti">{co.get('signatory_title', 'Authorised Signatory')}</div></div></div>
+  <div class="bottom"><div class="note">This is a computer-generated salary slip and is valid without
+      a physical signature. For any discrepancy, contact {co.get('email','')} within 7 days of issue.</div></div>
   <div class="legal">Generated {datetime.date.today().strftime('%d %B %Y')} &nbsp;·&nbsp; {co.get('email','')}</div>
 </div></body></html>"""
 
 
-def render_pdf(line: dict, emp: dict, period: str, pay_date: str, co: dict, out_path) -> str:
-    """Render the slip to a PDF at out_path. Lazy WeasyPrint import (scoped dep)."""
+def render_pdf(line: dict, emp: dict, period: str, pay_date: str, co: dict, out_path) -> dict:
+    """Render the slip to a PDF, then PASSWORD-PROTECT it with the employee's DOB
+    (DDMMYYYY) via pypdf. Lazy imports (WeasyPrint + pypdf are scoped payroll deps).
+    Returns {path, locked}; locked is False when DOB is absent (surfaced upstream,
+    never fabricated)."""
     from weasyprint import HTML
     html = render_html(line, emp, period, pay_date, co)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf(str(out_path))
-    return str(out_path)
+    pwd = pdf_password(emp)
+    if pwd:
+        from pypdf import PdfWriter
+        w = PdfWriter(clone_from=str(out_path))
+        w.encrypt(pwd)
+        with open(out_path, "wb") as fh:
+            w.write(fh)
+    return {"path": str(out_path), "locked": bool(pwd)}
