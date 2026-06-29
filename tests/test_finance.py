@@ -842,5 +842,48 @@ class TestDoctorPayroll(DoctorCase):
         self.assertFalse(res.green)
 
 
+# ── Phase 6: independent-audit surface ───────────────────────────────────────
+class TestAuditSurface(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fin-audit-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, **kw):
+        import importlib.machinery
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "bin" / "finance-audit"
+        loader = importlib.machinery.SourceFileLoader("finance_audit", str(path))
+        spec = importlib.util.spec_from_loader("finance_audit", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        return mod.run(self.db_path, with_tieout=False, **kw)
+
+    def _txn(self, rid, amount_minor, ckey):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, amount_minor, currency,"
+                         " canonical_key) VALUES (?,?,?,?)", (rid, amount_minor, "USD", ckey))
+
+    def test_pass_and_dynamic_invariants(self):
+        self._txn("t1", 10000, "k1")                  # clean -> doctor green
+        out = self._run()
+        self.assertEqual(out["AUDIT"], "PASS")
+        self.assertTrue(out["doctor_green"])
+        names = {i["invariant"] for i in out["invariants"]}   # DYNAMIC, not hardcoded
+        for inv in ("#3 ledger-statement tie-out", "#6 payroll", "#10 P&L reproducibility"):
+            self.assertIn(inv, names)
+        self.assertIn("money", out)
+
+    def test_fail_gate_on_red(self):
+        self._txn("t1", None, "k1")                   # NULL amount -> #8 RED
+        out = self._run()
+        self.assertEqual(out["AUDIT"], "FAIL")
+        self.assertFalse(out["doctor_green"])
+        self.assertIn("#8 sanity bounds", out["reds"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Independent-audit surface (Phase 6) — ONE read-only front door over the whole
+finance module, for Abhijeet's comprehensive audit before anything exits shadow.
+
+It calls doctor.run() DYNAMICALLY (so every invariant — current and future — is
+included automatically, never a hardcoded list), plus the audited money picture
+(P&L / cash from pnl_bucket + account_balances), the cross-currency transfer
+tie-out (delegates to bin/finance-tieout-transfers), and the payroll run(s).
+
+AUDIT GATE = finance-doctor GREEN. Strictly read-only: no writes, no money moves.
+Writes one consolidated report at reports/finance-audit.md.
+
+Usage: PYTHONPATH=. python3 bin/finance-audit
+"""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from core import config, db  # noqa: E402
+from modules.finance import doctor, pnl, money as fmoney  # noqa: E402
+
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-audit.md"
+
+
+def _tieout() -> dict:
+    """Cross-currency transfer tie-out via the existing read-only step."""
+    try:
+        out = subprocess.run(
+            [sys.executable, str(ROOT / "bin" / "finance-tieout-transfers")],
+            capture_output=True, text=True, cwd=str(ROOT),
+            env={"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/bin"})
+        return json.loads(out.stdout)
+    except Exception as e:
+        return {"error": f"tie-out step failed: {e}"}
+
+
+def run(db_path=None, with_tieout=True) -> dict:
+    dbp = db_path or config.DB_PATH
+    dr = doctor.run(dbp)
+    invariants = [{"invariant": c.invariant, "status": c.status, "detail": c.detail}
+                  for c in dr.checks]                       # DYNAMIC — all of them
+
+    def m(x):
+        return str(fmoney.from_minor(int(x or 0)))
+
+    with db.connect(dbp) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT source, type, upwork_type, category, accounting_subtype,"
+            " description, pnl_bucket, amount_base_minor FROM transactions"
+            " WHERE canonical_key IS NOT NULL")]
+        bals = [dict(r) for r in conn.execute(
+            "SELECT account, currency, closing_minor, source_file FROM account_balances")]
+        fxr = conn.execute("SELECT fx_rate FROM transactions WHERE source='IDFC'"
+                           " AND fx_rate IS NOT NULL AND fx_rate!='1'"
+                           " ORDER BY fx_date DESC LIMIT 1").fetchone()
+        runs = [dict(r) for r in conn.execute(
+            "SELECT period, pay_date, headcount, gross_minor, net_minor, status"
+            " FROM payroll_runs ORDER BY period")]
+    from decimal import Decimal
+    rate = Decimal(fxr["fx_rate"]) if fxr else Decimal("0")
+    p = pnl.compute(rows)
+    cash_minor = sum(b["closing_minor"] if b["currency"] == "USD"
+                     else fmoney.apply_rate(b["closing_minor"], rate) for b in bals)
+
+    return {
+        "AUDIT": "PASS" if dr.green else "FAIL",
+        "doctor_green": dr.green,
+        "reds": [c.invariant for c in dr.reds()],
+        "invariants": invariants,
+        "money": {"net_revenue": m(p["net_revenue_minor"]),
+                  "operating_profit": m(p["operating_profit_minor"]),
+                  "owner_draw_below_line": m(p["owner_draw_minor"]),
+                  "uncategorized_count": p["uncategorized_count"],
+                  "cash_total_usd": m(cash_minor),
+                  "cash_by_account": [{"account": b["account"], "currency": b["currency"],
+                                       "closing": m(b["closing_minor"]),
+                                       "source": b["source_file"]} for b in bals]},
+        "transfer_tieout": _tieout() if with_tieout else {"skipped": True},
+        "payroll_runs": [{"period": r["period"], "pay_date": r["pay_date"],
+                          "headcount": r["headcount"], "gross": m(r["gross_minor"]),
+                          "net": m(r["net_minor"]), "status": r["status"]} for r in runs],
+    }
+
+
+def main() -> int:
+    res = run()
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# Finance independent-audit surface\n\n```\n"
+                      + json.dumps(res, indent=1) + "\n```\n")
+    print(json.dumps(res, indent=1))
+    return 0 if res["doctor_green"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
