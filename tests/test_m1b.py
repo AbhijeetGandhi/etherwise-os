@@ -248,13 +248,16 @@ class TestSyncUpserts(M1bCase):
         self.assertEqual(amt["W1"], -200000)    # withdrawal -> debit
 
     def test_amount_coalesce_fill_not_clobber(self):
-        # M1 bug #1 fix: UPDATE fills a NULL amount_minor but never overwrites a good one
+        # M1 bug #1 fix: UPDATE COALESCE-fills an EXISTING row's NULL amount_minor
+        # but never overwrites a good one. (A NULL-amount row only ever exists as a
+        # pre-seeded canonical/CSV row now — bug #4 stops the sync minting them.)
         with db.connect(self.db_path) as conn:
-            # malformed first sync: no amount node -> amount_minor NULL (surfaced, not faked)
-            sync_state.upsert_transaction(conn, {"recordId": "M1", "type": "APInvoice"}, "personal")
+            # pre-existing canonical row (CSV-style) with no amount yet
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, currency)"
+                         " VALUES ('M1','upwork:M1','USD')")
             self.assertIsNone(conn.execute("SELECT amount_minor FROM transactions"
                               " WHERE record_id='M1'").fetchone()["amount_minor"])
-            # re-sync now carries the amount -> COALESCE fills it
+            # sync now carries the amount -> COALESCE fills it
             sync_state.upsert_transaction(conn, {"recordId": "M1", "type": "APInvoice",
                 "amount": {"amount": "300"}}, "personal")
             self.assertEqual(conn.execute("SELECT amount_minor FROM transactions"
@@ -265,6 +268,58 @@ class TestSyncUpserts(M1bCase):
                 "amount": {"amount": "300"}}, "personal")
             self.assertEqual(conn.execute("SELECT amount_minor FROM transactions"
                              " WHERE record_id='M1'").fetchone()["amount_minor"], 99999)
+
+    def _q(self, conn, canonical, resolved=None):
+        clause = "" if resolved is None else (
+            " AND resolved_at IS NOT NULL" if resolved else " AND resolved_at IS NULL")
+        return conn.execute(
+            "SELECT COUNT(*) c FROM quarantine WHERE source='upwork'"
+            " AND reason LIKE ?" + clause, (f"%({canonical})%",)).fetchone()["c"]
+
+    def test_missing_amount_quarantined_not_inserted(self):
+        # M1 bug #4 fix: a NEW txn with no amount is QUARANTINED, never inserted as
+        # a NULL-amount row (which would trip doctor #8 and break the GREEN gate).
+        with db.connect(self.db_path) as conn:
+            r = sync_state.upsert_transaction(conn, {"recordId": "Q1", "type": "APInvoice"}, "agency")
+            self.assertEqual(r, "quarantined")
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM transactions"
+                             " WHERE record_id='Q1'").fetchone()["c"], 0)   # no live row
+            self.assertEqual(self._q(conn, "upwork:Q1", resolved=False), 1)
+            # doctor #8 stays GREEN — no NULL-amount row in the live ledger
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM transactions"
+                             " WHERE amount_minor IS NULL").fetchone()["c"], 0)
+
+    def test_requarantine_idempotent(self):
+        # the agency-auth gap persists until re-OAuth: the same amountless row recurs
+        # every sync and must map to ONE quarantine entry, refreshed not appended.
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(sync_state.upsert_transaction(
+                conn, {"recordId": "Q2", "type": "APInvoice"}, "agency"), "quarantined")
+            for _ in range(3):
+                self.assertEqual(sync_state.upsert_transaction(
+                    conn, {"recordId": "Q2", "type": "APInvoice"}, "agency"), "quarantine-refreshed")
+            self.assertEqual(self._q(conn, "upwork:Q2"), 1)                 # exactly one entry
+            self.assertEqual(self._q(conn, "upwork:Q2", resolved=False), 1)
+
+    def test_quarantine_recovery_roundtrip(self):
+        # quarantined (no amount) -> later sync WITH amount -> inserted once +
+        # quarantine entry resolved + no duplicate transaction.
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(sync_state.upsert_transaction(
+                conn, {"recordId": "Q3", "type": "APInvoice"}, "agency"), "quarantined")
+            self.assertEqual(self._q(conn, "upwork:Q3", resolved=False), 1)
+            # recovery sync now carries the amount
+            self.assertEqual(sync_state.upsert_transaction(
+                conn, {"recordId": "Q3", "type": "APInvoice", "amount": {"amount": "300"}},
+                "agency"), "inserted")
+            rows = conn.execute("SELECT amount_minor FROM transactions"
+                                " WHERE canonical_key='upwork:Q3'").fetchall()
+            self.assertEqual(len(rows), 1)                                  # inserted once, no dup
+            self.assertEqual(rows[0]["amount_minor"], 30000)
+            self.assertEqual(self._q(conn, "upwork:Q3", resolved=False), 0) # pending entry cleared
+            self.assertEqual(self._q(conn, "upwork:Q3", resolved=True), 1)  # resolved, not dropped
+            self.assertEqual(conn.execute("SELECT resolution FROM quarantine"
+                             " WHERE reason LIKE '%(upwork:Q3)%'").fetchone()["resolution"], "imported")
 
 
 # ── poll_inbox classification (verbatim cases) ────────────────────────────────

@@ -190,15 +190,61 @@ def _signed_amount_minor(row: dict):
     return -minor if (t in _DEBIT_TYPES or sub in _DEBIT_SUBTYPES) else minor
 
 
+def _missing_amount_reason(canonical: str) -> str:
+    """Stable reason => exactly ONE quarantine entry per canonical, so the same
+    amountless row recurring every sync (the agency-auth/scope gap persists until
+    re-OAuth) maps to one entry that is refreshed, never appended per run."""
+    return (f"upwork txn missing amount ({canonical}); recover from CSV or agency "
+            f"re-OAuth (agency financials / vendorProposals scope gap)")
+
+
+def _quarantine_missing_amount(conn, row: dict, profile: str, canonical: str) -> str:
+    """Route an amountless NEW txn to quarantine instead of inserting a NULL-amount
+    row (which would trip doctor #8 and break the GREEN gate). Never fabricates,
+    never drops. IDEMPOTENT: refresh the single unresolved entry for this canonical
+    if it already exists, else insert one."""
+    reason = _missing_amount_reason(canonical)
+    payload = json.dumps({
+        "canonical_key": canonical, "profile": profile, "type": row.get("type"),
+        "subtype": row.get("subtype") or row.get("accountingSubtype"),
+        "description": row.get("description"),
+        "currency": (row.get("amount") or {}).get("currency"),
+        "createdDateTime": row.get("createdDateTime"),
+    }, sort_keys=True)
+    existing = conn.execute(
+        "SELECT id FROM quarantine WHERE source='upwork' AND resolved_at IS NULL"
+        " AND reason=?", (reason,)).fetchone()
+    if existing:
+        conn.execute("UPDATE quarantine SET at=datetime('now'), payload_json=?"
+                     " WHERE id=?", (payload, existing["id"]))
+        return "quarantine-refreshed"
+    conn.execute("INSERT INTO quarantine (source, reason, payload_json)"
+                 " VALUES ('upwork', ?, ?)", (reason, payload))
+    return "quarantined"
+
+
+def _resolve_missing_amount(conn, canonical: str) -> None:
+    """Recovery round-trip: an amount finally arrived for a previously-amountless
+    canonical -> mark its pending quarantine entry imported. No delete (nothing is
+    dropped); the resolved entry is the audit trail of the recovery."""
+    conn.execute(
+        "UPDATE quarantine SET resolved_at=datetime('now'), resolution='imported'"
+        " WHERE source='upwork' AND resolved_at IS NULL AND reason=?",
+        (_missing_amount_reason(canonical),))
+
+
 def upsert_transaction(conn, row: dict, profile: str) -> str:
-    """Idempotent transaction upsert. Fixes the 3 M1-cutover bugs:
+    """Idempotent transaction upsert. Fixes the M1-cutover bugs:
       #2 stub-twin minter: key on the CANONICAL namespace `upwork:<recordId>`
          (record_id=<rid>, canonical_key=upwork:<rid>) — the SAME identity the CSV
          import uses — so a re-sync DEDUPS against the canonical/CSV row instead of
          minting a NULL-key `personal:`/`agency:` twin (the double-count root).
-      #1 amount never refreshed: UPDATE now COALESCE-fills amount_minor when NULL
-         (self-heals a malformed/AP-AR row) without clobbering a corrected value.
-      #3 fee sign: amount stored as SIGNED integer minor units via _signed_amount_minor."""
+      #1 amount never refreshed: UPDATE COALESCE-fills amount_minor when an EXISTING
+         row's amount is NULL (self-heals) without clobbering a corrected value.
+      #3 fee sign: amount stored as SIGNED integer minor units via _signed_amount_minor.
+      #4 NULL-amount insert: a NEW txn the API hands us with no amount is QUARANTINED
+         (idempotently), never inserted as a NULL-amount row (which trips doctor #8).
+         When a later sync supplies the amount it inserts AND resolves the entry."""
     rid = row.get("recordId") or row.get("id")
     canonical = f"upwork:{rid}" if rid else None
     amt = _signed_amount_minor(row)
@@ -213,7 +259,11 @@ def upsert_transaction(conn, row: dict, profile: str) -> str:
             " updated_at=datetime('now') WHERE record_id=?",
             (row.get("status"), row.get("fullyPaidDateTime"), amt, amt,
              existing["record_id"]))
+        if amt is not None and canonical:
+            _resolve_missing_amount(conn, canonical)   # amount present now -> clear any pending entry
         return "updated"
+    if amt is None:                                     # M1 bug #4: never insert a NULL-amount row
+        return _quarantine_missing_amount(conn, row, profile, canonical or "upwork:?")
     conn.execute(
         "INSERT INTO transactions (record_id, canonical_key, dedup_key, upwork_type,"
         " accounting_subtype, description, amount_minor, amount_credited_minor,"
@@ -224,6 +274,8 @@ def upsert_transaction(conn, row: dict, profile: str) -> str:
          amt, amt, amt, (row.get("amount") or {}).get("currency") or "USD",
          row.get("createdDateTime"), row.get("fullyPaidDateTime"),
          row.get("status"), profile))
+    if canonical:
+        _resolve_missing_amount(conn, canonical)   # recovery: amount arrived -> clear pending entry, no dup
     return "inserted"
 
 
