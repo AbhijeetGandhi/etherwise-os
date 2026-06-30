@@ -105,6 +105,15 @@ def insert_wise_row(conn, row: dict, *, source_file: str) -> None:
          f"wise:{wid}", f"wise:{wid}"))
 
 
+def pending_missing_amount(conn, canonical: str) -> int:
+    """Read-only: count UNRESOLVED missing-amount quarantine entries for a canonical
+    (the dry-run import reports what a --commit WOULD resolve, without writing)."""
+    return conn.execute(
+        "SELECT COUNT(*) n FROM quarantine WHERE source='upwork' AND resolved_at IS NULL"
+        " AND reason LIKE 'upwork txn missing amount (' || ? || ')%'",
+        (canonical,)).fetchone()["n"]
+
+
 def resolve_missing_amount(conn, canonical: str) -> int:
     """Recovery round-trip (CSV path). The API sync quarantines an amountless txn
     with reason 'upwork txn missing amount (<canonical>); ...' (see

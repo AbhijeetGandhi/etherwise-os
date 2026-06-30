@@ -84,9 +84,11 @@ def run(commit: bool) -> dict:
                 if e["amount_minor"] is None or e["amount_minor"] == row["amount_minor"]:
                     # row already in the ledger with this amount -> clear any dangling
                     # missing-amount quarantine for it (defensive; idempotent).
-                    if commit and e["amount_minor"] is not None \
-                            and ledger.resolve_missing_amount(conn, row["canonical_key"]):
+                    if e["amount_minor"] is not None \
+                            and ledger.pending_missing_amount(conn, row["canonical_key"]):
                         quar_resolved.append(ref)
+                        if commit:
+                            ledger.resolve_missing_amount(conn, row["canonical_key"])
                     continue
                 is_gst_charge = (e["accounting_subtype"] == "GST"
                                  and e["upwork_type"] == "ARInvoice")
@@ -132,13 +134,14 @@ def run(commit: bool) -> dict:
             new_net += row["amount_minor"]
             new_by_type[row["type"]] += 1
             new_by_year[(row["date"] or "????")[:4]] += 1
+            # recovery round-trip: this CSV ref may be a previously-amountless API row
+            # the sync quarantined (e.g. agency txns with no API amount). Detect in
+            # dry-run (would-resolve) and actually resolve on --commit.
+            if ledger.pending_missing_amount(conn, row["canonical_key"]):
+                quar_resolved.append(ref)
             if commit:
                 _insert(conn, row)
-                # recovery round-trip: this CSV ref may be a previously-amountless
-                # API row the sync quarantined (e.g. agency txns with no API amount).
-                # Now that the authoritative CSV supplied the amount, resolve it.
-                if ledger.resolve_missing_amount(conn, row["canonical_key"]):
-                    quar_resolved.append(ref)
+                ledger.resolve_missing_amount(conn, row["canonical_key"])
 
     db_only = sum(1 for ref in existing if ref not in by_ref)
     return {
