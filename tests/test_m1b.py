@@ -321,6 +321,24 @@ class TestSyncUpserts(M1bCase):
             self.assertEqual(conn.execute("SELECT resolution FROM quarantine"
                              " WHERE reason LIKE '%(upwork:Q3)%'").fetchone()["resolution"], "imported")
 
+    def test_csv_path_resolves_api_minted_quarantine(self):
+        # CROSS-PATH CONTRACT: the API sync mints the missing-amount quarantine; the
+        # weekly CSV-import path (ledger.resolve_missing_amount) must resolve THAT
+        # SAME entry. Pins the two paths to one identity so they can't drift.
+        from modules.finance import ledger
+        with db.connect(self.db_path) as conn:
+            # API sync sees an amountless agency txn -> quarantines it
+            self.assertEqual(sync_state.upsert_transaction(
+                conn, {"recordId": "931008627", "type": "APInvoice"}, "agency"), "quarantined")
+            self.assertEqual(self._q(conn, "upwork:931008627", resolved=False), 1)
+            # CSV later carries the amount -> the SHARED resolver flips that entry
+            n = ledger.resolve_missing_amount(conn, "upwork:931008627")
+            self.assertEqual(n, 1)
+            self.assertEqual(self._q(conn, "upwork:931008627", resolved=False), 0)
+            self.assertEqual(self._q(conn, "upwork:931008627", resolved=True), 1)
+            # idempotent: a re-import (or the later scoped API sync) resolves nothing more
+            self.assertEqual(ledger.resolve_missing_amount(conn, "upwork:931008627"), 0)
+
 
 # ── poll_inbox classification (verbatim cases) ────────────────────────────────
 def room(rid="r1", contract_status=None, proposal_status=None,

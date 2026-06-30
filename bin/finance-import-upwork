@@ -70,6 +70,7 @@ def run(commit: bool) -> dict:
     gst_corrected, withdrawals_held, value_diffs, value_fixed = [], [], [], []
     new_by_type, new_by_year = Counter(), Counter()
     new_net = gst_swing = value_fix_swing = 0
+    quar_resolved = []          # refs whose pending missing-amount quarantine the CSV resolves
     with db.connect(config.DB_PATH) as conn:
         existing = {r["canonical_key"].split(":", 1)[1]: dict(r)
                     for r in conn.execute(
@@ -81,6 +82,11 @@ def run(commit: bool) -> dict:
             e = existing.get(ref)
             if e is not None:
                 if e["amount_minor"] is None or e["amount_minor"] == row["amount_minor"]:
+                    # row already in the ledger with this amount -> clear any dangling
+                    # missing-amount quarantine for it (defensive; idempotent).
+                    if commit and e["amount_minor"] is not None \
+                            and ledger.resolve_missing_amount(conn, row["canonical_key"]):
+                        quar_resolved.append(ref)
                     continue
                 is_gst_charge = (e["accounting_subtype"] == "GST"
                                  and e["upwork_type"] == "ARInvoice")
@@ -128,6 +134,11 @@ def run(commit: bool) -> dict:
             new_by_year[(row["date"] or "????")[:4]] += 1
             if commit:
                 _insert(conn, row)
+                # recovery round-trip: this CSV ref may be a previously-amountless
+                # API row the sync quarantined (e.g. agency txns with no API amount).
+                # Now that the authoritative CSV supplied the amount, resolve it.
+                if ledger.resolve_missing_amount(conn, row["canonical_key"]):
+                    quar_resolved.append(ref)
 
     db_only = sum(1 for ref in existing if ref not in by_ref)
     return {
@@ -145,6 +156,8 @@ def run(commit: bool) -> dict:
         "value_fix_swing_usd": str(money.from_minor(value_fix_swing)),
         "withdrawals_HELD_for_phase2": len(withdrawals_held),
         "value_diffs_for_abhijeet": len(value_diffs),
+        "quarantine_resolved": len(quar_resolved),
+        "_quarantine_resolved_refs": quar_resolved,
         "db_only_not_in_csv": db_only,
         "_new_transfer_held": new_transfer_held,
         "_value_diffs": value_diffs,

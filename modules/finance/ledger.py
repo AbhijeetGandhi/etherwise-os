@@ -105,6 +105,23 @@ def insert_wise_row(conn, row: dict, *, source_file: str) -> None:
          f"wise:{wid}", f"wise:{wid}"))
 
 
+def resolve_missing_amount(conn, canonical: str) -> int:
+    """Recovery round-trip (CSV path). The API sync quarantines an amountless txn
+    with reason 'upwork txn missing amount (<canonical>); ...' (see
+    modules.upwork.sync_state._missing_amount_reason — ONE entry per canonical).
+    When the authoritative CSV supplies that ref's amount, mark the pending entry
+    imported (no delete — the resolved row is the audit trail). Idempotent: returns
+    the number of entries flipped (0 if none pending). Matched on the stable
+    '(<canonical>)' marker so it stays valid if the reason's tail text changes.
+    This is the SAME resolver the API path uses (sync_state delegates here), so a
+    CSV import and a later scoped API sync can't double-resolve or drift."""
+    cur = conn.execute(
+        "UPDATE quarantine SET resolved_at=datetime('now'), resolution='imported'"
+        " WHERE source='upwork' AND resolved_at IS NULL"
+        " AND reason LIKE 'upwork txn missing amount (' || ? || ')%'", (canonical,))
+    return cur.rowcount
+
+
 def correct_upwork_csv_row(conn, row: dict) -> None:
     """Re-derive an EXISTING row fully from the authoritative CSV (amount, type,
     description) — used to repair a mis-paired transfer leg. Keyed by record_id."""

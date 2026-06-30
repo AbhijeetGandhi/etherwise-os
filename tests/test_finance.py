@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 
 from core import db
 from modules.finance import money, doctor
@@ -883,6 +884,80 @@ class TestAuditSurface(unittest.TestCase):
         self.assertEqual(out["AUDIT"], "FAIL")
         self.assertFalse(out["doctor_green"])
         self.assertIn("#8 sanity bounds", out["reds"])
+
+
+# ── Agency-gap weekly CSV import: recovery round-trip on the importer path ───
+class TestUpworkImportRecovery(unittest.TestCase):
+    """The agency financial gap (no API amount until/without scope) is closed by
+    the weekly Transaction-History CSV. Proves the bin wires the quarantine
+    resolution: an amountless API-minted entry flips to imported when the CSV
+    supplies the amount — inserted once, no dup, doctor #8 stays GREEN."""
+    HEADER = ("Date,Transaction ID,Transaction type,Transaction summary,"
+              "Transaction summary details,Description 1,Description 2,Description 3,"
+              "Entered description,Agency team,Freelancer,Client team,Account name,PO,"
+              "Ref ID,Amount $,Amount in local currency,Currency,Current balance $,"
+              "Payment method")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="upw-import-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        self.inbox = self.tmp / "inbox"
+        self.inbox.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _bin(self):
+        import importlib.machinery
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "bin" / "finance-import-upwork"
+        loader = importlib.machinery.SourceFileLoader("finance_import_upwork", str(path))
+        spec = importlib.util.spec_from_loader("finance_import_upwork", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        return mod
+
+    def test_csv_import_resolves_quarantined_agency_row(self):
+        from modules.upwork import sync_state
+        from modules.finance import doctor
+        # 1) API sync saw the agency txn with NO amount -> quarantined, no live row
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(sync_state.upsert_transaction(
+                conn, {"recordId": "931008627", "type": "Hourly",
+                       "description": "agency hourly"}, "agency"), "quarantined")
+        # 2) the weekly agency CSV now carries that ref WITH its amount
+        csv = (self.HEADER + "\n"
+               + '"Jun 28, 2026",TXN1,Hourly,Agency hourly,,Job work,,,,Team,Free,'
+                 'Client,Agency Acc,,931008627,123.45,,,123.45,')
+        (self.inbox / "2026-06-28-upwork-agency-fullhistory.csv").write_text(csv)
+        mod = self._bin()
+        with mock.patch.object(mod, "INBOX", self.inbox), \
+                mock.patch.object(mod.config, "DB_PATH", self.db_path), \
+                mock.patch.object(mod, "REPORT", self.tmp / "rep.md"):
+            res = mod.run(commit=True)
+        # 3) inserted once, quarantine flipped to imported, doctor #8 GREEN
+        self.assertEqual(res["new_inserted"], 1)
+        self.assertEqual(res["quarantine_resolved"], 1)
+        with db.connect(self.db_path) as conn:
+            rows = conn.execute("SELECT amount_minor FROM transactions"
+                                " WHERE canonical_key='upwork:931008627'").fetchall()
+            self.assertEqual(len(rows), 1)                       # no dup
+            self.assertEqual(rows[0]["amount_minor"], 12345)     # CSV amount, integer cents
+            q = conn.execute("SELECT resolved_at, resolution FROM quarantine"
+                             " WHERE reason LIKE '%(upwork:931008627)%'").fetchone()
+            self.assertIsNotNone(q["resolved_at"])
+            self.assertEqual(q["resolution"], "imported")
+            san = next(c for c in doctor.run(self.db_path).checks
+                       if c.invariant == "#8 sanity bounds")
+            self.assertEqual(san.status, "GREEN")
+        # 4) idempotent re-import resolves nothing further, inserts nothing
+        with mock.patch.object(mod, "INBOX", self.inbox), \
+                mock.patch.object(mod.config, "DB_PATH", self.db_path), \
+                mock.patch.object(mod, "REPORT", self.tmp / "rep.md"):
+            res2 = mod.run(commit=True)
+        self.assertEqual(res2["new_inserted"], 0)
+        self.assertEqual(res2["quarantine_resolved"], 0)
 
 
 # ── Phase 5/6: finance-calendar nudges (pinned biweekly anchors) ─────────────

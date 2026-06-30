@@ -226,11 +226,11 @@ def _quarantine_missing_amount(conn, row: dict, profile: str, canonical: str) ->
 def _resolve_missing_amount(conn, canonical: str) -> None:
     """Recovery round-trip: an amount finally arrived for a previously-amountless
     canonical -> mark its pending quarantine entry imported. No delete (nothing is
-    dropped); the resolved entry is the audit trail of the recovery."""
-    conn.execute(
-        "UPDATE quarantine SET resolved_at=datetime('now'), resolution='imported'"
-        " WHERE source='upwork' AND resolved_at IS NULL AND reason=?",
-        (_missing_amount_reason(canonical),))
+    dropped); the resolved entry is the audit trail of the recovery. Delegates to
+    the SHARED resolver in modules.finance.ledger so the API path and the weekly
+    CSV-import path resolve identically (one implementation, no drift)."""
+    from modules.finance import ledger
+    ledger.resolve_missing_amount(conn, canonical)
 
 
 def upsert_transaction(conn, row: dict, profile: str) -> str:
