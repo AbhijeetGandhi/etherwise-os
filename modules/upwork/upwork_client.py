@@ -1,12 +1,13 @@
-"""Upwork GraphQL client — READ-ONLY token until M1b cutover (§9).
+"""Upwork GraphQL client — OAuth refresh OWNER-GATED on the cutover marker (§9).
 
-v2 owns the OAuth refresh. This client reads upwork-api.json read-only; on
-401/expiry it raises TransientAPIError so the runner backs off and retries
-AFTER v2's refresher has cycled — it never refreshes, never writes the file.
+Ownership lives in var/upwork-token-owner. While it reads 'v2' (pre-cutover) this
+client is READ-ONLY: it never refreshes, never writes the file; on a 401 it raises
+TransientAPIError so the runner backs off until v2's refresher cycles.
 
-Refresh capability exists ONLY for post-cutover: refresh() hard-refuses
-unless var/upwork-token-owner contains 'v3' (flipped exclusively by
-bin/upwork-token-cutover with Abhijeet's sign-off).
+Once the marker is 'v3' (flipped by bin/upwork-token-cutover with Abhijeet's
+sign-off), v3 OWNS the token and self-heals: it refreshes PROACTIVELY just before
+expiry, and on a 401 it refreshes once and retries. refresh() still hard-refuses
+unless the marker is 'v3', so v3 can never race v2's refresher.
 
 Transport: stdlib urllib. Org context for dual-ACE via the
 X-Upwork-API-TenantId header (personal vs agency).
@@ -14,10 +15,15 @@ X-Upwork-API-TenantId header (personal vs agency).
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
+
+# Refresh proactively when the access token is within this many seconds of expiry
+# (or already past it) — avoids eating a 401 on every cycle once v3 owns the token.
+_REFRESH_MARGIN_S = 120
 
 from core import config
 from core import claude_gateway as gw
@@ -63,34 +69,63 @@ class UpworkClient:
         self.timeout = timeout
         self._token = read_access_token()
 
+    def _ensure_fresh_token(self) -> None:
+        """Proactive refresh: when v3 owns the token and it is at/near expiry,
+        re-mint BEFORE the request so we don't take a 401 every cycle. No-op when
+        v2 owns (pre-cutover read-only) or when no expiry is recorded."""
+        if token_owner() != "v3":
+            return
+        try:
+            creds = json.loads(CREDS_PATH.read_text())
+        except OSError:
+            return
+        exp = (creds.get("tokens") or {}).get("expires_at")
+        if exp is not None and time.time() >= float(exp) - _REFRESH_MARGIN_S:
+            self.refresh()                       # owner-gated; updates self._token
+
     def graphql(self, query: str, variables: Optional[dict] = None,
                 tolerate_errors: bool = False) -> dict:
         """tolerate_errors=True returns the FULL envelope {data, errors} —
         Upwork routinely returns partial data + errors (non-null bubbles on
-        system stories, v2 quirk); callers that can use partial data opt in."""
-        headers = dict(_BROWSER_HEADERS)
-        headers["Authorization"] = f"Bearer {self._token}"
-        headers["Content-Type"] = "application/json"
-        if self.tenant_id:
-            headers["X-Upwork-API-TenantId"] = str(self.tenant_id)
-        body = json.dumps({"query": query,
-                           "variables": variables or {}}).encode()
-        req = urllib.request.Request(GRAPHQL_URL, data=body, method="POST",
-                                     headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401:
-                raise gw.TransientAPIError(
-                    "Upwork 401 — token expired; v2 owns refresh (§9),"
-                    " retry after its refresher cycles") from exc
-            if exc.code in (429, 500, 502, 503, 504):
-                raise gw.TransientAPIError(
-                    f"Upwork HTTP {exc.code}") from exc
-            raise UpworkAPIError(f"Upwork HTTP {exc.code}") from exc
-        except OSError as exc:
-            raise gw.TransientAPIError(f"network: {exc!r}") from exc
+        system stories, v2 quirk); callers that can use partial data opt in.
+
+        When v3 owns the token this self-heals a 401: refresh once and retry the
+        same request. Pre-cutover (v2 owns) a 401 raises TransientAPIError so the
+        runner backs off until v2's refresher cycles — v3 never refreshes then."""
+        self._ensure_fresh_token()
+        data = None
+        for attempt in (1, 2):
+            headers = dict(_BROWSER_HEADERS)
+            headers["Authorization"] = f"Bearer {self._token}"
+            headers["Content-Type"] = "application/json"
+            if self.tenant_id:
+                headers["X-Upwork-API-TenantId"] = str(self.tenant_id)
+            body = json.dumps({"query": query,
+                               "variables": variables or {}}).encode()
+            req = urllib.request.Request(GRAPHQL_URL, data=body, method="POST",
+                                         headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    data = json.loads(resp.read().decode())
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401:
+                    if attempt == 1 and token_owner() == "v3":
+                        self.refresh()           # re-mint and retry once
+                        continue
+                    owner = token_owner()
+                    raise gw.TransientAPIError(
+                        "Upwork 401 — token expired; "
+                        + ("refresh did not clear it, re-auth may be needed"
+                           if owner == "v3" else
+                           "v2 owns refresh (§9), retry after its refresher cycles")
+                    ) from exc
+                if exc.code in (429, 500, 502, 503, 504):
+                    raise gw.TransientAPIError(
+                        f"Upwork HTTP {exc.code}") from exc
+                raise UpworkAPIError(f"Upwork HTTP {exc.code}") from exc
+            except OSError as exc:
+                raise gw.TransientAPIError(f"network: {exc!r}") from exc
         if tolerate_errors:
             return data
         if data.get("errors"):

@@ -7,7 +7,9 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import time
 import unittest
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -560,6 +562,77 @@ class TestOutcome(M1bCase):
 
 
 # ── client token rules ────────────────────────────────────────────────────────
+class _Resp:
+    """Minimal urlopen() context-manager stand-in returning a JSON payload."""
+    def __init__(self, payload):
+        self._b = json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._b
+
+
+def _http_401():
+    return urllib.error.HTTPError("https://api.upwork.com/graphql", 401,
+                                  "unauthorized", {}, None)
+
+
+class TestClientRefresh(M1bCase):
+    def _client(self, owner="v3", expires_in=9999):
+        creds = self.tmp / "upwork-api.json"
+        creds.write_text(json.dumps({
+            "client_id": "c", "client_secret": "s",
+            "tokens": {"access_token": "tok", "refresh_token": "r",
+                       "expires_at": time.time() + expires_in}}))
+        for p in (mock.patch.object(upwork_client, "CREDS_PATH", creds),
+                  mock.patch.object(upwork_client, "token_owner", return_value=owner)):
+            p.start()
+            self.addCleanup(p.stop)
+        c = upwork_client.UpworkClient()
+        c.refresh = mock.MagicMock(name="refresh")     # count calls; no real OAuth/network
+        return c
+
+    def test_401_refreshes_and_retries_when_v3(self):
+        c = self._client(owner="v3")                   # fresh token -> no proactive refresh
+        seq = [_http_401(), _Resp({"data": {"ok": 1}})]
+
+        def fake_urlopen(req, timeout=None):
+            x = seq.pop(0)
+            if isinstance(x, Exception):
+                raise x
+            return x
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = c.graphql("query{}", {})
+        self.assertEqual(out, {"ok": 1})               # recovered on retry
+        c.refresh.assert_called_once()                 # refreshed exactly once
+
+    def test_401_raises_without_refresh_when_v2(self):
+        c = self._client(owner="v2")                   # pre-cutover: never refresh
+        with mock.patch("urllib.request.urlopen", side_effect=_http_401()):
+            with self.assertRaises(gw.TransientAPIError):
+                c.graphql("q", {})
+        c.refresh.assert_not_called()
+
+    def test_proactive_refresh_before_expiry_when_v3(self):
+        c = self._client(owner="v3", expires_in=10)    # within margin -> refresh up front
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=lambda req, timeout=None: _Resp({"data": {}})):
+            c.graphql("q", {})
+        c.refresh.assert_called_once()
+
+    def test_no_proactive_refresh_when_token_fresh(self):
+        c = self._client(owner="v3", expires_in=9999)  # far from expiry -> no refresh
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=lambda req, timeout=None: _Resp({"data": {}})):
+            c.graphql("q", {})
+        c.refresh.assert_not_called()
+
+
 class TestClientToken(M1bCase):
     def test_refresh_refused_while_v2_owns(self):
         with mock.patch.object(upwork_client, "read_access_token",
