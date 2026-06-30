@@ -192,25 +192,60 @@ def _signed_amount_minor(row: dict):
 
 def _missing_amount_reason(canonical: str) -> str:
     """Stable reason => exactly ONE quarantine entry per canonical, so the same
-    amountless row recurring every sync (the agency-auth/scope gap persists until
-    re-OAuth) maps to one entry that is refreshed, never appended per run."""
-    return (f"upwork txn missing amount ({canonical}); recover from CSV or agency "
-            f"re-OAuth (agency financials / vendorProposals scope gap)")
+    amountless row recurring every sync (the agency-auth/scope gap persists) maps
+    to one entry that is refreshed, never appended per run. CSV-RECOVERABLE: the
+    weekly Transaction-History CSV supplies the amount and resolves it."""
+    return (f"upwork txn missing amount ({canonical}); recover from CSV "
+            f"(agency financials scope gap)")
 
 
-def _quarantine_missing_amount(conn, row: dict, profile: str, canonical: str) -> str:
-    """Route an amountless NEW txn to quarantine instead of inserting a NULL-amount
-    row (which would trip doctor #8 and break the GREEN gate). Never fabricates,
-    never drops. IDEMPOTENT: refresh the single unresolved entry for this canonical
-    if it already exists, else insert one."""
-    reason = _missing_amount_reason(canonical)
-    payload = json.dumps({
+# An API-only phantom: an amountless ref the agency partial-auth query keeps
+# surfacing that is NOT in any CSV export despite being in-range (a pending
+# stub / partial-auth artifact). HUMAN-CONFIRMED by re-tagging its quarantine
+# entry to this reason; the classification then lives in the DATA, so the sync
+# keeps it phantom (below) instead of reverting it to a 'recover from CSV' entry.
+# It will NEVER resolve via CSV; it just sits quarantined, GREEN-safe.
+_PHANTOM_PREFIX = "upwork API-only phantom"
+
+
+def phantom_reason(canonical: str) -> str:
+    """Full reason written when a human classifies a canonical as an API-only
+    phantom (see bin/finance-tag-phantom). Recognized by _quarantine_amountless
+    via _PHANTOM_PREFIX so the sync keeps it phantom on every subsequent run."""
+    return (f"{_PHANTOM_PREFIX} ({canonical}); agency partial-auth artifact, not in "
+            f"any CSV export despite in-range — GREEN-safe, no recovery (not CSV-pending)")
+
+
+def _amountless_payload(row: dict, profile: str, canonical: str) -> str:
+    return json.dumps({
         "canonical_key": canonical, "profile": profile, "type": row.get("type"),
         "subtype": row.get("subtype") or row.get("accountingSubtype"),
         "description": row.get("description"),
         "currency": (row.get("amount") or {}).get("currency"),
         "createdDateTime": row.get("createdDateTime"),
     }, sort_keys=True)
+
+
+def _quarantine_amountless(conn, row: dict, profile: str, canonical: str) -> str:
+    """Route an amountless NEW txn to quarantine instead of inserting a NULL-amount
+    row (which would trip doctor #8 and break the GREEN gate). Never fabricates,
+    never drops. IDEMPOTENT: one unresolved entry per canonical, refreshed.
+
+    If a human has already classified this canonical as an API-only phantom (by
+    re-tagging its entry with the _PHANTOM_PREFIX reason), KEEP it phantom — do
+    NOT mint a fresh 'recover from CSV' entry (which would falsely read as a
+    pending recovery and double the row). Phantom classification is DB-driven:
+    set it once, the sync respects it forever."""
+    payload = _amountless_payload(row, profile, canonical)
+    phantom = conn.execute(
+        "SELECT id FROM quarantine WHERE source='upwork' AND resolved_at IS NULL"
+        " AND reason LIKE ? || ' (' || ? || ')%'",
+        (_PHANTOM_PREFIX, canonical)).fetchone()
+    if phantom:                                          # human-tagged -> stays phantom
+        conn.execute("UPDATE quarantine SET at=datetime('now'), payload_json=?"
+                     " WHERE id=?", (payload, phantom["id"]))
+        return "phantom-refreshed"
+    reason = _missing_amount_reason(canonical)
     existing = conn.execute(
         "SELECT id FROM quarantine WHERE source='upwork' AND resolved_at IS NULL"
         " AND reason=?", (reason,)).fetchone()
@@ -263,7 +298,7 @@ def upsert_transaction(conn, row: dict, profile: str) -> str:
             _resolve_missing_amount(conn, canonical)   # amount present now -> clear any pending entry
         return "updated"
     if amt is None:                                     # M1 bug #4: never insert a NULL-amount row
-        return _quarantine_missing_amount(conn, row, profile, canonical or "upwork:?")
+        return _quarantine_amountless(conn, row, profile, canonical or "upwork:?")
     conn.execute(
         "INSERT INTO transactions (record_id, canonical_key, dedup_key, upwork_type,"
         " accounting_subtype, description, amount_minor, amount_credited_minor,"

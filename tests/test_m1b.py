@@ -339,6 +339,32 @@ class TestSyncUpserts(M1bCase):
             # idempotent: a re-import (or the later scoped API sync) resolves nothing more
             self.assertEqual(ledger.resolve_missing_amount(conn, "upwork:931008627"), 0)
 
+    def test_phantom_tag_is_kept_by_sync(self):
+        # API-only phantom: an amountless ref never in any CSV. Once a human re-tags
+        # its entry phantom, the sync must KEEP it phantom (not revert to a fresh
+        # 'recover from CSV' entry) so it is not mistaken for a pending recovery.
+        from modules.finance import ledger
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(sync_state.upsert_transaction(
+                conn, {"recordId": "PH1", "type": "APInvoice"}, "agency"), "quarantined")
+            # human classification: re-tag to phantom
+            conn.execute("UPDATE quarantine SET reason=? WHERE reason LIKE"
+                         " 'upwork txn missing amount (upwork:PH1)%'",
+                         (sync_state.phantom_reason("upwork:PH1"),))
+            # the recurring sync keeps it phantom, refreshes the SAME entry
+            self.assertEqual(sync_state.upsert_transaction(
+                conn, {"recordId": "PH1", "type": "APInvoice"}, "agency"), "phantom-refreshed")
+            self.assertEqual(self._q(conn, "upwork:PH1", resolved=False), 1)   # one entry, not doubled
+            # it never reads as a CSV-pending recovery, and the CSV resolver ignores it
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) c FROM quarantine WHERE reason LIKE"
+                " 'upwork txn missing amount (upwork:PH1)%'").fetchone()["c"], 0)
+            self.assertEqual(ledger.pending_missing_amount(conn, "upwork:PH1"), 0)
+            self.assertEqual(ledger.resolve_missing_amount(conn, "upwork:PH1"), 0)
+            # still no live row (GREEN-safe)
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM transactions"
+                             " WHERE record_id='PH1'").fetchone()["c"], 0)
+
 
 # ── poll_inbox classification (verbatim cases) ────────────────────────────────
 def room(rid="r1", contract_status=None, proposal_status=None,

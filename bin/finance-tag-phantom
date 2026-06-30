@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Re-tag an amountless-row quarantine entry as an API-only PHANTOM (a human
+classification decision). Use when an agency Ref keeps surfacing amountless from
+the API but is CONFIRMED not present in any CSV export despite being in-range —
+so it is NOT a pending CSV recovery (it would never resolve via the weekly
+import). After tagging, the sync keeps it phantom forever (never reverts it to a
+'recover from CSV' entry) and it stays quarantined, GREEN-safe. Classification
+lives in the DATA (the quarantine row), not a hardcoded ID list.
+
+Idempotent. Dry-run by default; --commit to write. Internal-only (SQLite).
+
+Usage: PYTHONPATH=. python3 bin/finance-tag-phantom <RefID> [<RefID> ...] [--commit]
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.upwork import sync_state  # noqa: E402
+
+
+def run(refs, commit: bool) -> list:
+    out = []
+    with db.connect(config.DB_PATH) as conn:
+        for ref in refs:
+            canonical = ref if ref.startswith("upwork:") else f"upwork:{ref}"
+            already = conn.execute(
+                "SELECT id FROM quarantine WHERE source='upwork' AND resolved_at IS NULL"
+                " AND reason LIKE ? || ' (' || ? || ')%'",
+                (sync_state._PHANTOM_PREFIX, canonical)).fetchone()
+            if already:
+                out.append({"ref": ref, "status": "already-phantom", "id": already["id"]})
+                continue
+            row = conn.execute(
+                "SELECT id FROM quarantine WHERE source='upwork' AND resolved_at IS NULL"
+                " AND reason LIKE 'upwork txn missing amount (' || ? || ')%'",
+                (canonical,)).fetchone()
+            if not row:
+                out.append({"ref": ref, "status": "no-pending-missing-amount-entry"})
+                continue
+            if commit:
+                conn.execute("UPDATE quarantine SET reason=?, at=datetime('now')"
+                             " WHERE id=?", (sync_state.phantom_reason(canonical), row["id"]))
+            out.append({"ref": ref, "status": "tagged-phantom" if commit else "would-tag",
+                        "id": row["id"]})
+    return out
+
+
+def main() -> int:
+    refs = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not refs:
+        print("usage: finance-tag-phantom <RefID> [<RefID> ...] [--commit]")
+        return 1
+    commit = "--commit" in sys.argv
+    print(json.dumps({"mode": "COMMIT" if commit else "DRY-RUN",
+                      "results": run(refs, commit)}, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
