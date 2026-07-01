@@ -251,6 +251,15 @@ def _daily_spend(db_path: Optional[Path], ist_date: str) -> float:
         return float(row["s"])
 
 
+def _monthly_spend(db_path: Optional[Path], month: str) -> float:
+    """Month-to-date spend across ALL tasks. `month` is the IST 'YYYY-MM'."""
+    with db.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(total_cost_usd), 0) AS s FROM claude_usage"
+            " WHERE substr(ist_date, 1, 7) = ?", (month,)).fetchone()
+        return float(row["s"])
+
+
 def _record_anomaly_once(db_path: Optional[Path], task_name: str, kind: str,
                          severity: str, detail: dict) -> None:
     with db.connect(db_path) as conn:
@@ -312,6 +321,16 @@ def _check_ceilings(db_path: Optional[Path], task_name: str,
             db_path, task_name, "budget_soft_cap", "warn",
             {"ist_date": ist_date, "spent_usd": round(spent_today, 4),
              "limit_usd": config.DAILY_SOFT_LIMIT_USD})
+    # Month-to-date WARN (non-blocking): fires once per calendar month when spend
+    # crosses the monthly soft limit. Dedup keys on the 'YYYY-MM' in ist_date.
+    month = ist_date[:7]
+    spent_month = _monthly_spend(db_path, month)
+    if spent_month >= config.MONTHLY_SOFT_LIMIT_USD:
+        _record_anomaly_once(
+            db_path, task_name, "budget_monthly_soft", "warn",
+            {"ist_date": month, "month": month,
+             "spent_usd": round(spent_month, 2),
+             "limit_usd": config.MONTHLY_SOFT_LIMIT_USD})
     if _run_spent_usd >= config.PER_RUN_MAX_USD:
         raise ClaudeBudgetExceeded(
             f"per-run cap: ${_run_spent_usd:.2f} >= "

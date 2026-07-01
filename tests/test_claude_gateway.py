@@ -266,6 +266,25 @@ class TestCeilings(GatewayTestCase):
         self.assertEqual(self.anomaly_rows("budget_soft_cap")[0]["severity"],
                          "warn")
 
+    def test_monthly_soft_warn_fires_once_non_blocking(self):
+        # spread MTD spend across days (each day under the daily cap) so only the
+        # MONTHLY threshold is crossed, not the daily one
+        per_day = config.MONTHLY_SOFT_LIMIT_USD / 20 + 0.01
+        for d in range(1, 21):
+            self.seed_spend(per_day, ist_date=f"2026-05-{d:02d}")
+        # a day with no daily spend: daily OK, month-to-date >= limit -> warn
+        gw._check_ceilings(self.db_path, "cos_sweep", "2026-05-21")
+        gw._check_ceilings(self.db_path, "cos_sweep", "2026-05-21")   # dedup
+        rows = self.anomaly_rows("budget_monthly_soft")
+        self.assertEqual(len(rows), 1)                                # once per month
+        self.assertEqual(rows[0]["severity"], "warn")
+        self.assertEqual(json.loads(rows[0]["detail_json"])["month"], "2026-05")
+
+    def test_monthly_soft_silent_under_limit(self):
+        self.seed_spend(config.MONTHLY_SOFT_LIMIT_USD - 10, ist_date="2026-05-05")
+        gw._check_ceilings(self.db_path, "cos_sweep", "2026-05-06")
+        self.assertEqual(len(self.anomaly_rows("budget_monthly_soft")), 0)
+
     def test_yesterday_spend_does_not_count(self):
         self.seed_spend(config.DAILY_HARD_LIMIT_USD * 2, ist_date="2026-06-09")
         with mock.patch.object(gw, "_payg_transport",

@@ -60,6 +60,7 @@ BILLING_FALLBACK_TO_PAYG = True                   # on credit exhaustion / auth 
 # ── Budget ceilings ──────────────────────────────────────────────────────────
 DAILY_SOFT_LIMIT_USD = 1.50                       # warning
 DAILY_HARD_LIMIT_USD = 5.00                       # ClaudeBudgetExceeded
+MONTHLY_SOFT_LIMIT_USD = 80.00                    # month-to-date WARN (Abhijeet's ~$100/mo target, 2026-07-01); non-blocking anomaly, not a hard cap
 PER_RUN_MAX_USD = 0.50                            # single invocation kill-switch
 PER_RUN_MAX_TOOL_CALLS = 40                       # NemoClaw lesson: die in-run, not at daily cap
 PER_RUN_MAX_OUTPUT_TOKENS = 8_000
