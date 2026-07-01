@@ -42,6 +42,19 @@ class NotifyTestCase(unittest.TestCase):
         self.assertIn("task_failure", html)
         self.assertIn("budget_hard_cap", html)
 
+    def test_monthly_budget_warn_escalates_daily_soft_stays(self):
+        # the monthly budget warn is escalated to email; other warns stay cockpit-only
+        self.seed_anomaly(kind="budget_monthly_soft", severity="warn",
+                          detail='{"month":"2026-07","spent_usd":82.0}')
+        self.seed_anomaly(kind="budget_soft_cap", severity="warn")
+        out = notify.drain_critical_anomalies(db_path=self.db_path,
+                                              send=self.sender)
+        self.assertEqual(out["drained"], 1)          # only the monthly warn
+        self.assertEqual(len(self.sent), 1)
+        _, html = self.sent[0]
+        self.assertIn("budget_monthly_soft", html)
+        self.assertNotIn("budget_soft_cap", html)    # daily soft warn not emailed
+
     def test_idempotent_via_cursor(self):
         self.seed_anomaly()
         notify.drain_critical_anomalies(db_path=self.db_path,

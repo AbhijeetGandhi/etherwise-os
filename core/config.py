@@ -112,6 +112,12 @@ SHADOW_MODE = {
     "knowledge": True,
     "chief_of_staff": True,
     "finance": True,
+    # CRM Airtable mirror gates (read by modules.crm.mirror; NOT runner modules).
+    # Proposals+Contracts ride the 'upwork' flag above. Transactions has its OWN
+    # gate DECOUPLED from 'finance' (2026-07-01): the mirror is a strict one-way
+    # copy-out (never reads Airtable back, never moves money), so the CRM copy can
+    # go live while the finance ledger/doctor/reports stay authoritative+shadowed.
+    "crm_transactions": True,
 }
 SCHEDULE_OFFSET_MIN = 15       # v3 jobs run +15min vs v2 counterparts during parallel
 

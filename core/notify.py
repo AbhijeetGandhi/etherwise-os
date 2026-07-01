@@ -7,8 +7,9 @@ successful send, so a dead SMTP retries on the next drain instead of
 swallowing interrupts.
 
 System-failure emails are the explicitly interrupt-worthy class (SOUL: calm
-by default — ONLY hot leads and system failures interrupt). Everything
-warn-level stays for the briefs.
+by default — ONLY hot leads and system failures interrupt). Warn-level stays
+for the briefs, EXCEPT the kinds in EMAIL_WARN_KINDS (e.g. the monthly budget
+warn) which are escalated to the interrupt email too.
 
 Entry: bin/notify (runner-wrapped) or notify.drain_critical_anomalies().
 """
@@ -23,6 +24,10 @@ from typing import Callable, Optional
 from core import config, db
 
 CURSOR_NAME = "notify_drained_anomaly_id"
+
+# warn-level anomaly kinds explicitly escalated to email (not cockpit-only).
+# The monthly budget warn is interrupt-worthy for Abhijeet's ~$100/mo target.
+EMAIL_WARN_KINDS = ("budget_monthly_soft",)
 
 
 def _gmail_creds() -> dict:
@@ -58,11 +63,13 @@ def _cursor(conn) -> int:
 def drain_critical_anomalies(db_path=None,
                              send: Optional[Callable] = None) -> dict:
     send = send or send_gmail
+    marks = ",".join("?" * len(EMAIL_WARN_KINDS))
     with db.connect(db_path) as conn:
         last = _cursor(conn)
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM anomalies WHERE id > ? AND severity='critical'"
-            " ORDER BY id", (last,))]
+            "SELECT * FROM anomalies WHERE id > ?"
+            f" AND (severity='critical' OR kind IN ({marks}))"
+            " ORDER BY id", (last, *EMAIL_WARN_KINDS))]
     if not rows:
         return {"drained": 0}
 
@@ -72,11 +79,12 @@ def drain_critical_anomalies(db_path=None,
         items.append(
             f"<li><b>{r['kind']}</b> · {r['task_name']} ·"
             f" {r['detected_at']}<br><code>{detail}</code></li>")
-    html = (f"<h2>{len(rows)} critical anomalies</h2><ul>"
+    n_crit = sum(1 for r in rows if r["severity"] == "critical")
+    html = (f"<h2>{len(rows)} interrupt anomalies ({n_crit} critical)</h2><ul>"
             + "\n".join(items) + "</ul>"
             "<p>Source: v3 anomalies table (interrupt queue, decision #9)."
             " Investigate, then mark resolved_at.</p>")
-    subject = (f"INTERRUPT: {len(rows)} critical"
+    subject = (f"INTERRUPT: {len(rows)}"
                f" anomal{'y' if len(rows) == 1 else 'ies'} —"
                f" {rows[-1]['kind']}")
 
