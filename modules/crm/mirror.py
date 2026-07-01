@@ -29,6 +29,8 @@ Upwork CRM view (canonical_key LIKE 'upwork:%').
 """
 from __future__ import annotations
 
+import re
+
 from core import config, db
 from core.sync import engine
 from core.sync.engine import FieldSpec
@@ -36,9 +38,28 @@ from modules.finance import money
 
 BASE = config.AIRTABLE_BASE
 
+# Upwork job id embedded in a Job URL as "~02<jobid>" — v3 proposals.marketplace_job_id
+# is that <jobid> (the "02"-stripped tail). Mirrors v2's FIND("~02"+job_id, {Job URL}).
+_JOBURL_JOBID = re.compile(r"~02(\d+)")
+
 
 def _iso_date(v):
     return (v or "")[:10] or None
+
+
+def _proposal_joburl_fallback(at_recs):
+    """Adopt v2's legacy scored-job Proposals row (keyed by Job URL, no Upwork
+    Proposal ID) when a v3 proposal shares its job id — so we UPDATE+stamp the id
+    onto it instead of creating a duplicate. O(1) via a prebuilt job-id index."""
+    idx = {}
+    for rec in at_recs:
+        m = _JOBURL_JOBID.search(rec.get("fields", {}).get("Job URL") or "")
+        if m:
+            idx.setdefault(m.group(1), rec)      # first row wins
+    def match(row, _at_by_id):
+        jid = row.get("marketplace_job_id")
+        return idx.get(str(jid)) if jid else None
+    return match
 
 
 def _proposal_rows(conn):
@@ -73,7 +94,7 @@ SPECS = {
     "proposals": {
         "at_table": config.AT["proposals"], "at_key_field": "Upwork Proposal ID",
         "key_col": "id", "gate": "upwork", "entity": "proposal",
-        "rows": _proposal_rows,
+        "rows": _proposal_rows, "build_fallback": _proposal_joburl_fallback,
         "ownership": {
             "status":             FieldSpec("Status", "system"),
             "job_title":          FieldSpec("Job Title", "system"),
@@ -132,8 +153,11 @@ def mirror_table(ctx, client, name: str, spec: dict) -> dict:
     at_by_id = {r["id"]: r for r in at_recs}
     with db.connect(ctx.db_path) as conn:
         local = spec["rows"](conn)
+    build_fb = spec.get("build_fallback")
+    fallback = build_fb(at_recs) if build_fb else None
     ops = engine.plan_push(local, at_by_id, spec["ownership"],
-                           spec["at_key_field"], spec["key_col"])
+                           spec["at_key_field"], spec["key_col"],
+                           fallback_match=fallback)
     res = engine.execute_push(
         ops, shadow=shadow, record_shadow=ctx.record_shadow_write,
         airtable=client.engine_writer(BASE, spec["at_table"]),

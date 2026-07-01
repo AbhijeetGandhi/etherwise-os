@@ -163,6 +163,38 @@ class MirrorCase(unittest.TestCase):
         self.assertTrue(res["shadow"])                        # gated by its own flag
         self.assertEqual(client.writes, [])
 
+    # ── Job-URL fallback: adopt v2's legacy scored-job row, no duplicate ─────
+    def test_proposal_joburl_fallback_adopts_legacy_row(self):
+        # v3 proposal has a job id but NO matching Upwork Proposal ID in Airtable;
+        # a legacy scored-job row exists keyed only by Job URL (~02<jobid>).
+        self._exec("INSERT INTO proposals (id, status, marketplace_job_id,"
+                   " job_title) VALUES ('PROP9','Applied','2048762896740180629','X')")
+        at = {config.AT["proposals"]: [
+            {"id": "recLEGACY", "fields": {
+                "Job URL": "https://www.upwork.com/jobs/~022048762896740180629",
+                "Status": "Scored"}}]}          # no Upwork Proposal ID yet
+        client = FakeClient(at)
+        mirror.mirror_table(self.ctx, client, "proposals",
+                            mirror.SPECS["proposals"])
+        ops = self.ctx.shadow_writes
+        self.assertEqual(len(ops), 1)
+        op = ops[0]
+        self.assertEqual(op["operation"], "update")            # adopt, NOT create
+        self.assertEqual(op["payload"]["Upwork Proposal ID"], "PROP9")  # id stamped
+        self.assertEqual(op["entity_key"], "PROP9")
+
+    def test_proposal_no_jobid_creates(self):
+        # no marketplace_job_id and no id match -> genuine create (no false adopt)
+        self._seed_proposal("PNEW")
+        self._exec("UPDATE proposals SET marketplace_job_id=NULL WHERE id='PNEW'")
+        at = {config.AT["proposals"]: [
+            {"id": "recX", "fields": {"Job URL":
+             "https://www.upwork.com/jobs/~0299999999999999999", "Status": "Scored"}}]}
+        client = FakeClient(at)
+        mirror.mirror_table(self.ctx, client, "proposals",
+                            mirror.SPECS["proposals"])
+        self.assertEqual(self.ctx.shadow_writes[0]["operation"], "create")
+
     # ── orphans reported, never deleted ─────────────────────────────────────
     def test_orphans_reported_not_deleted(self):
         self._seed_proposal("P1")

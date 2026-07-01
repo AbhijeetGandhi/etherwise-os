@@ -65,9 +65,14 @@ def _system_fields(row: dict, ownership: dict) -> dict:
 
 
 def plan_push(local_rows, at_records_by_id: dict, ownership: dict,
-              at_key_field: str, key_col: str = "id") -> list:
-    """Diff local system-owned fields against Airtable; emit create/update
-    ops. Match precedence: stored airtable_record_id, then the key field."""
+              at_key_field: str, key_col: str = "id",
+              fallback_match=None) -> list:
+    """Diff local system-owned fields against Airtable; emit create/update ops.
+    Match precedence: stored airtable_record_id, then the key field, then an
+    optional fallback_match(row, at_records_by_id)->rec|None (e.g. Proposals'
+    Job-URL match against v2's legacy scored-job rows). A fallback ('adopted')
+    match STAMPS the canonical key field onto the matched row so it is a direct
+    key match on the next run — mirrors v2 and prevents duplicate-on-missing-id."""
     by_key = {}
     for rec in at_records_by_id.values():
         key = rec.get("fields", {}).get(at_key_field)
@@ -82,6 +87,10 @@ def plan_push(local_rows, at_records_by_id: dict, ownership: dict,
             rec = at_records_by_id.get(row["airtable_record_id"])
         if rec is None:
             rec = by_key.get(str(row[key_col]))
+        adopted = False
+        if rec is None and fallback_match is not None:
+            rec = fallback_match(row, at_records_by_id)
+            adopted = rec is not None
 
         if rec is None:
             fields = dict(desired)
@@ -91,6 +100,8 @@ def plan_push(local_rows, at_records_by_id: dict, ownership: dict,
 
         existing = rec.get("fields", {})
         diff = {f: v for f, v in desired.items() if existing.get(f) != v}
+        if adopted and existing.get(at_key_field) != row[key_col]:
+            diff[at_key_field] = row[key_col]   # adopt the legacy row: stamp the id
         if diff:
             ops.append(Operation("update", rec["id"], str(row[key_col]),
                                  diff))
