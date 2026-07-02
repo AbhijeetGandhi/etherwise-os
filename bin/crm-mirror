@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """CRM Airtable mirror (v3 SQLite -> Airtable copy-out), replacing v2
-sync_airtable. Runner-wrapped (module='upwork' for the runs row + budget
-priority prefix). Per-table shadow gates are read INSIDE the mirror
-(SHADOW_MODE['upwork'] for proposals/contracts; SHADOW_MODE['crm_transactions']
-for transactions) — so this bin's module tag does not decide the gate.
+sync_airtable. Runner-wrapped (module='crm'). Per-table shadow gates are read
+INSIDE the mirror (SHADOW_MODE['crm'] for proposals/contracts;
+SHADOW_MODE['crm_transactions'] for transactions) — both DECOUPLED from 'upwork',
+so the mirror flips without touching the scanner's ClickUp path.
 
 One-way copy-out: never reads Airtable back into the ledger, never moves money.
 Shadow-first: while gated, intended writes land in shadow_ledger (target=airtable)
@@ -25,7 +25,7 @@ def task(ctx):
 
 
 if __name__ == "__main__":
-    result = runner.run_task("crm_mirror", task, module="upwork")
+    result = runner.run_task("crm_mirror", task, module="crm")
     print(json.dumps({"run_id": result.run_id, "status": result.status,
                       "metrics": result.metrics}, indent=1))
     sys.exit(0 if result.status in ("completed", "skipped_empty") else 1)

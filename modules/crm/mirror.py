@@ -7,9 +7,10 @@ OWN gate (SHADOW_MODE['crm_transactions']) while the finance ledger / doctor /
 reports stay authoritative AND shadowed (SHADOW_MODE['finance'] unchanged): the
 copy-out can't feed a wrong number back into the ledger and can't move money.
 
-Gates (read here, NOT runner modules):
-  - Proposals + Contracts -> SHADOW_MODE['upwork']       (ride the Upwork flip)
-  - Transactions          -> SHADOW_MODE['crm_transactions']  (decoupled)
+Gates (read here, NOT runner modules) — DECOUPLED from the scanner's 'upwork'
+flag so the mirror flips WITHOUT un-shadowing the scan's ClickUp path:
+  - Proposals + Contracts -> SHADOW_MODE['crm']
+  - Transactions          -> SHADOW_MODE['crm_transactions']  (also decoupled from finance)
 
 Field ownership (architecture §4): ONLY v3-owned (system) fields are ever in a
 payload. Human-maintained Airtable fields (Outcome Reason/Notes, Lead Score,
@@ -87,13 +88,18 @@ def _transaction_rows(conn):
         # boundary (display copy). Never read back into the ledger.
         r["_amount_usd"] = float(money.from_minor(m)) if m is not None else None
         r["_date"] = _iso_date(r.get("fully_paid_dt") or r.get("creation_dt"))
+        # Match on the NUMERIC Upwork id (from canonical_key), NOT record_id: 17
+        # legacy rows carry record_id 'personal:/agency:<id>' while canonical is
+        # 'upwork:<id>'. Airtable's "Upwork Transaction Record ID" holds the
+        # numeric id, so keying on record_id would mis-match -> duplicate.
+        r["_upwork_id"] = (r.get("canonical_key") or "").split(":", 1)[-1]
     return rows
 
 
 SPECS = {
     "proposals": {
         "at_table": config.AT["proposals"], "at_key_field": "Upwork Proposal ID",
-        "key_col": "id", "gate": "upwork", "entity": "proposal",
+        "key_col": "id", "gate": "crm", "entity": "proposal",
         "rows": _proposal_rows, "build_fallback": _proposal_joburl_fallback,
         "ownership": {
             "status":             FieldSpec("Status", "system"),
@@ -106,7 +112,7 @@ SPECS = {
     },
     "contracts": {
         "at_table": config.AT["contracts"], "at_key_field": "Upwork Contract ID",
-        "key_col": "id", "gate": "upwork", "entity": "contract",
+        "key_col": "id", "gate": "crm", "entity": "contract",
         "rows": _contract_rows,
         "ownership": {
             "title":           FieldSpec("Contract Title", "system"),
@@ -119,7 +125,7 @@ SPECS = {
     "transactions": {
         "at_table": config.AT["transactions"],
         "at_key_field": "Upwork Transaction Record ID",
-        "key_col": "record_id", "gate": "crm_transactions", "entity": "transaction",
+        "key_col": "_upwork_id", "gate": "crm_transactions", "entity": "transaction",
         "rows": _transaction_rows,
         "ownership": {
             "type":        FieldSpec("Type", "system"),

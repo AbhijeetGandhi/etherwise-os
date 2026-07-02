@@ -79,7 +79,7 @@ class MirrorCase(unittest.TestCase):
     def test_shadow_records_no_live_write(self):
         self._seed_proposal("P1")
         client = FakeClient({})                       # no AT rows -> create intent
-        with mock.patch.dict(config.SHADOW_MODE, {"upwork": True}):
+        with mock.patch.dict(config.SHADOW_MODE, {"crm": True}):
             res = mirror.mirror_table(self.ctx, client, "proposals",
                                       mirror.SPECS["proposals"])
         self.assertTrue(res["shadow"])
@@ -138,7 +138,7 @@ class MirrorCase(unittest.TestCase):
     def test_live_writes_when_gate_off(self):
         self._seed_proposal("P1")
         client = FakeClient({})
-        with mock.patch.dict(config.SHADOW_MODE, {"upwork": False}):
+        with mock.patch.dict(config.SHADOW_MODE, {"crm": False}):
             res = mirror.mirror_table(self.ctx, client, "proposals",
                                       mirror.SPECS["proposals"])
         self.assertFalse(res["shadow"])
@@ -151,17 +151,33 @@ class MirrorCase(unittest.TestCase):
         for banned in mirror.HANDS_OFF["proposals"]:
             self.assertNotIn(banned, fields)                  # hands-off even live
 
-    # ── transactions gate is independent of the upwork gate ─────────────────
+    # ── transactions gate is independent of the crm (proposals/contracts) gate ─
     def test_transactions_gate_decoupled(self):
         self._seed_txn("T1", 1000, "upwork:T1")
         client = FakeClient({})
-        # upwork LIVE but crm_transactions still SHADOW -> txn stays shadowed
+        # crm LIVE (proposals/contracts) but crm_transactions still SHADOW -> txn shadowed
         with mock.patch.dict(config.SHADOW_MODE,
-                             {"upwork": False, "crm_transactions": True}):
+                             {"crm": False, "crm_transactions": True}):
             res = mirror.mirror_table(self.ctx, client, "transactions",
                                       mirror.SPECS["transactions"])
         self.assertTrue(res["shadow"])                        # gated by its own flag
         self.assertEqual(client.writes, [])
+
+    # ── transactions match on the NUMERIC upwork id, not record_id ──────────
+    def test_transaction_miskey_matches_by_upwork_id(self):
+        # legacy row: record_id 'personal:900' but canonical 'upwork:900'. Airtable
+        # keys by the numeric id -> must UPDATE, never create a mis-keyed duplicate.
+        self._seed_txn("personal:900", 1000, "upwork:900")
+        at = {config.AT["transactions"]: [
+            {"id": "recT900", "fields": {"Upwork Transaction Record ID": "900",
+                                         "Amount USD": 10.0}}]}
+        client = FakeClient(at)
+        res = mirror.mirror_table(self.ctx, client, "transactions",
+                                  mirror.SPECS["transactions"])
+        self.assertEqual(len(self.ctx.shadow_writes), 1)
+        self.assertEqual(self.ctx.shadow_writes[0]["operation"], "update")   # matched
+        self.assertEqual(self.ctx.shadow_writes[0]["entity_key"], "900")     # numeric id
+        self.assertEqual(res["orphans"], 0)                                  # not a false orphan
 
     # ── Job-URL fallback: adopt v2's legacy scored-job row, no duplicate ─────
     def test_proposal_joburl_fallback_adopts_legacy_row(self):
