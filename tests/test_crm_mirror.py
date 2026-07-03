@@ -47,6 +47,13 @@ class MirrorCase(unittest.TestCase):
         self.db_path = self.tmp / "v3.db"
         db.migrate(self.db_path)
         self.ctx = FakeCtx(self.db_path)
+        # Pin the gates SHADOW for every test regardless of the LIVE config state
+        # (the mirror went live 2026-07-03; tests must not depend on prod flags).
+        # Gate-behavior tests override with their own patch.dict on top.
+        p = mock.patch.dict(config.SHADOW_MODE,
+                            {"crm": True, "crm_transactions": True})
+        p.start()
+        self.addCleanup(p.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)

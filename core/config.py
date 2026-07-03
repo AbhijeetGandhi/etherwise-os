@@ -119,8 +119,10 @@ SHADOW_MODE = {
     # -> Transactions (also decoupled from 'finance': the mirror is a strict
     # one-way copy-out — never reads Airtable back, never moves money — so the CRM
     # copy goes live while the finance ledger/doctor/reports stay shadowed).
-    "crm": True,
-    "crm_transactions": True,
+    # FLIPPED LIVE 2026-07-03 (Abhijeet's go, shadow run 1027 verified clean).
+    # Rollback = set both back to True.
+    "crm": False,
+    "crm_transactions": False,
 }
 SCHEDULE_OFFSET_MIN = 15       # v3 jobs run +15min vs v2 counterparts during parallel
 
