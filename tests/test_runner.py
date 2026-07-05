@@ -30,6 +30,9 @@ class RunnerTestCase(unittest.TestCase):
         self._patches = [
             mock.patch.object(config, "LOG_DIR", self.log_dir),
             mock.patch.object(config, "LOCK_DIR", self.lock_dir),
+            # pin the gate SHADOW regardless of live config ('upwork' went live
+            # at the 2026-07-06 scanner cutover); runner tests assert shadow.
+            mock.patch.dict(config.SHADOW_MODE, {"upwork": True}),
         ]
         for p in self._patches:
             p.start()

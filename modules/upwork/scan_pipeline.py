@@ -27,7 +27,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from core import config, db, runner
+from core import config, db, notify, runner
 from modules.upwork import scoring
 
 sys.path.insert(0, str(config.V3_ROOT / "scripts"))
@@ -111,6 +111,30 @@ def _update_scored(conn, jid: str, verdict: dict, draft: Optional[str],
     assert cur.rowcount == 1, f"{jid}: expected exactly one New row"
 
 
+def _digest_html(dbp, hot_ids) -> str:
+    """Hot-lead email body: one line per hot job — title (linked), score,
+    client, and the ClickUp card (set by the push just above, so the email
+    links straight to the card with the draft on it)."""
+    items = []
+    with db.connect(dbp) as conn:
+        for jid in hot_ids:
+            r = conn.execute(f"SELECT * FROM {TABLE} WHERE id=?",
+                             (jid,)).fetchone()
+            if not r:
+                continue
+            r = dict(r)
+            link = r.get("job_url") or f"https://www.upwork.com/jobs/~02{jid}"
+            client = " · ".join(p for p in (r.get("client_company"),
+                                            r.get("client_country")) if p)
+            card = (f' · <a href="{r["clickup_task_url"]}">ClickUp card</a>'
+                    if r.get("clickup_task_url") else "")
+            items.append(f'<li><a href="{link}">{r.get("title") or jid}</a>'
+                         f' — score {r.get("score")}'
+                         f'{" · " + client if client else ""}{card}</li>')
+    return ("<h2>Hot Upwork leads</h2><ul>" + "\n".join(items) + "</ul>"
+            "<p>Scored ≥16 this scan; drafts are on the ClickUp cards.</p>")
+
+
 def scan(ctx, _sleep=time.sleep) -> dict:
     dbp = ctx.db_path or config.DB_PATH
     tab = ensure_scan_tab()
@@ -177,6 +201,7 @@ def scan(ctx, _sleep=time.sleep) -> dict:
 
     hot = [e for e in scored if (e["score"] or 0)
            >= config.HOT_LEAD_THRESHOLD]
+    digest_status = None
     if hot:
         digest = {"subject": f"Upwork scan: {len(scored)} scored,"
                              f" {len(hot)} hot",
@@ -187,6 +212,19 @@ def scan(ctx, _sleep=time.sleep) -> dict:
                                     entity_key=datetime.now(
                                         config.TZ).strftime("%Y-%m-%dT%H"),
                                     payload=digest)
+            digest_status = "shadow"
+        else:
+            # LIVE hot-lead notification (wired at the 2026-07-06 scanner
+            # cutover — keeps Cowork-scanner alert parity). A send failure
+            # NEVER fails the scan: the cards are already pushed; log +
+            # surface in metrics instead.
+            try:
+                notify.send_gmail(digest["subject"],
+                                  _digest_html(dbp, digest["hot_ids"]))
+                digest_status = "sent"
+            except Exception as exc:                  # noqa: BLE001
+                ctx.log(f"hot-lead digest send FAILED: {exc!r}")
+                digest_status = "send_failed"
 
     if not new_rows and all(f["extracted"] == 0 for f in feeds.values()):
         raise runner.TaskSkip("no tiles extracted on any feed")
@@ -194,7 +232,7 @@ def scan(ctx, _sleep=time.sleep) -> dict:
     return {"feeds": feeds, "claimed": sum(f["new"] for f in feeds.values()),
             "scored": len(scored), "skipped": len(skipped),
             "drafts": drafted, "clickup_intents": intents,
-            "hot": len(hot)}
+            "hot": len(hot), "digest": digest_status}
 
 
 def main() -> int:

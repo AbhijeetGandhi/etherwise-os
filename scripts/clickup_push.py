@@ -236,10 +236,15 @@ def find_existing_task(tok: str, list_id: str, name: str):
 
 
 def attach(db_path, job_id: str, task_id: str, task_url: str) -> None:
+    """Mark the v3 scored_jobs row carded. (Was `jobs` — the v2-era table name;
+    v3 has no such table, so a live push would create the card then CRASH here.
+    Fixed at the 2026-07-06 scanner cutover. The legacy CLI run()/select_scoped
+    below still read `jobs` against the v2 DB default — v2-era relics; do not
+    use them against v3.)"""
     conn = sqlite3.connect(db_path, timeout=10)
     try:
         conn.execute(
-            "UPDATE jobs SET clickup_task_id=?, clickup_task_url=?,"
+            "UPDATE scored_jobs SET clickup_task_id=?, clickup_task_url=?,"
             " status='ClickUp Created', updated_at=datetime('now')"
             " WHERE id=?", (task_id, task_url, job_id))
         conn.commit()

@@ -55,6 +55,9 @@ class ScanPipelineCase(unittest.TestCase):
             mock.patch.object(sp, "ensure_scan_tab",
                               return_value=(111, 3)),
             mock.patch.object(sp, "navigate_tab"),
+            # pin the gate SHADOW regardless of live config ('upwork' went live
+            # at the 2026-07-06 scanner cutover); live-path tests re-patch False.
+            mock.patch.dict(config.SHADOW_MODE, {"upwork": True}),
         ]
         for p in self._patches:
             p.start()
@@ -174,6 +177,67 @@ class TestScan(ScanPipelineCase):
     def test_all_empty_feeds_skip_empty(self):
         result = self.run_scan([payload(), payload(), payload()])
         self.assertEqual(result.status, "skipped_empty")
+
+
+class TestScanLive(ScanPipelineCase):
+    """The 2026-07-06 scanner-cutover live path: ClickUp POST + attach marks
+    scored_jobs (NOT the v2 `jobs` table), hot-lead digest EMAILS, and a send
+    failure never fails the scan. ClickUp HTTP + SMTP are mocked."""
+
+    def run_live(self, send_mock, score=18):
+        self.req_calls = []
+
+        def fake_req(method, path, tok, body=None):
+            self.req_calls.append((method, path, body))
+            return {"id": "t123", "url": "https://app.clickup.com/t/t123"}
+
+        with mock.patch.dict(config.SHADOW_MODE, {"upwork": False}), \
+             mock.patch.object(sp.clickup_push, "token", return_value="tok"), \
+             mock.patch.object(sp.clickup_push, "req", side_effect=fake_req), \
+             mock.patch.object(sp.notify, "send_gmail", send_mock):
+            return self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                                 score_map={JID_A: score})
+
+    def test_live_pushes_card_marks_row_and_emails_digest(self):
+        send = mock.MagicMock()
+        result = self.run_live(send)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.metrics["digest"], "sent")
+        # card POSTed once to a list endpoint
+        posts = [c for c in self.req_calls if c[0] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertIn("/task", posts[0][1])
+        # attach hit scored_jobs (the v2 `jobs` UPDATE would have crashed here)
+        row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (JID_A,))[0]
+        self.assertEqual(row["status"], "ClickUp Created")
+        self.assertEqual(row["clickup_task_id"], "t123")
+        # digest emailed once, carrying title/score/card link
+        send.assert_called_once()
+        subject, html = send.call_args[0]
+        self.assertIn("1 hot", subject)
+        self.assertIn("Make.com Automation Build", html)
+        self.assertIn("score 18", html)
+        self.assertIn("app.clickup.com/t/t123", html)
+        # live run: nothing shadowed
+        self.assertEqual(self.rows("SELECT * FROM shadow_ledger"), [])
+        self.assertEqual(self.rows("SELECT * FROM runs")[0]["shadow"], 0)
+
+    def test_live_digest_send_failure_never_fails_scan(self):
+        send = mock.MagicMock(side_effect=RuntimeError("smtp down"))
+        result = self.run_live(send)
+        self.assertEqual(result.status, "completed")      # scan survives
+        self.assertEqual(result.metrics["digest"], "send_failed")
+        row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (JID_A,))[0]
+        self.assertEqual(row["status"], "ClickUp Created")  # card still pushed
+
+    def test_live_non_hot_pushes_without_email(self):
+        send = mock.MagicMock()
+        result = self.run_live(send, score=12)             # standard, not hot
+        self.assertEqual(result.status, "completed")
+        self.assertIsNone(result.metrics["digest"])
+        send.assert_not_called()
+        row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (JID_A,))[0]
+        self.assertEqual(row["status"], "ClickUp Created")
 
 
 class TestTabScripts(unittest.TestCase):

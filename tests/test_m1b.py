@@ -32,6 +32,9 @@ class M1bCase(unittest.TestCase):
         self._patches = [
             mock.patch.object(config, "LOG_DIR", self.tmp / "logs"),
             mock.patch.object(config, "LOCK_DIR", self.tmp / "locks"),
+            # pin the gate SHADOW regardless of live config ('upwork' went live
+            # at the 2026-07-06 scanner cutover); tests assert shadow behavior.
+            mock.patch.dict(config.SHADOW_MODE, {"upwork": True}),
         ]
         for p in self._patches:
             p.start()
