@@ -107,7 +107,12 @@ CALENDAR_WATCH = (
 # suppressed and recorded to shadow_ledger for diffing. Flipped OFF per-module
 # at its cutover, via this map — an explicit, reviewed config change.
 SHADOW_MODE = {
-    "upwork": True,
+    # FLIPPED LIVE 2026-07-06 (scanner cutover — Abhijeet's go after parity
+    # verify; Cowork upwork-job-scanner stands down in the same window).
+    # Live surface: scan->ClickUp cards + hot-lead digest email. poll_inbox /
+    # outcome_capture emails remain UNWIRED no-ops (v2 morning-briefing still
+    # covers them). Rollback = True + re-enable the Cowork scanner.
+    "upwork": False,
     "cockpit": False,          # cockpit is local-only; nothing to shadow
     "knowledge": True,
     "chief_of_staff": True,
