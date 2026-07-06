@@ -673,7 +673,9 @@ def seed_money(db_path):
         ("Hourly Earning", None, 150000, "2026-06-12", "Wise", "revenue"),   # non-Upwork rev
         ("Fixed Earning", None, 400000, "2026-05-20", "Upwork", "revenue"),  # last month
         ("Fixed Earning", None, 99900, "2026-04-10", "Upwork", "revenue"),   # older (chart)
-        ("Other", "expense", -300000, "2026-06-01", "IDFC", "opex"),         # expense, not revenue
+        # a bank-statement spend: personal -> owner_draw (2026-07-08 rules; opex
+        # is the credit-card statement)
+        ("Other", "expense", -300000, "2026-06-01", "IDFC", "owner_draw"),
         ("Connect Purchase", None, -4500, "2026-06-08", "Upwork", "platform_fee"),
         ("Connect Purchase", None, -4500, "2026-05-08", "Upwork", "platform_fee"),
     ]
@@ -690,7 +692,7 @@ def seed_money(db_path):
             "INSERT INTO transactions (record_id, canonical_key, type, category,"
             " amount_minor, amount_base_minor, currency, creation_dt, source, fx_rate,"
             " fx_date, pnl_bucket) VALUES ('fx','kfx','Other','expense',-100000,-1200,"
-            "'INR','2026-06-05T00:00:00+0000','IDFC','0.012','2026-06-05','opex')")
+            "'INR','2026-06-05T00:00:00+0000','IDFC','0.012','2026-06-05','owner_draw')")
         # cash: savings + FD (INR) + Wise (USD). 'authoritative:' source so #1 skips
         # them (aggregates, not statements) -> doctor stays GREEN for this panel test.
         for acct, ccy, closing in [("idfc", "INR", 50000073),

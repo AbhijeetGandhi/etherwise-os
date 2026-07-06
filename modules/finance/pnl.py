@@ -24,6 +24,55 @@ OPERATING = ("revenue", "refund", "platform_fee", "tax", "payroll", "opex")
 # unreconciled) — kept for continuous history, marked so they're distinguishable.
 RECONCILED_SOURCES = {"IDFC", "Wise", "Upwork", "Upwork-CSV"}
 
+# ── Bank-spend reclassification (Abhijeet, 2026-07-08 cockpit review) ─────────
+# Operating expenses = the CREDIT-CARD statement. Bank-statement spends are the
+# owner's personal outflows (-> owner_draw, below the line) EXCEPT:
+#   - POS debits to the business-SaaS vendors below       -> opex
+#   - POS debits to Upwork (+ the PayPal Upwork-escrow)    -> platform_fee
+#   - office rent (Rakhi Bohra)                            -> opex
+#   - past employees/contractors (Harshit, Atharva)        -> payroll
+#   - Jay/Shruti transfers that are salary-shaped          -> payroll
+#     (>= _SALARY_MIN_BASE_MINOR base-USD; smaller = personal transfer)
+#   - credit-card bill payments on the bank                -> cc_settlement
+# Bank sources = IDFC (v3 import) + 'Bank' (legacy v2 import of the same account).
+# 'Card' rows are the credit-card statement itself and stay opex.
+BANK_SOURCES = {"IDFC", "Bank"}
+BUSINESS_POS_VENDORS = (
+    "GOOGLE WORKSPACE", "GOOGLE CLOUD", "CLAUDE.AI", "GODADDY", "AMAZON WEB",
+    "AMAZONAWS", "OPENAI", "CHATGPT", "LOOM SUBSCRIPTION", "MAKE.COM", "GITHUB",
+    "LEMLIST", "FRAMER", "VERCEL", "LINKEDIN", "WHOP.COM", "CALENDLY", "VAPI",
+    "PERPLEXITY", "RENDER.COM", "TERABOX", "PAYPROGLOBA", "CLEVERBRIDG",
+)
+_RENT_PAYEES = ("RAKHI MUKESH BOHRA",)                 # office rent
+_CONTRACTOR_PAYEES = ("HARSHIT SINGHAL", "ATHARVA AJAY BARAWKA")
+_EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
+_SALARY_MIN_BASE_MINOR = 100_000                       # $1,000 — salary-shaped floor
+
+
+def _bank_spend(row: dict) -> str:
+    """Classify a bank-statement spend (a row that would previously have been
+    lumped into opex). See the rule table above; default is owner_draw —
+    personal spending from the business account is an equity draw, not a cost."""
+    d = (row.get("description") or "").upper()
+    if "CREDITCARDBILL" in d.replace(" ", ""):
+        return "cc_settlement"                          # bill payment, not a spend
+    if d.startswith("POS") or "POS-VISA/" in d:
+        if "UPWORK" in d or "UPWRKESCROW" in d:
+            return "platform_fee"                       # Upwork charges off the bank
+        if any(v in d for v in BUSINESS_POS_VENDORS):
+            return "opex"                               # business SaaS on debit card
+        return "owner_draw"                             # personal card-on-bank spend
+    if "UPWRKESCROW" in d:
+        return "platform_fee"
+    if any(p in d for p in _RENT_PAYEES):
+        return "opex"                                   # office rent
+    if any(p in d for p in _CONTRACTOR_PAYEES):
+        return "payroll"                                # past employees/contractors
+    if any(p in d for p in _EMPLOYEE_PAYEES):
+        base = abs(row.get("amount_base_minor") or 0)
+        return "payroll" if base >= _SALARY_MIN_BASE_MINOR else "owner_draw"
+    return "owner_draw"                                 # UPI / EMI / transfers / rest
+
 
 def bucket(row: dict) -> str:
     """The P&L bucket for one transactions row. Order matters: transfers/non-economic
@@ -40,7 +89,10 @@ def bucket(row: dict) -> str:
     if cat == "income":
         return "revenue"
     if cat == "expense":
-        return "opex"
+        # bank-statement expenses are NOT business opex by default (2026-07-08):
+        # route through the bank-spend rules; non-bank sources keep opex.
+        return _bank_spend(row) if (row.get("source") or "") in BANK_SOURCES \
+            else "opex"
     if cat == "salary":
         return "payroll"
     if cat == "fee":                       # Wise fee
@@ -63,11 +115,13 @@ def bucket(row: dict) -> str:
         return "tax"
     if sub in ("Milestone", "Payment"):    # earnings mis-typed 'Other' by Upwork
         return "revenue"
-    # legacy v2 Bank/Card types
+    # legacy v2 Bank/Card types. Card = the credit-card statement = opex by
+    # definition; legacy Bank rows route through the same bank-spend rules.
     if t == "Salary":
         return "payroll"
     if t in ("Other Expense", "Tools / SaaS", "Office", "Software", "Marketing"):
-        return "opex"
+        return _bank_spend(row) if (row.get("source") or "") in BANK_SOURCES \
+            else "opex"
     if t in ("Personal", "Owner Draw"):
         return "owner_draw"
 

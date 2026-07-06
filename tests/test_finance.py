@@ -757,9 +757,13 @@ class TestPnl(unittest.TestCase):
         rows = [
             {"type": "Hourly Earning", "amount_base_minor": 100000, "source": "Upwork"},
             {"category": "income", "amount_base_minor": 50000, "source": "Wise"},
-            {"category": "expense", "amount_base_minor": -30000, "source": "IDFC"},
+            # opex = the credit-card statement (2026-07-08 rule)
+            {"type": "Tools / SaaS", "amount_base_minor": -30000, "source": "Card"},
             {"accounting_subtype": "Service Fee", "amount_base_minor": -10000, "source": "Upwork"},
             {"category": "owner_draw", "amount_base_minor": -20000, "source": "IDFC"},   # below line
+            # a bank-statement UPI spend: personal -> owner_draw, NOT opex
+            {"category": "expense", "amount_base_minor": -7000, "source": "IDFC",
+             "description": "UPI/MOB/551610097279/payment on CRED"},
             {"category": "internal_sweep", "amount_base_minor": -999999, "source": "IDFC"},  # excluded
             {"category": "transfer_in", "amount_base_minor": 888888, "source": "IDFC"},      # excluded
             {"type": "Mystery", "amount_base_minor": -123, "source": "Bank"},               # flagged
@@ -767,10 +771,102 @@ class TestPnl(unittest.TestCase):
         r = pnl.compute(rows)
         # operating = 100000 + 50000 - 30000 - 10000 = 110000 ; draws/sweeps/transfers OUT
         self.assertEqual(r["operating_profit_minor"], 110000)
-        self.assertEqual(r["owner_draw_minor"], -20000)
+        self.assertEqual(r["owner_draw_minor"], -27000)          # deliberate + UPI spend
         self.assertEqual(r["excluded_minor"]["sweep"], -999999)
         self.assertEqual(r["excluded_minor"]["transfer"], 888888)
         self.assertEqual(r["uncategorized_count"], 1)
+
+    def test_bank_spend_rules_2026_07(self):
+        # Abhijeet's reclassification: opex = credit-card statement; bank spends
+        # are personal (owner_draw) except the explicit business rules.
+        from modules.finance import pnl
+        b = pnl.bucket
+        idfc = lambda desc, **kw: dict({"category": "expense", "source": "IDFC",
+                                        "description": desc}, **kw)
+        # Upwork platform charges off the bank -> platform_fee
+        self.assertEqual(b(idfc("POS-VISA/UPWORK -799420395REF/1234")), "platform_fee")
+        self.assertEqual(b(idfc("POS-VISA/PAYPAL *UPWRKESCROW/99")), "platform_fee")
+        # business-SaaS vendor allowlist on debit card -> opex
+        self.assertEqual(b(idfc("POS-VISA/GOOGLE WORKSPACE CYBS 22/9")), "opex")
+        self.assertEqual(b(idfc("POS-VISA/OPENAI *CHATGPT SUBSCR+1415879")), "opex")
+        # any other POS spend -> personal
+        self.assertEqual(b(idfc("POS-VISA/PLAYSTATION NETWORK/77")), "owner_draw")
+        # office rent -> opex; past employees/contractors -> payroll
+        self.assertEqual(b(idfc("NEFT/IDFB1/RAKHI MUKESH BOHRA/KKBK00013")), "opex")
+        self.assertEqual(b(idfc("NEFT/IDFB2/HARSHIT SINGHAL/HDFC0000001")), "payroll")
+        self.assertEqual(b(idfc("NEFT/IDFB3/ATHARVA AJAY BARAWKA/SBIN01")), "payroll")
+        # employees: salary-shaped (>= $1,000 base) -> payroll; smaller -> personal
+        self.assertEqual(b(idfc("NEFT/IDFB4/JAY SUSHIL POKHARNA/BARB0GOR",
+                                amount_base_minor=-135120)), "payroll")
+        self.assertEqual(b(idfc("NEFT/IDFB5/SHRUTI DEEPAK DHUMNE/HDFC000",
+                                amount_base_minor=-112700)), "payroll")
+        self.assertEqual(b(idfc("UPI/DR/1/JAY SUSHIL POKHARNA/BARB/x",
+                                amount_base_minor=-5000)), "owner_draw")
+        # credit-card bill payment on the bank -> settlement (never a spend)
+        self.assertEqual(b(idfc("Ecom/62881027/IndiaIdeas/AMEXCARD/Creditcardbill")),
+                         "cc_settlement")
+        # UPI / EMI / everything else -> personal
+        self.assertEqual(b(idfc("UPI/MOB/548709957603/Pay")), "owner_draw")
+        self.assertEqual(b(idfc("NACH/BOI EMI COLLECTION/035D646A9")), "owner_draw")
+        # legacy 'Bank'-source rows route the same way; 'Card' stays opex
+        self.assertEqual(b({"type": "Tools / SaaS", "source": "Bank",
+                            "description": "POS-VISA/OPENAI/509"}), "opex")
+        self.assertEqual(b({"type": "Other Expense", "source": "Bank",
+                            "description": "IFT/95381102014/x/UPI"}), "owner_draw")
+        self.assertEqual(b({"type": "Tools / SaaS", "source": "Card",
+                            "description": "RENDER.COM, RENDER.COM"}), "opex")
+        # non-bank sources with category=expense keep opex (unchanged behavior)
+        self.assertEqual(b({"category": "expense", "source": "Wise"}), "opex")
+
+
+class TestBucketizeAmountDependent(unittest.TestCase):
+    """Regression (2026-07-08): bucket() became amount-dependent (salary floor),
+    but bucketize + doctor #10 selected rows WITHOUT amount_base_minor — the rule
+    saw 0 on both sides, so salaries mis-bucketed to owner_draw AND #10 stayed
+    green. Both loaders must feed bucket() every field it reads."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fin-bucketize-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type, category,"
+                " description, amount_minor, amount_base_minor, currency, source,"
+                " pnl_bucket) VALUES ('jay1','kjay1','expense','expense',"
+                " 'NEFT/IDFB527349128872/JAY SUSHIL POKHARNA/BARB0GOR',"
+                " -12000000, -135120, 'INR', 'IDFC', 'opex')")   # stale stored bucket
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _bucketize(self):
+        import importlib.machinery, importlib.util
+        path = Path(__file__).resolve().parents[1] / "bin" / "finance-bucketize"
+        loader = importlib.machinery.SourceFileLoader("finance_bucketize", str(path))
+        spec = importlib.util.spec_from_loader("finance_bucketize", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        return mod
+
+    def test_salary_floor_survives_the_loader_roundtrip(self):
+        from unittest import mock
+        from modules.finance import doctor
+        # doctor #10 must CATCH the stale bucket (needs the amount to see it)
+        pre = next(c for c in doctor.run(self.db_path).checks
+                   if c.invariant == "#10 P&L reproducibility")
+        self.assertEqual(pre.status, "RED")
+        mod = self._bucketize()
+        with mock.patch.object(mod.config, "DB_PATH", self.db_path):
+            out = mod.run(apply=True)
+        self.assertEqual(out["changed"], 1)
+        with db.connect(self.db_path) as conn:
+            stored = conn.execute("SELECT pnl_bucket FROM transactions"
+                                  " WHERE record_id='jay1'").fetchone()["pnl_bucket"]
+        self.assertEqual(stored, "payroll")            # the $1,351 salary, not a draw
+        post = next(c for c in doctor.run(self.db_path).checks
+                    if c.invariant == "#10 P&L reproducibility")
+        self.assertEqual(post.status, "GREEN")
 
 
 # ── Phase 5: payroll compute + reconcile (prep-only) ─────────────────────────

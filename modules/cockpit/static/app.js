@@ -647,6 +647,48 @@ async function renderMoney(view) {
   });
   if (!byMonth.length) chart.appendChild(el("div", "emptystate", "No revenue months yet."));
 
+  // ── P&L by month (revenue / expenses / profit — each row drills) ──
+  const OPERATING_COSTS = ["platform_fee", "tax", "payroll", "opex"];
+  const OPERATING_ALL = ["revenue", "refund", ...OPERATING_COSTS];
+  view.appendChild(el("h2", "section",
+    `P&amp;L by month <span class="hint muted">— revenue, expenses and profit`
+    + ` per month; click a row for its transactions</span>`));
+  const pnlmCard = el("div", "card");
+  const pnlmDrill = el("div", "drill");
+  const monthsAll = [...new Set(rows.filter((x) => OPERATING_ALL.includes(x.b))
+    .map((x) => x.m))].sort().reverse().slice(0, 13);
+  const sumWhere = (pred) => rows.reduce((s, x) => pred(x) ? s + x.u : s, 0);
+  const pnlmWrap = el("div", "tablewrap");
+  const pnlmTable = el("table");
+  pnlmTable.innerHTML = "<tr><th>Month</th><th class='num'>Revenue</th>"
+    + "<th class='num'>Expenses</th><th class='num'>Profit</th></tr>";
+  monthsAll.forEach((m) => {
+    const rev = sumWhere((x) => x.m === m && (x.b === "revenue" || x.b === "refund"));
+    const cost = sumWhere((x) => x.m === m && OPERATING_COSTS.includes(x.b));
+    const profit = rev + cost;
+    const tr = el("tr");
+    tr.style.cursor = "pointer";
+    tr.innerHTML = `<td>${esc(m)}${m === thisM ? ' <span class="chip">current</span>' : ""}</td>`
+      + `<td class="num pos">${fmtUsd2(rev)}</td>`
+      + `<td class="num neg">${fmtUsd2(cost)}</td>`
+      + `<td class="num ${profit >= 0 ? "pos" : "neg"}"><b>${fmtUsd2(profit)}</b></td>`;
+    tr.onclick = () => openDrill(pnlmDrill, `P&L — ${m} (operating rows)`,
+      rowsFor((x) => x.m === m && OPERATING_ALL.includes(x.b)));
+    pnlmTable.appendChild(tr);
+  });
+  const totRev = sumWhere((x) => x.b === "revenue" || x.b === "refund");
+  const totCost = sumWhere((x) => OPERATING_COSTS.includes(x.b));
+  const trAll = el("tr");
+  trAll.style.fontWeight = "700";
+  trAll.innerHTML = `<td>All-time</td><td class="num pos">${fmtUsd2(totRev)}</td>`
+    + `<td class="num neg">${fmtUsd2(totCost)}</td>`
+    + `<td class="num ${totRev + totCost >= 0 ? "pos" : "neg"}">${fmtUsd2(totRev + totCost)}</td>`;
+  pnlmTable.appendChild(trAll);
+  pnlmWrap.appendChild(pnlmTable);
+  pnlmCard.appendChild(pnlmWrap);
+  pnlmCard.appendChild(pnlmDrill);
+  view.appendChild(pnlmCard);
+
   // ── P&L waterfall (each line drills; owner draws below the line) ──
   view.appendChild(el("h2", "section",
     `Profit &amp; Loss <span class="hint muted">— all-time · click any line for`

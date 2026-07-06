@@ -18,8 +18,11 @@ from modules.finance import pnl  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
 
+# amount_base_minor included: bucket() is amount-DEPENDENT since the 2026-07-08
+# bank-spend rules (employee salary floor) — omitting it fed the rule 0 and
+# silently mis-bucketed salary-shaped transfers.
 _COLS = ("record_id, source, type, upwork_type, category, accounting_subtype,"
-         " description, pnl_bucket")
+         " description, pnl_bucket, amount_base_minor")
 
 
 def run(apply: bool) -> dict:

@@ -312,9 +312,13 @@ def _check_bucket_reproducibility(conn) -> Check:
     finance-bucketize). Guards against the stored-category vs computed-bucket drift
     that made the P&L non-reproducible."""
     from modules.finance import pnl
+    # amount_base_minor: bucket() is amount-DEPENDENT (2026-07-08 salary floor) —
+    # recompute with the same fields bucketize writes from, or the check would
+    # agree with a truncated (wrong) computation on both sides.
     rows = [dict(r) for r in conn.execute(
         "SELECT record_id, source, type, upwork_type, category, accounting_subtype,"
-        " description, pnl_bucket FROM transactions WHERE canonical_key IS NOT NULL")]
+        " description, pnl_bucket, amount_base_minor FROM transactions"
+        " WHERE canonical_key IS NOT NULL")]
     if not rows or all(r.get("pnl_bucket") is None for r in rows):
         return Check("#10 P&L reproducibility", "N/A", "not bucketized yet (run finance-bucketize)")
     null = [r for r in rows if r.get("pnl_bucket") is None]
