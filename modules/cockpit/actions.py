@@ -44,6 +44,109 @@ def _kick(label: str) -> dict:
             "error": proc.stderr.strip()[:200] or None}
 
 
+# ── Finance ingest (upload -> stage -> dry-run -> commit) ─────────────────────
+# The cockpit NEVER writes the ledger itself: uploads only STAGE files into the
+# existing finance-inbox drop folders, and imports run through the SAME audited
+# importer bins Abhijeet runs by hand (reconcile-or-abort, idempotent, dry-run
+# default). Commit stays an explicit second click. Card statements stage only —
+# the card importer is still pending (encrypted-PDF blocker).
+FINANCE_INBOX = _REPO_ROOT / "finance-inbox"
+UPLOAD_KINDS = {
+    # kind: (subdir, allowed extensions, server-side naming)
+    "idfc":           ("bank",   (".xlsx",),                None),
+    "wise":           ("wise",   (".csv",),                 None),
+    "card":           ("card",   (".pdf", ".csv", ".xlsx"), None),
+    "upwork-personal": ("upwork", (".csv",), "{d}-upwork-personal-fullhistory.csv"),
+    "upwork-agency":   ("upwork", (".csv",), "{d}-upwork-agency-fullhistory.csv"),
+}
+UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+_IMPORTER_BIN = {"idfc": "finance-import-idfc", "wise": "finance-import-wise",
+                 "upwork-personal": "finance-import-upwork",
+                 "upwork-agency": "finance-import-upwork"}
+
+
+def _safe_name(filename: str) -> str:
+    """Keep a recognizable client name, neutralize traversal/separators."""
+    base = Path(filename or "upload").name
+    return "".join(c if (c.isalnum() or c in "._- ") else "_" for c in base)[:80]
+
+
+def finance_upload(kind: str, filename: str, data: bytes) -> dict:
+    """Stage an uploaded statement/export into its drop folder. Raw-body route
+    (not JSON). Validates kind, extension, size; never trusts the client path;
+    never overwrites an existing file (suffixes instead). Writes NOTHING to the
+    ledger — that is the importer's job, behind the explicit import action."""
+    spec = UPLOAD_KINDS.get(kind)
+    if not spec:
+        return {"ok": False, "error": f"unknown kind {kind!r}"}
+    subdir, exts, forced = spec
+    if not data:
+        return {"ok": False, "error": "empty upload"}
+    if len(data) > UPLOAD_MAX_BYTES:
+        return {"ok": False, "error": "file too large (20MB cap)"}
+    ext = Path(filename or "").suffix.lower()
+    if ext not in exts:
+        return {"ok": False,
+                "error": f"{kind} expects {'/'.join(exts)} (got {ext or 'no ext'})"}
+    name = (forced.format(d=date.today().isoformat()) if forced
+            else _safe_name(filename))
+    target_dir = FINANCE_INBOX / subdir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / name
+    n = 2
+    while target.exists():                      # never clobber a staged file
+        target = target_dir / f"{Path(name).stem}-{n}{Path(name).suffix}"
+        n += 1
+    target.write_bytes(data)
+    return {"ok": True, "kind": kind, "staged_as": target.name,
+            "dir": f"finance-inbox/{subdir}", "bytes": len(data),
+            "importable": kind != "card",
+            "note": ("staged only — the card importer is pending"
+                     " (encrypted-PDF blocker); rows import when it lands"
+                     if kind == "card" else None)}
+
+
+def _load_importer(bin_name: str):
+    import importlib.machinery
+    import importlib.util
+    path = _REPO_ROOT / "bin" / bin_name
+    loader = importlib.machinery.SourceFileLoader(bin_name.replace("-", "_"), str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def finance_import(db_path: Optional[Path], body: dict) -> dict:
+    """POST /api/finance/import — run an importer over its inbox. body:
+    {kind, commit: bool}. Dry-run unless commit=true (the same human gate as
+    the CLI). Returns the importer's own report + the doctor verdict after a
+    commit, so the UI shows the gate state alongside the result."""
+    kind = (body or {}).get("kind") or ""
+    commit = bool((body or {}).get("commit"))
+    if kind == "card":
+        return {"ok": True, "kind": kind, "status": "staged_only",
+                "note": "card importer pending (encrypted-PDF blocker) —"
+                        " uploads are staged in finance-inbox/card/"}
+    bin_name = _IMPORTER_BIN.get(kind)
+    if not bin_name:
+        return {"ok": False, "error": f"unknown kind {kind!r}"}
+    mod = _load_importer(bin_name)
+    try:
+        report = mod.run(commit)   # all importers: run(apply/commit: bool)
+    except Exception as exc:                    # noqa: BLE001
+        return {"ok": False, "kind": kind, "error": repr(exc)[:300]}
+    out = {"ok": True, "kind": kind, "commit": commit,
+           "report": {k: v for k, v in report.items() if not k.startswith("_")}}
+    if commit:                                  # show the gate state post-write
+        from modules.finance import doctor
+        dr = doctor.run(db_path or config.DB_PATH)
+        out["doctor"] = "GREEN" if dr.green else "RED"
+        if not dr.green:
+            out["reds"] = [c.invariant for c in dr.reds()]
+    return out
+
+
 def wake(db_path: Optional[Path], body: dict) -> dict:
     """POST /api/wake — kick an allowlisted launchd job. body: {job}."""
     job = (body or {}).get("job")

@@ -45,7 +45,10 @@ POST_ROUTES: dict = {
     "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
     "/api/note": actions.note,    # Quick Capture -> CoS notes inbox
     "/api/cos-nudge": actions.cos_nudge,  # act on a real M4 nudge
+    "/api/finance/import": actions.finance_import,  # dry-run/commit via importer bins
 }
+# raw-body route (file bytes, not JSON): staged into finance-inbox, kind-allowlisted
+UPLOAD_ROUTE = "/api/finance/upload"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -125,6 +128,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self._authed():
             self._json(401, {"error": "unauthorized"})
+            return
+        if path == UPLOAD_ROUTE:                 # raw file bytes, not JSON
+            q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > actions.UPLOAD_MAX_BYTES:
+                self._json(413, {"ok": False, "error": "file too large (20MB cap)"})
+                return
+            data = self.rfile.read(length) if length else b""
+            try:
+                self._json(200, actions.finance_upload(
+                    q.get("kind", ""), q.get("filename", ""), data))
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": repr(exc)})
             return
         fn = POST_ROUTES.get(path)
         if fn is None:

@@ -786,6 +786,94 @@ class TestMoneyReader(unittest.TestCase):
         self.assertNotIn("cash", out)
 
 
+class TestFinanceIngest(CockpitServerCase):
+    """Upload -> stage -> import wiring. Uploads only STAGE files; the ledger is
+    written solely by the importer bins behind the explicit commit action."""
+
+    def setUp(self):
+        super().setUp()
+        self.inbox = self.tmp / "finance-inbox"
+        self.p = mock.patch.object(actions, "FINANCE_INBOX", self.inbox)
+        self.p.start()
+        self.addCleanup(self.p.stop)
+
+    def post_raw(self, path, data, token=TOKEN):
+        url = f"http://127.0.0.1:{self.port}{path}"
+        req = urllib.request.Request(url, data=data, method="POST")
+        if token is not None:
+            req.add_header("X-Cockpit-Token", token)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode())
+
+    def test_upload_stages_with_forced_fullhistory_name(self):
+        s, out = self.post_raw(
+            "/api/finance/upload?kind=upwork-agency&filename=export%20(3).csv",
+            b"Date,Ref ID\n")
+        self.assertEqual(s, 200)
+        self.assertTrue(out["ok"])
+        self.assertTrue(out["staged_as"].endswith("-upwork-agency-fullhistory.csv"))
+        self.assertTrue((self.inbox / "upwork" / out["staged_as"]).exists())
+        self.assertTrue(out["importable"])
+
+    def test_upload_sanitizes_traversal_and_checks_ext(self):
+        s, out = self.post_raw(
+            "/api/finance/upload?kind=idfc&filename=..%2F..%2Fevil.xlsx", b"x")
+        self.assertTrue(out["ok"])
+        self.assertNotIn("/", out["staged_as"])
+        self.assertNotIn("..", out["staged_as"].replace("..", "_"))  # neutralized
+        self.assertTrue((self.inbox / "bank" / out["staged_as"]).exists())
+        s, out = self.post_raw(
+            "/api/finance/upload?kind=idfc&filename=stmt.csv", b"x")
+        self.assertFalse(out["ok"])                       # idfc wants xlsx
+        s, out = self.post_raw(
+            "/api/finance/upload?kind=nope&filename=a.csv", b"x")
+        self.assertFalse(out["ok"])                       # kind allowlist
+
+    def test_upload_never_clobbers(self):
+        for _ in range(2):
+            s, out = self.post_raw(
+                "/api/finance/upload?kind=wise&filename=st.csv", b"a,b\n")
+        names = sorted(p.name for p in (self.inbox / "wise").iterdir())
+        self.assertEqual(len(names), 2)                   # suffixed, not overwritten
+        self.assertNotEqual(names[0], names[1])
+
+    def test_upload_requires_token(self):
+        s, _ = self.post_raw("/api/finance/upload?kind=wise&filename=a.csv",
+                             b"x", token=None)
+        self.assertEqual(s, 401)
+
+    def test_card_upload_stages_only(self):
+        s, out = self.post_raw(
+            "/api/finance/upload?kind=card&filename=amex.pdf", b"%PDF-1.4")
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["importable"])               # importer pending
+        s, body = self.post("/api/finance/import", body={"kind": "card"})
+        self.assertEqual(json.loads(body)["status"], "staged_only")
+
+    def test_import_routes_and_doctor_on_commit(self):
+        fake = mock.MagicMock()
+        fake.run.return_value = {"mode": "DRY-RUN", "new_inserted": 3,
+                                 "_private": "hidden"}
+        with mock.patch.object(actions, "_load_importer", return_value=fake):
+            s, body = self.post("/api/finance/import",
+                                body={"kind": "upwork-agency"})
+            out = json.loads(body)
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["report"]["new_inserted"], 3)
+            self.assertNotIn("_private", out["report"])   # private keys stripped
+            fake.run.assert_called_with(False)            # dry-run default
+            s, body = self.post("/api/finance/import",
+                                body={"kind": "idfc", "commit": True})
+            out = json.loads(body)
+            fake.run.assert_called_with(True)
+            self.assertIn(out["doctor"], ("GREEN", "RED"))  # gate shown post-write
+        s, body = self.post("/api/finance/import", body={"kind": "nope"})
+        self.assertFalse(json.loads(body)["ok"])
+
+
 class TestMoneyDrill(unittest.TestCase):
     """The traceability contract: every Money figure's drill rows sum to the
     displayed metric, to the cent, from the SAME query set."""

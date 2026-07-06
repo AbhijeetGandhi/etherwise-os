@@ -753,6 +753,102 @@ async function renderMoney(view) {
   bar.append(seg, custom);
   view.appendChild(bar);
 
+  // ── Import data (upload -> stage -> dry-run -> explicit commit) ──
+  // The cockpit never writes the ledger itself: uploads stage into
+  // finance-inbox/, imports run the same audited importer bins
+  // (reconcile-or-abort, idempotent), and commit is a second explicit click.
+  // Card statements stage only — the card importer is still pending.
+  const KINDS = [
+    ["idfc", "Bank statement", "IDFC xlsx", ".xlsx"],
+    ["wise", "Wise", "account CSV", ".csv"],
+    ["upwork-personal", "Upwork personal", "full-history CSV", ".csv"],
+    ["upwork-agency", "Upwork agency", "full-history CSV", ".csv"],
+    ["card", "Credit card", "stages only — importer pending", ".pdf,.csv,.xlsx"],
+  ];
+  const impWrap = el("details", "card importcard");
+  impWrap.appendChild(el("summary", null,
+    `<b>Import data</b> <span class="muted small">— upload bank / card / Wise /`
+    + ` Upwork exports; dry-run first, commit is a second click</span>`));
+  const tiles = el("div", "imptiles");
+  const impOut = el("div", "impout");
+  KINDS.forEach(([kind, label, hint, accept]) => {
+    const t = el("div", "imptile");
+    t.appendChild(el("div", null,
+      `<b>${label}</b><br><span class="muted small">${hint}</span>`));
+    const inp = el("input");
+    inp.type = "file"; inp.accept = accept; inp.style.display = "none";
+    const btn = el("button", "action", "Upload");
+    btn.onclick = () => inp.click();
+    inp.onchange = () => {
+      if (inp.files[0]) doUpload(kind, inp.files[0], btn);
+      inp.value = "";
+    };
+    t.append(inp, btn);
+    tiles.appendChild(t);
+  });
+  impWrap.append(tiles, impOut);
+  view.appendChild(impWrap);
+
+  function reportChips(rep) {
+    const keep = Object.entries(rep || {}).filter(([k, v]) =>
+      typeof v !== "object" || v == null).slice(0, 12);
+    return keep.map(([k, v]) =>
+      `<span class="chip">${esc(k)}: <b>${esc(String(v))}</b></span>`).join(" ");
+  }
+
+  async function doUpload(kind, file, btn) {
+    btn.disabled = true; btn.textContent = "Uploading…";
+    impOut.innerHTML = "";
+    try {
+      const r = await fetch(`/api/finance/upload?kind=${encodeURIComponent(kind)}`
+        + `&filename=${encodeURIComponent(file.name)}`,
+        { method: "POST", headers: { "X-Cockpit-Token": bootToken() }, body: file });
+      const up = await r.json();
+      if (!up.ok) {
+        impOut.appendChild(el("div", "errstate", esc(up.error || "upload failed")));
+        return;
+      }
+      impOut.appendChild(el("div", "muted small",
+        `staged <code>${esc(up.staged_as)}</code> in <code>${esc(up.dir)}</code>`
+        + (up.note ? ` — ${esc(up.note)}` : "")));
+      if (!up.importable) return;
+      await doImport(kind, false);              // auto dry-run after staging
+    } catch (e) {
+      impOut.appendChild(el("div", "errstate",
+        "upload failed: " + esc(String(e.message || e))));
+    } finally { btn.disabled = false; btn.textContent = "Upload"; }
+  }
+
+  async function doImport(kind, commit) {
+    impOut.appendChild(el("div", "muted small", commit ? "Committing…" : "Dry-run…"));
+    const r = await fetch("/api/finance/import", { method: "POST",
+      headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, commit }) });
+    const res = await r.json();
+    if (!res.ok) {
+      impOut.appendChild(el("div", "errstate", esc(res.error || "import failed")));
+      return;
+    }
+    const box = el("div", "impreport");
+    box.appendChild(el("div", null,
+      `<b>${commit ? "COMMITTED" : "DRY-RUN"}</b> · ${esc(kind)} ${reportChips(res.report)}`));
+    if (res.report && res.report.abort) {
+      box.appendChild(el("div", "errstate", "importer refused: " + esc(res.report.abort)));
+    } else if (!commit) {
+      const c = el("button", "action primary", "Commit to ledger");
+      c.onclick = () => doImport(kind, true);
+      box.appendChild(c);
+    } else {
+      box.appendChild(el("div", null,
+        `doctor: <span class="pill ${res.doctor === "GREEN" ? "ok" : "fail"}">`
+        + `${esc(res.doctor || "?")}</span>`
+        + (res.reds ? ` <span class="errstate">${esc(res.reds.join(", "))}</span>` : "")));
+      box.appendChild(el("div", "muted small", "refreshing figures…"));
+      setTimeout(() => show("Money"), 1200);    // re-pull the audited numbers
+    }
+    impOut.appendChild(box);
+  }
+
   const body = el("div");
   view.appendChild(body);
   body.addEventListener("keydown", (e) => {

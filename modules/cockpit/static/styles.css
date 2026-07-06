@@ -136,6 +136,19 @@ tr:hover td{background:var(--g2)}
 .drill .close:hover{color:var(--red)}
 .drill .tablewrap{max-height:340px;overflow:auto}
 
+/* ── import card (upload -> dry-run -> commit) ── */
+.importcard summary{cursor:pointer;font-size:var(--fs-md)}
+.importcard summary::marker{color:var(--g5)}
+.imptiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:10px;margin-top:12px}
+.imptile{border:1px dashed var(--g4);border-radius:var(--rad-sm);padding:10px 12px;
+  display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.imptile:hover{border-color:var(--blue2)}
+.impout{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.impreport{border:1px solid var(--g3);border-radius:var(--rad-sm);padding:10px 12px;
+  display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.impreport .chip{margin:2px 2px 0 0}
+
 /* ── time-range bar (one scope state for the whole section) ── */
 .rangebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 var(--sp-4)}
 .rangeseg{display:inline-flex;border:1px solid var(--g3);border-radius:999px;
