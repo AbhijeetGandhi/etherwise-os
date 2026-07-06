@@ -140,17 +140,38 @@ def scan(ctx, _sleep=time.sleep) -> dict:
     tab = ensure_scan_tab()
 
     feeds = {}
+    redirected = []
     for feed, url in FEED_URLS.items():
         navigate_tab(tab, url + MARKER)
         _sleep(SETTLE_SECONDS)
         raw = feed_bridge.chrome_eval(feed_bridge.EXTRACT_JS, tab_ref=tab)
         payload = json.loads(raw)
+        # SESSION GUARD (2026-07-06 incident): a logged-out/challenged session
+        # bounces feed URLs to the PUBLIC search page (or a CF interstitial).
+        # Never ingest tiles from a non-feed page — they are unpersonalized
+        # public results, not our lead feeds. Detect by landing URL.
+        landed = payload.get("url") or ""
+        if "/nx/find-work/" not in landed:
+            feeds[feed] = {"extracted": 0, "valid": 0, "new": 0, "known": 0,
+                           "invalid": 0, "redirected_to": landed[:80]}
+            redirected.append(feed)
+            ctx.log(f"{feed}: REDIRECTED off-feed -> {landed[:80]} (tiles ignored)")
+            continue
         jobs = [j for j in (feed_bridge.parse_tile(t)
                             for t in payload.get("tiles", [])) if j]
         summary = feed_bridge.process(feed, jobs, db_path=dbp, table=TABLE)
         feeds[feed] = {k: summary[k] for k in
                        ("extracted", "valid", "new", "known", "invalid")}
         ctx.log(f"{feed}: {json.dumps(feeds[feed])}")
+    if redirected and len(redirected) == len(FEED_URLS):
+        # all feeds off-feed = the session is logged out (or challenge-walled):
+        # lead-gen is DOWN until a human logs in. Fail LOUD (-> critical anomaly
+        # -> interrupt email), never silently skip.
+        raise RuntimeError(
+            "Upwork session LOGGED OUT / challenge-walled: all feed URLs"
+            f" redirected (e.g. {feeds[redirected[0]]['redirected_to']})."
+            " Log into upwork.com in Chrome on the Mac — the scan self-heals"
+            " on the next :15 run.")
 
     # score everything 'New' — includes leftovers from a crashed prior run
     with db.connect(dbp) as conn:
@@ -175,7 +196,8 @@ def scan(ctx, _sleep=time.sleep) -> dict:
              "skip": skip})
 
     # intended ClickUp tasks (run-scoped by construction: this run's verdicts)
-    intents = 0
+    intents = 0     # shadow-recorded intents
+    pushed = 0      # LIVE cards actually created (0 in shadow) — separate metric
     for entry in scored:
         if (entry["score"] or 0) < 8:
             continue
@@ -198,6 +220,7 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             intents += 1
         else:
             clickup_push.push_one(clickup_push.token(), dbp, row, list_id)
+            pushed += 1
 
     hot = [e for e in scored if (e["score"] or 0)
            >= config.HOT_LEAD_THRESHOLD]
@@ -232,6 +255,7 @@ def scan(ctx, _sleep=time.sleep) -> dict:
     return {"feeds": feeds, "claimed": sum(f["new"] for f in feeds.values()),
             "scored": len(scored), "skipped": len(skipped),
             "drafts": drafted, "clickup_intents": intents,
+            "clickup_pushed": pushed,
             "hot": len(hot), "digest": digest_status}
 
 

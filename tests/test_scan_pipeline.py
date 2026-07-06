@@ -29,8 +29,8 @@ def tile(jid, title="Make.com Automation Build", posted="Posted 2 hours ago",
     }
 
 
-def payload(*tiles_):
-    return json.dumps({"url": "https://www.upwork.com/nx/find-work/my-feed",
+def payload(*tiles_, url="https://www.upwork.com/nx/find-work/my-feed"):
+    return json.dumps({"url": url,
                        "tile_count": len(tiles_), "tiles": list(tiles_)})
 
 
@@ -174,6 +174,35 @@ class TestScan(ScanPipelineCase):
         self.assertEqual(self.rows("SELECT status FROM scored_jobs")[0]
                          ["status"], "Scored")
 
+    def test_logged_out_redirect_fails_loud_ingests_nothing(self):
+        # 2026-07-06 incident: logged-out/CF-challenged session bounces feed URLs
+        # to the PUBLIC search page. Tiles there are NOT our feeds — never ingest;
+        # all-feeds-redirected must FAIL (-> critical anomaly -> interrupt email).
+        search = "https://www.upwork.com/nx/search/jobs/#ew-scan"
+        with self.assertRaises(RuntimeError):          # runner re-raises after routing
+            self.run_scan([payload(tile(JID_A), url=search),
+                           payload(tile(JID_B), url=search),
+                           payload(url=search)])
+        self.assertEqual(self.rows("SELECT * FROM scored_jobs"), [])   # nothing ingested
+        run = self.rows("SELECT status, error FROM runs ORDER BY id DESC")[0]
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("LOGGED OUT", run["error"])
+        self.assertIn("Log into upwork.com", run["error"])
+
+    def test_partial_redirect_processes_good_feeds_only(self):
+        # one feed healthy, two bounced: ingest the healthy one, log the rest,
+        # do NOT fail the run.
+        search = "https://www.upwork.com/nx/search/jobs/#ew-scan"
+        result = self.run_scan([payload(tile(JID_A)),
+                                payload(tile(JID_B), url=search),
+                                payload(url=search)],
+                               score_map={JID_A: 14})
+        self.assertEqual(result.status, "completed")
+        rows = self.rows("SELECT id FROM scored_jobs")
+        self.assertEqual([r["id"] for r in rows], [JID_A])   # only the feed tile
+        self.assertEqual(
+            result.metrics["feeds"]["best_matches"].get("redirected_to"), search)
+
     def test_all_empty_feeds_skip_empty(self):
         result = self.run_scan([payload(), payload(), payload()])
         self.assertEqual(result.status, "skipped_empty")
@@ -203,6 +232,8 @@ class TestScanLive(ScanPipelineCase):
         result = self.run_live(send)
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.metrics["digest"], "sent")
+        self.assertEqual(result.metrics["clickup_pushed"], 1)   # LIVE counter
+        self.assertEqual(result.metrics["clickup_intents"], 0)  # shadow-only counter
         # card POSTed once to a list endpoint
         posts = [c for c in self.req_calls if c[0] == "POST"]
         self.assertEqual(len(posts), 1)
