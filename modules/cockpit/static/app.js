@@ -28,7 +28,10 @@ async function refreshHealth() {
     const d = await api("/api/system");
     const worst = ((d.doctor || {}).worst || "?").toUpperCase();
     const last = (d.jobs || []).map((j) => j.started_at || "").sort().pop() || "";
-    chip.className = "healthchip " + (worst === "GREEN" ? "green" : worst === "?" ? "" : "red");
+    // green=all clear · amber=WARN (owner reminders, not faults) · red=FAIL/RED
+    const cls = worst === "GREEN" || worst === "PASS" ? "green"
+      : worst === "WARN" ? "amber" : worst === "?" ? "" : "red";
+    chip.className = "healthchip " + cls;
     chip.innerHTML = `<span class="dot2"></span>doctor ${worst}`
       + (last ? ` · sync ${esc(last.replace("T", " ").slice(5, 16))}` : "");
   } catch (e) {
@@ -720,7 +723,7 @@ async function renderMoney(view) {
 
   view.appendChild(el("h2", "section",
     `Money <span class="hint muted">— every number is clickable; figures match`
-    + ` bin/finance-pnl · as of ${esc(d.as_of || "")}</span>`
+    + ` bin/finance-pnl · ledger through ${esc(d.as_of || "")}</span>`
     + (parityOk ? "" : ' <span class="pill fail">⚠ parity mismatch — trust bin/finance-pnl</span>')));
 
   // ── range bar ──
@@ -1177,7 +1180,7 @@ async function renderMoney(view) {
     renderExp();
 
     body.appendChild(el("div", "foot",
-      `Data as of <b>${esc(d.as_of || "")}</b> · ${rows.length} reconciled transactions`
+      `Ledger through <b>${esc(d.as_of || "")}</b> (Upwork pre-dates upcoming invoices) · ${rows.length} reconciled transactions`
       + ` (${scoped.length} in range) · computed from the same audited`
       + ` <code>pnl.compute</code> buckets as <code>bin/finance-pnl</code>, gated on`
       + ` finance-doctor GREEN. Net revenue = revenue + refunds; operating profit is`

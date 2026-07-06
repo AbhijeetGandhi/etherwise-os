@@ -25,8 +25,15 @@ _SEVERITY = {"PASS": 0, "SKIP": 0, "WARN": 1, "FAIL": 2}
 
 
 def _ro(db_path: Optional[Path]) -> sqlite3.Connection:
+    """Read-only connection that is WAL-robust. mode=ro URI opens FAIL when the
+    -wal/-shm files are absent (i.e. whenever the last writer checkpoint-truncated
+    and no job is mid-run) — which made every cockpit reader 500 between writer
+    runs (2026-07-07 incident). A normal open + PRAGMA query_only enforces the
+    same no-writes contract at the connection level while letting SQLite manage
+    the WAL side files."""
     path = db_path or config.DB_PATH
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    conn = sqlite3.connect(str(path), timeout=10)
+    conn.execute("PRAGMA query_only=ON")
     conn.row_factory = sqlite3.Row
     return conn
 

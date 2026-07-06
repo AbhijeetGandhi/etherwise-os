@@ -25,6 +25,8 @@ body{margin:0;background:var(--g1);color:var(--g6);
 .healthchip.green .dot2{background:var(--green)}
 .healthchip.red{background:var(--red-soft);color:var(--red)}
 .healthchip.red .dot2{background:var(--red)}
+.healthchip.amber{background:var(--amber-soft);color:var(--warn)}
+.healthchip.amber .dot2{background:var(--amber)}
 .env{color:var(--g5);font-size:var(--fs-sm);white-space:nowrap}
 .btn-icon{border:1px solid var(--g3);background:var(--g0);color:var(--g5);border-radius:var(--rad-sm);
   width:32px;height:32px;cursor:pointer;font-size:15px;line-height:1;flex:none}

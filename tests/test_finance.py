@@ -869,6 +869,47 @@ class TestBucketizeAmountDependent(unittest.TestCase):
         self.assertEqual(post.status, "GREEN")
 
 
+class TestIdfcImporterPicksNewest(unittest.TestCase):
+    """Regression (2026-07-07 cockpit upload): 'newest statement' must be newest
+    by MTIME. Filename sort picked the old 'idfc-*.xlsx' over a freshly-uploaded
+    'IDFCFIRSTBankstatement*.xlsx' (uppercase sorts first in ASCII) and silently
+    dry-ran the stale file."""
+
+    def test_newest_by_mtime_not_filename(self):
+        import importlib.machinery
+        import importlib.util
+        import os
+        import time
+        from unittest import mock
+        tmp = Path(tempfile.mkdtemp(prefix="idfc-inbox-"))
+        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        old = tmp / "idfc-60606200234.xlsx"          # lexically LAST (lowercase)
+        new = tmp / "IDFCFIRSTBankstatement.xlsx"    # lexically first, mtime newest
+        old.write_bytes(b"o")
+        new.write_bytes(b"n")
+        past = time.time() - 3600
+        os.utime(old, (past, past))
+        path = Path(__file__).resolve().parents[1] / "bin" / "finance-import-idfc"
+        loader = importlib.machinery.SourceFileLoader("fin_imp_idfc", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        seen = {}
+
+        class Stop(Exception):
+            pass
+
+        def fake_parse(p):
+            seen["file"] = Path(p).name
+            raise Stop()
+
+        with mock.patch.object(mod, "INBOX", tmp), \
+                mock.patch.object(mod.bank_xlsx, "parse", side_effect=fake_parse):
+            with self.assertRaises(Stop):
+                mod.run(False)
+        self.assertEqual(seen["file"], "IDFCFIRSTBankstatement.xlsx")
+
+
 # ── Phase 5: payroll compute + reconcile (prep-only) ─────────────────────────
 class TestPayroll(unittest.TestCase):
     def test_split_integer_paise_sums_to_gross(self):

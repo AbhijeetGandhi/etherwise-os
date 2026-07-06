@@ -34,10 +34,13 @@ ACCOUNT = "idfc"
 
 
 def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
-    files = sorted(INBOX.glob("*.xlsx"))
+    files = sorted(INBOX.glob("*.xlsx"), key=lambda p: p.stat().st_mtime)
     if not files:
         return {"abort": "no .xlsx in finance-inbox/bank/"}
-    f = files[-1]                      # newest statement
+    f = files[-1]                      # newest statement by MTIME (upload time).
+    # NEVER by filename: ASCII-sorting picked the old 'idfc-*.xlsx' over a fresh
+    # 'IDFCFIRSTBankstatement*.xlsx' upload (uppercase sorts first) and silently
+    # dry-ran the stale statement (2026-07-07 cockpit-upload incident).
     out = bank_xlsx.parse(f)
     rows, meta, qrows = out["rows"], out["meta"], out["quarantine"]
     rec = bank_xlsx.reconcile_running_balance(rows)
@@ -154,6 +157,7 @@ def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
                      f"derived:sweep-legs:{f.name}"))
 
     res = {"mode": "APPLY" if apply else "DRY-RUN", "file": f.name,
+           "inbox_files": len(files),   # transparency: how many staged, which used
            "window": f"{win_lo}..{win_hi}", "statement_rows": len(good),
            "reconcile_ok": rec["ok"], "parse_quarantine": len(qrows),
            "category_breakdown": dict(Counter(r["category"] for r in good)),
