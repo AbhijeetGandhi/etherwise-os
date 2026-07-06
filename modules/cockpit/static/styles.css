@@ -136,6 +136,21 @@ tr:hover td{background:var(--g2)}
 .drill .close:hover{color:var(--red)}
 .drill .tablewrap{max-height:340px;overflow:auto}
 
+/* ── time-range bar (one scope state for the whole section) ── */
+.rangebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 var(--sp-4)}
+.rangeseg{display:inline-flex;border:1px solid var(--g3);border-radius:999px;
+  background:var(--g0);padding:3px;gap:2px;flex-wrap:wrap}
+.rbtn{border:0;background:none;color:var(--g5);font:inherit;font-size:var(--fs-sm);
+  font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.rbtn:hover{color:var(--g6);background:var(--g2)}
+.rbtn.on{background:var(--blue);color:#fff}
+.rangecustom{display:none;align-items:center;gap:6px}
+.rangecustom input[type=month]{font:var(--fs-sm) inherit;font-family:inherit;
+  padding:4px 8px;border:1px solid var(--g3);border-radius:var(--rad-sm);
+  background:var(--g0);color:var(--g6)}
+.mcol.dimmed .mbar{opacity:.3;filter:grayscale(.4)}
+.mcol.dimmed .xlbl{opacity:.5}
+
 /* ── drill breakdown pills (where-it-went groups) ── */
 .drillstrip{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px}
 .gpill{border:1px solid var(--g3);background:var(--g0);color:var(--g6);font:inherit;

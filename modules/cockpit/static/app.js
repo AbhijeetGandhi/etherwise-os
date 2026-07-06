@@ -664,323 +664,433 @@ async function renderMoney(view) {
   }
   const rows = tx.rows || [];            // the full reconciled ledger (drill source)
   const r = d.revenue || {}, p = d.pnl || {}, cash = d.cash || {};
-  const buckets = d.buckets || {};
+  const srvBuckets = d.buckets || {};
   const byMonth = r.by_month || [];
   const thisM = r.month, lastM = r.last_month;
   const revThis = r.month_usd || 0, revLast = r.last_month_usd || 0;
-  const rowsFor = (pred) => rows.filter(pred);
-  const revRows = (m) => rowsFor((x) => x.b === "revenue" && x.m === m);
+  const OPERATING_COSTS = ["platform_fee", "tax", "payroll", "opex"];
+  const OPERATING_ALL = ["revenue", "refund", ...OPERATING_COSTS];
+
+  // ══ range engine (architecture: ONE scope state; flows scope, cash doesn't;
+  // every scoped header + drill inherits it; all-time anchors to the SERVER
+  // figures with a live client-sum parity check) ══
+  const mAdd = (ym, k) => {                    // "2026-04" + k months
+    let [y, m] = ym.split("-").map(Number);
+    m += k; while (m < 1) { m += 12; y -= 1; } while (m > 12) { m -= 12; y += 1; }
+    return `${y}-${String(m).padStart(2, "0")}`;
+  };
+  const PRESETS = [
+    ["all", "All time", () => [null, null]],
+    ["this", "This month", () => [thisM, thisM]],
+    ["last", "Last month", () => [lastM, lastM]],
+    ["l3", "Last 3 mo", () => [mAdd(thisM, -2), thisM]],
+    ["t12", "Trailing 12", () => [mAdd(thisM, -11), thisM]],
+    ["ytd", "YTD", () => [thisM.slice(0, 4) + "-01", thisM]],
+    ["custom", "Custom", null],
+  ];
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(MONEY_FILTERS_KEY) || "{}"); }
+  catch (e) { saved = {}; }
+  let range = { preset: saved.preset || "all",
+                from: saved.from || null, to: saved.to || null };
+  if (!PRESETS.some(([k]) => k === range.preset)) range = { preset: "all", from: null, to: null };
+  const bounds = () => {
+    const pr = PRESETS.find(([k]) => k === range.preset);
+    if (pr && pr[2]) return pr[2]();
+    return [range.from, range.to];             // custom
+  };
+  const isAll = () => { const [f, t] = bounds(); return !f && !t; };
+  const inRange = (x) => { const [f, t] = bounds();
+    return (!f || x.m >= f) && (!t || x.m <= t); };
+  const rangeLabel = () => {
+    if (isAll()) return "all time";
+    const [f, t] = bounds();
+    return f === t ? f : `${f || "…"} → ${t || "…"}`;
+  };
+  const R = () => rows.filter(inRange);        // the scoped ledger
+  const sumB = (bs, rs) => rs.reduce((s, x) => bs.includes(x.b) ? s + x.u : s, 0);
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  // live parity check: client sums over ALL rows must equal the audited server
+  // figures to the cent — the traceability contract, enforced in the UI.
+  const parityOk =
+    Math.abs(round2(sumB(["revenue", "refund"], rows)) - (p.net_revenue_usd || 0)) < 0.005
+    && Math.abs(round2(sumB(OPERATING_ALL, rows)) - (p.operating_profit_usd || 0)) < 0.005;
+  if (!parityOk) console.warn("MONEY PARITY MISMATCH: client row sums != server pnl");
 
   view.appendChild(el("h2", "section",
     `Money <span class="hint muted">— every number is clickable; figures match`
-    + ` bin/finance-pnl · as of ${esc(d.as_of || "")}</span>`));
+    + ` bin/finance-pnl · as of ${esc(d.as_of || "")}</span>`
+    + (parityOk ? "" : ' <span class="pill fail">⚠ parity mismatch — trust bin/finance-pnl</span>')));
 
-  // ── KPI row (all clickable) ──
-  const kpis = el("div", "kpis");
-  const revDrill = el("div", "drill");
-  const wfDrill = el("div", "drill");
-  const mkKpi = (lbl, val, sub, act) => {
-    const c = el("button", "kpi");
-    c.appendChild(el("div", "lbl", lbl));
-    c.appendChild(el("div", "val", val));
-    c.appendChild(el("div", "sub2", sub));
-    c.appendChild(el("div", "tag", "details →"));
-    c.onclick = act;
-    return c;
-  };
-  kpis.appendChild(mkKpi("Cash position", fmtUsd0(cash.value_usd),
-    esc(cash.note || ""), () => drillCash()));
-  kpis.appendChild(mkKpi("Net revenue", fmtUsd0(p.net_revenue_usd),
-    "all-time · revenue + refunds",
-    () => openDrill(wfDrill, "Net revenue (revenue + refunds)",
-      rowsFor((x) => x.b === "revenue" || x.b === "refund"))));
-  kpis.appendChild(mkKpi("Operating profit", fmtUsd0(p.operating_profit_usd),
-    "all-time · after all costs",
-    () => wfCard.scrollIntoView({ behavior: "smooth", block: "center" })));
-  const delta = revThis - revLast;
-  kpis.appendChild(mkKpi(`This month (${esc(thisM || "")})`, fmtUsd0(revThis),
-    `<span class="${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} `
-    + `${fmtUsd0(Math.abs(delta))}</span> vs ${fmtUsd0(revLast)} last month`,
-    () => { selectBar(thisM); drillMonth(thisM); }));
-  view.appendChild(kpis);
-
-  // ── Revenue by month (13 bars · hover tooltip · click to drill) ──
-  view.appendChild(el("h2", "section",
-    `Revenue by month <span class="hint muted">— hover for detail, click a bar`
-    + ` for its transactions</span>`));
-  const chartCard = el("div", "card");
-  const chart = el("div", "mchart");
-  chartCard.appendChild(chart);
-  chartCard.appendChild(revDrill);
-  view.appendChild(chartCard);
-  const tip = moneyTip();
-  const maxRev = Math.max(...byMonth.map((m) => m.usd), 1);
-  const drillMonth = (m) => openDrill(revDrill, `Revenue — ${m}`, revRows(m));
-  const selectBar = (m) => chart.querySelectorAll(".mcol").forEach((x) =>
-    x.classList.toggle("sel", x.dataset.m === m));
-  byMonth.forEach((mrow) => {
-    const m = mrow.month, v = mrow.usd;
-    const col = el("button", "mcol" + (mrow.current ? " cur" : ""));
-    col.dataset.m = m;
-    const bar = el("div", "mbar");
-    bar.style.height = (100 * v / maxRev) + "%";
-    col.appendChild(bar);
-    col.appendChild(el("div", "xlbl" + (mrow.current ? " cur" : ""), m.slice(2)));
-    col.onmousemove = (e) => {
-      const mr = revRows(m);
-      const bySrc = {};
-      mr.forEach((x) => { bySrc[x.s] = (bySrc[x.s] || 0) + x.u; });
-      const top = Object.entries(bySrc).sort((a, b) => b[1] - a[1])[0];
-      tip.style.opacity = 1;
-      tip.style.left = Math.min(e.clientX + 14, innerWidth - 250) + "px";
-      tip.style.top = (e.clientY - 10) + "px";
-      tip.innerHTML = `<b>${m}</b> · ${fmtUsd2(v)}<br>${mr.length} transaction`
-        + `${mr.length === 1 ? "" : "s"}`
-        + (top ? `<br>top: ${esc(top[0])} ${fmtUsd0(top[1])}` : "")
-        + `<br><span style="opacity:.75">click to drill down</span>`;
-    };
-    col.onmouseleave = () => { tip.style.opacity = 0; };
-    col.onclick = () => { selectBar(m); drillMonth(m); };
-    chart.appendChild(col);
-  });
-  if (!byMonth.length) chart.appendChild(el("div", "emptystate", "No revenue months yet."));
-
-  // ── P&L by month (revenue / expenses / profit — each row drills) ──
-  const OPERATING_COSTS = ["platform_fee", "tax", "payroll", "opex"];
-  const OPERATING_ALL = ["revenue", "refund", ...OPERATING_COSTS];
-  view.appendChild(el("h2", "section",
-    `P&amp;L by month <span class="hint muted">— revenue, expenses and profit`
-    + ` per month; click a row for its transactions</span>`));
-  const pnlmCard = el("div", "card");
-  const pnlmDrill = el("div", "drill");
-  const monthsAll = [...new Set(rows.filter((x) => OPERATING_ALL.includes(x.b))
-    .map((x) => x.m))].sort().reverse().slice(0, 13);
-  const sumWhere = (pred) => rows.reduce((s, x) => pred(x) ? s + x.u : s, 0);
-  const pnlmWrap = el("div", "tablewrap");
-  const pnlmTable = el("table");
-  pnlmTable.innerHTML = "<tr><th>Month</th><th class='num'>Revenue</th>"
-    + "<th class='num'>Expenses</th><th class='num'>Profit</th></tr>";
-  monthsAll.forEach((m) => {
-    const rev = sumWhere((x) => x.m === m && (x.b === "revenue" || x.b === "refund"));
-    const cost = sumWhere((x) => x.m === m && OPERATING_COSTS.includes(x.b));
-    const profit = rev + cost;
-    const tr = el("tr");
-    // each CELL drills to its own rows — revenue, expenses, or the whole month
-    const tdM = el("td", null,
-      `${esc(m)}${m === thisM ? ' <span class="chip">current</span>' : ""}`);
-    const tdR = el("td", "num pos drillable", fmtUsd2(rev));
-    const tdC = el("td", "num neg drillable", fmtUsd2(cost));
-    const tdP = el("td", `num ${profit >= 0 ? "pos" : "neg"} drillable`,
-      `<b>${fmtUsd2(profit)}</b>`);
-    tdR.onclick = () => openDrill(pnlmDrill, `Revenue — ${m}`,
-      rowsFor((x) => x.m === m && (x.b === "revenue" || x.b === "refund")));
-    tdC.onclick = () => openDrill(pnlmDrill, `Expenses — ${m}`,
-      rowsFor((x) => x.m === m && OPERATING_COSTS.includes(x.b)),
-      { sortAmount: true });
-    tdP.onclick = () => openDrill(pnlmDrill, `P&L — ${m} (all operating rows)`,
-      rowsFor((x) => x.m === m && OPERATING_ALL.includes(x.b)));
-    tr.append(tdM, tdR, tdC, tdP);
-    pnlmTable.appendChild(tr);
-  });
-  const totRev = sumWhere((x) => x.b === "revenue" || x.b === "refund");
-  const totCost = sumWhere((x) => OPERATING_COSTS.includes(x.b));
-  const trAll = el("tr");
-  trAll.style.fontWeight = "700";
-  trAll.innerHTML = `<td>All-time</td><td class="num pos">${fmtUsd2(totRev)}</td>`
-    + `<td class="num neg">${fmtUsd2(totCost)}</td>`
-    + `<td class="num ${totRev + totCost >= 0 ? "pos" : "neg"}">${fmtUsd2(totRev + totCost)}</td>`;
-  pnlmTable.appendChild(trAll);
-  pnlmWrap.appendChild(pnlmTable);
-  pnlmCard.appendChild(pnlmWrap);
-  pnlmCard.appendChild(pnlmDrill);
-  view.appendChild(pnlmCard);
-
-  // ── P&L waterfall (each line drills; owner draws below the line) ──
-  view.appendChild(el("h2", "section",
-    `Profit &amp; Loss <span class="hint muted">— all-time · click any line for`
-    + ` its transactions</span>`));
-  const wfCard = el("div", "card");
-  const wf = el("div", "wf");
-  const wfLines = [["revenue", "Revenue"], ["refund", "Refunds"],
-    ["platform_fee", "Platform fees (Upwork/Wise)"], ["tax", "Taxes (WHT/GST)"],
-    ["payroll", "Payroll"], ["opex", "Operating expenses"]];
-  const wfMax = Math.max(...wfLines.map(([b]) => Math.abs(buckets[b] || 0)), 1);
-  wfLines.forEach(([b, label]) => {
-    const v = buckets[b] || 0;
-    const row = el("button", "wfrow");
-    row.appendChild(el("div", "n", label));
-    const bl = el("div", "bl");
-    const sp = el("span");
-    sp.style.width = (100 * Math.abs(v) / wfMax) + "%";
-    sp.style.left = "0";
-    sp.style.background = v >= 0 ? "var(--green)" : "var(--red)";
-    bl.appendChild(sp);
-    row.appendChild(bl);
-    row.appendChild(el("div", "amt " + (v >= 0 ? "pos" : "neg"), fmtUsd2(v)));
-    row.onclick = () => openDrill(wfDrill, BLABEL[b] || b,
-      rowsFor((x) => x.b === b));
-    wf.appendChild(row);
-  });
-  const tot = el("div", "wfrow total");
-  tot.appendChild(el("div", "n", "Operating profit"));
-  tot.appendChild(el("div", "bl"));
-  tot.appendChild(el("div", "amt " + ((p.operating_profit_usd || 0) >= 0 ? "pos" : "neg"),
-    fmtUsd2(p.operating_profit_usd)));
-  wf.appendChild(tot);
-  const od = el("button", "wfrow");
-  od.appendChild(el("div", "n",
-    `<span class="muted">Owner draws (below the line — equity, not a cost)</span>`));
-  od.appendChild(el("div", "bl"));
-  od.appendChild(el("div", "amt neg", fmtUsd2(p.owner_draw_usd)));
-  od.onclick = () => openDrill(wfDrill, "Owner draws",
-    rowsFor((x) => x.b === "owner_draw"));
-  wf.appendChild(od);
-  wfCard.appendChild(wf);
-  wfCard.appendChild(el("div", "muted small",
-    "Transfers, sweeps and card settlements are excluded — non-economic"
-    + " (money moving between our own accounts)."));
-  wfCard.appendChild(wfDrill);
-  view.appendChild(wfCard);
-
-  // ── Cash position ──
-  view.appendChild(el("h2", "section", "Cash position"));
-  const cashCard = el("div", "card");
-  (cash.by_account || []).forEach((a) => {
-    const row = el("div", "cashrow");
-    row.appendChild(el("div", null,
-      `<strong>${esc(a.account)}</strong> <span class="muted">${esc(a.currency)}</span>`));
-    const local = a.currency === "INR"
-      ? "₹" + Number(a.closing).toLocaleString("en-IN", { minimumFractionDigits: 2 })
-      : fmtUsd2(Number(a.closing));
-    row.appendChild(el("div", "num", `${local} <span class="muted">→ ${fmtUsd2(a.usd)}</span>`));
-    cashCard.appendChild(row);
-  });
-  const ctot = el("div", "cashrow");
-  ctot.style.fontWeight = "700";
-  ctot.appendChild(el("div", null, "Total (base USD)"));
-  ctot.appendChild(el("div", "num", fmtUsd2(cash.value_usd)));
-  cashCard.appendChild(ctot);
-  cashCard.appendChild(el("div", "muted small",
-    `INR→USD at ${esc(cash.inr_usd_rate || "?")} (pinned) · FD = fixed deposit`
-    + ` · as of ${esc(cash.as_of || "")}`));
-  view.appendChild(cashCard);
-
-  function drillCash() {
-    openDrill(wfDrill, "Cash accounts", []);
-    wfDrill.querySelector(".emptystate")?.remove();
-    const wrap = el("div", "tablewrap");
-    const t = el("table");
-    t.innerHTML = "<tr><th>Account</th><th>Currency</th><th class='num'>Local</th>"
-      + "<th class='num'>USD</th></tr>";
-    (cash.by_account || []).forEach((a) => {
-      const tr = el("tr");
-      tr.innerHTML = `<td><strong>${esc(a.account)}</strong></td><td>${esc(a.currency)}</td>`
-        + `<td class="num">${Number(a.closing).toLocaleString()}</td>`
-        + `<td class="num pos">${fmtUsd2(a.usd)}</td>`;
-      t.appendChild(tr);
+  // ── range bar ──
+  const bar = el("div", "rangebar");
+  const seg = el("div", "rangeseg");
+  const fromIn = el("input"), toIn = el("input");
+  fromIn.type = toIn.type = "month";
+  fromIn.title = "from month"; toIn.title = "to month";
+  const custom = el("span", "rangecustom");
+  custom.append(fromIn, el("span", "muted small", "→"), toIn);
+  const drawSeg = () => {
+    seg.innerHTML = "";
+    PRESETS.forEach(([key, label]) => {
+      const b = el("button", "rbtn" + (range.preset === key ? " on" : ""), label);
+      b.onclick = () => {
+        range.preset = key;
+        if (key === "custom") {
+          range.from = fromIn.value || range.from || lastM;
+          range.to = toIn.value || range.to || thisM;
+        }
+        rerender();
+      };
+      seg.appendChild(b);
     });
-    wrap.appendChild(t);
-    wfDrill.appendChild(wrap);
-    wfDrill.querySelector(".count").textContent =
-      `— ${(cash.by_account || []).length} accounts · total ${fmtUsd2(cash.value_usd)}`;
+    custom.style.display = range.preset === "custom" ? "inline-flex" : "none";
+    fromIn.value = range.from || ""; toIn.value = range.to || "";
+  };
+  fromIn.onchange = () => { range.preset = "custom"; range.from = fromIn.value || null; rerender(); };
+  toIn.onchange = () => { range.preset = "custom"; range.to = toIn.value || null; rerender(); };
+  bar.append(seg, custom);
+  view.appendChild(bar);
+
+  const body = el("div");
+  view.appendChild(body);
+  body.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") body.querySelectorAll(".drill.open")
+      .forEach((h) => h.classList.remove("open"));
+  });
+
+  function persist(extra) {
+    let cur = {};
+    try { cur = JSON.parse(localStorage.getItem(MONEY_FILTERS_KEY) || "{}"); }
+    catch (e) { cur = {}; }
+    localStorage.setItem(MONEY_FILTERS_KEY, JSON.stringify(
+      Object.assign(cur, { preset: range.preset, from: range.from, to: range.to }, extra || {})));
   }
 
-  // ── Transaction explorer (filters + search + sortable + count/sum) ──
-  view.appendChild(el("h2", "section",
-    `Transaction explorer <span class="hint muted">— filter &amp; search every`
-    + ` reconciled transaction</span>`));
-  const expCard = el("div", "card");
-  const filters = el("div", "filters");
-  const fMonth = el("select"), fBucket = el("select"), fSource = el("select");
-  const fSearch = el("input");
-  fSearch.type = "search";
-  fSearch.placeholder = "search description…";
-  const expCount = el("span", "muted small");
-  fMonth.appendChild(new Option("All months", ""));
-  [...new Set(rows.map((t) => t.m))].sort().reverse()
-    .forEach((m) => fMonth.appendChild(new Option(m, m)));
-  fBucket.appendChild(new Option("All buckets", ""));
-  [...new Set(rows.map((t) => t.b))].sort()
-    .forEach((b) => fBucket.appendChild(new Option(BLABEL[b] || b, b)));
-  fSource.appendChild(new Option("All sources", ""));
-  [...new Set(rows.map((t) => t.s))].sort()
-    .forEach((s) => fSource.appendChild(new Option(s || "—", s)));
-  filters.append(fMonth, fBucket, fSource, fSearch, expCount);
-  const expWrap = el("div", "tablewrap");
-  expWrap.style.maxHeight = "460px";
-  expWrap.style.overflow = "auto";
-  const expTable = el("table");
-  expWrap.appendChild(expTable);
-  expCard.append(filters, expWrap);
-  view.appendChild(expCard);
+  function rerender() {
+    persist();
+    drawSeg();
+    body.innerHTML = "";
+    const scoped = R();
+    const rl = rangeLabel();
+    const rowsFor = (pred) => scoped.filter(pred);
 
-  // restore last filter state (remembered per brief)
-  try {
-    const saved = JSON.parse(localStorage.getItem(MONEY_FILTERS_KEY) || "{}");
-    if (saved.m) fMonth.value = saved.m;
+    // scoped headline figures: server-anchored on all-time, row-sums otherwise
+    const netRev = isAll() ? (p.net_revenue_usd || 0)
+      : round2(sumB(["revenue", "refund"], scoped));
+    const opProfit = isAll() ? (p.operating_profit_usd || 0)
+      : round2(sumB(OPERATING_ALL, scoped));
+    const bucketSum = (b) => isAll() ? (srvBuckets[b] || 0)
+      : round2(sumB([b], scoped));
+
+    // ── KPI row ──
+    const kpis = el("div", "kpis");
+    const revDrill = el("div", "drill");
+    const wfDrill = el("div", "drill");
+    const mkKpi = (lbl, val, sub, act) => {
+      const c = el("button", "kpi");
+      c.appendChild(el("div", "lbl", lbl));
+      c.appendChild(el("div", "val", val));
+      c.appendChild(el("div", "sub2", sub));
+      c.appendChild(el("div", "tag", "details →"));
+      c.onclick = act;
+      return c;
+    };
+    kpis.appendChild(mkKpi("Cash position", fmtUsd0(cash.value_usd),
+      esc(cash.note || "") + (isAll() ? "" :
+        ' · <span class="muted">point-in-time, not range-scoped</span>'),
+      () => drillCash()));
+    kpis.appendChild(mkKpi("Net revenue", fmtUsd0(netRev),
+      `${esc(rl)} · revenue + refunds`,
+      () => openDrill(wfDrill, `Net revenue (${rl})`,
+        rowsFor((x) => x.b === "revenue" || x.b === "refund"))));
+    kpis.appendChild(mkKpi("Operating profit", fmtUsd0(opProfit),
+      `${esc(rl)} · after all costs`,
+      () => wfCard.scrollIntoView({ behavior: "smooth", block: "center" })));
+    const delta = revThis - revLast;
+    kpis.appendChild(mkKpi(`This month (${esc(thisM || "")})`, fmtUsd0(revThis),
+      `<span class="${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} `
+      + `${fmtUsd0(Math.abs(delta))}</span> vs ${fmtUsd0(revLast)} last month`,
+      () => { selectBar(thisM); drillMonth(thisM); }));
+    body.appendChild(kpis);
+
+    // ── Revenue by month (13 bars; out-of-range bars dim; click drills) ──
+    body.appendChild(el("h2", "section",
+      `Revenue by month <span class="hint muted">— hover for detail, click a bar`
+      + ` for its transactions</span>`));
+    const chartCard = el("div", "card");
+    const chart = el("div", "mchart");
+    chartCard.appendChild(chart);
+    chartCard.appendChild(revDrill);
+    body.appendChild(chartCard);
+    const tip = moneyTip();
+    const maxRev = Math.max(...byMonth.map((m) => m.usd), 1);
+    const revRows = (m) => rows.filter((x) => x.b === "revenue" && x.m === m);
+    const drillMonth = (m) => openDrill(revDrill, `Revenue — ${m}`, revRows(m));
+    const selectBar = (m) => chart.querySelectorAll(".mcol").forEach((x) =>
+      x.classList.toggle("sel", x.dataset.m === m));
+    byMonth.forEach((mrow) => {
+      const m = mrow.month, v = mrow.usd;
+      const dim = !inRange({ m }) ? " dimmed" : "";
+      const col = el("button", "mcol" + (mrow.current ? " cur" : "") + dim);
+      col.dataset.m = m;
+      const barEl = el("div", "mbar");
+      barEl.style.height = (100 * v / maxRev) + "%";
+      col.appendChild(barEl);
+      col.appendChild(el("div", "xlbl" + (mrow.current ? " cur" : ""), m.slice(2)));
+      col.onmousemove = (e) => {
+        const mr = revRows(m);
+        const bySrc = {};
+        mr.forEach((x) => { bySrc[x.s] = (bySrc[x.s] || 0) + x.u; });
+        const top = Object.entries(bySrc).sort((a, b) => b[1] - a[1])[0];
+        tip.style.opacity = 1;
+        tip.style.left = Math.min(e.clientX + 14, innerWidth - 250) + "px";
+        tip.style.top = (e.clientY - 10) + "px";
+        tip.innerHTML = `<b>${m}</b> · ${fmtUsd2(v)}<br>${mr.length} transaction`
+          + `${mr.length === 1 ? "" : "s"}`
+          + (top ? `<br>top: ${esc(top[0])} ${fmtUsd0(top[1])}` : "")
+          + `<br><span style="opacity:.75">click to drill down</span>`;
+      };
+      col.onmouseleave = () => { tip.style.opacity = 0; };
+      col.onclick = () => { selectBar(m); drillMonth(m); };
+      chart.appendChild(col);
+    });
+    if (!byMonth.length) chart.appendChild(el("div", "emptystate", "No revenue months yet."));
+
+    // ── P&L by month (within the range; cells drill) ──
+    body.appendChild(el("h2", "section",
+      `P&amp;L by month <span class="hint muted">— ${esc(rl)} · click a cell`
+      + ` for its transactions</span>`));
+    const pnlmCard = el("div", "card");
+    const pnlmDrill = el("div", "drill");
+    const monthsAll = [...new Set(scoped.filter((x) => OPERATING_ALL.includes(x.b))
+      .map((x) => x.m))].sort().reverse().slice(0, isAll() ? 13 : 24);
+    const sumWhere = (pred) => scoped.reduce((s, x) => pred(x) ? s + x.u : s, 0);
+    const pnlmWrap = el("div", "tablewrap");
+    const pnlmTable = el("table");
+    pnlmTable.innerHTML = "<tr><th>Month</th><th class='num'>Revenue</th>"
+      + "<th class='num'>Expenses</th><th class='num'>Profit</th></tr>";
+    monthsAll.forEach((m) => {
+      const rev = sumWhere((x) => x.m === m && (x.b === "revenue" || x.b === "refund"));
+      const cost = sumWhere((x) => x.m === m && OPERATING_COSTS.includes(x.b));
+      const profit = rev + cost;
+      const tr = el("tr");
+      const tdM = el("td", null,
+        `${esc(m)}${m === thisM ? ' <span class="chip">current</span>' : ""}`);
+      const tdR = el("td", "num pos drillable", fmtUsd2(rev));
+      const tdC = el("td", "num neg drillable", fmtUsd2(cost));
+      const tdP = el("td", `num ${profit >= 0 ? "pos" : "neg"} drillable`,
+        `<b>${fmtUsd2(profit)}</b>`);
+      tdR.onclick = () => openDrill(pnlmDrill, `Revenue — ${m}`,
+        rowsFor((x) => x.m === m && (x.b === "revenue" || x.b === "refund")));
+      tdC.onclick = () => openDrill(pnlmDrill, `Expenses — ${m}`,
+        rowsFor((x) => x.m === m && OPERATING_COSTS.includes(x.b)),
+        { sortAmount: true });
+      tdP.onclick = () => openDrill(pnlmDrill, `P&L — ${m} (all operating rows)`,
+        rowsFor((x) => x.m === m && OPERATING_ALL.includes(x.b)));
+      tr.append(tdM, tdR, tdC, tdP);
+      pnlmTable.appendChild(tr);
+    });
+    const totRev = sumWhere((x) => x.b === "revenue" || x.b === "refund");
+    const totCost = sumWhere((x) => OPERATING_COSTS.includes(x.b));
+    const trAll = el("tr");
+    trAll.style.fontWeight = "700";
+    trAll.innerHTML = `<td>${isAll() ? "All-time" : "Range total"}</td>`
+      + `<td class="num pos">${fmtUsd2(totRev)}</td>`
+      + `<td class="num neg">${fmtUsd2(totCost)}</td>`
+      + `<td class="num ${totRev + totCost >= 0 ? "pos" : "neg"}">${fmtUsd2(totRev + totCost)}</td>`;
+    pnlmTable.appendChild(trAll);
+    pnlmWrap.appendChild(pnlmTable);
+    pnlmCard.appendChild(pnlmWrap);
+    if (isAll() && monthsAll.length === 13) pnlmCard.appendChild(
+      el("div", "muted small", "showing the last 13 months — pick a range above for more"));
+    pnlmCard.appendChild(pnlmDrill);
+    body.appendChild(pnlmCard);
+
+    // ── P&L waterfall (scoped; each line drills; owner draws below) ──
+    body.appendChild(el("h2", "section",
+      `Profit &amp; Loss <span class="hint muted">— ${esc(rl)} · click any line`
+      + ` for its transactions</span>`));
+    const wfCard = el("div", "card");
+    const wf = el("div", "wf");
+    const wfLines = [["revenue", "Revenue"], ["refund", "Refunds"],
+      ["platform_fee", "Platform fees (Upwork/Wise)"], ["tax", "Taxes (WHT/GST)"],
+      ["payroll", "Payroll"], ["opex", "Operating expenses"]];
+    const wfMax = Math.max(...wfLines.map(([b]) => Math.abs(bucketSum(b))), 1);
+    wfLines.forEach(([b, label]) => {
+      const v = bucketSum(b);
+      const row = el("button", "wfrow");
+      row.appendChild(el("div", "n", label));
+      const bl = el("div", "bl");
+      const sp = el("span");
+      sp.style.width = (100 * Math.abs(v) / wfMax) + "%";
+      sp.style.left = "0";
+      sp.style.background = v >= 0 ? "var(--green)" : "var(--red)";
+      bl.appendChild(sp);
+      row.appendChild(bl);
+      row.appendChild(el("div", "amt " + (v >= 0 ? "pos" : "neg"), fmtUsd2(v)));
+      row.onclick = () => openDrill(wfDrill, `${BLABEL[b] || b} (${rl})`,
+        rowsFor((x) => x.b === b), { sortAmount: v < 0 });
+      wf.appendChild(row);
+    });
+    const tot = el("div", "wfrow total");
+    tot.appendChild(el("div", "n", "Operating profit"));
+    tot.appendChild(el("div", "bl"));
+    tot.appendChild(el("div", "amt " + (opProfit >= 0 ? "pos" : "neg"),
+      fmtUsd2(opProfit)));
+    wf.appendChild(tot);
+    const odV = bucketSum("owner_draw");
+    const od = el("button", "wfrow");
+    od.appendChild(el("div", "n",
+      `<span class="muted">Owner draws (below the line — equity, not a cost)</span>`));
+    od.appendChild(el("div", "bl"));
+    od.appendChild(el("div", "amt neg", fmtUsd2(odV)));
+    od.onclick = () => openDrill(wfDrill, `Owner draws (${rl})`,
+      rowsFor((x) => x.b === "owner_draw"), { sortAmount: true });
+    wf.appendChild(od);
+    wfCard.appendChild(wf);
+    wfCard.appendChild(el("div", "muted small",
+      "Transfers, sweeps and card settlements are excluded — non-economic"
+      + " (money moving between our own accounts)."));
+    wfCard.appendChild(wfDrill);
+    body.appendChild(wfCard);
+
+    // ── Cash position (point-in-time; never range-scoped) ──
+    body.appendChild(el("h2", "section",
+      `Cash position <span class="hint muted">— point-in-time balances,`
+      + ` not affected by the range</span>`));
+    const cashCard = el("div", "card");
+    (cash.by_account || []).forEach((a) => {
+      const row = el("div", "cashrow");
+      row.appendChild(el("div", null,
+        `<strong>${esc(a.account)}</strong> <span class="muted">${esc(a.currency)}</span>`));
+      const local = a.currency === "INR"
+        ? "₹" + Number(a.closing).toLocaleString("en-IN", { minimumFractionDigits: 2 })
+        : fmtUsd2(Number(a.closing));
+      row.appendChild(el("div", "num", `${local} <span class="muted">→ ${fmtUsd2(a.usd)}</span>`));
+      cashCard.appendChild(row);
+    });
+    const ctot = el("div", "cashrow");
+    ctot.style.fontWeight = "700";
+    ctot.appendChild(el("div", null, "Total (base USD)"));
+    ctot.appendChild(el("div", "num", fmtUsd2(cash.value_usd)));
+    cashCard.appendChild(ctot);
+    cashCard.appendChild(el("div", "muted small",
+      `INR→USD at ${esc(cash.inr_usd_rate || "?")} (pinned) · FD = fixed deposit`
+      + ` · as of ${esc(cash.as_of || "")}`));
+    body.appendChild(cashCard);
+
+    function drillCash() {
+      openDrill(wfDrill, "Cash accounts", []);
+      wfDrill.querySelector(".emptystate")?.remove();
+      const wrap = el("div", "tablewrap");
+      const t = el("table");
+      t.innerHTML = "<tr><th>Account</th><th>Currency</th><th class='num'>Local</th>"
+        + "<th class='num'>USD</th></tr>";
+      (cash.by_account || []).forEach((a) => {
+        const tr = el("tr");
+        tr.innerHTML = `<td><strong>${esc(a.account)}</strong></td><td>${esc(a.currency)}</td>`
+          + `<td class="num">${Number(a.closing).toLocaleString()}</td>`
+          + `<td class="num pos">${fmtUsd2(a.usd)}</td>`;
+        t.appendChild(tr);
+      });
+      wrap.appendChild(t);
+      wfDrill.appendChild(wrap);
+      wfDrill.querySelector(".count").textContent =
+        `— ${(cash.by_account || []).length} accounts · total ${fmtUsd2(cash.value_usd)}`;
+    }
+
+    // ── Transaction explorer (range pre-applied) ──
+    body.appendChild(el("h2", "section",
+      `Transaction explorer <span class="hint muted">— ${esc(rl)} · filter &amp;`
+      + ` search every reconciled transaction</span>`));
+    const expCard = el("div", "card");
+    const filters = el("div", "filters");
+    const fMonth = el("select"), fBucket = el("select"), fSource = el("select");
+    const fSearch = el("input");
+    fSearch.type = "search";
+    fSearch.placeholder = "search description…";
+    const expCount = el("span", "muted small");
+    fMonth.appendChild(new Option("All months", ""));
+    [...new Set(scoped.map((t) => t.m))].sort().reverse()
+      .forEach((m) => fMonth.appendChild(new Option(m, m)));
+    fBucket.appendChild(new Option("All buckets", ""));
+    [...new Set(scoped.map((t) => t.b))].sort()
+      .forEach((b) => fBucket.appendChild(new Option(BLABEL[b] || b, b)));
+    fSource.appendChild(new Option("All sources", ""));
+    [...new Set(scoped.map((t) => t.s))].sort()
+      .forEach((s) => fSource.appendChild(new Option(s || "—", s)));
+    filters.append(fMonth, fBucket, fSource, fSearch, expCount);
+    const expWrap = el("div", "tablewrap");
+    expWrap.style.maxHeight = "460px";
+    expWrap.style.overflow = "auto";
+    const expTable = el("table");
+    expWrap.appendChild(expTable);
+    expCard.append(filters, expWrap);
+    body.appendChild(expCard);
+
+    if (saved.m && [...fMonth.options].some((o) => o.value === saved.m)) fMonth.value = saved.m;
     if (saved.b) fBucket.value = saved.b;
     if (saved.s) fSource.value = saved.s;
     if (saved.q) fSearch.value = saved.q;
-  } catch (e) { /* fresh state */ }
 
-  let sortKey = "dt", sortDir = -1;
-  function renderExp() {
-    localStorage.setItem(MONEY_FILTERS_KEY, JSON.stringify(
-      { m: fMonth.value, b: fBucket.value, s: fSource.value, q: fSearch.value }));
-    const needle = fSearch.value.toLowerCase();
-    let out = rows.filter((t) =>
-      (!fMonth.value || t.m === fMonth.value)
-      && (!fBucket.value || t.b === fBucket.value)
-      && (!fSource.value || t.s === fSource.value)
-      && (!needle || (t.d + " " + t.t).toLowerCase().includes(needle)));
-    out.sort((a, b) => {
-      const x = a[sortKey], y = b[sortKey];
-      if (sortKey === "u") return (x - y) * sortDir;
-      return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
-    });
-    const total = out.reduce((s, t) => s + t.u, 0);
-    expCount.innerHTML = `${out.length} of ${rows.length} · sum <b>${fmtUsd2(total)}</b>`;
-    expTable.innerHTML = "";
-    const head = el("tr");
-    [["dt", "Date"], ["b", "Bucket"], ["t", "Type"], ["s", "Source"],
-     ["d", "Description"], ["u", "Amount"]].forEach(([k, l]) => {
-      const th = el("th", "sortable" + (k === "u" ? " num" : ""),
-        l + (sortKey === k ? (sortDir < 0 ? " ▼" : " ▲") : ""));
-      th.onclick = () => {
-        if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
-        renderExp();
-      };
-      head.appendChild(th);
-    });
-    expTable.appendChild(head);
-    out.slice(0, 600).forEach((x) => {
-      const tr = el("tr");
-      tr.innerHTML = `<td class="muted">${esc(x.dt)}</td>`
-        + `<td><span class="chip ${esc(x.b)}">${esc(BLABEL[x.b] || x.b)}</span></td>`
-        + `<td>${esc(x.t)}</td><td class="muted">${esc(x.s)}</td><td>${esc(x.d)}</td>`
-        + `<td class="num ${x.u >= 0 ? "pos" : "neg"}">${fmtUsd2(x.u)}</td>`;
-      expTable.appendChild(tr);
-    });
-    if (out.length > 600) expTable.appendChild(el("tr", null,
-      `<td colspan=6 class="muted small">showing first 600 of ${out.length}`
-      + ` — narrow the filter to see the rest</td>`));
+    let sortKey = "dt", sortDir = -1;
+    function renderExp() {
+      persist({ m: fMonth.value, b: fBucket.value, s: fSource.value, q: fSearch.value });
+      const needle = fSearch.value.toLowerCase();
+      let out = scoped.filter((t) =>
+        (!fMonth.value || t.m === fMonth.value)
+        && (!fBucket.value || t.b === fBucket.value)
+        && (!fSource.value || t.s === fSource.value)
+        && (!needle || (t.d + " " + t.t).toLowerCase().includes(needle)));
+      out.sort((a, b) => {
+        const x = a[sortKey], y = b[sortKey];
+        if (sortKey === "u") return (x - y) * sortDir;
+        return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+      });
+      const total = out.reduce((s, t) => s + t.u, 0);
+      expCount.innerHTML = `${out.length} of ${scoped.length} · sum <b>${fmtUsd2(total)}</b>`;
+      expTable.innerHTML = "";
+      const head = el("tr");
+      [["dt", "Date"], ["b", "Bucket"], ["t", "Type"], ["s", "Source"],
+       ["d", "Description"], ["u", "Amount"]].forEach(([k, l]) => {
+        const th = el("th", "sortable" + (k === "u" ? " num" : ""),
+          l + (sortKey === k ? (sortDir < 0 ? " ▼" : " ▲") : ""));
+        th.onclick = () => {
+          if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+          renderExp();
+        };
+        head.appendChild(th);
+      });
+      expTable.appendChild(head);
+      out.slice(0, 600).forEach((x) => {
+        const tr = el("tr");
+        tr.innerHTML = `<td class="muted">${esc(x.dt)}</td>`
+          + `<td><span class="chip ${esc(x.b)}">${esc(BLABEL[x.b] || x.b)}</span></td>`
+          + `<td>${esc(x.t)}</td><td class="muted">${esc(x.s)}</td><td>${esc(x.d)}</td>`
+          + `<td class="num ${x.u >= 0 ? "pos" : "neg"}">${fmtUsd2(x.u)}</td>`;
+        expTable.appendChild(tr);
+      });
+      if (out.length > 600) expTable.appendChild(el("tr", null,
+        `<td colspan=6 class="muted small">showing first 600 of ${out.length}`
+        + ` — narrow the filter to see the rest</td>`));
+    }
+    [fMonth, fBucket, fSource].forEach((s) => { s.onchange = renderExp; });
+    fSearch.oninput = renderExp;
+    renderExp();
+
+    body.appendChild(el("div", "foot",
+      `Data as of <b>${esc(d.as_of || "")}</b> · ${rows.length} reconciled transactions`
+      + ` (${scoped.length} in range) · computed from the same audited`
+      + ` <code>pnl.compute</code> buckets as <code>bin/finance-pnl</code>, gated on`
+      + ` finance-doctor GREEN. Net revenue = revenue + refunds; operating profit is`
+      + ` after platform fees, taxes, payroll and opex; owner draws are equity (below`
+      + ` the line); transfers/sweeps/card-settlement are excluded (non-economic).`
+      + ` Cash is point-in-time and not range-scoped.`));
   }
-  [fMonth, fBucket, fSource].forEach((s) => { s.onchange = renderExp; });
-  fSearch.oninput = renderExp;
-  renderExp();
 
-  view.appendChild(el("div", "foot",
-    `Data as of <b>${esc(d.as_of || "")}</b> · ${rows.length} reconciled transactions`
-    + ` · computed from the same audited <code>pnl.compute</code> buckets as`
-    + ` <code>bin/finance-pnl</code>, gated on finance-doctor GREEN.`
-    + ` Net revenue = revenue + refunds; operating profit is after platform fees,`
-    + ` taxes, payroll and opex; owner draws are equity (below the line);`
-    + ` transfers/sweeps/card-settlement are excluded (non-economic).`));
-
-  // Esc closes any open drill
-  view.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") [revDrill, wfDrill].forEach((h) => h.classList.remove("open"));
-  });
+  rerender();
 }
 
 function factLine(x, showClient) {
