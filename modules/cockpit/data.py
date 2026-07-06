@@ -507,8 +507,17 @@ def money(db_path: Optional[Path] = None,
         if r.get("pnl_bucket") == "revenue" and mo(r):
             bm[mo(r)] += r["amount_base_minor"] or 0
     by_month = [{"month": k, "usd": usd(v), "current": k == month}
-                for k, v in sorted(bm.items())][-12:]
+                for k, v in sorted(bm.items())][-13:]     # 13 bars (design brief)
     tgt = config.MONTHLY_REVENUE_TARGET_USD
+
+    # per-bucket totals (the P&L waterfall + drill targets; NULL -> uncategorized)
+    bucket_minor = defaultdict(int)
+    months_all = set()
+    for r in rows:
+        bucket_minor[r.get("pnl_bucket") or "uncategorized"] += \
+            r["amount_base_minor"] or 0
+        if mo(r):
+            months_all.add(mo(r))
 
     # P&L / burn / runway — reuse the audited compute (matches finance-pnl)
     allp = pnl.compute(rows)
@@ -536,6 +545,8 @@ def money(db_path: Optional[Path] = None,
 
     return {
         "doctor": "GREEN", "blocked": False,
+        "as_of": hi, "months": sorted(months_all),
+        "buckets": {b: usd(v) for b, v in sorted(bucket_minor.items())},
         "revenue": {
             "month": month, "month_usd": usd(month_minor), "target_usd": tgt,
             "pct_to_target": round(100 * usd(month_minor) / tgt, 1) if tgt else None,
@@ -560,3 +571,63 @@ def money(db_path: Optional[Path] = None,
                           "amount": usd(r["amount_base_minor"]), "currency": r["currency"],
                           "profile": r["source"]} for r in feed],
     }
+
+
+def money_transactions(db_path: Optional[Path] = None, *,
+                       bucket: Optional[str] = None,
+                       month: Optional[str] = None,
+                       source: Optional[str] = None,
+                       q: Optional[str] = None) -> dict:
+    """Drill-down: the EXACT transactions behind a Money figure (traceability
+    contract — every number is explainable). Same query set as money():
+    canonical_key IS NOT NULL, pnl_bucket, amount_base_minor — so the returned
+    rows SUM to the displayed metric to the cent (sum_usd is computed on integer
+    minor units, never floats). Doctor-GATED like money(): no rows on RED.
+
+    Filters (all optional, AND-ed): bucket (comma-list — 'revenue,refund' is the
+    Net-revenue KPI), month (YYYY-MM), source, q (case-insensitive substring over
+    description+type). No filters = the full reconciled ledger (the explorer)."""
+    from modules.finance import doctor, money as fmoney
+
+    dbp = db_path or config.DB_PATH
+    dr = doctor.run(dbp)
+    if not dr.green:                          # hard gate — no rows on RED
+        return {"doctor": "RED", "blocked": True,
+                "reds": [c.invariant for c in dr.reds()],
+                "rows": [], "count": 0, "sum_usd": 0.0}
+
+    conn = _ro(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT source, type, description, pnl_bucket, amount_base_minor,"
+            " creation_dt FROM transactions WHERE canonical_key IS NOT NULL")]
+    finally:
+        conn.close()
+
+    def usd(minor):
+        return round(float(fmoney.from_minor(int(minor or 0))), 2)
+
+    want_buckets = ({b.strip() for b in bucket.split(",") if b.strip()}
+                    if bucket else None)
+    needle = (q or "").strip().lower()
+    out, total_minor = [], 0
+    for r in rows:
+        b = r.get("pnl_bucket") or "uncategorized"
+        m = (r.get("creation_dt") or "")[:7]
+        if want_buckets is not None and b not in want_buckets:
+            continue
+        if month and m != month:
+            continue
+        if source and (r.get("source") or "") != source:
+            continue
+        if needle and needle not in ((r.get("description") or "") + " "
+                                     + (r.get("type") or "")).lower():
+            continue
+        minor = r.get("amount_base_minor") or 0
+        total_minor += minor
+        out.append({"dt": (r.get("creation_dt") or "")[:10], "m": m, "b": b,
+                    "u": usd(minor), "s": r.get("source") or "",
+                    "t": r.get("type") or "", "d": r.get("description") or ""})
+    out.sort(key=lambda x: x["dt"], reverse=True)
+    return {"doctor": "GREEN", "blocked": False, "rows": out,
+            "count": len(out), "sum_usd": usd(total_minor)}

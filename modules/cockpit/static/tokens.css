@@ -1,0 +1,56 @@
+/* Etherwise cockpit — design tokens (the single visual source of truth).
+   No hardcoded hex in components: everything reads these vars.
+   Light is the default; html[data-theme=dark] overrides the neutrals. */
+:root{
+  /* brand */
+  --navy:#0E1223;
+  --blue:#1260CC;
+  --blue2:#3A9BDC;
+  /* semantic */
+  --green:#0f9d58;          /* positive / revenue */
+  --red:#d23f31;            /* cost / negative */
+  --amber:#e8a33d;          /* warning / current period */
+  /* neutral scale (light) */
+  --g0:#ffffff;             /* card */
+  --g1:#f6f8fc;             /* page bg */
+  --g2:#eef2f8;             /* soft fill */
+  --g3:#e7ebf2;             /* border */
+  --g4:#c9d2e0;             /* strong border */
+  --g5:#6b7688;             /* muted ink */
+  --g6:#1a2233;             /* ink */
+  --g7:#0E1223;             /* headline ink (navy) */
+  /* soft semantic fills */
+  --green-soft:#e8f5ee; --green-line:#bfe6cf;
+  --red-soft:#fdecea;
+  --amber-soft:#fef3e0;
+  --blue-soft:#e7effc;
+  /* type scale */
+  --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-base:14px;
+  --fs-lg:16px; --fs-xl:22px; --fs-num:26px;
+  /* spacing (4px scale) + shape */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
+  --rad:12px; --rad-sm:8px;
+  --shadow-hover:0 3px 14px rgba(18,96,204,.08);
+  --shadow-pop:0 6px 20px rgba(0,0,0,.25);
+  /* legacy aliases (older section renderers read these) */
+  --bg:var(--g1); --panel:var(--g0); --ink:var(--g6); --muted:var(--g5);
+  --line:var(--g3); --accent:var(--blue); --accent-soft:var(--blue-soft);
+  --ok:var(--green); --warn:#b7791f; --fail:var(--red);
+  --radius:var(--rad); --gap:16px;
+}
+html[data-theme=dark]{
+  --g0:#161b2c;             /* card */
+  --g1:#0e1220;             /* page bg */
+  --g2:#1e2438;             /* soft fill */
+  --g3:#262e45;             /* border */
+  --g4:#3a445f;             /* strong border */
+  --g5:#8b96ac;             /* muted ink */
+  --g6:#e6eaf3;             /* ink */
+  --g7:#f2f5fb;             /* headline ink */
+  --green-soft:#12301f; --green-line:#1d4a30;
+  --red-soft:#391b17;
+  --amber-soft:#332508;
+  --blue-soft:#14263f;
+  --shadow-hover:0 3px 14px rgba(0,0,0,.4);
+  --shadow-pop:0 6px 20px rgba(0,0,0,.6);
+}

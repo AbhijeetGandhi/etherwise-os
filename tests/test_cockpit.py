@@ -784,5 +784,67 @@ class TestMoneyReader(unittest.TestCase):
         self.assertNotIn("cash", out)
 
 
+class TestMoneyDrill(unittest.TestCase):
+    """The traceability contract: every Money figure's drill rows sum to the
+    displayed metric, to the cent, from the SAME query set."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-drill-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_money(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_month_bucket_drill_sums_to_chart_bar(self):
+        m = data.money(self.db_path, today="2026-06-15")
+        bar = {x["month"]: x["usd"] for x in m["revenue"]["by_month"]}
+        for month in ("2026-06", "2026-05", "2026-04"):
+            d = data.money_transactions(self.db_path, bucket="revenue", month=month)
+            self.assertEqual(d["sum_usd"], bar[month])          # to the cent
+            self.assertEqual(round(sum(r["u"] for r in d["rows"]), 2), bar[month])
+            self.assertTrue(all(r["b"] == "revenue" and r["m"] == month
+                                for r in d["rows"]))
+
+    def test_bucket_drills_sum_to_waterfall_lines(self):
+        m = data.money(self.db_path, today="2026-06-15")
+        for b, total in m["buckets"].items():
+            d = data.money_transactions(self.db_path, bucket=b)
+            self.assertEqual(d["sum_usd"], total, f"bucket {b}")
+            self.assertEqual(d["count"], len(d["rows"]))
+
+    def test_multi_bucket_drill_is_net_revenue_kpi(self):
+        m = data.money(self.db_path, today="2026-06-15")
+        d = data.money_transactions(self.db_path, bucket="revenue,refund")
+        self.assertEqual(d["sum_usd"], m["pnl"]["net_revenue_usd"])
+
+    def test_unfiltered_explorer_covers_all_and_search_filters(self):
+        d = data.money_transactions(self.db_path)
+        self.assertEqual(d["count"], 8)                          # all canonical rows
+        s = data.money_transactions(self.db_path, q="connect")
+        self.assertEqual(s["count"], 2)                          # the two connect fees
+        self.assertEqual(s["sum_usd"], -90.0)
+        src = data.money_transactions(self.db_path, source="Wise")
+        self.assertEqual(src["count"], 1)
+        self.assertEqual(src["rows"][0]["u"], 1500.0)
+
+    def test_rows_shape_and_order(self):
+        d = data.money_transactions(self.db_path, bucket="revenue")
+        self.assertEqual([r["dt"] for r in d["rows"]],
+                         sorted((r["dt"] for r in d["rows"]), reverse=True))
+        for k in ("dt", "m", "b", "u", "s", "t", "d"):
+            self.assertIn(k, d["rows"][0])
+
+    def test_drill_doctor_gate_no_rows_on_red(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, type,"
+                         " amount_minor, currency) VALUES ('bad','kbad','Other',NULL,'USD')")
+        d = data.money_transactions(self.db_path, bucket="revenue")
+        self.assertTrue(d["blocked"])
+        self.assertEqual(d["rows"], [])                          # never stale rows
+        self.assertEqual(d["count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,12 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Etherwise Cockpit</title>
   <link rel="stylesheet" href="/static/uplot.min.css">
+  <link rel="stylesheet" href="/static/tokens.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">Etherwise<span class="dot">.</span><span class="sub">cockpit</span></div>
+    <button id="navToggle" class="btn-icon nav-toggle" title="Menu" aria-label="Toggle menu">☰</button>
     <nav id="nav" class="nav"></nav>
+    <span id="health" class="healthchip" title="finance-doctor + last sync"><span class="dot2"></span>…</span>
+    <button id="themeToggle" class="btn-icon" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
     <div class="env" id="env"></div>
   </header>
   <main id="view" class="view">

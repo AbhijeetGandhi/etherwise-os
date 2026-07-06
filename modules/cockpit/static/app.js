@@ -5,6 +5,37 @@
 
 const SECTIONS = ["Today", "Nudges", "Pipeline", "Money", "Clients", "Knowledge", "System"];
 const TOKEN_KEY = "ew_cockpit_token";
+const THEME_KEY = "ew_cockpit_theme";
+const LAST_SECTION_KEY = "ew_cockpit_section";
+const MONEY_FILTERS_KEY = "ew_cockpit_money_filters";
+
+// ── theme (persisted; tokens.css carries the palettes) ──
+function initTheme() {
+  const t = localStorage.getItem(THEME_KEY);
+  if (t) document.documentElement.setAttribute("data-theme", t);
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", cur);
+  localStorage.setItem(THEME_KEY, cur);
+}
+
+// ── health chip: doctor + last sync, refreshed on boot + every 5 min ──
+async function refreshHealth() {
+  const chip = document.getElementById("health");
+  if (!chip) return;
+  try {
+    const d = await api("/api/system");
+    const worst = ((d.doctor || {}).worst || "?").toUpperCase();
+    const last = (d.jobs || []).map((j) => j.started_at || "").sort().pop() || "";
+    chip.className = "healthchip " + (worst === "GREEN" ? "green" : worst === "?" ? "" : "red");
+    chip.innerHTML = `<span class="dot2"></span>doctor ${worst}`
+      + (last ? ` · sync ${esc(last.replace("T", " ").slice(5, 16))}` : "");
+  } catch (e) {
+    chip.className = "healthchip";
+    chip.innerHTML = `<span class="dot2"></span>health n/a`;
+  }
+}
 
 function bootToken() {
   const u = new URL(location.href);
@@ -67,6 +98,10 @@ async function nudge(itemKey, action, snoozeDays) {
 }
 
 const fmtUsd = (n) => "$" + (n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
+const fmtUsd2 = (n) => { const s = n < 0 ? "−" : ""; n = Math.abs(n || 0);
+  return s + "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+const fmtUsd0 = (n) => { const s = n < 0 ? "−" : ""; n = Math.abs(n || 0);
+  return s + "$" + n.toLocaleString("en-US", { maximumFractionDigits: 0 }); };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; };
 const pill = (text, cls) => text ? el("span", "pill " + (cls || ""), text) : document.createTextNode("");
@@ -289,71 +324,7 @@ const RENDERERS = {
     });
     view.appendChild(t);
   },
-  Money: async (view) => {
-    const d = await api("/api/money");
-    view.appendChild(el("h2", "section", "Money"));
-    if (d.blocked) {                       // finance-doctor RED -> show nothing
-      view.appendChild(card("Finance blocked",
-        `<div class="metric muted">— doctor RED —</div>`
-        + `<div class="muted">${d.note || ""}</div>`
-        + `<div class="muted" style="font-size:11px">RED: ${(d.reds||[]).join(", ")}</div>`));
-      return;
-    }
-    const r = d.revenue || {};
-    const grid = el("div", "grid");
-    const pct = Math.min(100, r.pct_to_target || 0);
-    grid.appendChild(card("Revenue this month",
-      `<div class="metric">${fmtUsd(r.month_usd)} <small>/ ${fmtUsd(r.target_usd)}</small></div>`
-      + `<div class="bar"><span style="width:${pct}%"></span></div>`
-      + `<div class="muted">${r.pct_to_target ?? 0}% to target · ${r.month}</div>`));
-    // apples-to-apples: this MTD vs last month through the same day
-    const mtdDelta = (r.month_usd || 0) - (r.last_month_mtd_usd || 0);
-    grid.appendChild(card("Pace vs last month",
-      `<div class="metric">${mtdDelta >= 0 ? "+" : "−"}${fmtUsd(Math.abs(mtdDelta))}</div>`
-      + `<div class="muted">MTD ${fmtUsd(r.month_usd)} vs ${fmtUsd(r.last_month_mtd_usd)} same point last month</div>`
-      + `<div class="muted">last month full: ${fmtUsd(r.last_month_usd)}</div>`));
-    const c = d.connects || {};
-    grid.appendChild(card("Connects spend",
-      `<div class="metric">${fmtUsd(c.this_month_usd)} <small>this month</small></div>`
-      + `<div class="muted">${fmtUsd(c.lifetime_usd)} lifetime</div>`));
-    const cash = d.cash || {};
-    const cashLines = (cash.by_account || [])
-      .map((a) => `${a.account} ${a.currency} ${a.closing} → ${fmtUsd(a.usd)}`).join("<br>");
-    grid.appendChild(card("Cash position",
-      `<div class="metric">${fmtUsd(cash.value_usd)}</div>`
-      + `<div class="muted" style="font-size:11px">${cashLines}</div>`
-      + `<div class="muted" style="font-size:11px">${cash.note || ""} · as of ${cash.as_of || ""}</div>`));
-    const p = d.pnl || {};
-    grid.appendChild(card("Profit &amp; runway",
-      `<div class="metric">${fmtUsd(p.operating_profit_usd)} <small>op. profit</small></div>`
-      + `<div class="muted">trailing-12mo ${fmtUsd(p.monthly_operating_profit_usd)}/mo · `
-      + `${p.runway_months == null ? "profitable (no burn)" : p.runway_months + " mo runway"}</div>`
-      + `<div class="muted" style="font-size:11px">owner draws ${fmtUsd(p.owner_draw_usd)} (below the line)`
-      + `${p.uncategorized_count ? " · " + p.uncategorized_count + " uncategorized" : ""}</div>`));
-    view.appendChild(grid);
-
-    view.appendChild(el("h2", "section", "Revenue by month"));
-    const chartBox = el("div", "card");
-    const chart = el("div", "chart");
-    chartBox.appendChild(chart);
-    view.appendChild(chartBox);
-    drawBarChart(chart,
-      (r.by_month || []).map((m) => ({ label: m.month.slice(2), v: m.usd, current: m.current })),
-      { money: true, target: r.target_usd, targetLabel: "target " + fmtUsd(r.target_usd) });
-
-    view.appendChild(el("h2", "section", "Recent transactions"));
-    const t = el("table");
-    t.innerHTML = "<tr><th>Date</th><th>Type</th><th>Amount</th><th>Profile</th></tr>";
-    (d.transactions || []).forEach((x) => {
-      const tr = el("tr");
-      const amt = (x.amount >= 0 ? "" : "−") + fmtUsd(Math.abs(x.amount));
-      tr.innerHTML = `<td class="muted">${(x.creation_dt||"").slice(0,10)}</td>`
-        + `<td>${x.type || "—"}</td><td>${amt} ${x.currency||""}</td>`
-        + `<td class="muted">${x.profile || "—"}</td>`;
-      t.appendChild(tr);
-    });
-    view.appendChild(t);
-  },
+  Money: renderMoney,
   Clients: async (view) => {
     const d = await api("/api/clients");
     view.appendChild(el("h2", "section", `Clients (${d.count || 0})`));
@@ -534,6 +505,336 @@ const RENDERERS = {
   },
 };
 
+// ════════════════════════ MONEY (flagship section) ════════════════════════
+// Principle: every number is explainable — click any figure and the exact
+// transactions behind it expand, and they sum to it, to the cent.
+const BLABEL = { revenue: "Revenue", refund: "Refunds", platform_fee: "Platform fees",
+  tax: "Taxes", payroll: "Payroll", opex: "Operating expenses", owner_draw: "Owner draws",
+  transfer: "Transfers", sweep: "Sweeps", cc_settlement: "Card settlement",
+  uncategorized: "Uncategorized" };
+
+function moneyTip() {
+  let tip = document.getElementById("tip");
+  if (!tip) { tip = el("div", "tip"); tip.id = "tip"; document.body.appendChild(tip); }
+  return tip;
+}
+
+function txTable(rows) {
+  rows = rows.slice().sort((a, b) => (a.dt < b.dt ? 1 : -1));
+  const wrap = el("div", "tablewrap");
+  const t = el("table");
+  t.innerHTML = "<tr><th>Date</th><th>Bucket</th><th>Type</th><th>Source</th>"
+    + "<th>Description</th><th class='num'>Amount</th></tr>";
+  rows.forEach((x) => {
+    const tr = el("tr");
+    tr.innerHTML = `<td class="muted">${esc(x.dt)}</td>`
+      + `<td><span class="chip ${esc(x.b)}">${esc(BLABEL[x.b] || x.b)}</span></td>`
+      + `<td>${esc(x.t)}</td><td class="muted">${esc(x.s)}</td><td>${esc(x.d)}</td>`
+      + `<td class="num ${x.u >= 0 ? "pos" : "neg"}">${fmtUsd2(x.u)}</td>`;
+    t.appendChild(tr);
+  });
+  wrap.appendChild(t);
+  return wrap;
+}
+
+// Traceability contract: the panel header shows count + sum OF THE ROWS —
+// the frontend only sums returned rows, never re-derives the metric.
+function openDrill(host, title, rows) {
+  host.innerHTML = "";
+  host.classList.add("open");
+  const total = rows.reduce((s, r) => s + r.u, 0);
+  const h = el("h4", null, `${esc(title)} <span class="count">— ${rows.length}`
+    + ` transaction${rows.length === 1 ? "" : "s"} · sum ${fmtUsd2(total)}</span>`
+    + `<button class="close">✕ close</button>`);
+  h.querySelector(".close").onclick = () => host.classList.remove("open");
+  host.appendChild(h);
+  host.appendChild(rows.length ? txTable(rows)
+    : el("div", "emptystate", "No transactions behind this figure."));
+  host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function renderMoney(view) {
+  const [d, tx] = await Promise.all([
+    api("/api/money"), api("/api/money/transactions")]);
+  if (d.blocked) {                       // finance-doctor RED -> show nothing
+    const b = el("div", "blocked");
+    b.appendChild(el("h3", null, "Finance blocked — doctor RED"));
+    b.appendChild(el("div", null, esc(d.note || "")));
+    b.appendChild(el("div", "muted small", "RED: " + (d.reds || []).join(", ")));
+    view.appendChild(b);
+    return;
+  }
+  const rows = tx.rows || [];            // the full reconciled ledger (drill source)
+  const r = d.revenue || {}, p = d.pnl || {}, cash = d.cash || {};
+  const buckets = d.buckets || {};
+  const byMonth = r.by_month || [];
+  const thisM = r.month, lastM = r.last_month;
+  const revThis = r.month_usd || 0, revLast = r.last_month_usd || 0;
+  const rowsFor = (pred) => rows.filter(pred);
+  const revRows = (m) => rowsFor((x) => x.b === "revenue" && x.m === m);
+
+  view.appendChild(el("h2", "section",
+    `Money <span class="hint muted">— every number is clickable; figures match`
+    + ` bin/finance-pnl · as of ${esc(d.as_of || "")}</span>`));
+
+  // ── KPI row (all clickable) ──
+  const kpis = el("div", "kpis");
+  const revDrill = el("div", "drill");
+  const wfDrill = el("div", "drill");
+  const mkKpi = (lbl, val, sub, act) => {
+    const c = el("button", "kpi");
+    c.appendChild(el("div", "lbl", lbl));
+    c.appendChild(el("div", "val", val));
+    c.appendChild(el("div", "sub2", sub));
+    c.appendChild(el("div", "tag", "details →"));
+    c.onclick = act;
+    return c;
+  };
+  kpis.appendChild(mkKpi("Cash position", fmtUsd0(cash.value_usd),
+    esc(cash.note || ""), () => drillCash()));
+  kpis.appendChild(mkKpi("Net revenue", fmtUsd0(p.net_revenue_usd),
+    "all-time · revenue + refunds",
+    () => openDrill(wfDrill, "Net revenue (revenue + refunds)",
+      rowsFor((x) => x.b === "revenue" || x.b === "refund"))));
+  kpis.appendChild(mkKpi("Operating profit", fmtUsd0(p.operating_profit_usd),
+    "all-time · after all costs",
+    () => wfCard.scrollIntoView({ behavior: "smooth", block: "center" })));
+  const delta = revThis - revLast;
+  kpis.appendChild(mkKpi(`This month (${esc(thisM || "")})`, fmtUsd0(revThis),
+    `<span class="${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} `
+    + `${fmtUsd0(Math.abs(delta))}</span> vs ${fmtUsd0(revLast)} last month`,
+    () => { selectBar(thisM); drillMonth(thisM); }));
+  view.appendChild(kpis);
+
+  // ── Revenue by month (13 bars · hover tooltip · click to drill) ──
+  view.appendChild(el("h2", "section",
+    `Revenue by month <span class="hint muted">— hover for detail, click a bar`
+    + ` for its transactions</span>`));
+  const chartCard = el("div", "card");
+  const chart = el("div", "mchart");
+  chartCard.appendChild(chart);
+  chartCard.appendChild(revDrill);
+  view.appendChild(chartCard);
+  const tip = moneyTip();
+  const maxRev = Math.max(...byMonth.map((m) => m.usd), 1);
+  const drillMonth = (m) => openDrill(revDrill, `Revenue — ${m}`, revRows(m));
+  const selectBar = (m) => chart.querySelectorAll(".mcol").forEach((x) =>
+    x.classList.toggle("sel", x.dataset.m === m));
+  byMonth.forEach((mrow) => {
+    const m = mrow.month, v = mrow.usd;
+    const col = el("button", "mcol" + (mrow.current ? " cur" : ""));
+    col.dataset.m = m;
+    const bar = el("div", "mbar");
+    bar.style.height = (100 * v / maxRev) + "%";
+    col.appendChild(bar);
+    col.appendChild(el("div", "xlbl" + (mrow.current ? " cur" : ""), m.slice(2)));
+    col.onmousemove = (e) => {
+      const mr = revRows(m);
+      const bySrc = {};
+      mr.forEach((x) => { bySrc[x.s] = (bySrc[x.s] || 0) + x.u; });
+      const top = Object.entries(bySrc).sort((a, b) => b[1] - a[1])[0];
+      tip.style.opacity = 1;
+      tip.style.left = Math.min(e.clientX + 14, innerWidth - 250) + "px";
+      tip.style.top = (e.clientY - 10) + "px";
+      tip.innerHTML = `<b>${m}</b> · ${fmtUsd2(v)}<br>${mr.length} transaction`
+        + `${mr.length === 1 ? "" : "s"}`
+        + (top ? `<br>top: ${esc(top[0])} ${fmtUsd0(top[1])}` : "")
+        + `<br><span style="opacity:.75">click to drill down</span>`;
+    };
+    col.onmouseleave = () => { tip.style.opacity = 0; };
+    col.onclick = () => { selectBar(m); drillMonth(m); };
+    chart.appendChild(col);
+  });
+  if (!byMonth.length) chart.appendChild(el("div", "emptystate", "No revenue months yet."));
+
+  // ── P&L waterfall (each line drills; owner draws below the line) ──
+  view.appendChild(el("h2", "section",
+    `Profit &amp; Loss <span class="hint muted">— all-time · click any line for`
+    + ` its transactions</span>`));
+  const wfCard = el("div", "card");
+  const wf = el("div", "wf");
+  const wfLines = [["revenue", "Revenue"], ["refund", "Refunds"],
+    ["platform_fee", "Platform fees (Upwork/Wise)"], ["tax", "Taxes (WHT/GST)"],
+    ["payroll", "Payroll"], ["opex", "Operating expenses"]];
+  const wfMax = Math.max(...wfLines.map(([b]) => Math.abs(buckets[b] || 0)), 1);
+  wfLines.forEach(([b, label]) => {
+    const v = buckets[b] || 0;
+    const row = el("button", "wfrow");
+    row.appendChild(el("div", "n", label));
+    const bl = el("div", "bl");
+    const sp = el("span");
+    sp.style.width = (100 * Math.abs(v) / wfMax) + "%";
+    sp.style.left = "0";
+    sp.style.background = v >= 0 ? "var(--green)" : "var(--red)";
+    bl.appendChild(sp);
+    row.appendChild(bl);
+    row.appendChild(el("div", "amt " + (v >= 0 ? "pos" : "neg"), fmtUsd2(v)));
+    row.onclick = () => openDrill(wfDrill, BLABEL[b] || b,
+      rowsFor((x) => x.b === b));
+    wf.appendChild(row);
+  });
+  const tot = el("div", "wfrow total");
+  tot.appendChild(el("div", "n", "Operating profit"));
+  tot.appendChild(el("div", "bl"));
+  tot.appendChild(el("div", "amt " + ((p.operating_profit_usd || 0) >= 0 ? "pos" : "neg"),
+    fmtUsd2(p.operating_profit_usd)));
+  wf.appendChild(tot);
+  const od = el("button", "wfrow");
+  od.appendChild(el("div", "n",
+    `<span class="muted">Owner draws (below the line — equity, not a cost)</span>`));
+  od.appendChild(el("div", "bl"));
+  od.appendChild(el("div", "amt neg", fmtUsd2(p.owner_draw_usd)));
+  od.onclick = () => openDrill(wfDrill, "Owner draws",
+    rowsFor((x) => x.b === "owner_draw"));
+  wf.appendChild(od);
+  wfCard.appendChild(wf);
+  wfCard.appendChild(el("div", "muted small",
+    "Transfers, sweeps and card settlements are excluded — non-economic"
+    + " (money moving between our own accounts)."));
+  wfCard.appendChild(wfDrill);
+  view.appendChild(wfCard);
+
+  // ── Cash position ──
+  view.appendChild(el("h2", "section", "Cash position"));
+  const cashCard = el("div", "card");
+  (cash.by_account || []).forEach((a) => {
+    const row = el("div", "cashrow");
+    row.appendChild(el("div", null,
+      `<strong>${esc(a.account)}</strong> <span class="muted">${esc(a.currency)}</span>`));
+    const local = a.currency === "INR"
+      ? "₹" + Number(a.closing).toLocaleString("en-IN", { minimumFractionDigits: 2 })
+      : fmtUsd2(Number(a.closing));
+    row.appendChild(el("div", "num", `${local} <span class="muted">→ ${fmtUsd2(a.usd)}</span>`));
+    cashCard.appendChild(row);
+  });
+  const ctot = el("div", "cashrow");
+  ctot.style.fontWeight = "700";
+  ctot.appendChild(el("div", null, "Total (base USD)"));
+  ctot.appendChild(el("div", "num", fmtUsd2(cash.value_usd)));
+  cashCard.appendChild(ctot);
+  cashCard.appendChild(el("div", "muted small",
+    `INR→USD at ${esc(cash.inr_usd_rate || "?")} (pinned) · FD = fixed deposit`
+    + ` · as of ${esc(cash.as_of || "")}`));
+  view.appendChild(cashCard);
+
+  function drillCash() {
+    openDrill(wfDrill, "Cash accounts", []);
+    wfDrill.querySelector(".emptystate")?.remove();
+    const wrap = el("div", "tablewrap");
+    const t = el("table");
+    t.innerHTML = "<tr><th>Account</th><th>Currency</th><th class='num'>Local</th>"
+      + "<th class='num'>USD</th></tr>";
+    (cash.by_account || []).forEach((a) => {
+      const tr = el("tr");
+      tr.innerHTML = `<td><strong>${esc(a.account)}</strong></td><td>${esc(a.currency)}</td>`
+        + `<td class="num">${Number(a.closing).toLocaleString()}</td>`
+        + `<td class="num pos">${fmtUsd2(a.usd)}</td>`;
+      t.appendChild(tr);
+    });
+    wrap.appendChild(t);
+    wfDrill.appendChild(wrap);
+    wfDrill.querySelector(".count").textContent =
+      `— ${(cash.by_account || []).length} accounts · total ${fmtUsd2(cash.value_usd)}`;
+  }
+
+  // ── Transaction explorer (filters + search + sortable + count/sum) ──
+  view.appendChild(el("h2", "section",
+    `Transaction explorer <span class="hint muted">— filter &amp; search every`
+    + ` reconciled transaction</span>`));
+  const expCard = el("div", "card");
+  const filters = el("div", "filters");
+  const fMonth = el("select"), fBucket = el("select"), fSource = el("select");
+  const fSearch = el("input");
+  fSearch.type = "search";
+  fSearch.placeholder = "search description…";
+  const expCount = el("span", "muted small");
+  fMonth.appendChild(new Option("All months", ""));
+  [...new Set(rows.map((t) => t.m))].sort().reverse()
+    .forEach((m) => fMonth.appendChild(new Option(m, m)));
+  fBucket.appendChild(new Option("All buckets", ""));
+  [...new Set(rows.map((t) => t.b))].sort()
+    .forEach((b) => fBucket.appendChild(new Option(BLABEL[b] || b, b)));
+  fSource.appendChild(new Option("All sources", ""));
+  [...new Set(rows.map((t) => t.s))].sort()
+    .forEach((s) => fSource.appendChild(new Option(s || "—", s)));
+  filters.append(fMonth, fBucket, fSource, fSearch, expCount);
+  const expWrap = el("div", "tablewrap");
+  expWrap.style.maxHeight = "460px";
+  expWrap.style.overflow = "auto";
+  const expTable = el("table");
+  expWrap.appendChild(expTable);
+  expCard.append(filters, expWrap);
+  view.appendChild(expCard);
+
+  // restore last filter state (remembered per brief)
+  try {
+    const saved = JSON.parse(localStorage.getItem(MONEY_FILTERS_KEY) || "{}");
+    if (saved.m) fMonth.value = saved.m;
+    if (saved.b) fBucket.value = saved.b;
+    if (saved.s) fSource.value = saved.s;
+    if (saved.q) fSearch.value = saved.q;
+  } catch (e) { /* fresh state */ }
+
+  let sortKey = "dt", sortDir = -1;
+  function renderExp() {
+    localStorage.setItem(MONEY_FILTERS_KEY, JSON.stringify(
+      { m: fMonth.value, b: fBucket.value, s: fSource.value, q: fSearch.value }));
+    const needle = fSearch.value.toLowerCase();
+    let out = rows.filter((t) =>
+      (!fMonth.value || t.m === fMonth.value)
+      && (!fBucket.value || t.b === fBucket.value)
+      && (!fSource.value || t.s === fSource.value)
+      && (!needle || (t.d + " " + t.t).toLowerCase().includes(needle)));
+    out.sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey];
+      if (sortKey === "u") return (x - y) * sortDir;
+      return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+    });
+    const total = out.reduce((s, t) => s + t.u, 0);
+    expCount.innerHTML = `${out.length} of ${rows.length} · sum <b>${fmtUsd2(total)}</b>`;
+    expTable.innerHTML = "";
+    const head = el("tr");
+    [["dt", "Date"], ["b", "Bucket"], ["t", "Type"], ["s", "Source"],
+     ["d", "Description"], ["u", "Amount"]].forEach(([k, l]) => {
+      const th = el("th", "sortable" + (k === "u" ? " num" : ""),
+        l + (sortKey === k ? (sortDir < 0 ? " ▼" : " ▲") : ""));
+      th.onclick = () => {
+        if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+        renderExp();
+      };
+      head.appendChild(th);
+    });
+    expTable.appendChild(head);
+    out.slice(0, 600).forEach((x) => {
+      const tr = el("tr");
+      tr.innerHTML = `<td class="muted">${esc(x.dt)}</td>`
+        + `<td><span class="chip ${esc(x.b)}">${esc(BLABEL[x.b] || x.b)}</span></td>`
+        + `<td>${esc(x.t)}</td><td class="muted">${esc(x.s)}</td><td>${esc(x.d)}</td>`
+        + `<td class="num ${x.u >= 0 ? "pos" : "neg"}">${fmtUsd2(x.u)}</td>`;
+      expTable.appendChild(tr);
+    });
+    if (out.length > 600) expTable.appendChild(el("tr", null,
+      `<td colspan=6 class="muted small">showing first 600 of ${out.length}`
+      + ` — narrow the filter to see the rest</td>`));
+  }
+  [fMonth, fBucket, fSource].forEach((s) => { s.onchange = renderExp; });
+  fSearch.oninput = renderExp;
+  renderExp();
+
+  view.appendChild(el("div", "foot",
+    `Data as of <b>${esc(d.as_of || "")}</b> · ${rows.length} reconciled transactions`
+    + ` · computed from the same audited <code>pnl.compute</code> buckets as`
+    + ` <code>bin/finance-pnl</code>, gated on finance-doctor GREEN.`
+    + ` Net revenue = revenue + refunds; operating profit is after platform fees,`
+    + ` taxes, payroll and opex; owner draws are equity (below the line);`
+    + ` transfers/sweeps/card-settlement are excluded (non-economic).`));
+
+  // Esc closes any open drill
+  view.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") [revDrill, wfDrill].forEach((h) => h.classList.remove("open"));
+  });
+}
+
 function factLine(x, showClient) {
   const trusted = x.confidence === "CONFIRMED" || x.confidence === "CROSS-VERIFIED";
   const who = showClient && x.client_id ? `<span class="pill">${esc(x.client_id)}</span> ` : "";
@@ -631,17 +932,44 @@ function card(title, html) {
 async function show(section) {
   currentSection = section;
   renderNav(section);
+  // deep-linkable sections + remember the last one
+  const want = "#" + section.toLowerCase();
+  if (location.hash !== want) history.replaceState({}, "", want);
+  localStorage.setItem(LAST_SECTION_KEY, section);
+  document.getElementById("nav").classList.remove("open");
   const view = document.getElementById("view");
   view.innerHTML = "";
+  view.appendChild(el("div", "loading", "Loading…"));
   const r = RENDERERS[section];
   try {
-    if (r) await r(view);
-    else { view.appendChild(el("h2", "section", section)); placeholder(view, section + " — wiring in a later phase."); }
+    const stage = el("div");
+    if (r) await r(stage);
+    else { stage.appendChild(el("h2", "section", section)); placeholder(stage, section + " — wiring in a later phase."); }
+    view.innerHTML = "";
+    view.appendChild(stage);
   } catch (e) {
+    view.innerHTML = "";
     if (e && e.unauthorized) { renderUnlock(view, !!localStorage.getItem(TOKEN_KEY)); return; }
-    view.appendChild(el("div", "placeholder", String(e.message || e)));
+    view.appendChild(el("div", "errstate", "This section failed to load: "
+      + esc(String(e.message || e)) + " — retry from the nav."));
   }
 }
 
+function sectionFromHash() {
+  const h = (location.hash || "").replace("#", "").toLowerCase();
+  return SECTIONS.find((s) => s.toLowerCase() === h) || null;
+}
+
+// ── boot ──
+initTheme();
 document.getElementById("env").textContent = location.host;
-show("Today");
+document.getElementById("themeToggle").onclick = toggleTheme;
+document.getElementById("navToggle").onclick = () =>
+  document.getElementById("nav").classList.toggle("open");
+window.addEventListener("hashchange", () => {
+  const s = sectionFromHash();
+  if (s && s !== currentSection) show(s);
+});
+refreshHealth();
+setInterval(refreshHealth, 5 * 60 * 1000);
+show(sectionFromHash() || localStorage.getItem(LAST_SECTION_KEY) || "Today");
