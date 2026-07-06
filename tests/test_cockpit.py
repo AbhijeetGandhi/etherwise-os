@@ -759,6 +759,20 @@ class TestMoneyReader(unittest.TestCase):
         self.assertEqual(accts["wise"], 0.0)
         self.assertEqual(round(sum(accts.values()), 2), out["cash"]["value_usd"])
 
+    def test_cash_latest_statement_per_account(self):
+        # overlapping re-imports leave several balance rows per account: cash
+        # takes the LATEST closing per account, never the sum (2026-07-07: two
+        # idfc statements would have double-counted savings).
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO account_balances (account,currency,opening_minor,"
+                         "closing_minor,statement_date,source_file,period_start,period_end)"
+                         " VALUES ('idfc','INR',50000000,50000059,'2026-07-05',"
+                         "'authoritative:idfc-new','2026-04-02','2026-06-30')")
+        out = data.money(self.db_path, today="2026-06-15")
+        idfc = [a for a in out["cash"]["by_account"] if a["account"] == "idfc"]
+        self.assertEqual(len(idfc), 1)                     # one row per account
+        self.assertEqual(idfc[0]["usd"], round(500000.59 * 0.012, 2))  # newest closing
+
     def test_pnl_matches_finance_pnl(self):
         # the cockpit panel must equal the audited compute (bin/finance-pnl source)
         from modules.finance import pnl, money as fmoney

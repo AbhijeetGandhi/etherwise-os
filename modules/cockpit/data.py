@@ -481,8 +481,16 @@ def money(db_path: Optional[Path] = None,
             "SELECT source, type, upwork_type, category, accounting_subtype,"
             " description, pnl_bucket, amount_base_minor, creation_dt FROM"
             " transactions WHERE canonical_key IS NOT NULL")]
+        # LATEST closing per account: with overlapping/re-imported statements an
+        # account has several balance rows — summing them double-counted cash
+        # (2026-07-07: two idfc statements would have shown ~2x savings).
+        # Deterministic: newest period_end/statement_date, id as tiebreak.
         bals = [dict(r) for r in conn.execute(
-            "SELECT account, currency, closing_minor FROM account_balances")]
+            "SELECT account, currency, closing_minor FROM account_balances b"
+            " WHERE b.id = (SELECT b2.id FROM account_balances b2"
+            "  WHERE b2.account = b.account"
+            "  ORDER BY COALESCE(b2.period_end, b2.statement_date) DESC, b2.id DESC"
+            "  LIMIT 1)")]
         fxr = conn.execute(
             "SELECT fx_rate FROM transactions WHERE source='IDFC' AND fx_rate"
             " IS NOT NULL AND fx_rate!='1' ORDER BY fx_date DESC LIMIT 1").fetchone()

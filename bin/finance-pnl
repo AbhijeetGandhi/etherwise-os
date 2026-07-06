@@ -43,7 +43,7 @@ def run(period_months: int = 12) -> dict:
             " WHERE canonical_key IS NOT NULL")]
         bals = [dict(r) for r in conn.execute(
             "SELECT account, currency, closing_minor, statement_date, source_file"
-            " FROM account_balances")]
+            " FROM account_balances b WHERE b.id = (SELECT b2.id FROM account_balances b2 WHERE b2.account = b.account ORDER BY COALESCE(b2.period_end, b2.statement_date) DESC, b2.id DESC LIMIT 1)")]  # latest per account (011)
         # most-recent pinned INR->USD rate, to value the IDFC INR cash in USD
         fxr = conn.execute("SELECT fx_rate FROM transactions WHERE source='IDFC'"
                            " AND fx_rate IS NOT NULL AND fx_rate!='1'"

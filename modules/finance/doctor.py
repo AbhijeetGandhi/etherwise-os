@@ -100,18 +100,22 @@ def _check_statement_integrity(conn) -> Check:
     # aggregate balances (the FD principal) carry a 'derived:'/'authoritative:'
     # source and have NO transaction flow in the ledger — they are point-in-time
     # balances, not statements, so #1 must skip them (else they falsely go RED).
-    stmts = [dict(r) for r in conn.execute(
-        "SELECT account, currency, opening_minor, closing_minor, statement_date,"
-        " source_file FROM account_balances WHERE source_file NOT LIKE 'derived:%'"
-        " AND source_file NOT LIKE 'authoritative:%'")]
+    stmts = _file_stmts(conn)     # includes period_start/period_end (011)
     if not stmts:
         return Check("#1 statement integrity", "N/A", "no statements imported yet")
     reds = []
     for s in stmts:
-        flow = conn.execute(
-            "SELECT COALESCE(SUM(amount_minor),0) f FROM transactions"
-            " WHERE source_file=? AND currency=?",
-            (s["source_file"], s["currency"])).fetchone()["f"]
+        # WINDOW attribution when the statement carries its coverage (011) —
+        # overlap-safe; else legacy source_file attribution (pre-011 rows).
+        flow = None
+        if s.get("period_start") and s.get("period_end"):
+            flow = _window_flow(conn, s["account"], s["currency"],
+                                s["period_start"], s["period_end"])
+        if flow is None:
+            flow = conn.execute(
+                "SELECT COALESCE(SUM(amount_minor),0) f FROM transactions"
+                " WHERE source_file=? AND currency=?",
+                (s["source_file"], s["currency"])).fetchone()["f"]
         expected = s["opening_minor"] + flow
         if expected != s["closing_minor"]:
             reds.append({"account": s["account"], "statement": s["statement_date"],
@@ -194,15 +198,44 @@ def _file_stmts(conn):
     like the FD principal — those are not transaction-backed statements)."""
     return [dict(r) for r in conn.execute(
         "SELECT account, currency, opening_minor, closing_minor, statement_date,"
-        " source_file FROM account_balances WHERE source_file NOT LIKE 'derived:%'"
+        " source_file, period_start, period_end FROM account_balances"
+        " WHERE source_file NOT LIKE 'derived:%'"
         " AND source_file NOT LIKE 'authoritative:%' ORDER BY account, currency,"
         " statement_date")]
 
 
+# account -> (transactions.source, canonical_key prefix): the rows a statement
+# window covers. Window attribution is overlap-safe — a re-downloaded statement
+# re-covers months whose rows were first inserted by an earlier file (2026-07-07).
+_ACCOUNT_ROWS = {"idfc": ("IDFC", "bank:%"), "wise": ("Wise", "wise:%")}
+
+
+def _window_flow(conn, account: str, currency: str, start: str, end: str):
+    """Σ amount_minor of the account's ledger rows dated within [start, end];
+    None when the account has no row mapping (falls back to file attribution)."""
+    m = _ACCOUNT_ROWS.get(account)
+    if not m or not (start and end) or start > end:
+        return None if not m else 0
+    src, pref = m
+    return conn.execute(
+        "SELECT COALESCE(SUM(amount_minor),0) f FROM transactions"
+        " WHERE source=? AND canonical_key LIKE ? AND currency=?"
+        " AND substr(creation_dt,1,10) BETWEEN ? AND ?",
+        (src, pref, currency, start, end)).fetchone()["f"]
+
+
 def _check_continuity(conn) -> Check:
-    """#2 continuity: for an account with >1 statement, consecutive periods must be
-    contiguous — closing[i] == opening[i+1] (no missing month, no overlap). N/A
-    until a second statement for some account exists."""
+    """#2 continuity: consecutive statements of an account must agree at the
+    boundary. UNIFIED rule (011, overlap-safe):
+        a.closing == b.opening + Σ(account rows in [b.period_start, a.period_end])
+    - contiguous statements: the window is empty -> b.opening must equal a.closing
+      (the pre-011 rule, unchanged);
+    - OVERLAPPING statements (a re-downloaded export): b re-covers part of a's
+      window, so b.opening + the overlap flow must land exactly on a.closing;
+    - a COVERAGE GAP (b starts later than the day after a ends) is RED — missing
+      days can hide missing transactions.
+    Statements without windows (pre-011) use the closing==opening equality."""
+    import datetime as _dt
     from collections import defaultdict
     groups = defaultdict(list)
     for s in _file_stmts(conn):
@@ -213,15 +246,32 @@ def _check_continuity(conn) -> Check:
     breaks = []
     for (acct, ccy), v in multi.items():
         for a, b in zip(v, v[1:]):
-            if a["closing_minor"] != b["opening_minor"]:
+            windowed = (a.get("period_end") and b.get("period_start"))
+            if windowed:
+                day_after_a = (_dt.date.fromisoformat(a["period_end"])
+                               + _dt.timedelta(days=1)).isoformat()
+                if b["period_start"] > day_after_a:
+                    breaks.append({"account": acct, "error": "coverage gap",
+                                   "from": a["period_end"], "to": b["period_start"]})
+                    continue
+                overlap = _window_flow(conn, acct, ccy,
+                                       b["period_start"], a["period_end"])
+                if overlap is None:            # unmapped account -> equality rule
+                    overlap = 0
+                expected = b["opening_minor"] + overlap
+                if a["closing_minor"] != expected:
+                    breaks.append({"account": acct, "from": a["statement_date"],
+                                   "to": b["statement_date"],
+                                   "gap_minor": expected - a["closing_minor"]})
+            elif a["closing_minor"] != b["opening_minor"]:
                 breaks.append({"account": acct, "from": a["statement_date"],
                                "to": b["statement_date"],
                                "gap_minor": b["opening_minor"] - a["closing_minor"]})
     if breaks:
         return Check("#2 continuity", "RED",
-                     f"{len(breaks)} period gap/overlap (closing != next opening)", breaks)
+                     f"{len(breaks)} boundary break(s) (gap or closing mismatch)", breaks)
     return Check("#2 continuity", "GREEN",
-                 f"{sum(len(v) for v in multi.values())} statements chain contiguously")
+                 f"{sum(len(v) for v in multi.values())} statements chain consistently")
 
 
 def _check_ledger_tieout(conn) -> Check:

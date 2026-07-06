@@ -111,10 +111,12 @@ def run(apply: bool) -> dict:
             opener = (last if nf else first)
             conn.execute(
                 "INSERT OR IGNORE INTO account_balances (account, currency,"
-                " opening_minor, closing_minor, statement_date, source_file)"
-                " VALUES ('wise','USD',?,?,?,?)",
+                " opening_minor, closing_minor, statement_date, source_file,"
+                " period_start, period_end) VALUES ('wise','USD',?,?,?,?,?,?)",
                 (opener["balance_minor"] - opener["amount_minor"], closing,
-                 max(r["date"] for r in usd_rows), usd_rows[0]["_file"]))
+                 max(r["date"] for r in usd_rows), usd_rows[0]["_file"],
+                 min(r["date"] for r in usd_rows),
+                 max(r["date"] for r in usd_rows)))
 
     return {"mode": "APPLY" if apply else "DRY-RUN",
             "files": [f.name for f, _ in files], "total_rows": len(all_rows),

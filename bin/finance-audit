@@ -52,7 +52,7 @@ def run(db_path=None, with_tieout=True) -> dict:
             " description, pnl_bucket, amount_base_minor FROM transactions"
             " WHERE canonical_key IS NOT NULL")]
         bals = [dict(r) for r in conn.execute(
-            "SELECT account, currency, closing_minor, source_file FROM account_balances")]
+            "SELECT account, currency, closing_minor, source_file FROM account_balances b WHERE b.id = (SELECT b2.id FROM account_balances b2 WHERE b2.account = b.account ORDER BY COALESCE(b2.period_end, b2.statement_date) DESC, b2.id DESC LIMIT 1)")]  # latest per account (011)
         fxr = conn.execute("SELECT fx_rate FROM transactions WHERE source='IDFC'"
                            " AND fx_rate IS NOT NULL AND fx_rate!='1'"
                            " ORDER BY fx_date DESC LIMIT 1").fetchone()

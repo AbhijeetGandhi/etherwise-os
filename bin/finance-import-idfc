@@ -120,14 +120,18 @@ def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
                              (f"IDFC parse: {q['reason']} ({f.name})",
                               json.dumps(q, default=str)))
 
-        # 4) account_balances for the #1 statement-integrity tie-out (SAVINGS)
+        # 4) account_balances for the #1 statement-integrity tie-out (SAVINGS).
+        # period_start/end = the statement's own window, so #1/#2 attribute flow
+        # by ACCOUNT+WINDOW (overlap-safe), not by which file first inserted a row.
         if apply and "opening_balance_minor" in meta:
             conn.execute(
                 "INSERT OR IGNORE INTO account_balances (account, currency,"
-                " opening_minor, closing_minor, statement_date, source_file)"
-                " VALUES (?,?,?,?,?,?)",
+                " opening_minor, closing_minor, statement_date, source_file,"
+                " period_start, period_end) VALUES (?,?,?,?,?,?,?,?)",
                 (ACCOUNT, "INR", meta["opening_balance_minor"],
-                 meta["closing_balance_minor"], meta.get("period_end") or win_hi, f.name))
+                 meta["closing_balance_minor"], meta.get("period_end") or win_hi,
+                 f.name, meta.get("period_start") or win_lo,
+                 meta.get("period_end") or win_hi))
 
     # 5) FD/deposit balance — the savings closing OMITS the linked fixed deposits.
     # AUTHORITATIVE (Abhijeet's IDFC-app FD list) wins when given via --fd-balance-inr;

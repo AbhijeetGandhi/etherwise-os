@@ -266,6 +266,66 @@ class DoctorCase(unittest.TestCase):
         c2 = [c for c in doctor.run(self.db_path).checks if c.invariant == "#2 continuity"][0]
         self.assertEqual(c2.status, "GREEN")
 
+    def _bal_w(self, conn, account, opening, closing, date, src, start, end,
+               ccy="USD"):
+        conn.execute("INSERT INTO account_balances (account,currency,opening_minor,"
+                     "closing_minor,statement_date,source_file,period_start,period_end)"
+                     " VALUES (?,?,?,?,?,?,?,?)",
+                     (account, ccy, opening, closing, date, src, start, end))
+
+    def _bank_row(self, conn, rid, amt, dt, src_file, ccy="USD"):
+        conn.execute("INSERT INTO transactions (record_id, canonical_key,"
+                     " amount_minor, currency, source, source_file, creation_dt)"
+                     " VALUES (?,?,?,?,?,?,?)",
+                     (rid, "bank:" + rid, amt, ccy, "IDFC", src_file, dt))
+
+    def test_overlapping_statements_green_1_and_2(self):
+        # 2026-07-07 cockpit-upload shape: an old full statement, then a fresh
+        # export whose window OVERLAPS it and adds new days. WINDOW attribution
+        # keeps #1 green for BOTH statements (the overlap rows belong to the old
+        # file by first-import attribution) and #2 consistent at the boundary.
+        with db.connect(self.db_path) as conn:
+            self._bank_row(conn, "r1", 7300, "2026-06-20", "old.xlsx")   # overlap
+            self._bank_row(conn, "r2", 2700, "2026-06-25", "old.xlsx")   # overlap
+            self._bank_row(conn, "r3", -1400, "2026-06-28", "new.xlsx")  # new days
+            self._bal_w(conn, "idfc", 0, 10000, "2026-06-25", "old.xlsx",
+                        "2026-06-01", "2026-06-25")
+            # new statement re-covers 06-15.. and runs to 06-30:
+            # opening (bal at 06-14) = 0; closing = 7300+2700-1400 = 8600
+            self._bal_w(conn, "idfc", 0, 8600, "2026-06-30", "new.xlsx",
+                        "2026-06-15", "2026-06-30")
+        res = doctor.run(self.db_path)
+        c1 = [c for c in res.checks if c.invariant == "#1 statement integrity"][0]
+        c2 = [c for c in res.checks if c.invariant == "#2 continuity"][0]
+        self.assertEqual(c1.status, "GREEN", c1.deltas)
+        self.assertEqual(c2.status, "GREEN", c2.deltas)
+
+    def test_overlap_with_missing_row_still_red(self):
+        # window attribution must not WEAKEN the invariant: if the overlap flow
+        # doesn't land exactly on the old closing, #2 stays RED.
+        with db.connect(self.db_path) as conn:
+            self._bank_row(conn, "r1", 7300, "2026-06-20", "old.xlsx")
+            self._bal_w(conn, "idfc", 0, 7300, "2026-06-25", "old.xlsx",
+                        "2026-06-01", "2026-06-25")
+            # new statement claims opening 100 at 06-15 => boundary math breaks
+            self._bal_w(conn, "idfc", 100, 7400, "2026-06-30", "new.xlsx",
+                        "2026-06-15", "2026-06-30")
+        c2 = [c for c in doctor.run(self.db_path).checks
+              if c.invariant == "#2 continuity"][0]
+        self.assertEqual(c2.status, "RED")
+
+    def test_coverage_gap_red_2(self):
+        # a HOLE between statement windows can hide transactions -> RED
+        with db.connect(self.db_path) as conn:
+            self._bal_w(conn, "idfc", 0, 0, "2026-06-10", "a.xlsx",
+                        "2026-06-01", "2026-06-10")
+            self._bal_w(conn, "idfc", 0, 0, "2026-06-30", "b.xlsx",
+                        "2026-06-20", "2026-06-30")   # starts 9 days late
+        c2 = [c for c in doctor.run(self.db_path).checks
+              if c.invariant == "#2 continuity"][0]
+        self.assertEqual(c2.status, "RED")
+        self.assertEqual(c2.deltas[0]["error"], "coverage gap")
+
     def test_ledger_tieout_mismatch_red_3(self):
         with db.connect(self.db_path) as conn:
             self._bal(conn, "idfc", 0, 10000, "2026-06-30", "jun.xlsx")
