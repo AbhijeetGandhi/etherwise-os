@@ -136,6 +136,20 @@ tr:hover td{background:var(--g2)}
 .drill .close:hover{color:var(--red)}
 .drill .tablewrap{max-height:340px;overflow:auto}
 
+/* ── drill breakdown pills (where-it-went groups) ── */
+.drillstrip{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px}
+.gpill{border:1px solid var(--g3);background:var(--g0);color:var(--g6);font:inherit;
+  font-size:var(--fs-sm);font-weight:600;padding:4px 10px;border-radius:999px;cursor:pointer}
+.gpill:hover{border-color:var(--blue2);color:var(--blue)}
+.gpill.on{background:var(--blue-soft);border-color:var(--blue);color:var(--blue)}
+.gpill.all{background:var(--g2)}
+.gpill .gsum{font-variant-numeric:tabular-nums;color:var(--g5);font-weight:600}
+.gpill.on .gsum{color:var(--blue)}
+.gpill .gn{color:var(--g4);font-weight:500;font-size:var(--fs-xs)}
+.drillsub{margin:4px 0 6px}
+td.drillable{cursor:pointer}
+td.drillable:hover{text-decoration:underline;text-decoration-color:var(--blue2)}
+
 /* ── filter bar ── */
 .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
 select,input[type=search]{font:var(--fs-md) inherit;font-family:inherit;padding:6px 9px;

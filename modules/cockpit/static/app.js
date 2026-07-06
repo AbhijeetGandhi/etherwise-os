@@ -519,27 +519,33 @@ function moneyTip() {
   return tip;
 }
 
-function txTable(rows) {
-  rows = rows.slice().sort((a, b) => (a.dt < b.dt ? 1 : -1));
-  const wrap = el("div", "tablewrap");
-  const t = el("table");
-  t.innerHTML = "<tr><th>Date</th><th>Bucket</th><th>Type</th><th>Source</th>"
-    + "<th>Description</th><th class='num'>Amount</th></tr>";
-  rows.forEach((x) => {
-    const tr = el("tr");
-    tr.innerHTML = `<td class="muted">${esc(x.dt)}</td>`
-      + `<td><span class="chip ${esc(x.b)}">${esc(BLABEL[x.b] || x.b)}</span></td>`
-      + `<td>${esc(x.t)}</td><td class="muted">${esc(x.s)}</td><td>${esc(x.d)}</td>`
-      + `<td class="num ${x.u >= 0 ? "pos" : "neg"}">${fmtUsd2(x.u)}</td>`;
-    t.appendChild(tr);
-  });
-  wrap.appendChild(t);
-  return wrap;
+// Who/what is behind a row — vendor for card/POS spends, payee for bank
+// transfers, client for earnings. Presentational only (sums stay exact).
+function whoOf(x) {
+  const d = (x.d || "").toUpperCase();
+  let m = d.match(/^POS(?:-VISA)?\/([^/]+)/);
+  if (m) return m[1].replace(/\s+(CYBS|SI)\b.*/, "").trim().slice(0, 26);
+  m = d.match(/^(?:NEFT|RTGS)\/[^/]+\/([^/]+)\//);
+  if (m) return m[1].trim().slice(0, 26);
+  m = d.match(/^IMPS[^/]*\/[^/]*\/[^/]*\/([^/]+)/);
+  if (m) return m[1].trim().slice(0, 26);
+  if (d.startsWith("UPI")) return "UPI payments";
+  if (d.includes("EMI")) return "Loan EMI";
+  m = (x.d || "").match(/^\(\d+\)\s*([^-]+?)\s*-/);          // Upwork hourly: client
+  if (m) return m[1].trim().slice(0, 26);
+  m = (x.d || "").match(/Received money from ([^.]+?) with/i); // Wise receipt: sender
+  if (m) return m[1].trim().slice(0, 26);
+  if (x.s === "Upwork" || x.s === "Upwork-CSV") return x.t || "Upwork";
+  const vendor = (x.d || "").split(",")[0].trim();             // card rows: "VENDOR, CITY"
+  if (x.s === "Card" && vendor) return vendor.slice(0, 26);
+  return (x.s || "?") + (x.t ? " · " + x.t : "");
 }
 
-// Traceability contract: the panel header shows count + sum OF THE ROWS —
-// the frontend only sums returned rows, never re-derives the metric.
-function openDrill(host, title, rows) {
+// Drill panel v2 (founder flow): headline count+sum -> WHERE-IT-WENT breakdown
+// (grouped pills, biggest first, click to narrow) -> search -> rows.
+// Traceability contract unchanged: the header sums the returned rows only.
+function openDrill(host, title, rows, opts) {
+  opts = opts || {};
   host.innerHTML = "";
   host.classList.add("open");
   const total = rows.reduce((s, r) => s + r.u, 0);
@@ -548,8 +554,100 @@ function openDrill(host, title, rows) {
     + `<button class="close">✕ close</button>`);
   h.querySelector(".close").onclick = () => host.classList.remove("open");
   host.appendChild(h);
-  host.appendChild(rows.length ? txTable(rows)
-    : el("div", "emptystate", "No transactions behind this figure."));
+  if (!rows.length) {
+    host.appendChild(el("div", "emptystate", "No transactions behind this figure."));
+    host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+
+  let pickBucket = null, pickWho = null, needle = "";
+  // cost drills read biggest-outflow-first; revenue/month drills newest-first
+  let sortAmount = opts.sortAmount != null ? opts.sortAmount : total < 0;
+
+  const buckets = [...new Set(rows.map((x) => x.b))];
+  const strips = el("div");
+  const body = el("div");
+  host.append(strips, body);
+
+  function pills(items, active, onpick, allLabel) {
+    const strip = el("div", "drillstrip");
+    const mk = (label, key, sum, n, cls) => {
+      const b = el("button", "gpill" + (cls || "") + (active === key ? " on" : ""),
+        `${esc(label)} <span class="gsum">${fmtUsd0(sum)}</span>`
+        + (n != null ? ` <span class="gn">×${n}</span>` : ""));
+      b.onclick = () => onpick(active === key ? null : key);
+      return b;
+    };
+    strip.appendChild(mk(allLabel, null, items.reduce((s, g) => s + g.sum, 0), null, " all"));
+    items.forEach((g) => strip.appendChild(mk(g.label, g.key, g.sum, g.n)));
+    return strip;
+  }
+
+  function render() {
+    // group over the CURRENT bucket selection so the who-strip follows it
+    const inBucket = rows.filter((x) => !pickBucket || x.b === pickBucket);
+    const groups = {};
+    inBucket.forEach((x) => {
+      const k = whoOf(x);
+      (groups[k] = groups[k] || { key: k, label: k, sum: 0, n: 0 });
+      groups[k].sum += x.u; groups[k].n += 1;
+    });
+    const top = Object.values(groups)
+      .sort((a, b) => Math.abs(b.sum) - Math.abs(a.sum)).slice(0, 9);
+
+    strips.innerHTML = "";
+    if (buckets.length > 1) {
+      const bsums = buckets.map((b) => ({
+        key: b, label: BLABEL[b] || b,
+        sum: rows.reduce((s, x) => x.b === b ? s + x.u : s, 0),
+        n: rows.filter((x) => x.b === b).length,
+      })).sort((a, b) => Math.abs(b.sum) - Math.abs(a.sum));
+      strips.appendChild(pills(bsums, pickBucket,
+        (k) => { pickBucket = k; pickWho = null; render(); }, "All buckets"));
+    }
+    if (top.length > 1) {
+      strips.appendChild(pills(top, pickWho,
+        (k) => { pickWho = k; render(); }, "Everyone"));
+    }
+    const bar = el("div", "filters");
+    const q = el("input");
+    q.type = "search"; q.placeholder = "search within…"; q.value = needle;
+    q.oninput = () => { needle = q.value; renderRows(); };
+    const st = el("button", "action", sortAmount ? "sort: biggest" : "sort: newest");
+    st.onclick = () => { sortAmount = !sortAmount; st.textContent = sortAmount ? "sort: biggest" : "sort: newest"; renderRows(); };
+    bar.append(q, st);
+    strips.appendChild(bar);
+    renderRows();
+    function renderRows() {
+      const nl = needle.toLowerCase();
+      let out = inBucket.filter((x) => (!pickWho || whoOf(x) === pickWho)
+        && (!nl || (x.d + " " + x.t + " " + x.s).toLowerCase().includes(nl)));
+      out = out.slice().sort(sortAmount
+        ? (a, b) => Math.abs(b.u) - Math.abs(a.u)
+        : (a, b) => (a.dt < b.dt ? 1 : -1));
+      const sub = out.reduce((s, r) => s + r.u, 0);
+      body.innerHTML = "";
+      body.appendChild(el("div", "muted small drillsub",
+        `${out.length} shown · ${fmtUsd2(sub)}`));
+      const wrap = el("div", "tablewrap");
+      const t = el("table");
+      t.innerHTML = "<tr><th>Date</th><th>Bucket</th><th>Type</th><th>Source</th>"
+        + "<th>Description</th><th class='num'>Amount</th></tr>";
+      out.slice(0, 300).forEach((x) => {
+        const tr = el("tr");
+        tr.innerHTML = `<td class="muted">${esc(x.dt)}</td>`
+          + `<td><span class="chip ${esc(x.b)}">${esc(BLABEL[x.b] || x.b)}</span></td>`
+          + `<td>${esc(x.t)}</td><td class="muted">${esc(x.s)}</td><td>${esc(x.d)}</td>`
+          + `<td class="num ${x.u >= 0 ? "pos" : "neg"}">${fmtUsd2(x.u)}</td>`;
+        t.appendChild(tr);
+      });
+      if (out.length > 300) t.appendChild(el("tr", null,
+        `<td colspan=6 class="muted small">showing 300 of ${out.length} — narrow above</td>`));
+      wrap.appendChild(t);
+      body.appendChild(wrap);
+    }
+  }
+  render();
   host.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -667,13 +765,21 @@ async function renderMoney(view) {
     const cost = sumWhere((x) => x.m === m && OPERATING_COSTS.includes(x.b));
     const profit = rev + cost;
     const tr = el("tr");
-    tr.style.cursor = "pointer";
-    tr.innerHTML = `<td>${esc(m)}${m === thisM ? ' <span class="chip">current</span>' : ""}</td>`
-      + `<td class="num pos">${fmtUsd2(rev)}</td>`
-      + `<td class="num neg">${fmtUsd2(cost)}</td>`
-      + `<td class="num ${profit >= 0 ? "pos" : "neg"}"><b>${fmtUsd2(profit)}</b></td>`;
-    tr.onclick = () => openDrill(pnlmDrill, `P&L — ${m} (operating rows)`,
+    // each CELL drills to its own rows — revenue, expenses, or the whole month
+    const tdM = el("td", null,
+      `${esc(m)}${m === thisM ? ' <span class="chip">current</span>' : ""}`);
+    const tdR = el("td", "num pos drillable", fmtUsd2(rev));
+    const tdC = el("td", "num neg drillable", fmtUsd2(cost));
+    const tdP = el("td", `num ${profit >= 0 ? "pos" : "neg"} drillable`,
+      `<b>${fmtUsd2(profit)}</b>`);
+    tdR.onclick = () => openDrill(pnlmDrill, `Revenue — ${m}`,
+      rowsFor((x) => x.m === m && (x.b === "revenue" || x.b === "refund")));
+    tdC.onclick = () => openDrill(pnlmDrill, `Expenses — ${m}`,
+      rowsFor((x) => x.m === m && OPERATING_COSTS.includes(x.b)),
+      { sortAmount: true });
+    tdP.onclick = () => openDrill(pnlmDrill, `P&L — ${m} (all operating rows)`,
       rowsFor((x) => x.m === m && OPERATING_ALL.includes(x.b)));
+    tr.append(tdM, tdR, tdC, tdP);
     pnlmTable.appendChild(tr);
   });
   const totRev = sumWhere((x) => x.b === "revenue" || x.b === "refund");
