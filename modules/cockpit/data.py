@@ -257,49 +257,93 @@ def clients(db_path: Optional[Path] = None, *, client=None,
     return out
 
 
+BOARD_WINDOW_DAYS = 7      # a hot lead older than this is dead on Upwork
+
+
 def pipeline(db_path: Optional[Path] = None,
              today: Optional[str] = None) -> dict:
-    """Pipeline panel: applied trend, proposals by status, win rate, score
-    bands (from scored_jobs.score — no ClickUp dependency), and the all-time
-    untasked-hot 'to triage' backlog."""
+    """Pipeline panel v2 (2026-07-07 accuracy audit) — TRUTHFUL sources only:
+    - funnel per week from scored_jobs (scanned / scored>=8 / carded) — live and
+      accurate; 'replied' from the room-sourced proposals (sparse but real).
+    - 'applied' is returned as UNAVAILABLE (never a fake 0): proposals are
+      room-sourced only and the vendorProposals scope was declined (too costly);
+      the connects-history CSV rail is the planned source of applied-truth.
+    - board is WINDOWED to actionable recency (BOARD_WINDOW_DAYS); the uncarded
+      shadow-era backlog is counted separately, never mixed into 'to triage'.
+    - win rate keeps its threads-only upper-bound caveat.
+    """
+    from collections import Counter
     day = today or _ist_today()
     d0 = date.fromisoformat(day)
+    this_mon = d0 - timedelta(days=d0.weekday())
+    fresh_cut = (d0 - timedelta(days=BOARD_WINDOW_DAYS)).isoformat()
     conn = _ro(db_path)
     try:
-        def applied_between(lo, hi):
+        def week_counts(sql, args=()):
+            c = Counter()
+            for r in conn.execute(sql, args):
+                try:
+                    d = date.fromisoformat((r[0] or "")[:10])
+                    c[(d - timedelta(days=d.weekday())).isoformat()] += 1
+                except ValueError:
+                    pass
+            return c
+
+        scanned = week_counts("SELECT fetched_at FROM scored_jobs"
+                              " WHERE fetched_at LIKE '20%'")
+        scored = week_counts("SELECT first_scored_at FROM scored_jobs"
+                             " WHERE score >= 8 AND first_scored_at LIKE '20%'")
+        carded = week_counts("SELECT first_scored_at FROM scored_jobs"
+                             " WHERE clickup_task_id IS NOT NULL"
+                             " AND first_scored_at LIKE '20%'")
+        replied = week_counts("SELECT created_dt FROM proposals"
+                              " WHERE created_dt LIKE '20%'")
+        funnel_weeks = []
+        for i in range(9, -1, -1):
+            wk = (this_mon - timedelta(weeks=i)).isoformat()
+            funnel_weeks.append({"week": wk, "scanned": scanned.get(wk, 0),
+                                 "scored": scored.get(wk, 0),
+                                 "carded": carded.get(wk, 0),
+                                 "replied": replied.get(wk, 0),
+                                 "current": i == 0})
+
+        def carded_between(lo, hi):
             return conn.execute(
-                "SELECT COUNT(*) FROM proposals WHERE"
-                " substr(created_dt,1,10) BETWEEN ? AND ?",
+                "SELECT COUNT(*) FROM scored_jobs WHERE clickup_task_id IS NOT"
+                " NULL AND substr(first_scored_at,1,10) BETWEEN ? AND ?",
                 (lo, hi)).fetchone()[0]
-        applied = {
-            "today": applied_between(day, day),
-            "week": applied_between((d0 - timedelta(days=6)).isoformat(), day),
-            "last_week": applied_between(
+        carded_now = {
+            "today": carded_between(day, day),
+            "week": carded_between((d0 - timedelta(days=6)).isoformat(), day),
+            "last_week": carded_between(
                 (d0 - timedelta(days=13)).isoformat(),
                 (d0 - timedelta(days=7)).isoformat())}
-        # Applied-per-week trend: bucket by week-start (Monday) in Python so
-        # it's consistent (no SQLite/Python %W mismatch) and ZERO-FILLED out
-        # to the CURRENT week — so a recent gap reads as a gap, not a chart
-        # that mysteriously ends early (redline 5).
-        from collections import Counter
-        rows = conn.execute("SELECT created_dt FROM proposals"
-                            " WHERE created_dt LIKE '20%'").fetchall()
-        counts = Counter()
-        for r in rows:
-            try:
-                d = date.fromisoformat(r["created_dt"][:10])
-                counts[(d - timedelta(days=d.weekday())).isoformat()] += 1
-            except ValueError:
-                pass
-        this_mon = d0 - timedelta(days=d0.weekday())
-        trend = [{"week": (this_mon - timedelta(weeks=i)).isoformat(),
-                  "count": counts.get(
-                      (this_mon - timedelta(weeks=i)).isoformat(), 0),
-                  "current": i == 0}
-                 for i in range(9, -1, -1)]
 
-        by_status = {r["status"] or "Unknown": r["n"] for r in conn.execute(
-            "SELECT status, COUNT(*) n FROM proposals GROUP BY status")}
+        # applied-truth is NOT derivable from the DB today — say so, loudly,
+        # instead of charting a frozen table as zeros (the pre-audit behavior).
+        applied = {"available": False,
+                   "reason": "proposals are room-sourced only (client replies);"
+                             " submissions are not captured — vendorProposals"
+                             " scope declined",
+                   "rail": "connects-history CSV import (weekly drop, like the"
+                           " agency export)"}
+
+        replied_total = conn.execute("SELECT COUNT(*) FROM proposals").fetchone()[0]
+        replied_month = conn.execute(
+            "SELECT COUNT(*) FROM proposals WHERE substr(created_dt,1,7)=?",
+            (day[:7],)).fetchone()[0]
+        last_reply = conn.execute(
+            "SELECT MAX(substr(created_dt,1,10)) FROM proposals").fetchone()[0]
+        client_replied = {"total": replied_total, "this_month": replied_month,
+                          "last": last_reply}
+
+        # by-status: blank status rows fall back to the raw upwork_status so
+        # nothing shows as 'Unknown' when the API gave us a real state.
+        by_status = {}
+        for r in conn.execute(
+                "SELECT COALESCE(NULLIF(status,''), upwork_status, 'Unknown') s,"
+                " COUNT(*) n FROM proposals GROUP BY s"):
+            by_status[r["s"]] = r["n"]
         dmarks = ",".join("?" * len(_DECIDED_PROP))
         won = conn.execute("SELECT COUNT(*) FROM proposals WHERE status='Won'"
                            ).fetchone()[0]
@@ -309,32 +353,36 @@ def pipeline(db_path: Optional[Path] = None,
         win_rate = {
             "won": won, "decided": decided,
             "pct": round(100 * won / decided, 1) if decided else None,
-            # Mirror holds only proposals WITH a message room (roomList
-            # sourcing) — submitted-but-no-reply losses are absent, so this
-            # OVERSTATES win rate until the M1 sourcing fix. Honest caveat.
-            "caveat": "threads-only — submitted-no-reply proposals not yet "
-                      "captured (M1 sourcing fix pending); win rate is an "
-                      "upper bound"}
+            "caveat": "threads-only — submitted-no-reply losses are invisible"
+                      " (no Lost rows exist), so this is a steep upper bound;"
+                      " true rate needs the connects-history applied count"}
 
-        # Score bands = the OPEN board (untasked Scored/Drafted) — the actual
-        # "what's on the board" snapshot. Counting all-time + tasked rows
-        # inverted the ratio with degraded/pre-canonical scoring noise
-        # (redline 1). Hot here == to_triage.
+        # the OPEN board, windowed to actionable freshness; the uncarded
+        # shadow-era backlog (never pushed while ClickUp was shadowed) is
+        # reported separately — it must not read as 'to triage'.
         bands_row = conn.execute(
             "SELECT SUM(score>=16) hot, SUM(score>=12 AND score<16) standard,"
             " SUM(score>=8 AND score<12) low FROM scored_jobs"
             " WHERE status IN ('Scored','Drafted') AND clickup_task_id IS NULL"
-        ).fetchone()
+            " AND substr(first_scored_at,1,10) >= ?", (fresh_cut,)).fetchone()
+        backlog = conn.execute(
+            "SELECT COUNT(*) FROM scored_jobs WHERE status IN"
+            " ('Scored','Drafted') AND clickup_task_id IS NULL AND score>=8"
+            " AND (first_scored_at IS NULL OR substr(first_scored_at,1,10) < ?)",
+            (fresh_cut,)).fetchone()[0]
         bands = {"hot": bands_row["hot"] or 0,
                  "standard": bands_row["standard"] or 0,
                  "low": bands_row["low"] or 0,
-                 "note": "open board (untasked). Scores include the "
-                         "pre-canonical-matrix backlog — hot is an upper "
-                         "bound until a backlog re-score (M1 cleanup)."}
+                 "window_days": BOARD_WINDOW_DAYS,
+                 "backlog_uncarded": backlog,
+                 "note": f"open board, last {BOARD_WINDOW_DAYS} days —"
+                         f" {backlog} older uncarded rows (mostly the shadow-era"
+                         " backlog; listings likely expired) excluded"}
         to_triage = bands["hot"]
     finally:
         conn.close()
-    return {"applied": applied, "applied_trend": trend,
+    return {"applied": applied, "funnel_weeks": funnel_weeks,
+            "carded": carded_now, "client_replied": client_replied,
             "by_status": by_status, "win_rate": win_rate, "bands": bands,
             "to_triage": to_triage}
 

@@ -384,17 +384,21 @@ class TestPipelineReader(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_to_triage_is_open_untasked_hot(self):
+    def test_to_triage_is_fresh_untasked_hot_only(self):
+        # v2 semantics (2026-07-07 audit): to-triage is WINDOWED — 111 (fresh,
+        # 06-15) counts; 113 (05-01, shadow-era stale) goes to the backlog
+        # counter, never 'to triage'; 112 is tasked → out entirely.
         out = data.pipeline(self.db_path, today="2026-06-15")
-        # 111(24)+113(18) untasked hot; 112 is ClickUp Created (tasked) → out
-        self.assertEqual(out["to_triage"], 2)
+        self.assertEqual(out["to_triage"], 1)
+        self.assertEqual(out["bands"]["backlog_uncarded"], 1)
 
-    def test_score_bands_open_board_only(self):
+    def test_score_bands_windowed_open_board(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
         b = out["bands"]
-        self.assertEqual(b["hot"], 2)        # untasked hot only (not 112)
+        self.assertEqual(b["hot"], 1)                 # fresh untasked hot only
         self.assertEqual(b["hot"], out["to_triage"])  # coherent
-        self.assertIn("note", b)             # honest caveat present
+        self.assertEqual(b["window_days"], data.BOARD_WINDOW_DAYS)
+        self.assertIn("note", b)                      # honest caveat present
 
     def test_win_rate_from_status_with_caveat(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
@@ -405,18 +409,34 @@ class TestPipelineReader(unittest.TestCase):
         self.assertEqual(wr["pct"], 60.0)
         self.assertIn("threads-only", wr["caveat"])  # honest skew note
 
-    def test_proposals_by_status(self):
+    def test_proposals_by_status_with_upwork_fallback(self):
+        with db.connect(self.db_path) as conn:      # blank status, raw upwork one
+            conn.execute("INSERT INTO proposals (id, status, upwork_status)"
+                         " VALUES ('blank1', NULL, 'Activated')")
         out = data.pipeline(self.db_path, today="2026-06-15")
         self.assertEqual(out["by_status"].get("Won"), 3)
+        self.assertEqual(out["by_status"].get("Activated"), 1)   # not 'Unknown'
 
-    def test_applied_trend_filled_to_current_week(self):
+    def test_applied_is_explicitly_unavailable(self):
+        # NEVER fake zeros from the frozen room-sourced table: 'applied' says
+        # loudly that it needs the connects-history rail.
         out = data.pipeline(self.db_path, today="2026-06-15")
-        t = out["applied_trend"]
+        self.assertFalse(out["applied"]["available"])
+        self.assertIn("connects-history", out["applied"]["rail"])
+
+    def test_funnel_weeks_zero_filled_and_truthful(self):
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        t = out["funnel_weeks"]
         self.assertEqual(len(t), 10)               # zero-filled window
         self.assertTrue(t[-1]["current"])          # ends at current week
         d = datetime(2026, 6, 15).date()
         expected_mon = (d - timedelta(days=d.weekday())).isoformat()
         self.assertEqual(t[-1]["week"], expected_mon)
+        cur = t[-1]
+        self.assertEqual(cur["carded"], 1)         # 112 carded on 06-15
+        self.assertEqual(cur["replied"], 1)        # p1 room-proposal on 06-15
+        # carded activity counters (the real action surface)
+        self.assertEqual(out["carded"]["today"], 1)
 
 
 class TestNudgeActions(unittest.TestCase):

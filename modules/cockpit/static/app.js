@@ -297,33 +297,80 @@ const RENDERERS = {
   },
   Pipeline: async (view) => {
     const d = await api("/api/pipeline");
-    view.appendChild(el("h2", "section", "Pipeline"));
-    const a = d.applied || {}, wr = d.win_rate || {}, b = d.bands || {};
+    view.appendChild(el("h2", "section",
+      `Pipeline <span class="hint muted">— truthful sources only; 'applied'`
+      + ` arrives with the connects-history rail</span>`));
+    const c = d.carded || {}, wr = d.win_rate || {}, b = d.bands || {};
+    const cr = d.client_replied || {};
     const grid = el("div", "grid");
-    grid.appendChild(card("Applied", `<div class="metric">${a.today||0} <small>today</small></div>`
-      + `<div class="muted">${a.week||0} this week · ${a.last_week||0} last week</div>`));
-    grid.appendChild(card("Win rate", `<div class="metric">${wr.pct != null ? wr.pct + "%" : "—"}</div>`
-      + `<div class="muted">${wr.won||0} won of ${wr.decided||0} decided</div>`
-      + `<div class="muted" style="font-size:11px">${wr.caveat || ""}</div>`));
-    grid.appendChild(card("Open board", `<div class="metric">${b.hot||0} <small>hot</small></div>`
-      + `<div class="muted">${b.standard||0} standard · ${b.low||0} low</div>`
-      + `<div class="muted" style="font-size:11px">${b.note || ""}</div>`));
-    grid.appendChild(card("To triage", `<div class="metric">${d.to_triage||0}</div>`
-      + `<div class="muted">untasked hot leads to action</div>`));
+    grid.appendChild(card("Carded to board",
+      `<div class="metric">${c.today || 0} <small>today</small></div>`
+      + `<div class="muted">${c.week || 0} this week · ${c.last_week || 0} last week</div>`
+      + `<div class="muted small">real ClickUp cards — your action surface</div>`));
+    grid.appendChild(card("Client replies",
+      `<div class="metric">${cr.this_month || 0} <small>this month</small></div>`
+      + `<div class="muted">${cr.total || 0} all-time · last ${esc(cr.last || "—")}</div>`
+      + `<div class="muted small">room-sourced proposals — replies, not submissions</div>`));
+    grid.appendChild(card("Win rate (upper bound)",
+      `<div class="metric">${wr.pct != null ? "≤" + wr.pct + "%" : "—"}</div>`
+      + `<div class="muted">${wr.won || 0} won of ${wr.decided || 0} decided threads</div>`
+      + `<div class="muted small">${esc(wr.caveat || "")}</div>`));
+    grid.appendChild(card(`To triage (last ${b.window_days || 7}d)`,
+      `<div class="metric">${d.to_triage || 0} <small>hot</small></div>`
+      + `<div class="muted">${b.standard || 0} standard · ${b.low || 0} low</div>`
+      + `<div class="muted small">${b.backlog_uncarded || 0} older uncarded rows excluded (shadow-era backlog)</div>`));
     view.appendChild(grid);
 
-    view.appendChild(el("h2", "section", "Applied per week"));
+    // applied-truth: explicit honest state — never zeros from a frozen table
+    const a = d.applied || {};
+    if (a.available === false) {
+      const call = el("div", "card");
+      call.appendChild(el("h3", null, "Applied — not yet measurable"));
+      call.appendChild(el("div", "muted", esc(a.reason || "")));
+      call.appendChild(el("div", null,
+        `Fix: <b>${esc(a.rail || "")}</b> — export it from Upwork`
+        + ` (Settings → Membership &amp; Connects → Connects history) and it`
+        + ` becomes a weekly drop like the agency CSV.`));
+      view.appendChild(call);
+    }
+
+    view.appendChild(el("h2", "section",
+      `Funnel by week <span class="hint muted">— scanned → scored ≥8 → carded`
+      + ` → client replied</span>`));
+    const fCard = el("div", "card");
+    const fWrap = el("div", "tablewrap");
+    const ft = el("table");
+    ft.innerHTML = "<tr><th>Week</th><th class='num'>Scanned</th>"
+      + "<th class='num'>Scored ≥8</th><th class='num'>Carded</th>"
+      + "<th class='num'>Client replied</th></tr>";
+    (d.funnel_weeks || []).slice().reverse().forEach((w) => {
+      const tr = el("tr");
+      tr.innerHTML = `<td>${esc(w.week)}${w.current ? ' <span class="chip">current</span>' : ""}</td>`
+        + `<td class="num">${w.scanned}</td><td class="num">${w.scored}</td>`
+        + `<td class="num">${w.carded}</td><td class="num">${w.replied}</td>`;
+      ft.appendChild(tr);
+    });
+    fWrap.appendChild(ft);
+    fCard.appendChild(fWrap);
+    view.appendChild(fCard);
+
+    view.appendChild(el("h2", "section", "Carded per week"));
     const chartBox = el("div", "card");
     const chart = el("div", "chart");
     chartBox.appendChild(chart);
     view.appendChild(chartBox);
-    drawBarChart(chart, (d.applied_trend || []).map(t => ({ label: (t.week || "").slice(5), v: t.count, current: t.current })));
+    drawBarChart(chart, (d.funnel_weeks || []).map((t) => (
+      { label: (t.week || "").slice(5), v: t.carded, current: t.current })));
 
-    view.appendChild(el("h2", "section", "Proposals by status"));
+    view.appendChild(el("h2", "section",
+      `Threads by status <span class="hint muted">— the ${cr.total || 0}`
+      + ` room-sourced proposals</span>`));
     const t = el("table");
     t.innerHTML = "<tr><th>Status</th><th>Count</th></tr>";
     Object.entries(d.by_status || {}).sort((x, y) => y[1] - x[1]).forEach(([s, n]) => {
-      const tr = el("tr"); tr.innerHTML = `<td>${s}</td><td>${n}</td>`; t.appendChild(tr);
+      const tr = el("tr");
+      tr.innerHTML = `<td>${esc(s)}</td><td>${n}</td>`;
+      t.appendChild(tr);
     });
     view.appendChild(t);
   },
