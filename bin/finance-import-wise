@@ -16,6 +16,7 @@ Reconcile-before-commit on the USD running balance.
 Usage: PYTHONPATH=. python3 bin/finance-import-wise [--apply]   (default dry-run)
 """
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -102,21 +103,32 @@ def run(apply: bool) -> dict:
 
         # account_balances only for the USD account (#1 tie-out). Non-USD
         # sub-accounts net to ~0 (received then swept to IDFC) -> immaterial to cash.
-        usd_rows = [r for r in all_rows if (r.get("currency") or "USD") == "USD"
-                    and r.get("balance_minor") is not None]
-        if apply and usd_rows:
-            nf = usd_rows[0]["date"] >= usd_rows[-1]["date"]
-            first, last = usd_rows[0], usd_rows[-1]
-            closing = (first if nf else last)["balance_minor"]
-            opener = (last if nf else first)
-            conn.execute(
-                "INSERT OR IGNORE INTO account_balances (account, currency,"
-                " opening_minor, closing_minor, statement_date, source_file,"
-                " period_start, period_end) VALUES ('wise','USD',?,?,?,?,?,?)",
-                (opener["balance_minor"] - opener["amount_minor"], closing,
-                 max(r["date"] for r in usd_rows), usd_rows[0]["_file"],
-                 min(r["date"] for r in usd_rows),
-                 max(r["date"] for r in usd_rows)))
+        # ONE balance row PER FILE, from that file's OWN rows — the old per-run
+        # mix attributed the new statement to the first file's name and only
+        # passed #1 because Wise hovers at $0 (found 2026-07-07). period = the
+        # export's CLAIMED range from the Wise filename (rows may start later),
+        # falling back to the rows' own span.
+        if apply:
+            for f, rows in files:
+                usd_rows = [r for r in rows
+                            if (r.get("currency") or "USD") == "USD"
+                            and r.get("balance_minor") is not None]
+                if not usd_rows:
+                    continue
+                nf = usd_rows[0]["date"] >= usd_rows[-1]["date"]
+                first, last = usd_rows[0], usd_rows[-1]
+                closing = (first if nf else last)["balance_minor"]
+                opener = (last if nf else first)
+                m = re.search(r"_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.csv$",
+                              f.name)
+                p_start = m.group(1) if m else min(r["date"] for r in usd_rows)
+                p_end = m.group(2) if m else max(r["date"] for r in usd_rows)
+                conn.execute(
+                    "INSERT OR IGNORE INTO account_balances (account, currency,"
+                    " opening_minor, closing_minor, statement_date, source_file,"
+                    " period_start, period_end) VALUES ('wise','USD',?,?,?,?,?,?)",
+                    (opener["balance_minor"] - opener["amount_minor"], closing,
+                     max(r["date"] for r in usd_rows), f.name, p_start, p_end))
 
     return {"mode": "APPLY" if apply else "DRY-RUN",
             "files": [f.name for f, _ in files], "total_rows": len(all_rows),
