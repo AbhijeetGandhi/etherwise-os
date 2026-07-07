@@ -859,13 +859,25 @@ class TestFinanceIngest(CockpitServerCase):
                              b"x", token=None)
         self.assertEqual(s, 401)
 
-    def test_card_upload_stages_only(self):
+    def test_card_upload_importable_and_forced_name(self):
+        # a Google-Drive token filename once lost its extension to truncation;
+        # card uploads are now force-named and fully importable (2026-07-07)
+        long_name = "ACFrOgD" + "x" * 90 + ".pdf"
         s, out = self.post_raw(
-            "/api/finance/upload?kind=card&filename=amex.pdf", b"%PDF-1.4")
+            f"/api/finance/upload?kind=card&filename={long_name}", b"%PDF-1.4")
         self.assertTrue(out["ok"])
-        self.assertFalse(out["importable"])               # importer pending
-        s, body = self.post("/api/finance/import", body={"kind": "card"})
-        self.assertEqual(json.loads(body)["status"], "staged_only")
+        self.assertTrue(out["importable"])                # importer live now
+        self.assertTrue(out["staged_as"].endswith("-card-statement.pdf"))
+        fake = mock.MagicMock()
+        fake.run.return_value = {"mode": "DRY-RUN", "new_rows": 17}
+        with mock.patch.object(actions, "_load_importer", return_value=fake) as ld:
+            s, body = self.post("/api/finance/import", body={"kind": "card"})
+            self.assertTrue(json.loads(body)["ok"])
+            ld.assert_any_call("finance-import-card")     # routes to the card bin
+
+    def test_safe_name_preserves_suffix(self):
+        self.assertTrue(actions._safe_name("A" * 200 + ".pdf").endswith(".pdf"))
+        self.assertLessEqual(len(actions._safe_name("A" * 200 + ".pdf")), 80)
 
     def test_import_routes_and_doctor_on_commit(self):
         fake = mock.MagicMock()

@@ -766,7 +766,7 @@ async function renderMoney(view) {
     ["wise", "Wise", "account CSV", ".csv"],
     ["upwork-personal", "Upwork personal", "full-history CSV", ".csv"],
     ["upwork-agency", "Upwork agency", "full-history CSV", ".csv"],
-    ["card", "Credit card", "stages only — importer pending", ".pdf,.csv,.xlsx"],
+    ["card", "Credit card", "IDFC Mayura PDF", ".pdf"],
   ];
   const impWrap = el("details", "card importcard");
   impWrap.appendChild(el("summary", null,

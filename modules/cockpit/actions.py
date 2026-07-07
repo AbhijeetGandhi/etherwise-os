@@ -48,27 +48,31 @@ def _kick(label: str) -> dict:
 # The cockpit NEVER writes the ledger itself: uploads only STAGE files into the
 # existing finance-inbox drop folders, and imports run through the SAME audited
 # importer bins Abhijeet runs by hand (reconcile-or-abort, idempotent, dry-run
-# default). Commit stays an explicit second click. Card statements stage only —
-# the card importer is still pending (encrypted-PDF blocker).
+# default). Commit stays an explicit second click.
 FINANCE_INBOX = _REPO_ROOT / "finance-inbox"
 UPLOAD_KINDS = {
     # kind: (subdir, allowed extensions, server-side naming)
     "idfc":           ("bank",   (".xlsx",),                None),
     "wise":           ("wise",   (".csv",),                 None),
-    "card":           ("card",   (".pdf", ".csv", ".xlsx"), None),
+    "card":           ("card",   (".pdf",),                 "{d}-card-statement.pdf"),
     "upwork-personal": ("upwork", (".csv",), "{d}-upwork-personal-fullhistory.csv"),
     "upwork-agency":   ("upwork", (".csv",), "{d}-upwork-agency-fullhistory.csv"),
 }
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 _IMPORTER_BIN = {"idfc": "finance-import-idfc", "wise": "finance-import-wise",
+                 "card": "finance-import-card",
                  "upwork-personal": "finance-import-upwork",
                  "upwork-agency": "finance-import-upwork"}
 
 
 def _safe_name(filename: str) -> str:
-    """Keep a recognizable client name, neutralize traversal/separators."""
+    """Keep a recognizable client name, neutralize traversal/separators.
+    Truncation PRESERVES the extension (a Google-Drive-token filename once lost
+    its .pdf to the 80-char cut — 2026-07-07)."""
     base = Path(filename or "upload").name
-    return "".join(c if (c.isalnum() or c in "._- ") else "_" for c in base)[:80]
+    clean = "".join(c if (c.isalnum() or c in "._- ") else "_" for c in base)
+    stem, ext = Path(clean).stem, Path(clean).suffix[:10]
+    return stem[:80 - len(ext)] + ext
 
 
 def finance_upload(kind: str, filename: str, data: bytes) -> dict:
@@ -100,10 +104,7 @@ def finance_upload(kind: str, filename: str, data: bytes) -> dict:
     target.write_bytes(data)
     return {"ok": True, "kind": kind, "staged_as": target.name,
             "dir": f"finance-inbox/{subdir}", "bytes": len(data),
-            "importable": kind != "card",
-            "note": ("staged only — the card importer is pending"
-                     " (encrypted-PDF blocker); rows import when it lands"
-                     if kind == "card" else None)}
+            "importable": True, "note": None}
 
 
 def _load_importer(bin_name: str):
@@ -124,10 +125,6 @@ def finance_import(db_path: Optional[Path], body: dict) -> dict:
     commit, so the UI shows the gate state alongside the result."""
     kind = (body or {}).get("kind") or ""
     commit = bool((body or {}).get("commit"))
-    if kind == "card":
-        return {"ok": True, "kind": kind, "status": "staged_only",
-                "note": "card importer pending (encrypted-PDF blocker) —"
-                        " uploads are staged in finance-inbox/card/"}
     bin_name = _IMPORTER_BIN.get(kind)
     if not bin_name:
         return {"ok": False, "error": f"unknown kind {kind!r}"}
@@ -138,7 +135,14 @@ def finance_import(db_path: Optional[Path], body: dict) -> dict:
         return {"ok": False, "kind": kind, "error": repr(exc)[:300]}
     out = {"ok": True, "kind": kind, "commit": commit,
            "report": {k: v for k, v in report.items() if not k.startswith("_")}}
-    if commit:                                  # show the gate state post-write
+    if commit:
+        # bucketize new rows immediately (the documented post-import step —
+        # otherwise the P&L misses them until the next manual run), then show
+        # the gate state post-write.
+        try:
+            out["bucketized"] = _load_importer("finance-bucketize").run(True)["changed"]
+        except Exception as exc:                # noqa: BLE001
+            out["bucketize_error"] = repr(exc)[:200]
         from modules.finance import doctor
         dr = doctor.run(db_path or config.DB_PATH)
         out["doctor"] = "GREEN" if dr.green else "RED"

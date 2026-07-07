@@ -929,6 +929,148 @@ class TestBucketizeAmountDependent(unittest.TestCase):
         self.assertEqual(post.status, "GREEN")
 
 
+class TestCardPdf(unittest.TestCase):
+    """IDFC Mayura credit-card PDF importer — parser + self-validating reconcile
+    (the card statement IS opex, Abhijeet 2026-07-08). Fixtures mirror the real
+    pypdf extraction, including wrapped descriptions and the DR/CR layout."""
+
+    # summary consistent with PAGE1's rows: ΣDR 28,603.58, ΣCR 1,45,004.43,
+    # flow +1,16,400.85; opening 1,45,002.43 -> total due 28,601.58. The
+    # payments/purchases pair (1,45,004.43 -> 28,603.58) ALSO satisfies the
+    # equation (the 2.00 reversal degeneracy) — only the DR tag disambiguates.
+    PAGE0 = ("ABHIJEET ASHOK GANDHI \nMayura Credit Card Statement\n"
+             "Statement Period: 23/May/2026 - 22/Jun/2026\n"
+             "r1,45,002.43 r0.00 r1,45,004.43r28,603.58 r0.00 r28,601.58 DR\n"
+             "Minimum Amount Due\nr2,006.00 DR\n(Mayura Credit Card XX3368)\n"
+             "APR applicable on this credit card is 40.00%")
+    PAGE1 = ("Statement Date:\n22/Jun/2026\n"
+             "21/05/2026 CLICKUP, 8886254258 Convert USD 80.00  7,757.58 DR\n"
+             "26/05/2026 Credit Card Payment Received 1,45,002.43 CR\n"
+             "04/06/2026 IND*LINKEDIN, HTTP://WWW.LI  2.00 DR\n"
+             "05/06/2026 OPENAI *CHATGPT SUBSCR, \nOPENAI.COM Convert  1,694.07 DR\n"
+             "06/06/2026 IND*LINKEDIN, HTTP://WWW.LI 2.00 CR\n"
+             "10/06/2026 ANTHROPIC* CLAUDE SUB, \nANTHROPIC.COM Convert USD 200.00  19,149.93 DR\n")
+
+    def test_parse_rows_and_meta(self):
+        from modules.finance.importers import card_pdf
+        p = card_pdf.parse_text([self.PAGE0, self.PAGE1])
+        self.assertEqual(p["card4"], "3368")
+        self.assertEqual(p["period_start"], "2026-05-23")
+        self.assertEqual(p["period_end"], "2026-06-22")
+        self.assertEqual(len(p["rows"]), 6)
+        by_desc = {r["description"][:8]: r for r in p["rows"]}
+        self.assertEqual(by_desc["CLICKUP,"]["amount_minor"], -775758)  # DR neg
+        # wrapped description joined; 'Convert' noise stripped
+        openai = [r for r in p["rows"] if r["description"].startswith("OPENAI")][0]
+        self.assertIn("OPENAI.COM", openai["description"])
+        self.assertNotIn("Convert", openai["description"])
+        self.assertEqual(openai["amount_minor"], -169407)
+        # payment CR -> cc_settlement (mirrors the bank-side leg, excluded)
+        pay = [r for r in p["rows"] if "Payment Received" in r["description"]][0]
+        self.assertEqual(pay["category"], "cc_settlement")
+        self.assertEqual(pay["amount_minor"], 14500243)
+        # a CR reversal stays 'expense' with POSITIVE paise (opex offset)
+        rev = [r for r in p["rows"] if r["drcr"] == "CR"
+               and "LINKEDIN" in r["description"]][0]
+        self.assertEqual(rev["category"], "expense")
+        self.assertEqual(rev["amount_minor"], 200)
+        # canonical keys unique + stable
+        keys = [r["canonical_key"] for r in p["rows"]]
+        self.assertEqual(len(set(keys)), 6)
+        again = card_pdf.parse_text([self.PAGE0, self.PAGE1])
+        self.assertEqual(keys, [r["canonical_key"] for r in again["rows"]])
+
+    def test_identical_rows_get_occurrence_index(self):
+        from modules.finance.importers import card_pdf
+        page = ("01/06/2026 CLICKUP, 8886254258  100.00 DR\n"
+                "01/06/2026 CLICKUP, 8886254258  100.00 DR\n")
+        p = card_pdf.parse_text(["", page])
+        self.assertEqual(len(p["rows"]), 2)
+        self.assertNotEqual(p["rows"][0]["canonical_key"],
+                            p["rows"][1]["canonical_key"])
+
+    def test_reconcile_dr_tag_breaks_degeneracy(self):
+        from modules.finance.importers import card_pdf
+        # the real statement: payments/purchases ALSO satisfy the equation
+        # (both differ from opening/total by the same 2.00 reversal); only the
+        # DR-tagged total picks the true pair.
+        p = card_pdf.parse_text([self.PAGE0, self.PAGE1])
+        rec = card_pdf.reconcile(p)
+        self.assertTrue(rec["ok"], rec)
+        self.assertEqual(rec["opening_minor"], 14500243)
+        self.assertEqual(rec["total_due_minor"], 2860158)
+
+    def test_reconcile_ambiguous_aborts(self):
+        from modules.finance.importers import card_pdf
+        p = card_pdf.parse_text(
+            ["r1,000.00 r850.00 r150.00 r0.00", "01/06/2026 X  850.00 CR\n"])
+        # no DR-tagged figures; both 1,000.00 and 0.00... produce >1 or 0 pairs
+        rec = card_pdf.reconcile(p)
+        self.assertFalse(rec["ok"])
+
+
+class TestCardImporterEndToEnd(unittest.TestCase):
+    PAGE0 = "Statement Period: 23/May/2026 - 22/Jun/2026\nXX3368\nr1,000.00 r150.00 DR r999.99"
+    PAGE1 = ("21/05/2026 CLICKUP, 8886254258  100.00 DR\n"
+             "26/05/2026 Credit Card Payment Received 1,000.00 CR\n"
+             "05/06/2026 OPENAI SUBSCR  50.00 DR\n")
+
+    def setUp(self):
+        import importlib.machinery
+        import importlib.util
+        self.tmp = Path(tempfile.mkdtemp(prefix="card-import-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        (self.tmp / "inbox").mkdir()
+        (self.tmp / "inbox" / "stmt.pdf").write_bytes(b"%PDF-fake")
+        path = Path(__file__).resolve().parents[1] / "bin" / "finance-import-card"
+        loader = importlib.machinery.SourceFileLoader("fin_imp_card", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(self.mod)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, apply):
+        from unittest import mock
+        with mock.patch.object(self.mod, "INBOX", self.tmp / "inbox"), \
+                mock.patch.object(self.mod.config, "DB_PATH", self.db_path), \
+                mock.patch.object(self.mod.card_pdf, "extract_text",
+                                  return_value=[self.PAGE0, self.PAGE1]), \
+                mock.patch.object(self.mod.fx, "pin_base",
+                                  side_effect=lambda rows, **k: (
+                                      [r.update({"amount_base_minor": r["amount_minor"],
+                                                 "fx_rate": "0.012", "fx_date": r["date"]})
+                                       for r in rows],
+                                      {"pinned": len(rows), "fetched_dates": []})[1]):
+            return self.mod.run(apply)
+
+    def test_apply_idempotent_buckets_and_no_balances(self):
+        out = self._run(apply=True)
+        self.assertEqual(out["inserted"], 3)
+        self.assertEqual(out["aborted_files"], [])
+        with db.connect(self.db_path) as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM transactions WHERE source='Card' ORDER BY creation_dt")]
+            nbal = conn.execute("SELECT COUNT(*) c FROM account_balances").fetchone()["c"]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(nbal, 0)                     # liability, never cash
+        spends = [r for r in rows if r["category"] == "expense"]
+        self.assertEqual({r["pnl_bucket"] for r in spends}, {"opex"})   # his rule
+        pay = [r for r in rows if r["category"] == "cc_settlement"][0]
+        self.assertEqual(pay["pnl_bucket"], "cc_settlement")
+        # stamped bucket reproduces bucket() -> doctor #10 stays GREEN
+        from modules.finance import doctor
+        c10 = [c for c in doctor.run(self.db_path).checks
+               if c.invariant == "#10 P&L reproducibility"][0]
+        self.assertEqual(c10.status, "GREEN")
+        # re-run: canonical-guarded no-op
+        out2 = self._run(apply=True)
+        self.assertEqual(out2["inserted"], 0)
+        self.assertEqual(out2["new_rows"], 0)
+
+
 class TestIdfcImporterPicksNewest(unittest.TestCase):
     """Regression (2026-07-07 cockpit upload): 'newest statement' must be newest
     by MTIME. Filename sort picked the old 'idfc-*.xlsx' over a freshly-uploaded

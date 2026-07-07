@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Credit-card statement import (IDFC FIRST Mayura PDF) — the card statement IS
+opex (Abhijeet 2026-07-08). REPRODUCIBLE + idempotent.
+
+Processes EVERY *.pdf in finance-inbox/card/ (statements are monthly; canonical
+keys make re-runs and re-uploads no-ops). Each file must SELF-RECONCILE —
+opening + ΣDR − ΣCR must land exactly on a printed summary amount (see
+card_pdf.reconcile) — or that file is skipped with the reason surfaced.
+
+Rows: source='Card', INR paise (DR negative), category 'expense' (-> opex via
+bucket()) except 'Payment Received' -> 'cc_settlement' (mirrors the bank-side
+bill-payment leg; excluded from P&L on both sides). NO account_balances row —
+a credit card is a liability, not cash. FX pins the USD presentation per value
+date on --apply (same frankfurter path as the bank importer); pnl_bucket is
+stamped at insert so the P&L includes the rows immediately.
+
+Usage: PYTHONPATH=. python3 bin/finance-import-card [--apply]   (default dry-run)
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db  # noqa: E402
+from modules.finance import fx, money, pnl  # noqa: E402
+from modules.finance.importers import card_pdf  # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "card"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-card.md"
+
+
+def _import_file(f: Path, apply: bool, seen: set) -> dict:
+    parsed = card_pdf.parse_text(card_pdf.extract_text(f))
+    rec = card_pdf.reconcile(parsed)
+    out = {"file": f.name, "card4": parsed["card4"],
+           "period": f"{parsed['period_start']}..{parsed['period_end']}",
+           "rows": len(parsed["rows"]), "parse_quarantine": len(parsed["quarantine"]),
+           "reconcile_ok": rec["ok"]}
+    if not rec["ok"]:
+        out["abort"] = (f"statement did not self-reconcile"
+                        f" (candidate pairs: {rec.get('pairs_found')})")
+        return out
+    out["opening_inr"] = str(money.from_minor(rec["opening_minor"]))
+    out["total_due_inr"] = str(money.from_minor(rec["total_due_minor"]))
+
+    # dedupe vs the DB AND vs rows earlier files contributed THIS run — so a
+    # dry-run over a re-uploaded duplicate statement reports 0 new, same as apply
+    todo = [r for r in parsed["rows"] if r["canonical_key"] not in seen]
+    seen.update(r["canonical_key"] for r in parsed["rows"])
+    out["already_imported"] = len(parsed["rows"]) - len(todo)
+    out["new_rows"] = len(todo)
+    out["new_spend_inr"] = str(money.from_minor(
+        sum(r["amount_minor"] for r in todo if r["category"] == "expense")))
+    if not (apply and todo):
+        return out
+
+    for r in todo:                      # FX needs currency + value_date
+        r["currency"] = "INR"
+        r["value_date"] = r["date"]
+    pin = fx.pin_base(todo, base_currency="USD")
+    out["fx"] = {"pinned": pin["pinned"], "dates": len(pin["fetched_dates"])}
+    inserted = 0
+    with db.connect(config.DB_PATH) as conn:
+        for r in todo:
+            row = {"category": r["category"], "source": "Card",
+                   "amount_base_minor": r.get("amount_base_minor")}
+            conn.execute(
+                "INSERT OR IGNORE INTO transactions (record_id, canonical_key,"
+                " dedup_key, type, category, description, currency, amount_minor,"
+                " amount_credited_minor, amount_base_minor, fx_rate, fx_date,"
+                " creation_dt, source, source_file, pnl_bucket)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (r["canonical_key"], r["canonical_key"], r["canonical_key"],
+                 "Card Spend" if r["category"] == "expense" else "Card Payment",
+                 r["category"], r["description"], "INR", r["amount_minor"],
+                 r["amount_minor"], r.get("amount_base_minor"), r.get("fx_rate"),
+                 r.get("fx_date"), r["date"], "Card", f.name,
+                 pnl.bucket(row)))       # stamped now -> P&L sees it immediately
+            inserted += 1
+    out["inserted"] = inserted
+    return out
+
+
+def run(apply: bool) -> dict:
+    files = sorted(INBOX.glob("*.pdf"), key=lambda p: p.stat().st_mtime)
+    if not files:
+        return {"abort": "no .pdf in finance-inbox/card/"}
+    with db.connect(config.DB_PATH) as conn:
+        seen = {r["canonical_key"] for r in conn.execute(
+            "SELECT canonical_key FROM transactions WHERE canonical_key LIKE 'card:%'")}
+    reports = [_import_file(f, apply, seen) for f in files]
+    aborted = [r["file"] for r in reports if r.get("abort")]
+    return {"mode": "APPLY" if apply else "DRY-RUN",
+            "files": len(files), "aborted_files": aborted,
+            "new_rows": sum(r.get("new_rows", 0) for r in reports),
+            "inserted": sum(r.get("inserted", 0) for r in reports),
+            "per_file": reports}
+
+
+def main() -> int:
+    res = run("--apply" in sys.argv)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# Card import\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
+    print(json.dumps(res, indent=1))
+    return 0 if not res.get("abort") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
