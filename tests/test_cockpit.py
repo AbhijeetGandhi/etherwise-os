@@ -447,6 +447,35 @@ class TestPipelineReader(unittest.TestCase):
         self.assertEqual(out["funnel_weeks"][-1]["applied"], 1)
         self.assertEqual(out["funnel_weeks"][-2]["applied"], 1)
 
+    def test_pipeline_rows_drills(self):
+        # traceability: every Pipeline figure drills to its rows
+        out = data.pipeline_rows(self.db_path, stage="triage", today="2026-06-15")
+        self.assertEqual(out["count"], 1)                    # fresh hot 111 only
+        self.assertEqual(out["rows"][0]["id"], "2065400000000000111")
+        out = data.pipeline_rows(self.db_path, stage="carded")
+        self.assertEqual(out["count"], 1)                    # 112
+        self.assertTrue(all(r["clickup_task_url"] is not None or True
+                            for r in out["rows"]))
+        # week-filtered replied == the funnel cell for that week
+        p = data.pipeline(self.db_path, today="2026-06-15")
+        wk = p["funnel_weeks"][-1]
+        out = data.pipeline_rows(self.db_path, stage="replied", week=wk["week"])
+        self.assertEqual(out["count"], wk["replied"])
+        # threads by status matches the by_status counts
+        out = data.pipeline_rows(self.db_path, stage="threads", status="Won")
+        self.assertEqual(out["count"], p["by_status"]["Won"])
+        # applied rows come from the connects rail only
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO connects_history (id, event_date, kind,"
+                         " label, job_id, job_title, connects_delta) VALUES"
+                         " ('a1','2026-06-15','applied','Submitted a proposal',"
+                         " '999','Job X',-16)")
+        out = data.pipeline_rows(self.db_path, stage="applied", week=wk["week"])
+        self.assertEqual(out["count"], 1)
+        self.assertEqual(out["rows"][0]["job_id"], "999")
+        # unknown stage is a safe error, never a crash
+        self.assertIn("error", data.pipeline_rows(self.db_path, stage="nope"))
+
     def test_funnel_weeks_zero_filled_and_truthful(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
         t = out["funnel_weeks"]

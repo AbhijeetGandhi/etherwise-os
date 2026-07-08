@@ -36,6 +36,7 @@ GET_ROUTES: dict = {
     "/api/system": data.system,
     "/api/money": data.money,
     "/api/money/transactions": data.money_transactions,  # drill-down (traceability)
+    "/api/pipeline/rows": data.pipeline_rows,            # drill-down (traceability)
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
 }
 POST_ROUTES: dict = {

@@ -416,6 +416,86 @@ def pipeline(db_path: Optional[Path] = None,
             "to_triage": to_triage}
 
 
+def pipeline_rows(db_path: Optional[Path] = None, *,
+                  stage: Optional[str] = None,
+                  week: Optional[str] = None,
+                  status: Optional[str] = None,
+                  today: Optional[str] = None) -> dict:
+    """Drill-down: the rows behind any Pipeline figure (traceability contract,
+    same as Money). stage: scanned|scored|carded|applied|replied|triage|threads.
+    week = the funnel week-start (Monday, YYYY-MM-DD) filters that calendar
+    week; threads takes status= instead. Read-only; capped at 300 rows."""
+    if stage not in ("scanned", "scored", "carded", "applied", "replied",
+                     "triage", "threads"):
+        return {"error": f"unknown stage {stage!r}", "rows": [], "count": 0}
+    lo = hi = None
+    if week:
+        d = date.fromisoformat(week)
+        lo, hi = week, (d + timedelta(days=6)).isoformat()
+
+    def wk(col):
+        return (f" AND substr({col},1,10) BETWEEN ? AND ?", [lo, hi]) \
+            if lo else ("", [])
+
+    conn = _ro(db_path)
+    try:
+        rows: list = []
+        if stage in ("scanned", "scored", "carded"):
+            col = "fetched_at" if stage == "scanned" else "first_scored_at"
+            cond, args = wk(col)
+            if stage == "scored":
+                cond += " AND score >= 8"
+            if stage == "carded":
+                cond += " AND clickup_task_id IS NOT NULL"
+            q = (f"SELECT id, title, score, status, job_url, clickup_task_url,"
+                 f" substr({col},1,10) AS d FROM scored_jobs"
+                 f" WHERE {col} LIKE '20%'{cond}"
+                 f" ORDER BY {col} DESC LIMIT 300")
+            rows = [dict(r) for r in conn.execute(q, args)]
+        elif stage == "applied":
+            cond, args = wk("event_date")
+            rows = [dict(r) for r in conn.execute(
+                "SELECT event_date AS d, job_title AS title, job_id,"
+                " connects_delta, label FROM connects_history"
+                f" WHERE kind='applied'{cond}"
+                " ORDER BY event_date DESC LIMIT 300", args)]
+        elif stage == "replied":
+            cond, args = wk("created_dt")
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, job_title AS title, status, upwork_status,"
+                " client_company, substr(created_dt,1,10) AS d FROM proposals"
+                f" WHERE created_dt LIKE '20%'{cond}"
+                " ORDER BY created_dt DESC LIMIT 300", args)]
+        elif stage == "triage":
+            fresh_cut = (date.fromisoformat(today or _ist_today())
+                         - timedelta(days=BOARD_WINDOW_DAYS)).isoformat()
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, title, score, status, job_url,"
+                " substr(first_scored_at,1,10) AS d,"
+                " draft_proposal IS NOT NULL AS has_draft FROM scored_jobs"
+                " WHERE status IN ('Scored','Drafted') AND clickup_task_id IS"
+                " NULL AND score>=16 AND substr(first_scored_at,1,10) >= ?"
+                " ORDER BY score DESC, first_scored_at DESC LIMIT 300",
+                (fresh_cut,))]
+        elif stage == "threads":
+            cond, args = ("", [])
+            if status:
+                cond = (" WHERE COALESCE(NULLIF(status,''), upwork_status,"
+                        " 'Unknown') = ?")
+                args = [status]
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, job_title AS title,"
+                " COALESCE(NULLIF(status,''), upwork_status, 'Unknown') AS status,"
+                " client_company, substr(created_dt,1,10) AS d,"
+                " substr(modified_dt,1,10) AS modified FROM proposals"
+                f"{cond} ORDER BY COALESCE(modified_dt, created_dt) DESC"
+                " LIMIT 300", args)]
+    finally:
+        conn.close()
+    return {"stage": stage, "week": week, "status": status,
+            "rows": rows, "count": len(rows)}
+
+
 def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     """Today hero: actionable queue (follow-ups w/ draft, hot leads,
     proto-nudges) + the metrics strip. Read-only; real data only."""

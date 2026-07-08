@@ -298,85 +298,160 @@ const RENDERERS = {
   Pipeline: async (view) => {
     const d = await api("/api/pipeline");
     view.appendChild(el("h2", "section",
-      `Pipeline <span class="hint muted">— truthful sources only; 'applied'`
-      + ` arrives with the connects-history rail</span>`));
+      `Pipeline <span class="hint muted">— every number is clickable; sources`
+      + ` are truthful (applied = connects rail)</span>`));
     const c = d.carded || {}, wr = d.win_rate || {}, b = d.bands || {};
-    const cr = d.client_replied || {};
-    const grid = el("div", "grid");
-    grid.appendChild(card("Carded to board",
-      `<div class="metric">${c.today || 0} <small>today</small></div>`
-      + `<div class="muted">${c.week || 0} this week · ${c.last_week || 0} last week</div>`
-      + `<div class="muted small">real ClickUp cards — your action surface</div>`));
-    grid.appendChild(card("Client replies",
-      `<div class="metric">${cr.this_month || 0} <small>this month</small></div>`
-      + `<div class="muted">${cr.total || 0} all-time · last ${esc(cr.last || "—")}</div>`
-      + `<div class="muted small">room-sourced proposals — replies, not submissions</div>`));
-    grid.appendChild(card("Win rate (upper bound)",
-      `<div class="metric">${wr.pct != null ? "≤" + wr.pct + "%" : "—"}</div>`
-      + `<div class="muted">${wr.won || 0} won of ${wr.decided || 0} decided threads</div>`
-      + `<div class="muted small">${esc(wr.caveat || "")}</div>`));
-    grid.appendChild(card(`To triage (last ${b.window_days || 7}d)`,
-      `<div class="metric">${d.to_triage || 0} <small>hot</small></div>`
-      + `<div class="muted">${b.standard || 0} standard · ${b.low || 0} low</div>`
-      + `<div class="muted small">${b.backlog_uncarded || 0} older uncarded rows excluded (shadow-era backlog)</div>`));
-    view.appendChild(grid);
+    const cr = d.client_replied || {}, a = d.applied || {};
+    const drill = el("div", "drill");
 
-    // applied-truth: the connects-history rail. Available -> true counts
-    // (0 is a real zero); pre-rail -> an explicit callout, never fake zeros.
-    const a = d.applied || {};
-    if (a.available) {
-      const grid2 = el("div", "grid");
-      grid2.appendChild(card("Applied (connects rail)",
-        `<div class="metric">${a.today || 0} <small>today</small></div>`
-        + `<div class="muted">${a.week || 0} this week · ${a.last_week || 0} last week</div>`
-        + `<div class="muted small">${esc(a.note || "")}</div>`));
-      view.appendChild(grid2);
-    } else {
-      const call = el("div", "card");
-      call.appendChild(el("h3", null, "Applied — not yet measurable"));
-      call.appendChild(el("div", "muted", esc(a.reason || "")));
-      call.appendChild(el("div", null, `Fix: <b>${esc(a.rail || "")}</b>.`));
-      view.appendChild(call);
+    // generic rows-drill (jobs / applies / threads), same panel contract:
+    // header shows the count of the rows actually shown
+    async function openRows(title, params, cols) {
+      const qs = Object.entries(params).filter(([, v]) => v != null)
+        .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+      const res = await api("/api/pipeline/rows?" + qs);
+      const rows = res.rows || [];
+      drill.innerHTML = "";
+      drill.classList.add("open");
+      const h = el("h4", null, `${esc(title)} <span class="count">— ${rows.length}`
+        + ` row${rows.length === 1 ? "" : "s"}${rows.length === 300 ? " (capped)" : ""}</span>`
+        + `<button class="close">✕ close</button>`);
+      h.querySelector(".close").onclick = () => drill.classList.remove("open");
+      drill.appendChild(h);
+      if (!rows.length) {
+        drill.appendChild(el("div", "emptystate", "No rows behind this figure."));
+      } else {
+        const wrap = el("div", "tablewrap");
+        const t = el("table");
+        t.innerHTML = "<tr>" + cols.map((cc) =>
+          `<th${cc.num ? " class='num'" : ""}>${cc.label}</th>`).join("") + "</tr>";
+        rows.forEach((r) => {
+          const tr = el("tr");
+          tr.innerHTML = cols.map((cc) => {
+            const v = cc.render ? cc.render(r) : esc(r[cc.k] == null ? "—" : r[cc.k]);
+            return `<td${cc.num ? " class='num'" : ""}>${v}</td>`;
+          }).join("");
+          t.appendChild(tr);
+        });
+        wrap.appendChild(t);
+        drill.appendChild(wrap);
+      }
+      drill.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
+    const jobCols = [
+      { k: "d", label: "Date" },
+      { k: "title", label: "Job", render: (r) => r.job_url
+        ? `<a href="${esc(r.job_url)}" target="_blank" rel="noopener">${esc(r.title || r.id)}</a>`
+        : esc(r.title || r.id) },
+      { k: "score", label: "Score", num: true },
+      { k: "status", label: "Status",
+        render: (r) => `<span class="pill">${esc(r.status || "—")}</span>` },
+      { k: "clickup_task_url", label: "Card", render: (r) => r.clickup_task_url
+        ? `<a href="${esc(r.clickup_task_url)}" target="_blank" rel="noopener">card</a>` : "—" },
+    ];
+    const appliedCols = [
+      { k: "d", label: "Date" },
+      { k: "title", label: "Job", render: (r) => r.job_id
+        ? `<a href="https://www.upwork.com/jobs/~02${esc(r.job_id)}" target="_blank"`
+          + ` rel="noopener">${esc(r.title || r.job_id)}</a>` : esc(r.title || "—") },
+      { k: "connects_delta", label: "Connects", num: true },
+    ];
+    const threadCols = [
+      { k: "d", label: "Started" },
+      { k: "modified", label: "Updated" },
+      { k: "title", label: "Job", render: (r) => esc(r.title || r.id) },
+      { k: "client_company", label: "Client" },
+      { k: "status", label: "Status",
+        render: (r) => `<span class="pill">${esc(r.status)}</span>` },
+    ];
 
+    const mondayOf = (iso) => iso;   // funnel weeks already carry the Monday
+
+    // ── KPI strip (all clickable) ──
+    const kpis = el("div", "kpis");
+    const mkKpi = (lbl, val, sub, act) => {
+      const k = el("button", "kpi");
+      k.appendChild(el("div", "lbl", lbl));
+      k.appendChild(el("div", "val", val));
+      k.appendChild(el("div", "sub2", sub));
+      k.appendChild(el("div", "tag", "details →"));
+      k.onclick = act;
+      return k;
+    };
+    kpis.appendChild(mkKpi("Carded to board", String(c.today || 0),
+      `${c.week || 0} this week · ${c.last_week || 0} last week · today`,
+      () => openRows("Carded — all recent", { stage: "carded" }, jobCols)));
+    kpis.appendChild(mkKpi("Applied" + (a.available ? "" : " (rail pending)"),
+      a.available ? String(a.week || 0) : "—",
+      a.available ? `this week · ${a.today || 0} today · since ${esc(a.since || "")}`
+                  : esc((a.rail || "").slice(0, 60)),
+      () => openRows("Applications (connects rail)", { stage: "applied" }, appliedCols)));
+    kpis.appendChild(mkKpi("Client replies", String(cr.this_month || 0),
+      `this month · ${cr.total || 0} all-time · last ${esc(cr.last || "—")}`,
+      () => openRows("Client replies (room-sourced proposals)",
+        { stage: "replied" }, threadCols)));
+    kpis.appendChild(mkKpi("To triage", String(d.to_triage || 0),
+      `hot, last ${b.window_days || 7}d · ${b.standard || 0} std · ${b.low || 0} low`
+      + ` · ${b.backlog_uncarded || 0} stale excluded`,
+      () => openRows(`To triage — untasked hot (last ${b.window_days || 7}d)`,
+        { stage: "triage" }, jobCols)));
+    view.appendChild(kpis);
+    view.appendChild(drill);
+
+    // win rate + zero-applies context line
+    view.appendChild(el("div", "muted small",
+      `Win rate ≤${wr.pct != null ? wr.pct : "—"}% (${wr.won || 0} won of`
+      + ` ${wr.decided || 0} decided threads) — ${esc(wr.caveat || "")}`));
+
+    // ── Funnel by week (cells drill) ──
     view.appendChild(el("h2", "section",
       `Funnel by week <span class="hint muted">— scanned → scored ≥8 → carded`
-      + ` → applied → client replied</span>`));
+      + ` → applied → replied · click a cell for its rows</span>`));
     const fCard = el("div", "card");
     const fWrap = el("div", "tablewrap");
     const ft = el("table");
     ft.innerHTML = "<tr><th>Week</th><th class='num'>Scanned</th>"
       + "<th class='num'>Scored ≥8</th><th class='num'>Carded</th>"
       + "<th class='num'>Applied</th><th class='num'>Client replied</th></tr>";
+    const stages = [["scanned", "scanned", jobCols], ["scored", "scored", jobCols],
+                    ["carded", "carded", jobCols], ["applied", "applied", appliedCols],
+                    ["replied", "replied", threadCols]];
     (d.funnel_weeks || []).slice().reverse().forEach((w) => {
       const tr = el("tr");
-      tr.innerHTML = `<td>${esc(w.week)}${w.current ? ' <span class="chip">current</span>' : ""}</td>`
-        + `<td class="num">${w.scanned}</td><td class="num">${w.scored}</td>`
-        + `<td class="num">${w.carded}</td>`
-        + `<td class="num">${w.applied == null ? "—" : w.applied}</td>`
-        + `<td class="num">${w.replied}</td>`;
+      const tdW = el("td", null,
+        `${esc(w.week)}${w.current ? ' <span class="chip">current</span>' : ""}`);
+      tr.appendChild(tdW);
+      stages.forEach(([key, stage, cols]) => {
+        const v = w[key];
+        const td = el("td", "num" + (v ? " drillable" : ""),
+          v == null ? "—" : String(v));
+        if (v) td.onclick = () => openRows(
+          `${stage[0].toUpperCase() + stage.slice(1)} — week of ${w.week}`,
+          { stage, week: mondayOf(w.week) }, cols);
+        tr.appendChild(td);
+      });
       ft.appendChild(tr);
     });
     fWrap.appendChild(ft);
     fCard.appendChild(fWrap);
+    fCard.appendChild(el("div", "muted small",
+      "The outage (w/06-22) and shadow weeks (carded 0) are real history —"
+      + " the funnel never rewrites the past."));
     view.appendChild(fCard);
 
-    view.appendChild(el("h2", "section", "Carded per week"));
-    const chartBox = el("div", "card");
-    const chart = el("div", "chart");
-    chartBox.appendChild(chart);
-    view.appendChild(chartBox);
-    drawBarChart(chart, (d.funnel_weeks || []).map((t) => (
-      { label: (t.week || "").slice(5), v: t.carded, current: t.current })));
-
+    // ── Threads by status (rows drill) ──
     view.appendChild(el("h2", "section",
       `Threads by status <span class="hint muted">— the ${cr.total || 0}`
-      + ` room-sourced proposals</span>`));
+      + ` room-sourced proposals · click a status</span>`));
     const t = el("table");
-    t.innerHTML = "<tr><th>Status</th><th>Count</th></tr>";
+    t.innerHTML = "<tr><th>Status</th><th class='num'>Count</th></tr>";
     Object.entries(d.by_status || {}).sort((x, y) => y[1] - x[1]).forEach(([s, n]) => {
       const tr = el("tr");
-      tr.innerHTML = `<td>${esc(s)}</td><td>${n}</td>`;
+      tr.style.cursor = "pointer";
+      tr.innerHTML = `<td><span class="pill">${esc(s)}</span></td>`
+        + `<td class="num drillable">${n}</td>`;
+      tr.onclick = () => openRows(`Threads — ${s}`,
+        { stage: "threads", status: s }, threadCols);
       t.appendChild(tr);
     });
     view.appendChild(t);
