@@ -306,6 +306,8 @@ def pipeline(db_path: Optional[Path] = None,
                                  "carded": carded.get(wk, 0),
                                  "replied": replied.get(wk, 0),
                                  "current": i == 0})
+        # 'applied' joins the funnel only when the rail is live (None = no data,
+        # rendered as an em-dash — never a fake zero)
 
         def carded_between(lo, hi):
             return conn.execute(
@@ -319,14 +321,41 @@ def pipeline(db_path: Optional[Path] = None,
                 (d0 - timedelta(days=13)).isoformat(),
                 (d0 - timedelta(days=7)).isoformat())}
 
-        # applied-truth is NOT derivable from the DB today — say so, loudly,
-        # instead of charting a frozen table as zeros (the pre-audit behavior).
-        applied = {"available": False,
-                   "reason": "proposals are room-sourced only (client replies);"
-                             " submissions are not captured — vendorProposals"
-                             " scope declined",
-                   "rail": "connects-history CSV import (weekly drop, like the"
-                           " agency export)"}
+        # applied-truth: the connects-history rail (daily Chrome scrape — the
+        # page has no export and its API is scope-blocked). When the rail has
+        # data, counts are TRUE (0 = genuinely no applications); before the
+        # first scrape, say loudly that it's unavailable — never fake zeros.
+        applied_weeks = Counter()
+        try:
+            ch = conn.execute("SELECT COUNT(*) n, MIN(event_date) since"
+                              " FROM connects_history").fetchone()
+        except Exception:                        # pre-013 DB
+            ch = {"n": 0, "since": None}
+        if ch["n"]:
+            def applied_between(lo, hi):
+                return conn.execute(
+                    "SELECT COUNT(*) FROM connects_history WHERE kind='applied'"
+                    " AND event_date BETWEEN ? AND ?", (lo, hi)).fetchone()[0]
+            applied = {
+                "available": True, "since": ch["since"],
+                "today": applied_between(day, day),
+                "week": applied_between((d0 - timedelta(days=6)).isoformat(), day),
+                "last_week": applied_between(
+                    (d0 - timedelta(days=13)).isoformat(),
+                    (d0 - timedelta(days=7)).isoformat()),
+                "note": f"connects-history rail (daily scrape); history begins"
+                        f" {ch['since']} — a 0 here is a true zero"}
+            applied_weeks = week_counts(
+                "SELECT event_date FROM connects_history WHERE kind='applied'")
+        else:
+            applied = {"available": False,
+                       "reason": "proposals are room-sourced only (client"
+                                 " replies); submissions are not captured —"
+                                 " vendorProposals scope declined",
+                       "rail": "connects-history scrape rail (built — awaiting"
+                               " its first run)"}
+        for w in funnel_weeks:                   # em-dash pre-rail, true 0 after
+            w["applied"] = applied_weeks.get(w["week"], 0) if ch["n"] else None
 
         replied_total = conn.execute("SELECT COUNT(*) FROM proposals").fetchone()[0]
         replied_month = conn.execute(

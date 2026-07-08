@@ -321,33 +321,40 @@ const RENDERERS = {
       + `<div class="muted small">${b.backlog_uncarded || 0} older uncarded rows excluded (shadow-era backlog)</div>`));
     view.appendChild(grid);
 
-    // applied-truth: explicit honest state — never zeros from a frozen table
+    // applied-truth: the connects-history rail. Available -> true counts
+    // (0 is a real zero); pre-rail -> an explicit callout, never fake zeros.
     const a = d.applied || {};
-    if (a.available === false) {
+    if (a.available) {
+      const grid2 = el("div", "grid");
+      grid2.appendChild(card("Applied (connects rail)",
+        `<div class="metric">${a.today || 0} <small>today</small></div>`
+        + `<div class="muted">${a.week || 0} this week · ${a.last_week || 0} last week</div>`
+        + `<div class="muted small">${esc(a.note || "")}</div>`));
+      view.appendChild(grid2);
+    } else {
       const call = el("div", "card");
       call.appendChild(el("h3", null, "Applied — not yet measurable"));
       call.appendChild(el("div", "muted", esc(a.reason || "")));
-      call.appendChild(el("div", null,
-        `Fix: <b>${esc(a.rail || "")}</b> — export it from Upwork`
-        + ` (Settings → Membership &amp; Connects → Connects history) and it`
-        + ` becomes a weekly drop like the agency CSV.`));
+      call.appendChild(el("div", null, `Fix: <b>${esc(a.rail || "")}</b>.`));
       view.appendChild(call);
     }
 
     view.appendChild(el("h2", "section",
       `Funnel by week <span class="hint muted">— scanned → scored ≥8 → carded`
-      + ` → client replied</span>`));
+      + ` → applied → client replied</span>`));
     const fCard = el("div", "card");
     const fWrap = el("div", "tablewrap");
     const ft = el("table");
     ft.innerHTML = "<tr><th>Week</th><th class='num'>Scanned</th>"
       + "<th class='num'>Scored ≥8</th><th class='num'>Carded</th>"
-      + "<th class='num'>Client replied</th></tr>";
+      + "<th class='num'>Applied</th><th class='num'>Client replied</th></tr>";
     (d.funnel_weeks || []).slice().reverse().forEach((w) => {
       const tr = el("tr");
       tr.innerHTML = `<td>${esc(w.week)}${w.current ? ' <span class="chip">current</span>' : ""}</td>`
         + `<td class="num">${w.scanned}</td><td class="num">${w.scored}</td>`
-        + `<td class="num">${w.carded}</td><td class="num">${w.replied}</td>`;
+        + `<td class="num">${w.carded}</td>`
+        + `<td class="num">${w.applied == null ? "—" : w.applied}</td>`
+        + `<td class="num">${w.replied}</td>`;
       ft.appendChild(tr);
     });
     fWrap.appendChild(ft);

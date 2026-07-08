@@ -417,12 +417,35 @@ class TestPipelineReader(unittest.TestCase):
         self.assertEqual(out["by_status"].get("Won"), 3)
         self.assertEqual(out["by_status"].get("Activated"), 1)   # not 'Unknown'
 
-    def test_applied_is_explicitly_unavailable(self):
-        # NEVER fake zeros from the frozen room-sourced table: 'applied' says
-        # loudly that it needs the connects-history rail.
+    def test_applied_is_explicitly_unavailable_pre_rail(self):
+        # NEVER fake zeros: before the connects rail's first scrape, 'applied'
+        # says loudly that it's unavailable, and funnel cells are None (em-dash).
         out = data.pipeline(self.db_path, today="2026-06-15")
         self.assertFalse(out["applied"]["available"])
         self.assertIn("connects-history", out["applied"]["rail"])
+        self.assertIsNone(out["funnel_weeks"][-1]["applied"])
+
+    def test_applied_from_connects_rail(self):
+        # with the rail live, applied counts are TRUE (0 = genuinely zero) and
+        # come from kind='applied' rows only.
+        with db.connect(self.db_path) as conn:
+            for cid, dt, kind in [("c1", "2026-06-15", "applied"),
+                                  ("c2", "2026-06-12", "applied"),
+                                  ("c3", "2026-06-15", "badge"),
+                                  ("c4", "2026-06-01", "applied")]:
+                conn.execute("INSERT INTO connects_history (id, event_date,"
+                             " kind, label, connects_delta) VALUES (?,?,?,?,?)",
+                             (cid, dt, kind, "x", -8 if kind == "applied" else -1))
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        a = out["applied"]
+        self.assertTrue(a["available"])
+        self.assertEqual(a["today"], 1)          # c1 only (badge never counts)
+        self.assertEqual(a["week"], 2)           # c1 + c2
+        self.assertEqual(a["since"], "2026-06-01")
+        # calendar weeks: c1 (Mon 06-15) in the current week; c2 (Fri 06-12)
+        # in the prior one — rolling-7d 'week' (2) vs calendar cells (1 and 1)
+        self.assertEqual(out["funnel_weeks"][-1]["applied"], 1)
+        self.assertEqual(out["funnel_weeks"][-2]["applied"], 1)
 
     def test_funnel_weeks_zero_filled_and_truthful(self):
         out = data.pipeline(self.db_path, today="2026-06-15")
