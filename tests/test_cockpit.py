@@ -425,6 +425,35 @@ class TestPipelineReader(unittest.TestCase):
         self.assertIn("connects-history", out["applied"]["rail"])
         self.assertIsNone(out["funnel_weeks"][-1]["applied"])
 
+    def test_pre_rail_weeks_are_unknown_not_zero(self):
+        # 2026-07-13: the funnel printed 0 applied for EVERY historical week,
+        # which reads as "he never applied" instead of "we weren't measuring".
+        # Only weeks the rail actually covers may show a number.
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO connects_history (id, event_date, kind,"
+                         " label, connects_delta) VALUES"
+                         " ('c1','2026-06-15','applied','x',-8)")
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        weeks = out["funnel_weeks"]
+        self.assertEqual(out["applied"]["covered_since"], "2026-06-15")
+        self.assertEqual(weeks[-1]["applied"], 1)          # covered -> real count
+        # weeks that ENDED before the rail started have no data at all
+        self.assertIsNone(weeks[0]["applied"])
+        self.assertIsNone(weeks[-3]["applied"])
+
+    def test_hired_column_from_contracts(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO contracts (id, title, upwork_status,"
+                         " start_dt) VALUES ('c9','Airtable build','ACTIVE',"
+                         " '2026-06-15T00:00:00+0000')")
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        self.assertEqual(out["funnel_weeks"][-1]["hired"], 1)
+        self.assertEqual(out["funnel_weeks"][0]["hired"], 0)   # true zero: contracts are fully known
+        rows = data.pipeline_rows(self.db_path, stage="hired",
+                                  week=out["funnel_weeks"][-1]["week"])
+        self.assertEqual(rows["count"], 1)
+        self.assertEqual(rows["rows"][0]["title"], "Airtable build")
+
     def test_applied_from_connects_rail(self):
         # with the rail live, applied counts are TRUE (0 = genuinely zero) and
         # come from kind='applied' rows only.

@@ -298,6 +298,10 @@ def pipeline(db_path: Optional[Path] = None,
                              " AND first_scored_at LIKE '20%'")
         replied = week_counts("SELECT created_dt FROM proposals"
                               " WHERE created_dt LIKE '20%'")
+        # HIRED — the funnel's real end state (contracts.start_dt is the truth;
+        # proposals.status='Won' is thread-sourced and undercounts)
+        hired = week_counts("SELECT start_dt FROM contracts"
+                            " WHERE start_dt LIKE '20%'")
         funnel_weeks = []
         for i in range(9, -1, -1):
             wk = (this_mon - timedelta(weeks=i)).isoformat()
@@ -305,9 +309,8 @@ def pipeline(db_path: Optional[Path] = None,
                                  "scored": scored.get(wk, 0),
                                  "carded": carded.get(wk, 0),
                                  "replied": replied.get(wk, 0),
+                                 "hired": hired.get(wk, 0),
                                  "current": i == 0})
-        # 'applied' joins the funnel only when the rail is live (None = no data,
-        # rendered as an em-dash — never a fake zero)
 
         def carded_between(lo, hi):
             return conn.execute(
@@ -354,8 +357,18 @@ def pipeline(db_path: Optional[Path] = None,
                                  " vendorProposals scope declined",
                        "rail": "connects-history scrape rail (built — awaiting"
                                " its first run)"}
-        for w in funnel_weeks:                   # em-dash pre-rail, true 0 after
-            w["applied"] = applied_weeks.get(w["week"], 0) if ch["n"] else None
+        # 'applied' is only KNOWN for weeks the connects rail actually covers.
+        # A week that ended before the rail's first scrape has NO data — it must
+        # render as unknown (em-dash), never as a fabricated 0 (2026-07-13: the
+        # funnel showed 0 applied for every historical week, which read as "he
+        # never applied" instead of "we weren't measuring yet").
+        since = ch["since"] if ch["n"] else None
+        for w in funnel_weeks:
+            week_end = (date.fromisoformat(w["week"])
+                        + timedelta(days=6)).isoformat()
+            covered = bool(since) and week_end >= since
+            w["applied"] = applied_weeks.get(w["week"], 0) if covered else None
+        applied["covered_since"] = since
 
         replied_total = conn.execute("SELECT COUNT(*) FROM proposals").fetchone()[0]
         replied_month = conn.execute(
@@ -426,7 +439,7 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
     week = the funnel week-start (Monday, YYYY-MM-DD) filters that calendar
     week; threads takes status= instead. Read-only; capped at 300 rows."""
     if stage not in ("scanned", "scored", "carded", "applied", "replied",
-                     "triage", "threads"):
+                     "hired", "triage", "threads"):
         return {"error": f"unknown stage {stage!r}", "rows": [], "count": 0}
     lo = hi = None
     if week:
@@ -466,6 +479,14 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                 " client_company, substr(created_dt,1,10) AS d FROM proposals"
                 f" WHERE created_dt LIKE '20%'{cond}"
                 " ORDER BY created_dt DESC LIMIT 300", args)]
+        elif stage == "hired":
+            cond, args = wk("start_dt")
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, COALESCE(title, job_title) AS title, client_company,"
+                " upwork_status AS status, hourly_rate, contract_type,"
+                " substr(start_dt,1,10) AS d FROM contracts"
+                f" WHERE start_dt LIKE '20%'{cond}"
+                " ORDER BY start_dt DESC LIMIT 300", args)]
         elif stage == "triage":
             fresh_cut = (date.fromisoformat(today or _ist_today())
                          - timedelta(days=BOARD_WINDOW_DAYS)).isoformat()

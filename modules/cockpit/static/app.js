@@ -406,16 +406,28 @@ const RENDERERS = {
     // ── Funnel by week (cells drill) ──
     view.appendChild(el("h2", "section",
       `Funnel by week <span class="hint muted">— scanned → scored ≥8 → carded`
-      + ` → applied → replied · click a cell for its rows</span>`));
+      + ` → applied → replied → hired · click a cell for its rows · “—” = not`
+      + ` measured that week</span>`));
     const fCard = el("div", "card");
     const fWrap = el("div", "tablewrap");
     const ft = el("table");
     ft.innerHTML = "<tr><th>Week</th><th class='num'>Scanned</th>"
       + "<th class='num'>Scored ≥8</th><th class='num'>Carded</th>"
-      + "<th class='num'>Applied</th><th class='num'>Client replied</th></tr>";
+      + "<th class='num'>Applied</th><th class='num'>Client replied</th>"
+      + "<th class='num'>Hired</th></tr>";
+    const hiredCols = [
+      { k: "d", label: "Started" },
+      { k: "title", label: "Contract", render: (r) => esc(r.title || r.id) },
+      { k: "client_company", label: "Client" },
+      { k: "contract_type", label: "Type" },
+      { k: "hourly_rate", label: "Rate", num: true,
+        render: (r) => r.hourly_rate ? "$" + r.hourly_rate + "/hr" : "—" },
+      { k: "status", label: "Status",
+        render: (r) => `<span class="pill">${esc(r.status || "—")}</span>` },
+    ];
     const stages = [["scanned", "scanned", jobCols], ["scored", "scored", jobCols],
                     ["carded", "carded", jobCols], ["applied", "applied", appliedCols],
-                    ["replied", "replied", threadCols]];
+                    ["replied", "replied", threadCols], ["hired", "hired", hiredCols]];
     (d.funnel_weeks || []).slice().reverse().forEach((w) => {
       const tr = el("tr");
       const tdW = el("td", null,
