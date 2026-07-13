@@ -221,7 +221,20 @@ select:focus,input[type=search]:focus{outline:none;border-color:var(--blue2)}
 .trendline{position:absolute;inset:18px 0 24px;width:100%;height:calc(100% - 42px);
   pointer-events:none;overflow:visible}
 .trendline polyline{fill:none;stroke:var(--amber);stroke-width:2;
-  vector-effect:non-scaling-stroke;stroke-linejoin:round}
+  vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
+/* outcome cards — deliberately NOT funnel bands (different sources/windows) */
+.outcomes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.ocard{border:1px solid var(--g3);border-radius:var(--rad);padding:14px 16px;
+  background:var(--g1);text-align:left;cursor:pointer;font:inherit;transition:.12s}
+.ocard:hover{border-color:var(--blue);background:var(--g2)}
+.ocard.unknown{opacity:.7;cursor:default}
+.ocard.unknown:hover{border-color:var(--g3);background:var(--g1)}
+.ocard .lbl{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.04em;
+  color:var(--g5);font-weight:700}
+.ocard .val{font-size:26px;font-weight:700;color:var(--g7);
+  font-variant-numeric:tabular-nums;margin:4px 0 2px}
+.ocard .sub2{font-size:var(--fs-xs);color:var(--g5);line-height:1.4}
+@media(max-width:700px){.outcomes{grid-template-columns:1fr}}
 
 /* lead quality: one stacked bar + a clickable legend */
 .qstack{display:flex;height:36px;border-radius:6px;overflow:hidden;gap:2px}

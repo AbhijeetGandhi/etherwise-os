@@ -377,6 +377,16 @@ const RENDERERS = {
       { k: "status", label: "Status",
         render: (r) => `<span class="pill">${esc(r.status)}</span>` },
     ];
+    const hiredCols = [
+      { k: "d", label: "Started" },
+      { k: "title", label: "Contract", render: (r) => esc(r.title || r.id) },
+      { k: "client_company", label: "Client" },
+      { k: "contract_type", label: "Type" },
+      { k: "hourly_rate", label: "Rate", num: true,
+        render: (r) => r.hourly_rate ? "$" + r.hourly_rate + "/hr" : "—" },
+      { k: "status", label: "Status",
+        render: (r) => `<span class="pill">${esc(r.status || "—")}</span>` },
+    ];
 
     const mondayOf = (iso) => iso;   // funnel weeks already carry the Monday
 
@@ -569,6 +579,13 @@ const RENDERERS = {
       const [rf] = bounds();
       const railCovers = !!railSince
         && (isAll() || (rf || "0000-00") >= railSince.slice(0, 7));
+      // ONLY the scanner stages belong in the funnel. Each of these five IS a
+      // strict subset of the one above (same table, same rows, narrowing
+      // predicate), so the taper is a real loss and the step-% is a real
+      // conversion. Applied/replied/hired are NOT subsets of these — they come
+      // from other tables with other time coverage (contracts reach back to
+      // 2024; 51 of 55 predate the scanner's first scan) — so they are shown
+      // BELOW as outcomes, with no step-% pretending they divide into this.
       const steps = [
         { k: "scanned", lbl: "Scanned", n: scanned, q: scopeQ({}),
           note: "every job the feeds returned" },
@@ -582,19 +599,11 @@ const RENDERERS = {
           q: scopeQ({ score_min: HOT }), note: "cleared the hot bar" },
         { k: "carded", lbl: "Carded to ClickUp", n: carded.length,
           q: scopeQ({ carded: "1" }), note: "made it onto the board" },
-        { k: "applied", lbl: "Applied", n: railCovers ? A().length : null,
-          q: null, outcome: true,
-          note: railCovers ? "connects-history rail — a 0 here is a true zero"
-                           : `not measured before ${esc(railSince || "the rail")}` },
-        { k: "replied", lbl: "Client replied", n: RP().length, q: null,
-          outcome: true, note: "room-sourced threads" },
-        { k: "hired", lbl: "Hired", n: H().length, q: null, outcome: true,
-          note: "contracts started" },
       ];
       charts.appendChild(el("h2", "section",
-        `Conversion funnel <span class="hint muted">— ${esc(rl)} · each band is`
-        + ` a subset of the one above · click a band for its rows, or a drop-off`
-        + ` for the jobs that died there</span>`));
+        `Conversion funnel <span class="hint muted">— ${esc(rl)} · the scanner`
+        + ` stages, where each band IS a subset of the one above · click a band`
+        + ` for its rows, or a drop-off for the jobs that died there</span>`));
       const fc = el("div", "card");
       const fn = el("div", "funnel");
       steps.forEach((s, i) => {
@@ -637,12 +646,56 @@ const RENDERERS = {
         }
       });
       fc.appendChild(fn);
-      if (!railCovers) {
-        fc.appendChild(el("div", "muted small",
-          `Applied is blank for this range — the connects rail only measures from`
-          + ` ${esc(railSince || "—")}. A blank is “not measured”, never a zero.`));
-      }
       charts.appendChild(fc);
+
+      // ── OUTCOMES (deliberately NOT part of the funnel above) ─────────────
+      // These three come from three different sources with three different
+      // coverage windows. They do not divide into 'carded', and showing a
+      // conversion between them would be a lie: 'Hired 55, 75% of replies'
+      // implied three quarters of client replies become contracts, when in
+      // truth most of those contracts predate the scanner entirely.
+      charts.appendChild(el("h2", "section",
+        `Outcomes <span class="hint muted">— ${esc(rl)} · what actually came`
+        + ` back · these are NOT a subset of the funnel above, so there is no`
+        + ` conversion % between them</span>`));
+      const oc = el("div", "card");
+      const og = el("div", "outcomes");
+      const outs = [
+        { lbl: "Applied", n: railCovers ? A().length : null,
+          src: railCovers
+            ? `connects-history rail · live since ${esc(railSince || "")}`
+            : `not measured before ${esc(railSince || "the rail")}`,
+          zero: "a true zero — applications are paused",
+          stage: "applied", cols: appliedCols },
+        { lbl: "Client replied", n: RP().length,
+          src: "room-sourced threads · reaches back to 2024",
+          stage: "replied", cols: threadCols },
+        { lbl: "Hired", n: H().length,
+          src: "contracts started · most predate the scanner",
+          stage: "hired", cols: hiredCols },
+      ];
+      outs.forEach((o) => {
+        const b3 = el("button", "ocard" + (o.n == null ? " unknown" : ""));
+        b3.innerHTML = `<div class="lbl">${esc(o.lbl)}</div>`
+          + `<div class="val">${o.n == null ? "—" : nfmt(o.n)}</div>`
+          + `<div class="sub2">${esc(o.n === 0 && o.zero ? o.zero : o.src)}</div>`;
+        if (o.n != null) {
+          // the drill inherits the SAME month bounds the card counted with —
+          // otherwise a range-scoped card would open an all-time row list
+          const [of_, ot] = bounds();
+          b3.onclick = () => openRows(`${o.lbl} — ${rl}`,
+            { stage: o.stage, frm: of_, to: ot }, o.cols);
+        }
+        og.appendChild(b3);
+      });
+      oc.appendChild(og);
+      oc.appendChild(el("div", "muted small",
+        "Three sources, three coverage windows — that is why they are not"
+        + " stacked into the funnel. The connects rail only measures applications"
+        + (railSince ? ` from ${esc(railSince)}` : "")
+        + "; client replies and contracts reach back to 2024, long before the"
+        + " scanner existed. A blank is “not measured”, never a zero."));
+      charts.appendChild(oc);
 
       // ── 2. SCORE DISTRIBUTION ───────────────────────────────────────────
       charts.appendChild(el("h2", "section",
@@ -812,14 +865,20 @@ const RENDERERS = {
         const wmax = Math.max(1, ...wks.map((w) => byWeek[w].n));
         const tch = el("div", "mchart trend");
         // the carded-% line, drawn over the bars
-        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        // points sit at the CENTRE of each bar's column (i + 0.5 of n columns),
+        // not at the column edge — an off-by-half-a-column line reads as noise
+        const NS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(NS, "svg");
         svg.setAttribute("class", "trendline");
-        svg.setAttribute("viewBox", `0 0 ${Math.max(1, wks.length - 1)} 100`);
+        svg.setAttribute("viewBox", `0 0 ${wks.length} 100`);
         svg.setAttribute("preserveAspectRatio", "none");
-        const pts = wks.map((w, i) =>
-          `${i},${100 - Math.min(100, pctOf(byWeek[w].c, byWeek[w].n))}`).join(" ");
-        const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-        poly.setAttribute("points", pts);
+        const xy = wks.map((w, i) => [
+          i + 0.5, 100 - Math.min(100, pctOf(byWeek[w].c, byWeek[w].n))]);
+        const poly = document.createElementNS(NS, "polyline");
+        poly.setAttribute("points", xy.map(([x, y]) => `${x},${y}`).join(" "));
+        // no dots: the viewBox is stretched non-uniformly (preserveAspectRatio
+        // none), so a circle would render as a squashed ellipse. The line alone,
+        // with a non-scaling stroke, is the only shape that survives the stretch.
         svg.appendChild(poly);
         wks.forEach((w) => {
           const b2 = byWeek[w];
@@ -901,16 +960,6 @@ const RENDERERS = {
       + "<th class='num'>Scored ≥8</th><th class='num'>Carded</th>"
       + "<th class='num'>Applied</th><th class='num'>Client replied</th>"
       + "<th class='num'>Hired</th></tr>";
-    const hiredCols = [
-      { k: "d", label: "Started" },
-      { k: "title", label: "Contract", render: (r) => esc(r.title || r.id) },
-      { k: "client_company", label: "Client" },
-      { k: "contract_type", label: "Type" },
-      { k: "hourly_rate", label: "Rate", num: true,
-        render: (r) => r.hourly_rate ? "$" + r.hourly_rate + "/hr" : "—" },
-      { k: "status", label: "Status",
-        render: (r) => `<span class="pill">${esc(r.status || "—")}</span>` },
-    ];
     const stages = [["scanned", "scanned", jobCols], ["scored", "scored", jobCols],
                     ["carded", "carded", jobCols], ["applied", "applied", appliedCols],
                     ["replied", "replied", threadCols], ["hired", "hired", hiredCols]];

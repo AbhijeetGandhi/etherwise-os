@@ -1181,6 +1181,34 @@ class TestPipelineFacts(unittest.TestCase):
                          + self.total(skip="hourly_below_30")
                          + self.total(skip="low_hourly_rate"), len(hourly))
 
+    def test_outcome_drills_honour_the_month_range(self):
+        """Outcome cards (applied/replied/hired) are range-scoped, so their
+        drills must be too — a card counting one window while its rows show
+        another is precisely the dead-end metric the contract forbids."""
+        with db.connect(self.db_path) as conn:
+            for pid, dt in [("p1", "2024-04-05T00:00:00+0000"),
+                            ("p2", "2026-06-02T00:00:00+0000")]:
+                conn.execute("INSERT INTO proposals (id, status, created_dt)"
+                             " VALUES (?,'Won',?)", (pid, dt))
+            for cid, dt in [("c1", "2024-05-01T00:00:00+0000"),
+                            ("c2", "2026-06-04T00:00:00+0000")]:
+                conn.execute("INSERT INTO contracts (id, title, start_dt)"
+                             " VALUES (?,'Old work',?)", (cid, dt))
+        allr = data.pipeline_rows(self.db_path, stage="replied")
+        self.assertEqual(allr["total"], 2)                    # 2024 + 2026
+        scoped = data.pipeline_rows(self.db_path, stage="replied",
+                                    frm="2026-06", to="2026-06")
+        self.assertEqual(scoped["total"], 1)                  # the 2024 one is out
+        self.assertEqual(scoped["rows"][0]["d"], "2026-06-02")
+        hired = data.pipeline_rows(self.db_path, stage="hired",
+                                   frm="2026-06", to="2026-06")
+        self.assertEqual(hired["total"], 1)
+
+    def test_week_filter_still_beats_the_range(self):
+        # the funnel-by-week table asks by WEEK; that must keep working
+        d = data.pipeline_rows(self.db_path, stage="scanned", week="2026-06-08")
+        self.assertEqual(d["total"], 6)          # the six 2026-06-10 jobs
+
     def test_drill_reports_uncapped_total(self):
         d = data.pipeline_rows(self.db_path, stage="jobs")
         self.assertEqual(d["total"], 9)

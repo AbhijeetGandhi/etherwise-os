@@ -561,8 +561,21 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
         lo, hi = week, (d + timedelta(days=6)).isoformat()
 
     def wk(col):
-        return (f" AND substr({col},1,10) BETWEEN ? AND ?", [lo, hi]) \
-            if lo else ("", [])
+        """Date filter for a dated stage: an exact funnel WEEK when the
+        funnel-by-week table asks, otherwise the Pipeline's month RANGE. The
+        outcome cards (applied/replied/hired) are range-scoped, so their drills
+        must be too — a card and its rows that disagree is the dead-end metric
+        this whole contract exists to prevent."""
+        if lo:
+            return f" AND substr({col},1,10) BETWEEN ? AND ?", [lo, hi]
+        cond, args = "", []
+        if frm:
+            cond += f" AND substr({col},1,7) >= ?"
+            args.append(frm)
+        if to:
+            cond += f" AND substr({col},1,7) <= ?"
+            args.append(to)
+        return cond, args
 
     def _int(v):
         try:
@@ -639,6 +652,9 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                  f" WHERE {col} LIKE '20%'{cond}"
                  f" ORDER BY {col} DESC LIMIT 300")
             rows = [dict(r) for r in conn.execute(q, args)]
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM scored_jobs WHERE {col} LIKE '20%'{cond}",
+                args).fetchone()[0]
         elif stage == "applied":
             cond, args = wk("event_date")
             rows = [dict(r) for r in conn.execute(
@@ -646,6 +662,9 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                 " connects_delta, label FROM connects_history"
                 f" WHERE kind='applied'{cond}"
                 " ORDER BY event_date DESC LIMIT 300", args)]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM connects_history"
+                f" WHERE kind='applied'{cond}", args).fetchone()[0]
         elif stage == "replied":
             cond, args = wk("created_dt")
             rows = [dict(r) for r in conn.execute(
@@ -653,6 +672,9 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                 " client_company, substr(created_dt,1,10) AS d FROM proposals"
                 f" WHERE created_dt LIKE '20%'{cond}"
                 " ORDER BY created_dt DESC LIMIT 300", args)]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM proposals"
+                f" WHERE created_dt LIKE '20%'{cond}", args).fetchone()[0]
         elif stage == "hired":
             cond, args = wk("start_dt")
             rows = [dict(r) for r in conn.execute(
@@ -661,6 +683,9 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                 " substr(start_dt,1,10) AS d FROM contracts"
                 f" WHERE start_dt LIKE '20%'{cond}"
                 " ORDER BY start_dt DESC LIMIT 300", args)]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM contracts"
+                f" WHERE start_dt LIKE '20%'{cond}", args).fetchone()[0]
         elif stage == "triage":
             fresh_cut = (date.fromisoformat(today or _ist_today())
                          - timedelta(days=BOARD_WINDOW_DAYS)).isoformat()
