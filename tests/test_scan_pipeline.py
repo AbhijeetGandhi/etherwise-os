@@ -52,7 +52,9 @@ def ssr_job(jid, title="Airtable + Make.com Automation Specialist", **kw):
          "amount": {"amount": 0}, "tierText": "Expert",
          "durationLabel": "More than 6 months", "proposalsTier": "5 to 10",
          "publishedOn": "2026-07-13T07:54:56.303Z",
-         "skills": [{"prettyName": "Make.com"}, {"prettyName": "Airtable"}],
+         # real payload: named skills live in `attrs`; `skills` is often nameless
+         "attrs": [{"prettyName": "Make.com"}, {"prettyName": "Airtable"}],
+         "skills": [{"uid": "1"}, {"uid": "2"}],
          "client": {"paymentVerificationStatus": 1, "totalSpent": 12000.0,
                     "totalHires": 14, "totalFeedback": 4.9,
                     "location": {"country": "United States"}}}
@@ -276,6 +278,9 @@ class TestSsrPayload(ScanPipelineCase):
         self.assertEqual(r["client_payment_verified"], 1)
         self.assertEqual(r["total_applicants"], 5)            # "5 to 10" tier
         self.assertIn("~02" + JID_A, r["job_url"])            # href from ciphertext
+        # skills come from `attrs` — the double-weighted skill_fit signal must
+        # never be blank again (2026-07-13 regression)
+        self.assertEqual(json.loads(r["skills_json"]), ["Make.com", "Airtable"])
 
     def test_dom_fallback_when_payload_missing(self):
         # payload gone (shape change) -> DOM path still works, and says so

@@ -365,10 +365,18 @@ def parse_job(job, now=None):
     out["total_applicants"] = int(m.group(1)) if m else None
 
     out["description"] = (job.get("description") or "").strip()
-    out["skills"] = [s.get("prettyName") or s.get("name") or ""
-                     for s in (job.get("skills") or [])
-                     if isinstance(s, dict)] or \
-                    [s for s in (job.get("skills") or []) if isinstance(s, str)]
+    # skills live in `attrs` (prettyName) on the SSR payload; the `skills` array
+    # is often present but nameless -> reading only it stored ["","",""] and
+    # blanked the DOUBLE-WEIGHTED skill_fit signal (caught 2026-07-13). Merge
+    # both, keep order, drop blanks.
+    names = []
+    for src in ((job.get("attrs") or []), (job.get("skills") or [])):
+        for s in src:
+            n = (s.get("prettyName") or s.get("name") or "").strip() \
+                if isinstance(s, dict) else str(s).strip()
+            if n and n not in names:
+                names.append(n)
+    out["skills"] = names
 
     c = job.get("client") or {}
     out["client_payment_verified"] = 1 if c.get(
