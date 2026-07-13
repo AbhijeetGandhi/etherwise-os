@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Optional
 
 from core import config, db, notify, runner
-from modules.upwork import scoring
+from modules.upwork import icp, scoring
 
 sys.path.insert(0, str(config.V3_ROOT / "scripts"))
 import clickup_push  # noqa: E402  (routing/list names for intents)
@@ -112,6 +112,32 @@ def _update_scored(conn, jid: str, verdict: dict, draft: Optional[str],
              len(draft.split()) if draft else None,
              "Drafted" if draft else "Scored", jid))
     assert cur.rowcount == 1, f"{jid}: expected exactly one New row"
+
+
+def _icp_html(hits) -> str:
+    """The ICP alert: why it qualified, up front — you should be able to decide
+    from the email alone."""
+    items = []
+    for h in hits:
+        r, why = h["row"], h["why"]
+        rate = (f"${r.get('hourly_min') or '?'}–${r.get('hourly_max')}/hr"
+                if r.get("contract_type") == "Hourly"
+                else f"${r.get('fixed_budget') or 0:,.0f} fixed")
+        items.append(
+            f'<li style="margin-bottom:14px"><a href="{r.get("job_url")}"><b>'
+            f'{r.get("title")}</b></a> — score {r.get("score")}<br>'
+            f'{rate} · client spent ${r.get("client_total_spent") or 0:,.0f}'
+            f' · {r.get("client_hires") or 0} hires · {r.get("client_country") or "—"}'
+            f'<br><span style="color:#0f9d58">✓ '
+            + " · ".join(why) + "</span>"
+            + (f'<br><a href="{r.get("clickup_task_url")}">ClickUp card</a>'
+               if r.get("clickup_task_url") else "") + "</li>")
+    return ("<h2>★ Ideal-client lead" + ("s" if len(hits) > 1 else "") + "</h2>"
+            "<p>Matches the ICP: core stack (Airtable/Make), budget reaches "
+            "$51/hr (or $5k fixed), proven spender, long-term, agency-friendly."
+            "</p><ul>" + "\n".join(items) + "</ul>"
+            "<p style='color:#6b7688;font-size:12px'>Drafts are on the ClickUp "
+            "cards in <b>ICP / Prime</b>.</p>")
 
 
 def _digest_html(dbp, hot_ids) -> str:
@@ -229,6 +255,8 @@ def scan(ctx, _sleep=time.sleep) -> dict:
     # intended ClickUp tasks (run-scoped by construction: this run's verdicts)
     intents = 0     # shadow-recorded intents
     pushed = 0      # LIVE cards actually created (0 in shadow) — separate metric
+    icp_hits = []   # ideal-client-profile leads (the tier above 'hot')
+    icp_near = []
     for entry in scored:
         if (entry["score"] or 0) < 8:
             continue
@@ -236,8 +264,18 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             row = dict(conn.execute(
                 f"SELECT * FROM {TABLE} WHERE id=?",
                 (entry["id"],)).fetchone())
+        # ICP / Prime: deterministic ideal-client overlay ON TOP of the score
+        row["skills"] = json.loads(row.get("skills_json") or "[]")
+        verdict_bd = json.loads(row.get("score_breakdown_json") or "{}")
+        icp_v = icp.classify(row, score=row["score"], breakdown=verdict_bd)
+        if icp_v["tier"] == "icp":
+            icp_hits.append({"row": row, "why": icp_v["reasons"]})
+        elif icp_v["tier"] == "icp_near":
+            icp_near.append({"id": row["id"], "title": row["title"],
+                             "missing": icp_v["misses"]})
         list_id = clickup_push.list_for_score(
-            row["score"], invite=clickup_push.is_invite(row))
+            row["score"], invite=clickup_push.is_invite(row),
+            icp_tier=icp_v["tier"])
         if not list_id:
             continue
         if ctx.shadow:
@@ -252,6 +290,30 @@ def scan(ctx, _sleep=time.sleep) -> dict:
         else:
             clickup_push.push_one(clickup_push.token(), dbp, row, list_id)
             pushed += 1
+
+    # ICP hits get their OWN immediate email — they must never be buried in the
+    # hourly hot digest (81% of scored jobs are 'hot'; these are the few that
+    # match the ideal-client profile).
+    icp_status = None
+    if icp_hits and not ctx.shadow:
+        try:
+            notify.send_gmail(
+                f"★ ICP lead{'s' if len(icp_hits) > 1 else ''}:"
+                f" {icp_hits[0]['row']['title'][:60]}"
+                + (f" (+{len(icp_hits) - 1} more)" if len(icp_hits) > 1 else ""),
+                _icp_html(icp_hits))
+            icp_status = "sent"
+        except Exception as exc:                  # noqa: BLE001
+            ctx.log(f"ICP email FAILED: {exc!r}")
+            icp_status = "send_failed"
+    elif icp_hits:
+        ctx.record_shadow_write(
+            target="email", operation="send", entity="icp_alert",
+            entity_key=datetime.now(config.TZ).strftime("%Y-%m-%dT%H"),
+            payload={"ids": [h["row"]["id"] for h in icp_hits]})
+        icp_status = "shadow"
+    if icp_hits or icp_near:
+        ctx.log(f"ICP: {len(icp_hits)} prime, {len(icp_near)} near-miss")
 
     hot = [e for e in scored if (e["score"] or 0)
            >= config.HOT_LEAD_THRESHOLD]
@@ -287,7 +349,9 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             "scored": len(scored), "skipped": len(skipped),
             "drafts": drafted, "clickup_intents": intents,
             "clickup_pushed": pushed,
-            "hot": len(hot), "digest": digest_status}
+            "hot": len(hot), "digest": digest_status,
+            "icp": len(icp_hits), "icp_near": len(icp_near),
+            "icp_email": icp_status}
 
 
 def main() -> int:

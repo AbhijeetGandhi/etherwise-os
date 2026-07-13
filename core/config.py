@@ -140,6 +140,13 @@ SWEEP_INTERVAL_HOURS = 2       # within work hours; empty-skip short-circuit
 INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately (decision #9)
 HOT_LEAD_THRESHOLD = 16
 LOOM_FLAG_THRESHOLD = 22
+# ── ICP / Prime (Abhijeet's ideal-client profile, 2026-07-13) ────────────────
+# A TOP tier above 'hot' — 16+ had become a rubber stamp (81% of scored jobs).
+# Deterministic, code-side (see modules/upwork/icp.py).
+ICP_HOURLY_USD = 51.0            # $51/hr must be in the budget range
+ICP_FIXED_USD = 5000.0           # fixed-price equivalent
+ICP_CLIENT_SPEND_USD = 50000.0   # proven spender
+ICP_SPEND_PER_HIRE_USD = 2000.0  # readiness-to-pay proxy (avg-rate enrichment pending)
 
 # ── Chief of Staff (M4) — nudge scoring + decay (design spec §6) ──────────────
 # urgency = COS_URGENCY_BASE[kind] * recency_decay(age) * stake_mult(money|score)
