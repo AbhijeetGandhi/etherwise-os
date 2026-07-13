@@ -371,11 +371,14 @@ def pipeline(db_path: Optional[Path] = None,
         # render as unknown (em-dash), never as a fabricated 0 (2026-07-13: the
         # funnel showed 0 applied for every historical week, which read as "he
         # never applied" instead of "we weren't measuring yet").
+        # A week is MEASURED only if the rail was already running when it BEGAN.
+        # Judging on the week's END was wrong: the week of Jun-29 ended Jul-05,
+        # after the rail's first row (Jun-30), so it was called 'covered' and
+        # reported 0 applied for Jun 29 — six days nobody was counting. Coverage
+        # is a property of the whole period, not of its last day (2026-07-14).
         since = ch["since"] if ch["n"] else None
         for w in funnel_weeks:
-            week_end = (date.fromisoformat(w["week"])
-                        + timedelta(days=6)).isoformat()
-            covered = bool(since) and week_end >= since
+            covered = bool(since) and w["week"] >= since
             w["applied"] = applied_weeks.get(w["week"], 0) if covered else None
         applied["covered_since"] = since
 

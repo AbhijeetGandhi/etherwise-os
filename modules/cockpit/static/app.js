@@ -575,10 +575,17 @@ const RENDERERS = {
       const hot = js.filter((j) => j.s != null && j.s >= HOT);
       const carded = js.filter((j) => j.c);
       // applied is only KNOWN where the connects rail covers the range
+      // The applied count is only KNOWN for a period the rail actually measured.
+      // Coverage is judged on the period's START DATE, and 'all time' is the
+      // LEAST covered range there is, not the most: it reaches back to 2024,
+      // while the rail began on 2026-06-30. Two bugs lived here — 'all time'
+      // short-circuited to covered, and a month-granularity compare called June
+      // covered when the rail only holds Jun 30. Both produced a bare 0 where
+      // the truth is "never measured" (2026-07-14).
       const railSince = F.rail_since;
       const [rf] = bounds();
-      const railCovers = !!railSince
-        && (isAll() || (rf || "0000-00") >= railSince.slice(0, 7));
+      const rangeStart = isAll() || !rf ? null : rf + "-01";
+      const railCovers = !!railSince && !!rangeStart && rangeStart >= railSince;
       // ONLY the scanner stages belong in the funnel. Each of these five IS a
       // strict subset of the one above (same table, same rows, narrowing
       // predicate), so the taper is a real loss and the step-% is a real
@@ -664,7 +671,11 @@ const RENDERERS = {
         { lbl: "Applied", n: railCovers ? A().length : null,
           src: railCovers
             ? `connects-history rail · live since ${esc(railSince || "")}`
-            : `not measured before ${esc(railSince || "the rail")}`,
+            // the uncovered case must never read as "you applied to nothing" —
+            // it means "we weren't counting yet". Say so, and say what IS known.
+            : `NOT MEASURED for this range — the rail only counts from`
+              + ` ${esc(railSince || "—")}`
+              + (railSince ? ` (${nfmt(A().length)} since then)` : ""),
           zero: "a true zero — applications are paused",
           stage: "applied", cols: appliedCols },
         { lbl: "Client replied", n: RP().length,

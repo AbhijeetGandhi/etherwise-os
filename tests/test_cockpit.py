@@ -441,6 +441,22 @@ class TestPipelineReader(unittest.TestCase):
         self.assertIsNone(weeks[0]["applied"])
         self.assertIsNone(weeks[-3]["applied"])
 
+    def test_week_the_rail_started_midway_is_unknown_not_zero(self):
+        """Coverage is a property of the WHOLE period, not of its last day. The
+        rail starting on Thursday does not mean Monday-to-Wednesday were zero —
+        it means nobody was counting them (2026-07-14)."""
+        with db.connect(self.db_path) as conn:
+            # rail's first row lands on the THURSDAY of the 06-15 week
+            conn.execute("INSERT INTO connects_history (id, event_date, kind,"
+                         " label, connects_delta) VALUES"
+                         " ('c2','2026-06-18','applied','x',-8)")
+        out = data.pipeline(self.db_path, today="2026-06-19")
+        wk = {w["week"]: w for w in out["funnel_weeks"]}["2026-06-15"]
+        # the old rule (week_end >= since) called this week covered and printed
+        # 1 applied, silently implying Mon-Wed were 0. It is UNKNOWN.
+        self.assertIsNone(wk["applied"])
+        self.assertEqual(out["applied"]["covered_since"], "2026-06-18")
+
     def test_hired_column_from_contracts(self):
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO contracts (id, title, upwork_status,"
