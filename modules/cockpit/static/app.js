@@ -8,6 +8,15 @@ const TOKEN_KEY = "ew_cockpit_token";
 const THEME_KEY = "ew_cockpit_theme";
 const LAST_SECTION_KEY = "ew_cockpit_section";
 const MONEY_FILTERS_KEY = "ew_cockpit_money_filters";
+const PIPE_FILTERS_KEY = "ew_cockpit_pipeline_filters";
+
+// query string from a param object; nulls drop out (so an all-time range simply
+// omits frm/to rather than sending empty bounds)
+function qstr(params) {
+  return Object.entries(params).filter(([, v]) => v != null && v !== "")
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+}
+const nfmtG = (n) => Number(n).toLocaleString();
 
 // ── theme (persisted; tokens.css carries the palettes) ──
 function initTheme() {
@@ -296,7 +305,8 @@ const RENDERERS = {
     view.appendChild(grid);
   },
   Pipeline: async (view) => {
-    const d = await api("/api/pipeline");
+    const [d, F] = await Promise.all([api("/api/pipeline"),
+                                      api("/api/pipeline/facts")]);
     view.appendChild(el("h2", "section",
       `Pipeline <span class="hint muted">— every number is clickable; sources`
       + ` are truthful (applied = connects rail)</span>`));
@@ -307,14 +317,17 @@ const RENDERERS = {
     // generic rows-drill (jobs / applies / threads), same panel contract:
     // header shows the count of the rows actually shown
     async function openRows(title, params, cols) {
-      const qs = Object.entries(params).filter(([, v]) => v != null)
-        .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
-      const res = await api("/api/pipeline/rows?" + qs);
+      const res = await api("/api/pipeline/rows?" + qstr(params));
       const rows = res.rows || [];
+      // the drill states the TRUE count and, when the 300-row cap bites, says so
+      // — a capped list must never read as "that's all there was"
+      const total = res.total == null ? rows.length : res.total;
+      const capped = total > rows.length;
       drill.innerHTML = "";
       drill.classList.add("open");
-      const h = el("h4", null, `${esc(title)} <span class="count">— ${rows.length}`
-        + ` row${rows.length === 1 ? "" : "s"}${rows.length === 300 ? " (capped)" : ""}</span>`
+      const h = el("h4", null, `${esc(title)} <span class="count">— ${nfmtG(total)}`
+        + ` row${total === 1 ? "" : "s"}`
+        + `${capped ? ` (showing the latest ${rows.length})` : ""}</span>`
         + `<button class="close">✕ close</button>`);
       h.querySelector(".close").onclick = () => drill.classList.remove("open");
       drill.appendChild(h);
@@ -402,6 +415,468 @@ const RENDERERS = {
     view.appendChild(el("div", "muted small",
       `Win rate ≤${wr.pct != null ? wr.pct : "—"}% (${wr.won || 0} won of`
       + ` ${wr.decided || 0} decided threads) — ${esc(wr.caveat || "")}`));
+
+    // ══════════════════════════════════════════════════════════════════════
+    // CHARTS — all scoped by ONE range state, all aggregated from the SAME
+    // fact rows the drills query. A bar can therefore never disagree with the
+    // rows behind it: same predicate, same source, by construction.
+    // ══════════════════════════════════════════════════════════════════════
+    const jobs = F.jobs || [];
+    const HOT = F.hot_threshold || 16, FLOOR = F.score_floor || 8;
+    const monthsPresent = [...new Set(jobs.map((j) => j.m).filter(Boolean))].sort();
+    const thisM = (F.as_of || "").slice(0, 7)
+      || monthsPresent[monthsPresent.length - 1] || "";
+    const mAdd = (ym, k) => {
+      let [y, m] = ym.split("-").map(Number);
+      m += k; while (m < 1) { m += 12; y -= 1; } while (m > 12) { m -= 12; y += 1; }
+      return `${y}-${String(m).padStart(2, "0")}`;
+    };
+    const lastM = mAdd(thisM, -1);
+    const PRESETS = [
+      ["all", "All time", () => [null, null]],
+      ["this", "This month", () => [thisM, thisM]],
+      ["last", "Last month", () => [lastM, lastM]],
+      ["l3", "Last 3 mo", () => [mAdd(thisM, -2), thisM]],
+      ["t12", "Trailing 12", () => [mAdd(thisM, -11), thisM]],
+      ["ytd", "YTD", () => [thisM.slice(0, 4) + "-01", thisM]],
+      ["custom", "Custom", null],
+    ];
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(PIPE_FILTERS_KEY) || "{}"); }
+    catch (e) { saved = {}; }
+    let range = { preset: saved.preset || "all",
+                  from: saved.from || null, to: saved.to || null };
+    if (!PRESETS.some(([k]) => k === range.preset)) {
+      range = { preset: "all", from: null, to: null };
+    }
+    const bounds = () => {
+      const pr = PRESETS.find(([k]) => k === range.preset);
+      return pr && pr[2] ? pr[2]() : [range.from, range.to];
+    };
+    const isAll = () => { const [f, t] = bounds(); return !f && !t; };
+    const inRange = (x) => { const [f, t] = bounds();
+      return (!f || x.m >= f) && (!t || x.m <= t); };
+    const rangeLabel = () => {
+      if (isAll()) return "all time";
+      const [f, t] = bounds();
+      return f === t ? f : `${f || "…"} → ${t || "…"}`;
+    };
+    // the scoped fact sets — every chart below reads ONLY these
+    const J = () => jobs.filter(inRange);
+    const A = () => (F.applies || []).filter(inRange);
+    const RP = () => (F.replies || []).filter(inRange);
+    const H = () => (F.hires || []).filter(inRange);
+    // the filter object a chart band hands to the drill — identical semantics
+    const scopeQ = (extra) => {
+      const [f, t] = bounds();
+      return Object.assign({ stage: "jobs", frm: f, to: t }, extra || {});
+    };
+    const pctOf = (n, dn) => (dn ? Math.round((1000 * n) / dn) / 10 : 0);
+    const nfmt = (n) => n.toLocaleString();
+
+    // the column set for CHART drills — carries the fields a chart band is
+    // actually about (why it was skipped, what it paid, which feed, its tier)
+    const chartCols = [
+      { k: "d", label: "Seen" },
+      { k: "title", label: "Job", render: (r) => r.job_url
+        ? `<a href="${esc(r.job_url)}" target="_blank" rel="noopener">${esc(r.title || r.id)}</a>`
+        : esc(r.title || r.id) },
+      { k: "score", label: "Score", num: true },
+      { k: "budget", label: "Budget", num: true, render: (r) => r.hourly_max
+        ? "$" + r.hourly_max + "/hr"
+        : (r.fixed_budget ? "$" + Number(r.fixed_budget).toLocaleString() : "—") },
+      { k: "client_total_spent", label: "Client spent", num: true,
+        render: (r) => r.client_total_spent
+          ? "$" + Math.round(r.client_total_spent).toLocaleString() : "—" },
+      { k: "feed_source", label: "Feed" },
+      { k: "icp_tier", label: "Tier", render: (r) => r.icp_tier
+        ? `<span class="pill ${r.icp_tier === "icp" ? "icp" : ""}">${esc(r.icp_tier)}</span>` : "—" },
+      { k: "hard_rule_skip", label: "Skipped for",
+        render: (r) => r.hard_rule_skip
+          ? `<span class="pill fail">${esc(r.hard_rule_skip)}</span>` : "—" },
+      { k: "clickup_task_url", label: "Card", render: (r) => r.clickup_task_url
+        ? `<a href="${esc(r.clickup_task_url)}" target="_blank" rel="noopener">card</a>` : "—" },
+    ];
+    // the "N died here" band between two funnel steps — itself drillable
+    const dropRow = (label, q, rl) => {
+      const dr = el("button", "fndrop");
+      dr.innerHTML = `<span class="fnx">↓</span> ${esc(label)}`
+        + ` <span class="tag">see them →</span>`;
+      dr.onclick = () => openRows(`${label} — ${rl}`, q, chartCols);
+      return dr;
+    };
+
+    // ── range bar ──
+    const bar = el("div", "rangebar");
+    const seg = el("div", "rangeseg");
+    const fromIn = el("input"), toIn = el("input");
+    fromIn.type = toIn.type = "month";
+    fromIn.title = "from month"; toIn.title = "to month";
+    const custom = el("span", "rangecustom");
+    custom.append(fromIn, el("span", "muted small", "→"), toIn);
+    const drawSeg = () => {
+      seg.innerHTML = "";
+      PRESETS.forEach(([key, label]) => {
+        const bt = el("button", "rbtn" + (range.preset === key ? " on" : ""), label);
+        bt.onclick = () => {
+          range.preset = key;
+          if (key === "custom") {
+            range.from = fromIn.value || range.from || lastM;
+            range.to = toIn.value || range.to || thisM;
+          }
+          redraw();
+        };
+        seg.appendChild(bt);
+      });
+      custom.style.display = range.preset === "custom" ? "inline-flex" : "none";
+      fromIn.value = range.from || ""; toIn.value = range.to || "";
+    };
+    fromIn.onchange = () => { range.preset = "custom"; range.from = fromIn.value || null; redraw(); };
+    toIn.onchange = () => { range.preset = "custom"; range.to = toIn.value || null; redraw(); };
+    bar.append(seg, custom);
+    view.appendChild(bar);
+
+    const charts = el("div");            // everything the range rescopes
+    view.appendChild(charts);
+
+    function redraw() {
+      localStorage.setItem(PIPE_FILTERS_KEY, JSON.stringify(range));
+      drawSeg();
+      charts.innerHTML = "";
+      const js = J(), rl = rangeLabel();
+
+      // ── 1. CONVERSION FUNNEL ────────────────────────────────────────────
+      // Each stage is a strict subset of the one above it, so the drop-off
+      // between two bars IS the rows that failed that step — clickable too.
+      const scanned = js.length;
+      const passed = js.filter((j) => !j.k);
+      const scored = js.filter((j) => j.s != null && j.s >= FLOOR);
+      const hot = js.filter((j) => j.s != null && j.s >= HOT);
+      const carded = js.filter((j) => j.c);
+      // applied is only KNOWN where the connects rail covers the range
+      const railSince = F.rail_since;
+      const [rf] = bounds();
+      const railCovers = !!railSince
+        && (isAll() || (rf || "0000-00") >= railSince.slice(0, 7));
+      const steps = [
+        { k: "scanned", lbl: "Scanned", n: scanned, q: scopeQ({}),
+          note: "every job the feeds returned" },
+        { k: "passed", lbl: "Passed the floors", n: passed.length,
+          q: scopeQ({ skip: "__none__" }),
+          note: "survived n8n / rate / fixed-budget hard rules" },
+        { k: "scored", lbl: `Scored ≥${FLOOR}`, n: scored.length,
+          q: scopeQ({ skip: "__none__", score_min: FLOOR }),
+          note: "the model found real fit" },
+        { k: "hot", lbl: `Hot ≥${HOT}`, n: hot.length,
+          q: scopeQ({ score_min: HOT }), note: "cleared the hot bar" },
+        { k: "carded", lbl: "Carded to ClickUp", n: carded.length,
+          q: scopeQ({ carded: "1" }), note: "made it onto the board" },
+        { k: "applied", lbl: "Applied", n: railCovers ? A().length : null,
+          q: null, outcome: true,
+          note: railCovers ? "connects-history rail — a 0 here is a true zero"
+                           : `not measured before ${esc(railSince || "the rail")}` },
+        { k: "replied", lbl: "Client replied", n: RP().length, q: null,
+          outcome: true, note: "room-sourced threads" },
+        { k: "hired", lbl: "Hired", n: H().length, q: null, outcome: true,
+          note: "contracts started" },
+      ];
+      charts.appendChild(el("h2", "section",
+        `Conversion funnel <span class="hint muted">— ${esc(rl)} · each band is`
+        + ` a subset of the one above · click a band for its rows, or a drop-off`
+        + ` for the jobs that died there</span>`));
+      const fc = el("div", "card");
+      const fn = el("div", "funnel");
+      steps.forEach((s, i) => {
+        const prev = i ? steps[i - 1] : null;
+        const row = el("div", "fnstep");
+        const w = scanned ? Math.max(0.6, (100 * (s.n || 0)) / scanned) : 0;
+        const conv = prev && prev.n ? pctOf(s.n || 0, prev.n) : null;
+        const btn = el("button", "fnbar" + (s.outcome ? " out" : "")
+          + (s.q ? "" : " nodrill"));
+        btn.style.width = w + "%";
+        btn.title = s.note;
+        if (s.q) btn.onclick = () => openRows(`${s.lbl} — ${rl}`, s.q, chartCols);
+        const meta = el("div", "fnmeta");
+        meta.innerHTML = `<span class="fnlbl">${esc(s.lbl)}</span>`
+          + `<span class="fnnum">${s.n == null ? "—" : nfmt(s.n)}</span>`
+          + (scanned && s.n != null && !s.outcome
+              ? `<span class="fnpct">${pctOf(s.n, scanned)}% of scanned</span>` : "")
+          + (conv != null && s.n != null
+              ? `<span class="fnconv ${conv < 50 ? "warn" : ""}">${conv}% step</span>` : "");
+        row.append(meta, btn);
+        fn.appendChild(row);
+        // the drop-off band between this step and the next (only where the
+        // failing rows are actually identifiable, i.e. inside the job table)
+        if (i === 0) {
+          const lost = scanned - passed.length;
+          if (lost > 0) fn.appendChild(dropRow(`${nfmt(lost)} killed by the hard`
+            + ` floors`, scopeQ({ skip: "__any__" }), rl));
+        }
+        if (i === 2) {
+          const lost = scored.length - hot.length;
+          if (lost > 0) fn.appendChild(dropRow(`${nfmt(lost)} scored ${FLOOR}–`
+            + `${HOT - 1} — real but not hot`,
+            scopeQ({ score_min: FLOOR, score_max: HOT }), rl));
+        }
+        if (i === 3) {
+          const lost = hot.length - carded.length;
+          if (lost > 0) fn.appendChild(dropRow(`${nfmt(lost)} hot but never`
+            + ` carded (shadow era / expired)`,
+            scopeQ({ score_min: HOT, carded: "0" }), rl));
+        }
+      });
+      fc.appendChild(fn);
+      if (!railCovers) {
+        fc.appendChild(el("div", "muted small",
+          `Applied is blank for this range — the connects rail only measures from`
+          + ` ${esc(railSince || "—")}. A blank is “not measured”, never a zero.`));
+      }
+      charts.appendChild(fc);
+
+      // ── 2. SCORE DISTRIBUTION ───────────────────────────────────────────
+      charts.appendChild(el("h2", "section",
+        `Score distribution <span class="hint muted">— ${esc(rl)} · where the`
+        + ` model actually lands · the hot bar sits at ${HOT}</span>`));
+      const BW = 4, TOP = 40;
+      const hist = [];
+      for (let lo = 0; lo < TOP; lo += BW) {
+        const n = js.filter((j) => j.s != null && j.s >= lo && j.s < lo + BW).length;
+        hist.push({ lo, hi: lo + BW, n });
+      }
+      const hmax = Math.max(1, ...hist.map((h) => h.n));
+      const hc = el("div", "card");
+      const hch = el("div", "mchart");
+      hist.forEach((h) => {
+        const col = el("button", "mcol" + (h.lo >= HOT ? " hot" : ""));
+        const bh = el("div", "mbar");
+        bh.style.height = (100 * h.n) / hmax + "%";
+        col.append(bh, el("div", "xlbl", String(h.lo)));
+        col.title = `${h.n} jobs scored ${h.lo}–${h.hi - 1}`;
+        if (h.n) col.onclick = () => openRows(
+          `Scored ${h.lo}–${h.hi - 1} — ${rl}`,
+          scopeQ({ score_min: h.lo, score_max: h.hi }), chartCols);
+        hch.appendChild(col);
+      });
+      hc.appendChild(hch);
+      const nScored = js.filter((j) => j.s != null).length;
+      const pHot = pctOf(js.filter((j) => j.s != null && j.s >= HOT).length, nScored);
+      hc.appendChild(el("div", "muted small",
+        `${nfmt(nScored)} scored · ${pHot}% clear the hot bar of ${HOT}`
+        + (pHot > 60 ? " — the bar is a rubber stamp at this rate; ICP is the"
+          + " tier that actually discriminates" : "")));
+      charts.appendChild(hc);
+
+      // ── 3. WHY WE SKIP ──────────────────────────────────────────────────
+      // hourly_below_30 is SPLIT: a stated low rate is a real reject; a MISSING
+      // rate is the rule misfiring on absent data (the 2026-07-13 finding).
+      charts.appendChild(el("h2", "section",
+        `Why we skip <span class="hint muted">— ${esc(rl)} · the jobs the hard`
+        + ` floors killed before scoring · click any bar to read what we threw`
+        + ` away</span>`));
+      const skipped = js.filter((j) => j.k);
+      // Reasons are DERIVED from the data, never hardcoded: the reason strings
+      // drifted across the v2/v3 scanners (17 distinct values live in the
+      // table) and a fixed list would silently swallow the ones it forgot.
+      // Anything unmapped still shows, under its raw key.
+      const LBL = {
+        no_rate: "hourly — no rate stated",
+        hourly_below_30: "hourly < $30 (stated)",
+        low_hourly_rate: "hourly < $30 (stated, v2 rule)",
+        low_hourly: "hourly < $30 (stated, v2 rule)",
+        fixed_below_500: "fixed < $500",
+        fixed_below_floor: "fixed below floor (v2 rule)",
+        fixed_5_placeholder: "fixed $5 placeholder",
+        fixed_5_low_quality: "fixed $5, low quality",
+        fixed_low_weak_client: "fixed low + weak client",
+        n8n_exclusion: "n8n-only",
+        outside_domain: "outside our domain",
+        out_of_domain: "outside our domain (v2 rule)",
+        no_asia_timezone: "no-Asia timezone",
+        no_asia_tz: "no-Asia timezone (v2 rule)",
+        onsite_required: "onsite required",
+        already_hired: "already hired",
+        already_applied: "already applied",
+        client_filled: "client filled the role",
+        spam: "spam",
+      };
+      const HOURLY_SKIPS = ["hourly_below_30", "low_hourly_rate", "low_hourly"];
+      const byReason = {};
+      skipped.forEach((j) => {
+        // an hourly-floor skip with NO stated rate is its OWN reason: the client
+        // left the rate blank, Upwork ships it as $0, and the floor reads $0 as
+        // cheap. That is an unknown, not a reject — it must not hide inside the
+        // "too cheap" bar (2026-07-13 finding).
+        const key = (j.nr && HOURLY_SKIPS.includes(j.k)) ? "no_rate" : j.k;
+        byReason[key] = (byReason[key] || 0) + 1;
+      });
+      const reasons = Object.entries(byReason).map(([key, n]) => ({
+        key, n, lbl: LBL[key] || key, flag: key === "no_rate",
+      })).sort((x, y) => y.n - x.n);
+      const sc = el("div", "card");
+      const sk = el("div", "wf");
+      const smax = Math.max(1, ...reasons.map((r) => r.n));
+      reasons.forEach((r) => {
+        const row = el("button", "wfrow" + (r.flag ? " flag" : ""));
+        const bl = el("div", "bl");
+        const sp = el("span");
+        sp.style.width = (100 * r.n) / smax + "%";
+        sp.style.background = r.flag ? "var(--amber)" : "var(--red)";
+        bl.appendChild(sp);
+        row.append(el("div", "n", esc(r.lbl) + (r.flag
+          ? ' <span class="chip warn">rule misfire?</span>' : "")), bl,
+          el("div", "amt", nfmt(r.n)));
+        row.onclick = () => openRows(`Skipped — ${r.lbl} · ${rl}`,
+          scopeQ({ skip: r.key }), chartCols);
+        sk.appendChild(row);
+      });
+      if (!reasons.length) {
+        sk.appendChild(el("div", "emptystate", "Nothing was skipped in this range."));
+      }
+      sc.appendChild(sk);
+      const nNoRate = byReason.no_rate || 0;
+      sc.appendChild(el("div", "muted small",
+        `${nfmt(skipped.length)} of ${nfmt(js.length)} scanned jobs were killed`
+        + ` before scoring (${pctOf(skipped.length, js.length)}%).`
+        + (nNoRate ? ` ${nfmt(nNoRate)} of them failed ONLY because the client`
+          + ` never stated a rate — those are unknowns, not cheap jobs.` : "")));
+      charts.appendChild(sc);
+
+      // ── 4. FEED ROI + WEEKLY CONVERSION TREND ───────────────────────────
+      charts.appendChild(el("h2", "section",
+        `Feed ROI <span class="hint muted">— ${esc(rl)} · which feed actually`
+        + ` produces work · click any cell</span>`));
+      const feeds = [...new Set(js.map((j) => j.f).filter(Boolean))];
+      const ft2 = el("table");
+      ft2.innerHTML = "<tr><th>Feed</th><th class='num'>Scanned</th>"
+        + `<th class='num'>Hot ≥${HOT}</th><th class='num'>Carded</th>`
+        + "<th class='num'>ICP</th><th class='num'>Carded rate</th></tr>";
+      feeds.map((f) => {
+        const rowsF = js.filter((j) => j.f === f);
+        return { f, n: rowsF.length,
+                 hot: rowsF.filter((j) => j.s != null && j.s >= HOT).length,
+                 carded: rowsF.filter((j) => j.c).length,
+                 icp: rowsF.filter((j) => j.t === "icp").length };
+      }).sort((x, y) => y.n - x.n).forEach((r) => {
+        const tr = el("tr");
+        const cell = (v, q) => {
+          const td = el("td", "num" + (v && q ? " drillable" : ""), nfmt(v));
+          if (v && q) td.onclick = () => openRows(
+            `${r.f} — ${rl}`, scopeQ(Object.assign({ feed: r.f }, q)), chartCols);
+          return td;
+        };
+        tr.appendChild(el("td", null, `<code>${esc(r.f)}</code>`));
+        tr.appendChild(cell(r.n, {}));
+        tr.appendChild(cell(r.hot, { score_min: HOT }));
+        tr.appendChild(cell(r.carded, { carded: "1" }));
+        tr.appendChild(cell(r.icp, { icp: "icp" }));
+        tr.appendChild(el("td", "num muted", pctOf(r.carded, r.n) + "%"));
+        ft2.appendChild(tr);
+      });
+      const fcard = el("div", "card");
+      fcard.appendChild(el("div", "tablewrap", "")).appendChild(ft2);
+      charts.appendChild(fcard);
+
+      // weekly conversion trend — scanned bars + carded-rate line
+      const wk = (iso) => {
+        const dt = new Date(iso + "T00:00:00");
+        dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));   // back to Monday
+        return dt.toISOString().slice(0, 10);
+      };
+      const byWeek = {};
+      js.forEach((j) => {
+        if (!j.d) return;
+        const w = wk(j.d);
+        (byWeek[w] = byWeek[w] || { n: 0, c: 0, hot: 0 });
+        byWeek[w].n++;
+        if (j.c) byWeek[w].c++;
+        if (j.s != null && j.s >= HOT) byWeek[w].hot++;
+      });
+      const wks = Object.keys(byWeek).sort().slice(-13);
+      if (wks.length) {
+        charts.appendChild(el("h2", "section",
+          `Weekly throughput <span class="hint muted">— scanned volume (bars)`
+          + ` vs the share that reached the board (line) · last ${wks.length}`
+          + ` weeks in range</span>`));
+        const tc = el("div", "card");
+        const wmax = Math.max(1, ...wks.map((w) => byWeek[w].n));
+        const tch = el("div", "mchart trend");
+        // the carded-% line, drawn over the bars
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "trendline");
+        svg.setAttribute("viewBox", `0 0 ${Math.max(1, wks.length - 1)} 100`);
+        svg.setAttribute("preserveAspectRatio", "none");
+        const pts = wks.map((w, i) =>
+          `${i},${100 - Math.min(100, pctOf(byWeek[w].c, byWeek[w].n))}`).join(" ");
+        const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        poly.setAttribute("points", pts);
+        svg.appendChild(poly);
+        wks.forEach((w) => {
+          const b2 = byWeek[w];
+          const col = el("button", "mcol");
+          const bh = el("div", "mbar");
+          bh.style.height = (100 * b2.n) / wmax + "%";
+          col.append(bh, el("div", "xlbl", w.slice(5)));
+          col.title = `week of ${w}: ${b2.n} scanned · ${b2.hot} hot · ${b2.c}`
+            + ` carded (${pctOf(b2.c, b2.n)}%)`;
+          col.onclick = () => openRows(`Scanned — week of ${w}`,
+            { stage: "scanned", week: w }, jobCols);
+          tch.appendChild(col);
+        });
+        tch.appendChild(svg);
+        tc.appendChild(tch);
+        tc.appendChild(el("div", "muted small",
+          "Bars = jobs scanned. Line = the share that reached the ClickUp board."
+          + " A line that sinks while bars hold means the feed got worse, not quieter."));
+        charts.appendChild(tc);
+      }
+
+      // ── 5. LEAD QUALITY (ICP tier) ──────────────────────────────────────
+      charts.appendChild(el("h2", "section",
+        `Lead quality <span class="hint muted">— ${esc(rl)} · the ICP overlay`
+        + ` above the hot bar · deterministic, recomputable, drillable</span>`));
+      const scoredJs = js.filter((j) => j.s != null);
+      const tiers = [
+        { k: "icp", lbl: "ICP / Prime", cls: "t-icp",
+          n: scoredJs.filter((j) => j.t === "icp").length,
+          q: { icp: "icp" },
+          note: "Airtable/Make + $51/hr + rich client + long-term" },
+        { k: "icp_near", lbl: "Near-miss", cls: "t-near",
+          n: scoredJs.filter((j) => j.t === "icp_near").length,
+          q: { icp: "icp_near" }, note: "must-haves hold, one qualifier short" },
+        { k: "hot", lbl: `Hot ≥${HOT} (not prime)`, cls: "t-hot",
+          n: scoredJs.filter((j) => j.s >= HOT && !j.t).length,
+          q: { score_min: HOT }, note: "cleared the bar, not the profile" },
+        { k: "rest", lbl: `Scored < ${HOT}`, cls: "t-rest",
+          n: scoredJs.filter((j) => j.s < HOT).length,
+          q: { score_max: HOT }, note: "below the hot bar" },
+      ];
+      const qc = el("div", "card");
+      const stack = el("div", "qstack");
+      const qTot = Math.max(1, scoredJs.length);
+      tiers.filter((t) => t.n).forEach((t) => {
+        const seg2 = el("button", "qseg " + t.cls);
+        seg2.style.flex = String(t.n);
+        seg2.title = `${t.lbl}: ${t.n} (${pctOf(t.n, qTot)}%) — ${t.note}`;
+        seg2.onclick = () => openRows(`${t.lbl} — ${rl}`,
+          scopeQ(t.q), chartCols);
+        stack.appendChild(seg2);
+      });
+      qc.appendChild(stack);
+      const leg = el("div", "qlegend");
+      tiers.forEach((t) => {
+        const it = el("button", "qlegit");
+        it.innerHTML = `<span class="dot3 ${t.cls}"></span>${esc(t.lbl)}`
+          + ` <b>${nfmt(t.n)}</b> <span class="muted">${pctOf(t.n, qTot)}%</span>`;
+        if (t.n) it.onclick = () => openRows(`${t.lbl} — ${rl}`, scopeQ(t.q), chartCols);
+        leg.appendChild(it);
+      });
+      qc.appendChild(leg);
+      qc.appendChild(el("div", "muted small",
+        "ICP is recomputed from stored fields (bin/icp-backfill) — the tier in"
+        + " the DB is always the tier today's profile would award."));
+      charts.appendChild(qc);
+    }
+    redraw();
 
     // ── Funnel by week (cells drill) ──
     view.appendChild(el("h2", "section",

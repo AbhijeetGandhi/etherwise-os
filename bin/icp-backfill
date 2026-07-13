@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Backfill scored_jobs.icp_tier for every historical scored row (migration 014).
+
+icp.classify() is deterministic over columns we already store, so this is a pure
+recomputation — no network, no model, no invention. Re-running it is a no-op when
+nothing changed, which is exactly what makes the column trustworthy: the tier in
+the DB is always the tier the current profile would award.
+
+    PYTHONPATH=. python3 bin/icp-backfill            # dry-run (prints the mix)
+    PYTHONPATH=. python3 bin/icp-backfill --commit   # writes
+"""
+from __future__ import annotations
+
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db                                    # noqa: E402
+from modules.upwork import icp                                 # noqa: E402
+
+
+def main() -> int:
+    commit = "--commit" in sys.argv
+    dbp = config.DB_PATH
+    with db.connect(dbp) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM scored_jobs WHERE score IS NOT NULL")]
+
+    mix, changed = Counter(), []
+    for row in rows:
+        row["skills"] = json.loads(row.get("skills_json") or "[]")
+        bd = json.loads(row.get("score_breakdown_json") or "{}")
+        tier = icp.classify(row, score=row["score"], breakdown=bd)["tier"]
+        mix[tier or "—"] += 1
+        if tier != row.get("icp_tier"):
+            changed.append((row["id"], tier))
+
+    print(f"scored rows: {len(rows)}")
+    for tier, n in mix.most_common():
+        print(f"  {tier:10} {n:5}  ({100 * n / len(rows):.1f}%)")
+    print(f"rows whose stored tier differs: {len(changed)}")
+
+    if not commit:
+        print("\ndry-run — pass --commit to write")
+        return 0
+    with db.connect(dbp) as conn:
+        conn.executemany("UPDATE scored_jobs SET icp_tier=? WHERE id=?",
+                         [(t, i) for i, t in changed])
+    print(f"wrote {len(changed)} rows")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

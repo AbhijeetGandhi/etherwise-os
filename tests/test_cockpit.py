@@ -1063,5 +1063,175 @@ class TestMoneyDrill(unittest.TestCase):
         self.assertEqual(d["count"], 0)
 
 
+# ── Pipeline charts: the traceability contract ────────────────────────────────
+# The charts aggregate pipeline_facts client-side; the drills query
+# pipeline_rows(stage='jobs') server-side. They are two different code paths
+# over the same table, so they can drift — and a chart that disagrees with the
+# rows behind it is exactly the "dead-end metric" the cockpit exists to abolish.
+# These tests pin them together.
+
+def seed_chart_jobs(db_path):
+    """Nine jobs spanning every band the Pipeline charts slice on. Ids are
+    spaced (not sequential) — sequential ids trip the fabrication guard."""
+    base = 2065400000000000000
+    rows = [
+        # (offset, month, score, skip, hourly_max, feed, carded, icp)
+        (7919 * 1, "2026-05", 24, None, 60, "most_recent", 1, "icp"),
+        (7919 * 2, "2026-05", 18, None, 55, "best_matches", 1, "icp_near"),
+        (7919 * 3, "2026-05", 10, None, 40, "most_recent", 0, None),
+        (7919 * 4, "2026-06", 28, None, 75, "my_feed", 1, "icp"),
+        (7919 * 5, "2026-06", 16, None, 51, "best_matches", 0, None),
+        # skipped: a STATED low rate (a real reject)
+        (7919 * 6, "2026-06", None, "hourly_below_30", 20, "most_recent", 0, None),
+        # skipped: NO rate stated — the rule misfiring on absent data
+        (7919 * 7, "2026-06", None, "hourly_below_30", None, "most_recent", 0, None),
+        (7919 * 8, "2026-06", None, "low_hourly_rate", None, "firehose", 0, None),
+        (7919 * 9, "2026-06", None, "n8n_exclusion", None, "my_feed", 0, None),
+    ]
+    with db.connect(db_path) as conn:
+        for off, m, score, skip, hmax, feed, carded, icp in rows:
+            conn.execute(
+                "INSERT INTO scored_jobs (id, title, score, hard_rule_skip,"
+                " hourly_max, feed_source, clickup_task_id, icp_tier,"
+                " fetched_at, first_scored_at, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (str(base + off), f"Job {off}", score, skip, hmax, feed,
+                 "t" + str(off) if carded else None, icp,
+                 f"{m}-10T04:00:00+00:00",
+                 f"{m}-10T04:05:00+00:00" if score else None,
+                 "Skipped" if skip else "Scored"))
+
+
+class TestPipelineFacts(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-facts-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_chart_jobs(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def facts(self):
+        return data.pipeline_facts(self.db_path, today="2026-07-01")
+
+    def total(self, **kw):
+        return data.pipeline_rows(self.db_path, stage="jobs", **kw)["total"]
+
+    def test_fact_row_shape(self):
+        f = self.facts()
+        self.assertEqual(len(f["jobs"]), 9)
+        for k in ("i", "d", "m", "s", "k", "f", "c", "t", "nr"):
+            self.assertIn(k, f["jobs"][0])
+        self.assertEqual(f["hot_threshold"], config.HOT_LEAD_THRESHOLD)
+
+    def test_no_rate_flag_only_for_missing_rate_hourly_skips(self):
+        f = self.facts()
+        nr = [j for j in f["jobs"] if j["nr"]]
+        self.assertEqual(len(nr), 2)               # the two blank-rate hourly skips
+        # the STATED $20 job failed the same rule but is a genuine reject
+        stated = [j for j in f["jobs"]
+                  if j["k"] == "hourly_below_30" and not j["nr"]]
+        self.assertEqual(len(stated), 1)
+        # ...and an n8n skip is never a rate misfire
+        self.assertFalse(any(j["nr"] for j in f["jobs"]
+                             if j["k"] == "n8n_exclusion"))
+
+    def test_every_funnel_band_equals_its_drill(self):
+        """THE contract: a bar and the rows behind it are the same rows."""
+        f = self.facts()
+        js = f["jobs"]
+        HOT, FLOOR = f["hot_threshold"], f["score_floor"]
+        cases = [
+            (len(js), {}),
+            (sum(1 for j in js if not j["k"]), {"skip": "__none__"}),
+            (sum(1 for j in js if j["k"]), {"skip": "__any__"}),
+            (sum(1 for j in js if j["s"] is not None and j["s"] >= FLOOR),
+             {"skip": "__none__", "score_min": FLOOR}),
+            (sum(1 for j in js if j["s"] is not None and j["s"] >= HOT),
+             {"score_min": HOT}),
+            (sum(1 for j in js if j["c"]), {"carded": "1"}),
+            (sum(1 for j in js if j["s"] is not None and j["s"] >= HOT and not j["c"]),
+             {"score_min": HOT, "carded": "0"}),
+            (sum(1 for j in js if j["t"] == "icp"), {"icp": "icp"}),
+            (sum(1 for j in js if j["t"] == "icp_near"), {"icp": "icp_near"}),
+            (sum(1 for j in js if j["nr"]), {"skip": "no_rate"}),
+            (sum(1 for j in js if j["f"] == "most_recent"), {"feed": "most_recent"}),
+        ]
+        for want, q in cases:
+            self.assertEqual(self.total(**q), want, q)
+
+    def test_parity_holds_inside_a_month_range(self):
+        f = self.facts()
+        for frm, to in [("2026-05", "2026-05"), ("2026-06", "2026-06"),
+                        ("2026-05", "2026-06")]:
+            js = [j for j in f["jobs"] if frm <= j["m"] <= to]
+            self.assertEqual(self.total(frm=frm, to=to), len(js))
+            self.assertEqual(self.total(frm=frm, to=to, carded="1"),
+                             sum(1 for j in js if j["c"]))
+            self.assertEqual(self.total(frm=frm, to=to, skip="no_rate"),
+                             sum(1 for j in js if j["nr"]))
+
+    def test_stated_low_rate_and_no_rate_never_double_count(self):
+        # the two buckets partition the hourly-floor skips — no row in both,
+        # no row in neither (the split that made the misfire visible)
+        f = self.facts()
+        hourly = [j for j in f["jobs"]
+                  if j["k"] in ("hourly_below_30", "low_hourly_rate", "low_hourly")]
+        self.assertEqual(self.total(skip="no_rate")
+                         + self.total(skip="hourly_below_30")
+                         + self.total(skip="low_hourly_rate"), len(hourly))
+
+    def test_drill_reports_uncapped_total(self):
+        d = data.pipeline_rows(self.db_path, stage="jobs")
+        self.assertEqual(d["total"], 9)
+        self.assertEqual(d["total"], d["count"])   # under the cap they agree
+
+    def test_unknown_stage_is_refused(self):
+        d = data.pipeline_rows(self.db_path, stage="everything")
+        self.assertIn("error", d)
+        self.assertEqual(d["rows"], [])
+
+
+class TestIcpPersistence(unittest.TestCase):
+    """The tier must be recomputable from stored fields — that is what makes the
+    persisted column trustworthy rather than a frozen guess."""
+
+    def test_backfill_is_deterministic_and_idempotent(self):
+        import json as _json
+        from modules.upwork import icp
+        tmp = Path(tempfile.mkdtemp(prefix="cockpit-icp-"))
+        try:
+            dbp = tmp / "v3.db"
+            db.migrate(dbp)
+            with db.connect(dbp) as conn:
+                conn.execute(
+                    "INSERT INTO scored_jobs (id, title, description, skills_json,"
+                    " contract_type, hourly_max, engagement_duration,"
+                    " client_total_spent, client_hires, score, fetched_at)"
+                    " VALUES ('2065400000000007919','Airtable + Make.com build',"
+                    " 'Ongoing automation for our ops team.',"
+                    " '[\"Airtable\",\"Make.com\"]','Hourly',60,"
+                    " 'More than 6 months',168000,20,24,'2026-06-10T04:00:00+00:00')")
+            with db.connect(dbp) as conn:
+                row = dict(conn.execute("SELECT * FROM scored_jobs").fetchone())
+            row["skills"] = _json.loads(row["skills_json"])
+            tier = icp.classify(row, score=row["score"])["tier"]
+            self.assertEqual(tier, "icp")
+            # recomputing the same row yields the same tier — no drift, no state
+            self.assertEqual(icp.classify(row, score=row["score"])["tier"], tier)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_legacy_list_shaped_breakdown_does_not_crash(self):
+        # early rows stored score_breakdown_json as a LIST; the backfill must
+        # survive it rather than blow up mid-run
+        from modules.upwork import icp
+        v = icp.classify({"title": "Airtable work", "description": "ongoing",
+                          "hourly_max": 60, "client_total_spent": 90000,
+                          "client_hires": 10},
+                         score=24, breakdown=["not", "a", "dict"])
+        self.assertEqual(v["tier"], "icp")
+
+
 if __name__ == "__main__":
     unittest.main()

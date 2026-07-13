@@ -107,7 +107,11 @@ def is_long_term(job: dict, breakdown: Optional[dict] = None) -> tuple:
     dur = str(job.get("engagement_duration") or "").strip().lower()
     if dur in _LONG_DURATIONS:
         return True, f"duration: {job.get('engagement_duration')}"
-    bonus = ((breakdown or {}).get("bonuses") or {}).get("long_term") or 0
+    # breakdown shape drifted over time (early rows stored a list) — anything
+    # that is not the dict we expect simply carries no corroborating bonus
+    bd = breakdown if isinstance(breakdown, dict) else {}
+    bonuses = bd.get("bonuses")
+    bonus = (bonuses.get("long_term") or 0) if isinstance(bonuses, dict) else 0
     if bonus >= 3:
         return True, "model flagged long-term/ongoing"
     if _LONG_TERM_RE.search(text):

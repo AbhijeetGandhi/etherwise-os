@@ -187,6 +187,63 @@ select,input[type=search]{font:var(--fs-md) inherit;font-family:inherit;padding:
 input[type=search]{flex:1;min-width:160px}
 select:focus,input[type=search]:focus{outline:none;border-color:var(--blue2)}
 
+/* ── pipeline: conversion funnel ── */
+/* each band is a strict subset of the one above; width is share-of-scanned, so
+   the taper IS the loss. The drop-off rows between bands are drillable too. */
+.funnel{display:flex;flex-direction:column;gap:2px}
+.fnstep{display:flex;align-items:center;gap:14px}
+.fnmeta{width:320px;flex:none;display:flex;align-items:baseline;gap:8px;
+  font-size:var(--fs-sm);padding:5px 0}
+.fnlbl{flex:1;color:var(--g6);font-weight:600}
+.fnnum{font-variant-numeric:tabular-nums;font-weight:700;color:var(--g7);min-width:52px;text-align:right}
+.fnpct{color:var(--g5);font-size:var(--fs-xs);min-width:82px;text-align:right}
+.fnconv{color:var(--g5);font-size:var(--fs-xs);min-width:64px;text-align:right}
+.fnconv.warn{color:var(--warn);font-weight:600}
+.fnbar{height:30px;border:0;border-radius:5px;cursor:pointer;padding:0;min-width:3px;
+  background:linear-gradient(90deg,var(--blue),var(--blue2));transition:.12s}
+.fnbar:hover{filter:brightness(1.1)}
+.fnbar.out{background:linear-gradient(90deg,var(--green),#4bbf87)}
+.fnbar.nodrill{cursor:default;opacity:.75}
+.fndrop{display:flex;align-items:center;gap:8px;margin:1px 0 1px 334px;padding:3px 10px;
+  border:0;background:none;font:inherit;font-size:var(--fs-xs);color:var(--g5);
+  cursor:pointer;border-radius:var(--rad-sm);text-align:left}
+.fndrop:hover{background:var(--g2);color:var(--g6)}
+.fndrop .fnx{color:var(--red);font-weight:700}
+.fndrop .tag{color:var(--blue);opacity:0;transition:.12s}
+.fndrop:hover .tag{opacity:1}
+
+/* histogram: bars past the hot bar are tinted so the threshold is visible */
+.mcol.hot .mbar{background:linear-gradient(180deg,#ff8a6b,var(--red))}
+.wfrow.flag{outline:1px dashed var(--amber);outline-offset:-1px}
+
+/* weekly throughput: bars + a carded-rate line drawn over them */
+.mchart.trend{position:relative}
+.trendline{position:absolute;inset:18px 0 24px;width:100%;height:calc(100% - 42px);
+  pointer-events:none;overflow:visible}
+.trendline polyline{fill:none;stroke:var(--amber);stroke-width:2;
+  vector-effect:non-scaling-stroke;stroke-linejoin:round}
+
+/* lead quality: one stacked bar + a clickable legend */
+.qstack{display:flex;height:36px;border-radius:6px;overflow:hidden;gap:2px}
+.qseg{border:0;cursor:pointer;padding:0;transition:.12s}
+.qseg:hover{filter:brightness(1.12)}
+.qseg.t-icp,.dot3.t-icp{background:var(--green)}
+.qseg.t-near,.dot3.t-near{background:var(--amber)}
+.qseg.t-hot,.dot3.t-hot{background:var(--blue)}
+.qseg.t-rest,.dot3.t-rest{background:var(--g3)}
+.qlegend{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:12px}
+.qlegit{display:flex;align-items:center;gap:6px;border:0;background:none;font:inherit;
+  font-size:var(--fs-sm);color:var(--g6);cursor:pointer;padding:3px 6px;border-radius:var(--rad-sm)}
+.qlegit:hover{background:var(--g2)}
+.dot3{width:9px;height:9px;border-radius:3px;display:inline-block}
+.pill.icp{background:var(--green-soft);color:var(--green)}
+
+@media(max-width:760px){
+  .fnstep{flex-direction:column;align-items:stretch;gap:2px}
+  .fnmeta{width:auto}
+  .fndrop{margin-left:0}
+}
+
 /* ── states ── */
 .blocked{background:var(--red-soft);border:1px solid var(--red);border-radius:var(--rad);
   padding:var(--sp-5);color:var(--g6)}

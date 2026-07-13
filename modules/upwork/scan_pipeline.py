@@ -268,6 +268,12 @@ def scan(ctx, _sleep=time.sleep) -> dict:
         row["skills"] = json.loads(row.get("skills_json") or "[]")
         verdict_bd = json.loads(row.get("score_breakdown_json") or "{}")
         icp_v = icp.classify(row, score=row["score"], breakdown=verdict_bd)
+        # persist the tier (014) — it is deterministic, so history stays
+        # reproducible and lead quality becomes chartable instead of living
+        # only inside one run's metrics
+        with db.connect(dbp) as conn:
+            conn.execute(f"UPDATE {TABLE} SET icp_tier=? WHERE id=?",
+                         (icp_v["tier"], row["id"]))
         if icp_v["tier"] == "icp":
             icp_hits.append({"row": row, "why": icp_v["reasons"]})
         elif icp_v["tier"] == "icp_near":

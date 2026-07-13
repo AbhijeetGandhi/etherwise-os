@@ -259,6 +259,15 @@ def clients(db_path: Optional[Path] = None, *, client=None,
 
 BOARD_WINDOW_DAYS = 7      # a hot lead older than this is dead on Upwork
 
+# every skip reason that means "failed the HOURLY rate floor". The name drifted
+# across v2/v3 (low_hourly_rate -> low_hourly -> hourly_below_30) and all three
+# still sit in the table, so any rule that reasons about the hourly floor must
+# consider all of them or it silently under-counts history. ONE definition,
+# shared by pipeline_facts (the chart) and pipeline_rows (the drill) — that
+# shared definition is what makes a bar equal to the rows behind it.
+_HOURLY_SKIPS = ("hourly_below_30", "low_hourly_rate", "low_hourly")
+_HOURLY_SKIP_Q = ",".join("?" * len(_HOURLY_SKIPS))
+
 
 def pipeline(db_path: Optional[Path] = None,
              today: Optional[str] = None) -> dict:
@@ -429,17 +438,90 @@ def pipeline(db_path: Optional[Path] = None,
             "to_triage": to_triage}
 
 
+def pipeline_facts(db_path: Optional[Path] = None,
+                   today: Optional[str] = None) -> dict:
+    """One compact fact-row per job (plus the dated outcome rails) — the SOURCE
+    the Pipeline charts aggregate client-side, exactly as Money aggregates the
+    ledger. Charts and drills therefore share one predicate set: a bar can never
+    disagree with the rows behind it.
+
+    Job facts (short keys; ~4.8k rows):
+      i  id            m  month entered the pipeline (fetched_at)
+      d  date fetched  s  score (null = never scored)
+      k  hard-rule skip reason (null = passed the floors)
+      f  feed source   c  1 if a ClickUp card exists
+      t  icp tier ('icp' | 'icp_near' | null)
+      nr 1 if the ONLY reason it failed the hourly floor is that the client
+         never stated a rate (Upwork sends those as $0, so the floor reads a
+         missing rate as a cheap one — an unknown, not a reject). Carried in
+         the fact row so the chart never has to ask the server for a count.
+
+    The month key is ALWAYS fetched_at: a job is scored and carded within minutes
+    of being fetched, and using one clock for every stage is what lets the funnel
+    subtract stage-to-stage without a month-boundary artefact.
+    """
+    day = today or _ist_today()
+    conn = _ro(db_path)
+    try:
+        jobs = [{"i": r["id"], "d": r["d"], "m": (r["d"] or "")[:7],
+                 "s": r["score"], "k": r["hard_rule_skip"],
+                 "f": r["feed_source"], "c": 1 if r["carded"] else 0,
+                 "t": r["icp_tier"], "nr": 1 if r["no_rate"] else 0}
+                for r in conn.execute(
+                    "SELECT id, substr(fetched_at,1,10) AS d, score,"
+                    " hard_rule_skip, feed_source, icp_tier,"
+                    " clickup_task_id IS NOT NULL AS carded,"
+                    " (hard_rule_skip IN ('hourly_below_30','low_hourly_rate',"
+                    "  'low_hourly') AND hourly_max IS NULL) AS no_rate"
+                    " FROM scored_jobs WHERE fetched_at LIKE '20%'")]
+        applies = [{"d": r["d"], "m": r["d"][:7]} for r in conn.execute(
+            "SELECT event_date AS d FROM connects_history WHERE kind='applied'"
+            " AND event_date LIKE '20%'")]
+        replies = [{"d": r["d"], "m": r["d"][:7]} for r in conn.execute(
+            "SELECT substr(created_dt,1,10) AS d FROM proposals"
+            " WHERE created_dt LIKE '20%'")]
+        hires = [{"d": r["d"], "m": r["d"][:7]} for r in conn.execute(
+            "SELECT substr(start_dt,1,10) AS d FROM contracts"
+            " WHERE start_dt LIKE '20%'")]
+        try:
+            ch = conn.execute("SELECT COUNT(*) n, MIN(event_date) since"
+                              " FROM connects_history").fetchone()
+            rail_since = ch["since"] if ch["n"] else None
+        except Exception:                              # pre-013 DB
+            rail_since = None
+    finally:
+        conn.close()
+    return {"jobs": jobs, "applies": applies, "replies": replies,
+            "hires": hires, "rail_since": rail_since, "as_of": day,
+            "hot_threshold": config.HOT_LEAD_THRESHOLD,
+            "score_floor": 8}
+
+
 def pipeline_rows(db_path: Optional[Path] = None, *,
                   stage: Optional[str] = None,
                   week: Optional[str] = None,
                   status: Optional[str] = None,
+                  frm: Optional[str] = None,
+                  to: Optional[str] = None,
+                  skip: Optional[str] = None,
+                  feed: Optional[str] = None,
+                  icp: Optional[str] = None,
+                  score_min: Optional[str] = None,
+                  score_max: Optional[str] = None,
+                  carded: Optional[str] = None,
                   today: Optional[str] = None) -> dict:
     """Drill-down: the rows behind any Pipeline figure (traceability contract,
-    same as Money). stage: scanned|scored|carded|applied|replied|triage|threads.
-    week = the funnel week-start (Monday, YYYY-MM-DD) filters that calendar
-    week; threads takes status= instead. Read-only; capped at 300 rows."""
-    if stage not in ("scanned", "scored", "carded", "applied", "replied",
-                     "hired", "triage", "threads"):
+    same as Money).
+
+    stage: jobs|scanned|scored|carded|applied|replied|hired|triage|threads.
+
+    'jobs' is the generic, filterable stage every CHART band drills through —
+    its filters mirror the fact-row keys exactly (frm/to month window, skip,
+    feed, icp, score_min/score_max, carded), so the rows it returns are by
+    construction the same rows the bar counted. The week-based stages remain for
+    the funnel-by-week table. Read-only; capped at 300 rows."""
+    if stage not in ("jobs", "scanned", "scored", "carded", "applied",
+                     "replied", "hired", "triage", "threads"):
         return {"error": f"unknown stage {stage!r}", "rows": [], "count": 0}
     lo = hi = None
     if week:
@@ -450,10 +532,70 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
         return (f" AND substr({col},1,10) BETWEEN ? AND ?", [lo, hi]) \
             if lo else ("", [])
 
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
     conn = _ro(db_path)
     try:
         rows: list = []
-        if stage in ("scanned", "scored", "carded"):
+        total: Optional[int] = None
+        if stage == "jobs":
+            # the CHART drill — filters mirror the fact-row keys 1:1
+            cond, args = " AND fetched_at LIKE '20%'", []
+            if frm:
+                cond += " AND substr(fetched_at,1,7) >= ?"
+                args.append(frm)
+            if to:
+                cond += " AND substr(fetched_at,1,7) <= ?"
+                args.append(to)
+            if skip == "__none__":
+                cond += " AND hard_rule_skip IS NULL"
+            elif skip == "__any__":
+                cond += " AND hard_rule_skip IS NOT NULL"
+            elif skip == "no_rate":
+                # the split (must match pipeline_facts' `nr` exactly): failed an
+                # hourly floor with NO rate on the post — an unknown, not a cheap job
+                cond += (f" AND hard_rule_skip IN ({_HOURLY_SKIP_Q})"
+                         " AND hourly_max IS NULL")
+                args.extend(_HOURLY_SKIPS)
+            elif skip in _HOURLY_SKIPS:      # ...vs a rate we actually saw
+                cond += " AND hard_rule_skip=? AND hourly_max IS NOT NULL"
+                args.append(skip)
+            elif skip:
+                cond += " AND hard_rule_skip=?"
+                args.append(skip)
+            if feed:
+                cond += " AND feed_source=?"
+                args.append(feed)
+            if icp:
+                cond += " AND icp_tier=?"
+                args.append(icp)
+            smin, smax = _int(score_min), _int(score_max)
+            if smin is not None:
+                cond += " AND score >= ?"
+                args.append(smin)
+            if smax is not None:
+                cond += " AND score < ?"
+                args.append(smax)
+            if carded == "1":
+                cond += " AND clickup_task_id IS NOT NULL"
+            elif carded == "0":
+                cond += " AND clickup_task_id IS NULL"
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, title, score, status, job_url, clickup_task_url,"
+                " hard_rule_skip, feed_source, icp_tier, contract_type,"
+                " hourly_max, fixed_budget, client_total_spent,"
+                " substr(fetched_at,1,10) AS d FROM scored_jobs"
+                f" WHERE 1=1{cond} ORDER BY fetched_at DESC LIMIT 300", args)]
+            # the UNCAPPED count — the drill shows 300 rows but must never imply
+            # that 300 is the answer when the figure it came from says otherwise
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM scored_jobs WHERE 1=1{cond}",
+                args).fetchone()[0]
+        elif stage in ("scanned", "scored", "carded"):
             col = "fetched_at" if stage == "scanned" else "first_scored_at"
             cond, args = wk(col)
             if stage == "scored":
@@ -514,7 +656,8 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
     finally:
         conn.close()
     return {"stage": stage, "week": week, "status": status,
-            "rows": rows, "count": len(rows)}
+            "rows": rows, "count": len(rows),
+            "total": len(rows) if total is None else total}
 
 
 def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
