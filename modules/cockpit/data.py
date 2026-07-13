@@ -430,12 +430,44 @@ def pipeline(db_path: Optional[Path] = None,
                          f" {backlog} older uncarded rows (mostly the shadow-era"
                          " backlog; listings likely expired) excluded"}
         to_triage = bands["hot"]
+
+        # ICP / Prime — the tier that actually discriminates now that ~80% of
+        # scored jobs clear the 'hot' bar. This is the KPI that replaced
+        # 'to triage': since the live ClickUp cutover every hot lead is carded
+        # within the same run, so 'hot AND uncarded' is structurally always 0 —
+        # a metric that can no longer be non-zero is a dead metric.
+        cut30 = (d0 - timedelta(days=29)).isoformat()
+        icp_row = conn.execute(
+            "SELECT SUM(icp_tier='icp') icp, SUM(icp_tier='icp_near') near"
+            " FROM scored_jobs WHERE substr(fetched_at,1,10) >= ?",
+            (cut30,)).fetchone()
+        icp_last = conn.execute(
+            "SELECT MAX(substr(fetched_at,1,10)) FROM scored_jobs"
+            " WHERE icp_tier='icp'").fetchone()[0]
+        icp_all = conn.execute(
+            "SELECT COUNT(*) FROM scored_jobs WHERE icp_tier='icp'").fetchone()[0]
+        icp_kpi = {"last_30": icp_row["icp"] or 0,
+                   "near_30": icp_row["near"] or 0,
+                   "total": icp_all, "last": icp_last}
+
+        # every zero in the KPI strip must be able to say WHY it is zero — a
+        # bare 0 with no context is the dead-end metric this cockpit exists to
+        # abolish (2026-07-14: four zeros at once, all for different reasons)
+        def days_since(iso):
+            if not iso:
+                return None
+            try:
+                return (d0 - date.fromisoformat(iso[:10])).days
+            except ValueError:
+                return None
+        client_replied["days_since"] = days_since(client_replied["last"])
+        icp_kpi["days_since"] = days_since(icp_last)
     finally:
         conn.close()
     return {"applied": applied, "funnel_weeks": funnel_weeks,
             "carded": carded_now, "client_replied": client_replied,
             "by_status": by_status, "win_rate": win_rate, "bands": bands,
-            "to_triage": to_triage}
+            "to_triage": to_triage, "icp": icp_kpi}
 
 
 def pipeline_facts(db_path: Optional[Path] = None,

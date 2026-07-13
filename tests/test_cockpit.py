@@ -1192,6 +1192,45 @@ class TestPipelineFacts(unittest.TestCase):
         self.assertEqual(d["rows"], [])
 
 
+class TestPipelineKpis(unittest.TestCase):
+    """The KPI strip: the headline window must carry signal, and every zero must
+    be able to say why it is zero (2026-07-14: all four read 0 at 3am — one was
+    a 3-hour-old day, one was a metric that can no longer be non-zero, and two
+    were true zeros nobody could tell apart)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-kpi-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_chart_jobs(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_carded_week_survives_an_empty_today(self):
+        # 'today' is legitimately 0 early in the day; the 7-day window is what
+        # the headline shows, so an empty morning never reads as a dead pipeline
+        out = data.pipeline(self.db_path, today="2026-06-16")
+        self.assertEqual(out["carded"]["today"], 0)
+        self.assertEqual(out["carded"]["week"], 1)      # the 06-10 card
+
+    def test_icp_kpi_counts_and_dates(self):
+        out = data.pipeline(self.db_path, today="2026-06-16")
+        icp = out["icp"]
+        self.assertEqual(icp["total"], 2)               # both seeded ICP rows
+        self.assertEqual(icp["last_30"], 1)             # only the 06-10 one
+        self.assertEqual(icp["last"], "2026-06-10")
+        self.assertEqual(icp["days_since"], 6)
+
+    def test_zero_carries_its_recency(self):
+        # far enough out that nothing is in the last 30 days: the count is 0 but
+        # 'days_since' still says when the last one WAS — the zero explains itself
+        out = data.pipeline(self.db_path, today="2026-12-01")
+        self.assertEqual(out["icp"]["last_30"], 0)
+        self.assertEqual(out["icp"]["total"], 2)
+        self.assertGreater(out["icp"]["days_since"], 30)
+
+
 class TestIcpPersistence(unittest.TestCase):
     """The tier must be recomputable from stored fields — that is what makes the
     persisted column trustworthy rather than a frozen guess."""

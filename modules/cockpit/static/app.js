@@ -310,7 +310,7 @@ const RENDERERS = {
     view.appendChild(el("h2", "section",
       `Pipeline <span class="hint muted">— every number is clickable; sources`
       + ` are truthful (applied = connects rail)</span>`));
-    const c = d.carded || {}, wr = d.win_rate || {}, b = d.bands || {};
+    const c = d.carded || {}, wr = d.win_rate || {};
     const cr = d.client_replied || {}, a = d.applied || {};
     const drill = el("div", "drill");
 
@@ -391,23 +391,34 @@ const RENDERERS = {
       k.onclick = act;
       return k;
     };
-    kpis.appendChild(mkKpi("Carded to board", String(c.today || 0),
-      `${c.week || 0} this week · ${c.last_week || 0} last week · today`,
+    // The headline window is the 7-DAY one, not 'today': the scanner runs
+    // hourly and the founder reads this at 3am, when 'today' is structurally
+    // near-zero and says nothing. Today stays visible in the sub-line.
+    // Every zero carries WHY it is zero — a bare 0 is a dead end.
+    const icp = d.icp || {};
+    const ago = (n) => n == null ? "never"
+      : n === 0 ? "today" : n === 1 ? "yesterday" : `${n}d ago`;
+    kpis.appendChild(mkKpi("Carded to board", String(c.week || 0),
+      `last 7 days · ${c.today || 0} today · ${c.last_week || 0} the week before`,
       () => openRows("Carded — all recent", { stage: "carded" }, jobCols)));
+    kpis.appendChild(mkKpi("ICP / Prime", String(icp.last_30 || 0),
+      `last 30 days · ${icp.near_30 || 0} near-miss · ${icp.total || 0} all-time`
+      + ` · last ${ago(icp.days_since)}`,
+      () => openRows("ICP / Prime leads (all-time)",
+        { stage: "jobs", icp: "icp" }, chartCols)));
     kpis.appendChild(mkKpi("Applied" + (a.available ? "" : " (rail pending)"),
       a.available ? String(a.week || 0) : "—",
-      a.available ? `this week · ${a.today || 0} today · since ${esc(a.since || "")}`
-                  : esc((a.rail || "").slice(0, 60)),
+      a.available
+        ? (a.week ? `last 7 days · ${a.today || 0} today`
+                  : `last 7 days — a TRUE zero (applications paused; rail live`
+                    + ` since ${esc(a.since || "")})`)
+        : esc((a.rail || "").slice(0, 60)),
       () => openRows("Applications (connects rail)", { stage: "applied" }, appliedCols)));
     kpis.appendChild(mkKpi("Client replies", String(cr.this_month || 0),
-      `this month · ${cr.total || 0} all-time · last ${esc(cr.last || "—")}`,
+      `this month · ${cr.total || 0} all-time · last reply ${ago(cr.days_since)}`
+      + (cr.this_month ? "" : " — nothing applied, so nothing to reply to"),
       () => openRows("Client replies (room-sourced proposals)",
         { stage: "replied" }, threadCols)));
-    kpis.appendChild(mkKpi("To triage", String(d.to_triage || 0),
-      `hot, last ${b.window_days || 7}d · ${b.standard || 0} std · ${b.low || 0} low`
-      + ` · ${b.backlog_uncarded || 0} stale excluded`,
-      () => openRows(`To triage — untasked hot (last ${b.window_days || 7}d)`,
-        { stage: "triage" }, jobCols)));
     view.appendChild(kpis);
     view.appendChild(drill);
 
