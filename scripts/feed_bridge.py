@@ -103,6 +103,49 @@ EXTRACT_JS = r"""
 })()
 """
 
+# ── SSR payload harvest (the PRIMARY source since 2026-07-13) ────────────────
+# Upwork lazily HYDRATES the job cards: the page ships 2 rendered tiles plus
+# `data-test="job-tile-placeholder"` skeletons that only become real tiles when
+# the render lifecycle runs. Our scan tab is deliberately parked (hidden), and
+# Chrome does NOT run rendering/rAF in hidden tabs — so the placeholders never
+# hydrated and DOM scraping saw only ~2 jobs/feed (~12% of the feed) for days,
+# silently starving lead-gen. Waiting and scrolling cannot fix it.
+#
+# But the FULL feed is server-embedded in the `window.__NUXT__` script: Nuxt
+# deletes the global after hydration, yet the <script> TEXT remains, so we
+# re-eval it to recover the payload. This is immune to visibility/hydration and
+# gives STRUCTURED fields (exact budget, client spend/hires, proposal tier)
+# instead of regex-scraped card text. DOM stays as the fallback.
+PAYLOAD_JS = r"""
+(function () {
+  function feeds(st) {
+    var all = [];
+    Object.keys(st || {}).forEach(function (k) {
+      if (!/^feed/i.test(k)) return;
+      var v = st[k];
+      if (v && v.jobs && v.jobs.length) all = all.concat(v.jobs);
+    });
+    return all;
+  }
+  try {
+    var nuxt = window.__NUXT__;
+    if (!nuxt || !nuxt.state) {           // Nuxt deletes the global post-hydration
+      var s = Array.prototype.slice.call(document.querySelectorAll('script'))
+        .filter(function (x) {
+          return (x.textContent || '').indexOf('window.__NUXT__=') === 0; })[0];
+      if (!s) return JSON.stringify({url: location.href, jobs: [],
+                                     err: 'no __NUXT__ script'});
+      (0, eval)(s.textContent);
+      nuxt = window.__NUXT__;
+    }
+    var st = (nuxt && nuxt.state) || nuxt || {};
+    return JSON.stringify({url: location.href, jobs: feeds(st)});
+  } catch (e) {
+    return JSON.stringify({url: location.href, jobs: [], err: String(e)});
+  }
+})()
+"""
+
 DUMP_JS = r"""
 (function () {
   var s = (window.__NUXT__ || {}).state || {};
@@ -272,6 +315,75 @@ def parse_tile(tile, now=None):
                                      re.search(r"spent|Rating|verified|Skills"
                                                r"|ago", last, re.I)) else None
     return job
+
+
+def _slug(title: str) -> str:
+    s = re.sub(r"[^A-Za-z0-9]+", "-", (title or "").strip()).strip("-")
+    return s[:80] or "job"
+
+
+def parse_job(job, now=None):
+    """SSR payload job -> the SAME recorder-shaped dict parse_tile returns, so
+    claiming/scoring/validation are untouched. Structured beats regex: budget,
+    client spend/hires/rating and the proposals tier come from real fields.
+
+    href is BUILT from the job's own ciphertext (never invented): the payload
+    carries `ciphertext` == '~02<uid>', which is exactly the id validate_job
+    checks against, so the href/id pair can't drift."""
+    uid = str(job.get("uid") or "").strip()
+    cipher = str(job.get("ciphertext") or "").strip()
+    if not cipher and uid:
+        cipher = "~02" + uid
+    title = (job.get("title") or "").strip()
+    href = f"{HOST}{_slug(title)}_{cipher}/" if cipher else ""
+
+    out = {"id": uid or None, "href": href, "title": title,
+           "created_dt": (job.get("publishedOn") or job.get("createdOn")
+                          or None)}
+
+    # 1 = fixed-price, 2 = hourly (Upwork's `type`)
+    jtype = job.get("type")
+    hb = job.get("hourlyBudget") or {}
+    hmin, hmax = hb.get("min") or None, hb.get("max") or None
+    amount = (job.get("amount") or {}).get("amount")
+    if jtype == 2 or hmin or hmax:
+        out["contract_type"] = "Hourly"
+        out["hourly_min"], out["hourly_max"] = hmin, hmax
+        out["fixed_budget"] = None
+    else:
+        out["contract_type"] = "Fixed"
+        out["fixed_budget"] = amount or None
+        out["hourly_min"] = out["hourly_max"] = None
+    out["experience_level"] = job.get("tierText") or None
+    out["engagement"] = job.get("engagement") or None
+    out["engagement_duration"] = (job.get("durationLabel")
+                                  or job.get("duration") or None)
+
+    # proposals tier ("5 to 10", "20 to 50") -> the low bound, same semantics
+    # as the DOM path's `total_applicants`
+    m = re.search(r"(\d+)", str(job.get("proposalsTier") or ""))
+    out["total_applicants"] = int(m.group(1)) if m else None
+
+    out["description"] = (job.get("description") or "").strip()
+    out["skills"] = [s.get("prettyName") or s.get("name") or ""
+                     for s in (job.get("skills") or [])
+                     if isinstance(s, dict)] or \
+                    [s for s in (job.get("skills") or []) if isinstance(s, str)]
+
+    c = job.get("client") or {}
+    out["client_payment_verified"] = 1 if c.get(
+        "paymentVerificationStatus") == 1 else 0
+    fb = c.get("totalFeedback")
+    out["client_rating"] = round(float(fb), 2) if isinstance(
+        fb, (int, float)) and fb else None
+    spent = c.get("totalSpent")
+    out["client_total_spent"] = float(spent) if isinstance(
+        spent, (int, float)) else None
+    hires = c.get("totalHires")
+    out["client_hires"] = int(hires) if isinstance(hires, int) else None
+    out["client_country"] = ((c.get("location") or {}).get("country")
+                             or None)
+    return out
 
 
 # ── validation (Iron Law) ─────────────────────────────────────────────────────

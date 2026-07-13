@@ -37,6 +37,9 @@ import feed_bridge   # noqa: E402  (extraction library)
 TASK_NAME = "upwork_scan"
 TABLE = "scored_jobs"
 MARKER = "#ew-scan"
+# a healthy feed ships ~10-30 jobs; anything less means the extraction path is
+# broken, not that the market is quiet (2026-07-13 hydration incident)
+MIN_HEALTHY_TILES = 5
 FEED_URLS = {
     "most_recent": "https://www.upwork.com/nx/find-work/most-recent",
     "best_matches": "https://www.upwork.com/nx/find-work/best-matches",
@@ -141,28 +144,56 @@ def scan(ctx, _sleep=time.sleep) -> dict:
 
     feeds = {}
     redirected = []
+    degraded = []
     for feed, url in FEED_URLS.items():
         navigate_tab(tab, url + MARKER)
         _sleep(SETTLE_SECONDS)
-        raw = feed_bridge.chrome_eval(feed_bridge.EXTRACT_JS, tab_ref=tab)
-        payload = json.loads(raw)
+        # PRIMARY: the SSR __NUXT__ payload — the FULL feed, immune to the lazy
+        # hydration that Chrome never runs in our hidden scan tab (2026-07-13:
+        # DOM scraping silently returned ~2 tiles/feed for days). DOM stays as
+        # the fallback if the payload shape ever disappears.
+        payload = json.loads(
+            feed_bridge.chrome_eval(feed_bridge.PAYLOAD_JS, tab_ref=tab))
+        landed = payload.get("url") or ""
+        source = "payload"
+        jobs = [feed_bridge.parse_job(j) for j in (payload.get("jobs") or [])]
+        if not jobs:
+            dom = json.loads(
+                feed_bridge.chrome_eval(feed_bridge.EXTRACT_JS, tab_ref=tab))
+            landed = dom.get("url") or landed
+            jobs = [j for j in (feed_bridge.parse_tile(t)
+                                for t in dom.get("tiles", [])) if j]
+            source = "dom-fallback"
+            ctx.log(f"{feed}: payload empty ({payload.get('err') or 'no jobs'})"
+                    f" -> DOM fallback yielded {len(jobs)}")
         # SESSION GUARD (2026-07-06 incident): a logged-out/challenged session
         # bounces feed URLs to the PUBLIC search page (or a CF interstitial).
         # Never ingest tiles from a non-feed page — they are unpersonalized
         # public results, not our lead feeds. Detect by landing URL.
-        landed = payload.get("url") or ""
         if "/nx/find-work/" not in landed:
             feeds[feed] = {"extracted": 0, "valid": 0, "new": 0, "known": 0,
                            "invalid": 0, "redirected_to": landed[:80]}
             redirected.append(feed)
             ctx.log(f"{feed}: REDIRECTED off-feed -> {landed[:80]} (tiles ignored)")
             continue
-        jobs = [j for j in (feed_bridge.parse_tile(t)
-                            for t in payload.get("tiles", [])) if j]
         summary = feed_bridge.process(feed, jobs, db_path=dbp, table=TABLE)
         feeds[feed] = {k: summary[k] for k in
                        ("extracted", "valid", "new", "known", "invalid")}
+        feeds[feed]["source"] = source
+        # DEGRADED-FEED GUARD: a healthy feed returns ~10-30 jobs. A handful
+        # means the extraction path is broken (hydration, layout, selector) —
+        # never let that pass as a quiet 'nothing new' again.
+        if summary["extracted"] < MIN_HEALTHY_TILES:
+            degraded.append(f"{feed}={summary['extracted']}")
         ctx.log(f"{feed}: {json.dumps(feeds[feed])}")
+    if degraded:
+        # loud, but NOT fatal: whatever WAS extracted is still worth scoring.
+        ctx.anomaly("scan_feed_degraded", "critical",
+                    {"feeds": degraded, "min_expected": MIN_HEALTHY_TILES,
+                     "note": "feed extraction returned far fewer jobs than a"
+                             " healthy feed — check the payload/DOM path"})
+        ctx.log(f"DEGRADED FEEDS: {', '.join(degraded)}"
+                f" (< {MIN_HEALTHY_TILES} jobs) — lead-gen is under-scanning")
     if redirected and len(redirected) == len(FEED_URLS):
         # all feeds off-feed = the session is logged out (or challenge-walled):
         # lead-gen is DOWN until a human logs in. Fail LOUD (-> critical anomaly

@@ -100,6 +100,18 @@ class RunContext:
                 f"{action} blocked: module {self.module!r} is in shadow mode"
                 " (record_shadow_write instead)")
 
+    def anomaly(self, kind: str, severity: str, detail: dict) -> None:
+        """File an anomaly WITHOUT failing the run — for degradations a task
+        survives but a human must know about (e.g. the scanner extracting a
+        fraction of the feed). severity='critical' reaches the interrupt email
+        via bin/notify; 'warn' stays for the briefs/cockpit."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO anomalies (task_name, kind, detail_json, severity)"
+                " VALUES (?,?,?,?)",
+                (self.task_name, kind, json.dumps(detail, default=str),
+                 severity))
+
 
 # ── logging (IST, daily files) ────────────────────────────────────────────────
 

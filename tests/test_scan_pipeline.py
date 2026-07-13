@@ -44,6 +44,26 @@ def verdict(score=18):
                           "gate": None, "total": score}}
 
 
+def ssr_job(jid, title="Airtable + Make.com Automation Specialist", **kw):
+    """One job as it appears in the __NUXT__ SSR payload."""
+    j = {"uid": jid, "ciphertext": "~02" + jid, "title": title,
+         "description": "Automate the intake pipeline with Make and Airtable.",
+         "type": 2, "hourlyBudget": {"min": 35, "max": 50},
+         "amount": {"amount": 0}, "tierText": "Expert",
+         "durationLabel": "More than 6 months", "proposalsTier": "5 to 10",
+         "publishedOn": "2026-07-13T07:54:56.303Z",
+         "skills": [{"prettyName": "Make.com"}, {"prettyName": "Airtable"}],
+         "client": {"paymentVerificationStatus": 1, "totalSpent": 12000.0,
+                    "totalHires": 14, "totalFeedback": 4.9,
+                    "location": {"country": "United States"}}}
+    j.update(kw)
+    return j
+
+
+def ssr(*jobs, url="https://www.upwork.com/nx/find-work/most-recent"):
+    return json.dumps({"url": url, "jobs": list(jobs)})
+
+
 class ScanPipelineCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="scan-test-"))
@@ -71,16 +91,29 @@ class ScanPipelineCase(unittest.TestCase):
         with db.connect(self.db_path) as conn:
             return [dict(r) for r in conn.execute(sql, args)]
 
-    def run_scan(self, chrome_payloads, score_map=None):
-        """chrome_payloads: one payload per feed call (3 feeds)."""
+    def run_scan(self, chrome_payloads, score_map=None, ssr=None):
+        """chrome_payloads: one DOM payload per feed (the fallback path).
+        ssr: optional SSR __NUXT__ payloads per feed (the PRIMARY path since
+        2026-07-13). With no ssr, the payload comes back empty and the scan
+        falls back to the DOM — which is how the pre-existing tests still run."""
         score_map = score_map or {}
 
         def fake_score(row, task_name, db_path=None):
             return verdict(score_map.get(row["id"], 14))
 
+        ssr_iter = iter(ssr or [])
+        dom_iter = iter(chrome_payloads)
+
+        def fake_eval(js, tab_ref=None, _sleep=None):
+            if "__NUXT__" in js:                      # PAYLOAD_JS
+                return next(ssr_iter, json.dumps(
+                    {"url": "https://www.upwork.com/nx/find-work/my-feed",
+                     "jobs": []}))
+            return next(dom_iter)                     # EXTRACT_JS (fallback)
+
         from core import runner
         with mock.patch.object(sp.feed_bridge, "chrome_eval",
-                               side_effect=chrome_payloads), \
+                               side_effect=fake_eval), \
              mock.patch.object(scoring, "score_job",
                                side_effect=fake_score), \
              mock.patch.object(scoring, "draft_proposal",
@@ -88,6 +121,13 @@ class ScanPipelineCase(unittest.TestCase):
             return runner.run_task(
                 sp.TASK_NAME, lambda ctx: sp.scan(ctx, _sleep=lambda s: None),
                 module="upwork", db_path=self.db_path)
+
+    def anomalies(self, kind=None):
+        q = "SELECT * FROM anomalies"
+        args = ()
+        if kind:
+            q, args = q + " WHERE kind=?", (kind,)
+        return self.rows(q, args)
 
 
 JID_A = "2064908810394200829"
@@ -139,19 +179,16 @@ class TestScan(ScanPipelineCase):
             "SELECT * FROM shadow_ledger WHERE target='clickup'")), 1)
 
     def test_hard_rule_job_skipped_without_model_call(self):
-        t = tile(JID_A, title="n8n migration expert")
         calls = []
         with mock.patch.object(scoring, "score_job",
                                side_effect=lambda *a, **k:
                                calls.append(1) or verdict()):
-            from core import runner
-            with mock.patch.object(sp.feed_bridge, "chrome_eval",
-                                   side_effect=[payload(t), payload(),
-                                                payload()]):
-                result = runner.run_task(
-                    sp.TASK_NAME,
-                    lambda ctx: sp.scan(ctx, _sleep=lambda s: None),
-                    module="upwork", db_path=self.db_path)
+            # via the SSR payload (the primary path) — the n8n title must be
+            # hard-skipped before any model call, same as on the DOM path
+            result = self.run_scan(
+                [payload(), payload(), payload()],
+                ssr=[ssr(ssr_job(JID_A, title="n8n migration expert")),
+                     ssr(), ssr()])
         self.assertEqual(calls, [])          # model never invoked
         row = self.rows("SELECT * FROM scored_jobs")[0]
         self.assertEqual(row["status"], "Skipped")
@@ -206,6 +243,70 @@ class TestScan(ScanPipelineCase):
     def test_all_empty_feeds_skip_empty(self):
         result = self.run_scan([payload(), payload(), payload()])
         self.assertEqual(result.status, "skipped_empty")
+
+
+class TestSsrPayload(ScanPipelineCase):
+    """The 2026-07-13 hydration incident: Upwork lazily hydrates job cards, and
+    Chrome never runs the render lifecycle in our hidden scan tab, so DOM
+    scraping saw ~2 of ~50 jobs. The SSR __NUXT__ payload carries the FULL feed
+    and is immune to that — it is now the primary source."""
+
+    def test_payload_is_primary_and_carries_full_feed(self):
+        jobs = [ssr_job(str(2076575652992019450 + i * 7919)) for i in range(10)]
+        result = self.run_scan([payload(), payload(), payload()],
+                               ssr=[ssr(*jobs), ssr(), ssr()])
+        self.assertEqual(result.status, "completed")
+        f = result.metrics["feeds"]
+        self.assertEqual(f["most_recent"]["extracted"], 10)   # not 2
+        self.assertEqual(f["most_recent"]["source"], "payload")
+        self.assertEqual(f["most_recent"]["new"], 10)
+        rows = self.rows("SELECT * FROM scored_jobs")
+        self.assertEqual(len(rows), 10)
+
+    def test_payload_fields_beat_regex(self):
+        result = self.run_scan([payload(), payload(), payload()],
+                               ssr=[ssr(ssr_job(JID_A)), ssr(), ssr()])
+        self.assertEqual(result.status, "completed")
+        r = self.rows("SELECT * FROM scored_jobs WHERE id=?", (JID_A,))[0]
+        self.assertEqual(r["contract_type"], "Hourly")
+        self.assertEqual(r["hourly_min"], 35)
+        self.assertEqual(r["hourly_max"], 50)
+        self.assertEqual(r["client_total_spent"], 12000.0)
+        self.assertEqual(r["client_country"], "United States")
+        self.assertEqual(r["client_payment_verified"], 1)
+        self.assertEqual(r["total_applicants"], 5)            # "5 to 10" tier
+        self.assertIn("~02" + JID_A, r["job_url"])            # href from ciphertext
+
+    def test_dom_fallback_when_payload_missing(self):
+        # payload gone (shape change) -> DOM path still works, and says so
+        result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                               ssr=[json.dumps({"url": "https://www.upwork.com/"
+                                                       "nx/find-work/most-recent",
+                                                "jobs": [], "err": "no __NUXT__"}),
+                                    ssr(), ssr()])
+        self.assertEqual(result.status, "completed")
+        f = result.metrics["feeds"]
+        self.assertEqual(f["most_recent"]["extracted"], 1)
+        self.assertEqual(f["most_recent"]["source"], "dom-fallback")
+
+    def test_degraded_feed_raises_critical_anomaly(self):
+        # 2 jobs/feed is the exact silent-starvation signature — never quiet again
+        result = self.run_scan([payload(), payload(), payload()],
+                               ssr=[ssr(ssr_job(JID_A), ssr_job(JID_B)),
+                                    ssr(), ssr()])
+        self.assertEqual(result.status, "completed")          # not fatal
+        a = self.anomalies("scan_feed_degraded")
+        self.assertEqual(len(a), 1)
+        self.assertEqual(a[0]["severity"], "critical")        # -> interrupt email
+        detail = json.loads(a[0]["detail_json"])
+        self.assertIn("most_recent=2", detail["feeds"])
+        self.assertEqual(detail["min_expected"], sp.MIN_HEALTHY_TILES)
+
+    def test_healthy_feed_raises_no_anomaly(self):
+        jobs = [ssr_job(str(2076575652992019450 + i * 7919)) for i in range(10)]
+        self.run_scan([payload(), payload(), payload()],
+                      ssr=[ssr(*jobs), ssr(*jobs), ssr(*jobs)])
+        self.assertEqual(self.anomalies("scan_feed_degraded"), [])
 
 
 class TestScanLive(ScanPipelineCase):
