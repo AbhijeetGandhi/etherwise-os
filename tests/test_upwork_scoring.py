@@ -37,6 +37,37 @@ class TestHardRules(unittest.TestCase):
         j = job(contract_type="Fixed", hourly_max=None, fixed_budget=300.0)
         self.assertEqual(scoring.hard_rule_skip(j), "fixed_below_500")
 
+    # ── rate-unstated hourly → option B (2026-07-16) ─────────────────────────
+    # Upwork ships a blank rate as $0; feed_bridge normalises it to None. The
+    # old $30 floor read that as 'cheap' and killed ~370 real jobs. Now the
+    # client's proven spend stands in for the absent rate.
+    def test_rate_unstated_proven_spender_is_scored(self):
+        # no rate, but a $12k client (base fixture) -> falls through to scoring
+        j = job(hourly_min=None, hourly_max=None)
+        self.assertIsNone(scoring.hard_rule_skip(j))
+
+    def test_rate_unstated_unproven_client_is_skipped(self):
+        j = job(hourly_min=None, hourly_max=None, client_total_spent=200.0,
+                client_payment_verified=False, client_hires=0)
+        self.assertEqual(scoring.hard_rule_skip(j), "rate_unstated_low_client")
+
+    def test_rate_unstated_payment_verified_with_hire_is_scored(self):
+        # under the $5k spend bar, but payment-verified with a hire history
+        j = job(hourly_min=None, hourly_max=None, client_total_spent=1500.0,
+                client_payment_verified=True, client_hires=3)
+        self.assertIsNone(scoring.hard_rule_skip(j))
+
+    def test_rate_unstated_verified_but_never_hired_is_skipped(self):
+        j = job(hourly_min=None, hourly_max=None, client_total_spent=0.0,
+                client_payment_verified=True, client_hires=0)
+        self.assertEqual(scoring.hard_rule_skip(j), "rate_unstated_low_client")
+
+    def test_stated_low_rate_still_skips_as_below_30(self):
+        # a rate WAS given and it's genuinely low — unchanged, and NOT the
+        # rate-unstated path even for a proven spender
+        j = job(hourly_min=15.0, hourly_max=20.0, client_total_spent=200_000.0)
+        self.assertEqual(scoring.hard_rule_skip(j), "hourly_below_30")
+
     def test_no_placeholder_escape_even_for_whales(self):
         j = job(contract_type="Fixed", hourly_max=None, fixed_budget=50.0,
                 client_total_spent=200_000.0)

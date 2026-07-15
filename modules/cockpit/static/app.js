@@ -807,7 +807,8 @@ const RENDERERS = {
       // table) and a fixed list would silently swallow the ones it forgot.
       // Anything unmapped still shows, under its raw key.
       const LBL = {
-        no_rate: "hourly — no rate stated",
+        no_rate: "hourly — no rate (pre-fix, scored as $0)",
+        rate_unstated_low_client: "hourly — no rate + unproven client",
         hourly_below_30: "hourly < $30 (stated)",
         low_hourly_rate: "hourly < $30 (stated, v2 rule)",
         low_hourly: "hourly < $30 (stated, v2 rule)",
@@ -862,11 +863,16 @@ const RENDERERS = {
       }
       sc.appendChild(sk);
       const nNoRate = byReason.no_rate || 0;
+      const nUnproven = byReason.rate_unstated_low_client || 0;
       sc.appendChild(el("div", "muted small",
         `${nfmt(skipped.length)} of ${nfmt(js.length)} scanned jobs were killed`
         + ` before scoring (${pctOf(skipped.length, js.length)}%).`
-        + (nNoRate ? ` ${nfmt(nNoRate)} of them failed ONLY because the client`
-          + ` never stated a rate — those are unknowns, not cheap jobs.` : "")));
+        + (nNoRate ? ` ${nfmt(nNoRate)} historical rows failed ONLY because the`
+          + ` client never stated a rate — the old $30 floor read a blank as $0.`
+          + ` FIXED 2026-07-16 (option B): a rate-unstated job now scores when`
+          + ` the client is a proven spender, and only skips (as “no rate +`
+          + ` unproven client”${nUnproven ? `, ${nfmt(nUnproven)} here` : ""})`
+          + ` otherwise.` : "")));
       charts.appendChild(sc);
 
       // ── 4. FEED ROI + WEEKLY CONVERSION TREND ───────────────────────────

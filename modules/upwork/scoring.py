@@ -69,6 +69,23 @@ SCHEMA = {
 
 # ── hard rules (code, pre-model, v4.9 no exceptions) ─────────────────────────
 
+def _rate_unstated(job: dict) -> bool:
+    """True when the client stated NO hourly rate. Upwork ships a blank rate as
+    {type:'NotProvided', min:0, max:0}, which feed_bridge normalises to None —
+    so 'no min AND no max' is unstated, distinct from a stated-low '$15-20'."""
+    return not (job.get("hourly_min") or 0) and not (job.get("hourly_max") or 0)
+
+
+def _proven_spender(job: dict) -> bool:
+    """Readiness-to-pay proxy for a MISSING rate (option B, 2026-07-16): a real
+    spender who just left the rate blank is worth scoring; an unproven one is
+    not. Rate-unstated is not low-value, but we don't score all of them either."""
+    if (job.get("client_total_spent") or 0) >= config.RATE_UNSTATED_MIN_CLIENT_SPEND_USD:
+        return True
+    return bool(job.get("client_payment_verified")) \
+        and (job.get("client_hires") or 0) >= config.RATE_UNSTATED_MIN_HIRES
+
+
 def hard_rule_skip(job: dict) -> Optional[str]:
     """Skip reason or None. Title/description only for n8n — tags do NOT
     trigger (2026-06-10 decision). No placeholder escape (v4.9)."""
@@ -80,8 +97,15 @@ def hard_rule_skip(job: dict) -> Optional[str]:
     if _N8N_RE.search(text) and not _OTHER_TOOLS_RE.search(text):
         return "n8n_exclusion"          # sole-tool: n8n is THE subject
     if job.get("contract_type") == "Hourly":
-        if (job.get("hourly_max") or 0) < config.HARD_FLOOR_HOURLY:
-            return "hourly_below_30"
+        if _rate_unstated(job):
+            # no rate stated: the $30 floor read a blank as $0 and killed ~370
+            # jobs, 2/3 of that bucket, many of them real. Option B: let the
+            # client's proven spend stand in for the absent rate.
+            if not _proven_spender(job):
+                return "rate_unstated_low_client"
+            # proven spender + blank rate -> fall through and SCORE it
+        elif (job.get("hourly_max") or 0) < config.HARD_FLOOR_HOURLY:
+            return "hourly_below_30"    # a rate WAS stated, and it's too low
     elif job.get("contract_type") == "Fixed":
         if (job.get("fixed_budget") or 0) < config.HARD_FLOOR_FIXED:
             return "fixed_below_500"
