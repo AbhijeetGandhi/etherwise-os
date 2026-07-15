@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from core import config, doctor_checks
+from core import config, doctor_checks, source_health
 from core.airtable_client import AirtableClient
 
 _STATUS_ORDER = {"Active": 0, "Paused": 1, "Lead": 2, "Ended": 3, "Past": 4}
@@ -20,7 +20,8 @@ _clients_cache = {"at": 0.0, "data": None}   # 60s TTL — Airtable is external
 # Light doctor for the System panel: fast, local, no network, no full-tree
 # secret scan (that's bin/doctor's job). Reflects the REAL machine.
 _DOCTOR_LIGHT = ("check_python", "check_db", "check_pricing_coverage",
-                 "check_guardrails_selftest", "check_calendar")
+                 "check_guardrails_selftest", "check_calendar",
+                 "check_source_freshness")
 _SEVERITY = {"PASS": 0, "SKIP": 0, "WARN": 1, "FAIL": 2}
 
 
@@ -95,6 +96,7 @@ def system(db_path: Optional[Path] = None) -> dict:
         shadow_by_task = {r["task_name"]: r["n"] for r in conn.execute(
             "SELECT task_name, COUNT(*) AS n FROM shadow_ledger"
             " GROUP BY task_name ORDER BY n DESC")}
+        sources = source_health.source_health(conn)
     finally:
         conn.close()
     return {
@@ -105,6 +107,7 @@ def system(db_path: Optional[Path] = None) -> dict:
                   "hard_limit_usd": config.DAILY_HARD_LIMIT_USD},
         "shadow": {"pending": shadow.get("pending", 0), "by_status": shadow,
                    "by_task": shadow_by_task},
+        "sources": sources,
         "doctor": _doctor_light(),
     }
 
@@ -465,12 +468,20 @@ def pipeline(db_path: Optional[Path] = None,
                 return None
         client_replied["days_since"] = days_since(client_replied["last"])
         icp_kpi["days_since"] = days_since(icp_last)
+
+        # source health, stamped onto the figures each source feeds. A stale
+        # rail or a degraded scanner must not render as a live-looking count —
+        # the KPI carries its source's verdict so the UI can say 'not current'.
+        health = source_health.source_health(conn)
+        applied["source"] = source_health.by_backs(health, "applied")
+        scanner_health = source_health.by_backs(health, "pipeline")
     finally:
         conn.close()
     return {"applied": applied, "funnel_weeks": funnel_weeks,
             "carded": carded_now, "client_replied": client_replied,
             "by_status": by_status, "win_rate": win_rate, "bands": bands,
-            "to_triage": to_triage, "icp": icp_kpi}
+            "to_triage": to_triage, "icp": icp_kpi,
+            "scanner_health": scanner_health}
 
 
 def pipeline_facts(db_path: Optional[Path] = None,

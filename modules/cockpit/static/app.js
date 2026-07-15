@@ -185,6 +185,34 @@ const RENDERERS = {
     });
     view.appendChild(t);
 
+    // ── Source health: every number-backing source self-reports ──
+    const srcs = ((d.sources || {}).sources) || [];
+    if (srcs.length) {
+      view.appendChild(el("h2", "section",
+        `Source health <span class="hint muted">— freshness + degradation of`
+        + ` each number-backing source · a critical one in trouble turns the`
+        + ` health chip amber</span>`));
+      const stbl = el("table");
+      stbl.innerHTML = "<tr><th>Source</th><th>Status</th><th>Last success</th>"
+        + "<th>Backs</th><th>Detail</th></tr>";
+      srcs.forEach((s) => {
+        const cls = s.status === "ok" ? "green"
+          : s.status === "degraded" ? "amber" : "red";
+        const detail = s.status === "ok" ? `fresh · ${s.age_hours}h ago`
+          : s.status === "down" ? "never produced a successful run"
+          : s.status === "stale" ? `${s.age_hours}h ago > ${s.max_age_hours}h max`
+          : "ran but output was thin/degraded";
+        const tr = el("tr");
+        tr.innerHTML = `<td>${esc(s.label)}${s.critical ? "" : ' <span class="muted small">(non-critical)</span>'}</td>`
+          + `<td><span class="pill ${cls}">${esc(s.status)}</span></td>`
+          + `<td class="muted">${esc((s.last_success || "—").replace("T", " ").slice(0, 16))}</td>`
+          + `<td class="muted">${esc(s.backs || "—")}</td>`
+          + `<td class="muted">${esc(detail)}</td>`;
+        stbl.appendChild(tr);
+      });
+      view.appendChild(stbl);
+    }
+
     // doctor check list (full System)
     view.appendChild(el("h2", "section", "Doctor checks"));
     const dt = el("table");
@@ -408,22 +436,47 @@ const RENDERERS = {
     const icp = d.icp || {};
     const ago = (n) => n == null ? "never"
       : n === 0 ? "today" : n === 1 ? "yesterday" : `${n}d ago`;
-    kpis.appendChild(mkKpi("Carded to board", String(c.week || 0),
+
+    // ── source-health stamps (a stale/degraded source must never look live) ──
+    // A KPI whose backing source is unhealthy carries a warning and, for the
+    // applied count specifically, refuses to show a live-looking number: a
+    // stale rail's "0" is indistinguishable from a real 0 (2026-07-14).
+    const sh = d.scanner_health || {};
+    const scannerBad = sh.status && sh.status !== "ok";
+    const scanWarn = scannerBad
+      ? `<div class="kpiwarn">⚠ scanner ${esc(sh.status)}`
+        + (sh.status === "stale" && sh.age_hours != null
+            ? ` — last run ${sh.age_hours}h ago` : "")
+        + (sh.status === "degraded" ? " — feed thin, may undercount" : "")
+        + `; recent numbers may be low</div>`
+      : "";
+    const cardedKpi = mkKpi("Carded to board", String(c.week || 0),
       `last 7 days · ${c.today || 0} today · ${c.last_week || 0} the week before`,
-      () => openRows("Carded — all recent", { stage: "carded" }, jobCols)));
+      () => openRows("Carded — all recent", { stage: "carded" }, jobCols));
+    if (scanWarn) cardedKpi.insertAdjacentHTML("beforeend", scanWarn);
+    kpis.appendChild(cardedKpi);
     kpis.appendChild(mkKpi("ICP / Prime", String(icp.last_30 || 0),
       `last 30 days · ${icp.near_30 || 0} near-miss · ${icp.total || 0} all-time`
       + ` · last ${ago(icp.days_since)}`,
       () => openRows("ICP / Prime leads (all-time)",
         { stage: "jobs", icp: "icp" }, chartCols)));
-    kpis.appendChild(mkKpi("Applied" + (a.available ? "" : " (rail pending)"),
-      a.available ? String(a.week || 0) : "—",
-      a.available
-        ? (a.week ? `last 7 days · ${a.today || 0} today`
-                  : `last 7 days — a TRUE zero (applications paused; rail live`
-                    + ` since ${esc(a.since || "")})`)
-        : esc((a.rail || "").slice(0, 60)),
-      () => openRows("Applications (connects rail)", { stage: "applied" }, appliedCols)));
+    // the rail's own freshness gates whether its 0 can be trusted: a stale rail
+    // means "we may be missing applications", not "you applied to nothing".
+    const rs = (a.source || {});
+    const railStale = rs.status && rs.status !== "ok";
+    const appliedKpi = mkKpi(
+      "Applied" + (a.available ? (railStale ? " ⚠" : "") : " (rail pending)"),
+      !a.available ? "—" : railStale ? "stale" : String(a.week || 0),
+      !a.available ? esc((a.rail || "").slice(0, 60))
+        : railStale
+          ? `NOT CURRENT — rail last ran ${rs.age_hours != null ? rs.age_hours + "h ago" : "unknown"}`
+            + ` (max ${rs.max_age_hours}h); its 0 can't be trusted until it scrapes`
+          : (a.week ? `last 7 days · ${a.today || 0} today`
+                    : `last 7 days — a TRUE zero (applications paused; rail live`
+                      + ` since ${esc(a.since || "")})`),
+      () => openRows("Applications (connects rail)", { stage: "applied" }, appliedCols));
+    if (railStale) appliedKpi.classList.add("kpi-stale");
+    kpis.appendChild(appliedKpi);
     kpis.appendChild(mkKpi("Client replies", String(cr.this_month || 0),
       `this month · ${cr.total || 0} all-time · last reply ${ago(cr.days_since)}`
       + (cr.this_month ? "" : " — nothing applied, so nothing to reply to"),

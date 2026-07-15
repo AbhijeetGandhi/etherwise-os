@@ -457,6 +457,18 @@ class TestPipelineReader(unittest.TestCase):
         self.assertIsNone(wk["applied"])
         self.assertEqual(out["applied"]["covered_since"], "2026-06-18")
 
+    def test_pipeline_stamps_source_health_on_kpis(self):
+        # applied carries its rail's verdict; the payload carries the scanner's.
+        # With no runs seeded, both sources are 'down' -> the applied KPI must
+        # not present a live-looking count.
+        out = data.pipeline(self.db_path, today="2026-07-16")
+        self.assertIn("source", out["applied"])
+        self.assertEqual(out["applied"]["source"]["backs"], "applied")
+        self.assertIn("scanner_health", out)
+        self.assertEqual(out["scanner_health"]["backs"], "pipeline")
+        # a fresh DB has never run either source
+        self.assertFalse(out["applied"]["source"]["ok"])
+
     def test_hired_column_from_contracts(self):
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO contracts (id, title, upwork_status,"

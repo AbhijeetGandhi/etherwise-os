@@ -107,10 +107,10 @@ class RunContext:
         via bin/notify; 'warn' stays for the briefs/cockpit."""
         with db.connect(self.db_path) as conn:
             conn.execute(
-                "INSERT INTO anomalies (task_name, kind, detail_json, severity)"
-                " VALUES (?,?,?,?)",
+                "INSERT INTO anomalies (task_name, kind, detail_json, severity,"
+                " run_id) VALUES (?,?,?,?,?)",
                 (self.task_name, kind, json.dumps(detail, default=str),
-                 severity))
+                 severity, self.run_id))
 
 
 # ── logging (IST, daily files) ────────────────────────────────────────────────
@@ -198,11 +198,12 @@ def _route_failure(db_path: Optional[Path], task_name: str, run_id: int,
     notify.py (when built) drains critical anomalies into interrupt emails."""
     with db.connect(db_path) as conn:
         conn.execute(
-            "INSERT INTO anomalies (task_name, kind, detail_json, severity)"
-            " VALUES (?, 'task_failure', ?, 'critical')",
+            "INSERT INTO anomalies (task_name, kind, detail_json, severity,"
+            " run_id) VALUES (?, 'task_failure', ?, 'critical', ?)",
             (task_name, json.dumps({
                 "run_id": run_id, "error": error[:1000],
-                "ist_date": datetime.now(config.TZ).strftime("%Y-%m-%d")})))
+                "ist_date": datetime.now(config.TZ).strftime("%Y-%m-%d")}),
+             run_id))
 
 
 # ── the wrapper ───────────────────────────────────────────────────────────────

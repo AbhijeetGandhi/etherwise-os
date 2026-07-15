@@ -222,6 +222,13 @@ select:focus,input[type=search]:focus{outline:none;border-color:var(--blue2)}
   pointer-events:none;overflow:visible}
 .trendline polyline{fill:none;stroke:var(--amber);stroke-width:2;
   vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
+/* source-health stamps on a KPI: warn banner + stale de-emphasis */
+.kpiwarn{margin-top:8px;padding:5px 8px;border-radius:var(--rad-sm);
+  background:var(--amber-soft);color:var(--warn);font-size:var(--fs-xs);
+  font-weight:600;line-height:1.35}
+.kpi.kpi-stale .val{color:var(--warn)}
+.kpi.kpi-stale{outline:1px dashed var(--amber);outline-offset:-1px}
+
 /* outcome cards — deliberately NOT funnel bands (different sources/windows) */
 .outcomes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .ocard{border:1px solid var(--g3);border-radius:var(--rad);padding:14px 16px;

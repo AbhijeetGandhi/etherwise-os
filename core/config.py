@@ -148,6 +148,41 @@ ICP_FIXED_USD = 5000.0           # fixed-price equivalent
 ICP_CLIENT_SPEND_USD = 50000.0   # proven spender
 ICP_SPEND_PER_HIRE_USD = 2000.0  # readiness-to-pay proxy (avg-rate enrichment pending)
 
+# ── Rate-unstated hourly gate (2026-07-16, option B) ─────────────────────────
+# Upwork ships a blank hourly rate as $0, and the $30 floor read $0 as 'cheap',
+# silently killing ~370 jobs (2/3 of that skip bucket) that never stated a rate
+# at all. Rate-unstated is NOT low-value — but we don't score all of them either.
+# When the rate is absent, the CLIENT'S proven spend stands in for it: a real
+# spender who left the rate blank is worth scoring; an unproven one is not.
+RATE_UNSTATED_MIN_CLIENT_SPEND_USD = 5000.0   # proven-spender proxy for a missing rate
+RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a hire history
+
+# ── Source-health registry (2026-07-16) ──────────────────────────────────────
+# Every number-backing source self-reports freshness + health so a source that
+# silently degrades (a dead rail, a scanner extracting 2 tiles/feed) can never
+# render stale/thin numbers as if they were current. core/source_health.py reads
+# this; bin/doctor and the cockpit both consume the verdict. Adding a source is
+# ONE entry here, not new code.
+#   task_name     — the runs.task_name it writes (freshness = age of last success)
+#   max_age_hours — cadence + grace; older than this => STALE
+#   degrade_kinds — anomaly kinds that mean 'ran but produced thin/bad output';
+#                   an unresolved one on the LATEST run => DEGRADED (self-healing)
+#   critical      — a stale/degraded critical source turns doctor amber
+#   backs         — the cockpit figure it feeds (so that KPI can show 'not current')
+SOURCES = (
+    {"key": "connects_rail", "label": "Connects-history rail",
+     "task_name": "upwork_connects", "max_age_hours": 26,
+     "degrade_kinds": (), "critical": True, "backs": "applied",
+     "why": "the applied-truth source; a stale rail makes 'applied' look like a"
+            " live 0 when nobody is actually counting"},
+    {"key": "scanner", "label": "Upwork scanner",
+     "task_name": "upwork_scan", "max_age_hours": 3,
+     "degrade_kinds": ("scan_feed_degraded",), "critical": True,
+     "backs": "pipeline",
+     "why": "backs the funnel + carded board; a thin feed silently under-scans"
+            " lead-gen"},
+)
+
 # ── Chief of Staff (M4) — nudge scoring + decay (design spec §6) ──────────────
 # urgency = COS_URGENCY_BASE[kind] * recency_decay(age) * stake_mult(money|score)
 # Tunable here ONLY (single source of truth). Higher base = ranks higher.

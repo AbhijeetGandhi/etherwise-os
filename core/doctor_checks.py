@@ -317,6 +317,42 @@ def check_plists(root: Optional[Path] = None) -> list:
     return checks
 
 
+def check_source_freshness(db_path: Optional[Path] = None,
+                           now=None) -> list:
+    """Every number-backing source must be fresh AND un-degraded, or the numbers
+    it feeds are lying. A critical source that is stale (stopped producing) or
+    degraded (ran thin) is a WARN — amber, not red: the data is suspect, not
+    corrupt, and a human should look before trusting the affected KPI."""
+    from core import source_health as sh
+    db_path = db_path or config.DB_PATH
+    if not Path(db_path).is_file():
+        return [Check("SKIP", "source freshness", "no database yet")]
+    try:
+        with db.connect(db_path) as conn:
+            health = sh.source_health(conn, now=now)
+    except Exception as exc:  # noqa: BLE001 — a health read must never crash doctor
+        return [Check("WARN", "source freshness", f"check failed: {exc!r}")]
+
+    checks = []
+    for s in health["sources"]:
+        if s["ok"]:
+            checks.append(Check("PASS", f"source {s['key']}",
+                                f"fresh ({s['age_hours']}h ago)"))
+            continue
+        status = s["status"]
+        if status == "down":
+            msg = "has NEVER produced a successful run"
+        elif status == "stale":
+            msg = (f"STALE — last success {s['age_hours']}h ago"
+                   f" (max {s['max_age_hours']}h); {s['why']}")
+        else:  # degraded
+            msg = f"DEGRADED this run — {s['why']}"
+        # only critical sources escalate the doctor verdict; others inform
+        checks.append(Check("WARN" if s["critical"] else "PASS",
+                            f"source {s['key']}", msg))
+    return checks
+
+
 def check_cockpit() -> list:
     """Cockpit auth/bind hygiene (M2): token present, token file owner-only,
     server bound to loopback. No network."""
@@ -350,6 +386,7 @@ ALL_CHECKS = (
     ("guardrails", check_guardrails_selftest),
     ("hooks", check_hooks),
     ("calendar", check_calendar),
+    ("source freshness", check_source_freshness),
     ("models api", check_models_api),
     ("plists", check_plists),
     ("cockpit", check_cockpit),
