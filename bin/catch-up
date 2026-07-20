@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Restart the scheduled jobs whose source is ACTUALLY overdue.
+
+Why this exists (2026-07-20 incident): macOS does not queue missed
+StartCalendarInterval windows. A window that passes while the Mac is asleep or
+off is skipped outright — so the Mac slept from Jul-17 to Jul-20 and the daily
+connects rail, the hourly sync/mirror and two weekly finance pulls simply never
+ran. launchd was behaving correctly the whole time; every job resumed exactly on
+its slot once the machine was awake.
+
+Blanket RunAtLoad is the wrong fix. It fires EVERY job on every load: a
+thundering herd at boot, a spurious run every time a plist is reloaded, and
+repeat side-effects from anything that emails. This asks the source registry
+which sources are overdue and kickstarts only those — so the freshness
+mechanism we already have becomes self-healing.
+
+Guards:
+  - only sources marked catch_up (manual imports and emailing jobs opt out)
+  - only sources whose status is stale/down; a healthy source is never touched
+  - a per-task cooldown, so a job that is broken (not merely missed) is not
+    re-kicked on every wake
+  - staggered starts; several rails share the one Chrome marker tab
+  - `launchctl kickstart` without -k: a job already running is left alone, and
+    the runner's flock stops overlap regardless
+
+    PYTHONPATH=. python3 bin/catch-up [--dry-run]
+"""
+from __future__ import annotations
+
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db, runner, source_health as sh   # noqa: E402
+
+TASK_NAME = "catch_up"
+
+
+def _recently_ran(conn, task: str, now: datetime, minutes: int) -> bool:
+    """True if this task started within the cooldown — don't pile on a run that
+    has only just happened."""
+    cutoff = (now - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    row = conn.execute(
+        "SELECT 1 FROM runs WHERE task_name=? AND started_at >= ? LIMIT 1",
+        (task, cutoff)).fetchone()
+    return row is not None
+
+
+def _keeps_failing(conn, task: str, limit: int) -> bool:
+    """True when the task's last `limit` runs ALL failed. Such a job is broken,
+    not merely missed: restarting it just loops and buries the real fault under
+    repeat anomalies. Give up and let the brief carry it to a human."""
+    rows = conn.execute(
+        "SELECT status FROM runs WHERE task_name=? ORDER BY id DESC LIMIT ?",
+        (task, limit)).fetchall()
+    return len(rows) == limit and all(r[0] == "failed" for r in rows)
+
+
+def overdue_sources(conn, now: datetime, sources=None) -> list:
+    """The sources that are both unhealthy AND safe to restart unattended."""
+    health = sh.source_health(conn, now=now, sources=sources)
+    out = []
+    for s in health["sources"]:
+        if s["status"] not in ("stale", "down"):
+            continue                      # degraded ran fine; a restart won't help
+        src = next((x for x in (sources if sources is not None else config.SOURCES)
+                    if x["key"] == s["key"]), {})
+        if not src.get("catch_up") or not src.get("launchd_label"):
+            continue                      # manual / opted out / no agent to kick
+        out.append({**s, "launchd_label": src["launchd_label"]})
+    return out
+
+
+def kickstart(label: str, uid: int, _run=subprocess.run) -> tuple:
+    """launchctl kickstart WITHOUT -k: never interrupt a run already in flight."""
+    proc = _run(["launchctl", "kickstart", f"gui/{uid}/{label}"],
+                capture_output=True, text=True, timeout=30)
+    return proc.returncode, (proc.stderr or proc.stdout or "").strip()
+
+
+def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
+        _kick=kickstart, dry_run: bool = False) -> dict:
+    import os
+    now = now or datetime.now(config.TZ)
+    uid = os.getuid() if uid is None else uid
+    dbp = ctx.db_path or config.DB_PATH
+
+    with db.connect(dbp) as conn:
+        candidates = overdue_sources(conn, now)
+        due, skipped, gave_up = [], [], []
+        for s in candidates:
+            if _recently_ran(conn, s["task_name"], now,
+                             config.CATCH_UP_COOLDOWN_MIN):
+                skipped.append({"key": s["key"], "why": "ran within cooldown"})
+            elif _keeps_failing(conn, s["task_name"],
+                                config.CATCH_UP_MAX_CONSECUTIVE_FAILURES):
+                gave_up.append({"key": s["key"], "why": "failing every attempt"})
+            else:
+                due.append(s)
+
+    kicked, failed = [], []
+    for i, s in enumerate(due):
+        if dry_run:
+            kicked.append({"key": s["key"], "dry_run": True})
+            continue
+        if i:
+            _sleep(config.CATCH_UP_STAGGER_SEC)
+        code, err = _kick(s["launchd_label"], uid)
+        entry = {"key": s["key"], "label": s["launchd_label"],
+                 "overdue_h": s["hours_overdue"]}
+        if code == 0:
+            kicked.append(entry)
+            ctx.log(f"kickstarted {s['key']} ({s['label']}) —"
+                    f" {s['hours_overdue']}h past its deadline")
+        else:
+            failed.append({**entry, "error": err[:200]})
+            ctx.log(f"FAILED to kickstart {s['key']}: {err[:200]}")
+
+    if failed:
+        # a job we cannot restart is exactly the silent-death case this whole
+        # mechanism exists to prevent — say so loudly
+        ctx.anomaly("catch_up_failed", "critical",
+                    {"failed": failed, "uid": uid})
+    if gave_up:
+        # not a restart problem — say plainly that a human is needed
+        ctx.anomaly("catch_up_gave_up", "critical",
+                    {"sources": [g["key"] for g in gave_up],
+                     "detail": "failing every attempt; restarting will not fix it"})
+        for g in gave_up:
+            ctx.log(f"NOT restarting {g['key']} — it has failed its last"
+                    f" {config.CATCH_UP_MAX_CONSECUTIVE_FAILURES} runs;"
+                    " this needs a human, not another kickstart")
+    if not candidates:
+        ctx.log("all sources fresh — nothing to catch up")
+    return {"overdue": len(candidates), "kicked": [k["key"] for k in kicked],
+            "failed": [f["key"] for f in failed],
+            "skipped_cooldown": [s["key"] for s in skipped],
+            "gave_up": [g["key"] for g in gave_up]}
+
+
+def main() -> int:
+    dry = "--dry-run" in sys.argv
+    result = runner.run_task(TASK_NAME, lambda ctx: run(ctx, dry_run=dry),
+                             module="system")
+    print(result.metrics)
+    return 0 if result.status == "completed" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

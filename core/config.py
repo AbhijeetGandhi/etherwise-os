@@ -128,6 +128,11 @@ SHADOW_MODE = {
     # Rollback = set both back to True.
     "crm": False,
     "crm_transactions": False,
+    # 'system' = local operational tasks (bin/catch-up). LIVE because it makes
+    # ZERO external writes — it only restarts local launchd agents. Each job it
+    # restarts still enforces its OWN module's shadow gate, so catch-up can
+    # never be a way around the shadow protocol.
+    "system": False,
 }
 SCHEDULE_OFFSET_MIN = 15       # v3 jobs run +15min vs v2 counterparts during parallel
 
@@ -169,16 +174,24 @@ RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a h
 #                   an unresolved one on the LATEST run => DEGRADED (self-healing)
 #   critical      — a stale/degraded critical source turns doctor amber
 #   backs         — the cockpit figure it feeds (so that KPI can show 'not current')
+#   launchd_label — the agent bin/catch-up may kickstart when this source is
+#                   overdue. Omit it (or set catch_up False) and the source is
+#                   REPORTED but never auto-restarted.
+#   catch_up      — safe to re-run unattended after a missed window? False for
+#                   anything with an outward side-effect that must not repeat
+#                   (the brief emails), and for manually-fed sources.
 SOURCES = (
     {"key": "connects_rail", "label": "Connects-history rail",
      "task_name": "upwork_connects", "max_age_hours": 26,
      "degrade_kinds": (), "critical": True, "backs": "applied",
+     "launchd_label": "io.etherwise.v3.upwork-connects", "catch_up": True,
      "why": "the applied-truth source; a stale rail makes 'applied' look like a"
             " live 0 when nobody is actually counting"},
     {"key": "scanner", "label": "Upwork scanner",
      "task_name": "upwork_scan", "max_age_hours": 3,
      "degrade_kinds": ("scan_feed_degraded",), "critical": True,
      "backs": "pipeline",
+     "launchd_label": "io.etherwise.v3.upwork-scan", "catch_up": True,
      "why": "backs the funnel + carded board; a thin feed silently under-scans"
             " lead-gen"},
     # ── money-backing sources (2026-07-20) ───────────────────────────────────
@@ -187,16 +200,19 @@ SOURCES = (
     {"key": "upwork_sync", "label": "Upwork sync",
      "task_name": "upwork_sync", "max_age_hours": 3,     # hourly at :45
      "degrade_kinds": (), "critical": True, "backs": "money",
+     "launchd_label": "io.etherwise.v3.upwork-sync", "catch_up": True,
      "why": "feeds proposals, contracts and Upwork transactions — the Money"
             " tab's revenue side and the pipeline's thread state"},
     {"key": "crm_mirror", "label": "CRM mirror (Airtable)",
      "task_name": "crm_mirror", "max_age_hours": 3,      # hourly at :50
      "degrade_kinds": (), "critical": True, "backs": "crm",
+     "launchd_label": "io.etherwise.v3.crm-mirror", "catch_up": True,
      "why": "one-way copy-out to the Airtable CRM; when it stops, Airtable"
             " quietly drifts from the v3 truth"},
     {"key": "finance_upwork_weekly", "label": "Upwork finance pull (weekly)",
      "task_name": "finance_upwork_weekly", "max_age_hours": 192,  # 8d = 7 + grace
      "degrade_kinds": (), "critical": True, "backs": "money",
+     "launchd_label": "io.etherwise.v3.finance-upwork-weekly", "catch_up": True,
      "why": "the weekly Upwork earnings/fee pull behind the P&L"},
     # Manually fed: statement imports have no scheduled run to age, but the DATA
     # still has an age — freshness_sql asks the ledger when it was last fed.
@@ -205,10 +221,27 @@ SOURCES = (
      "degrade_kinds": (), "critical": True, "backs": "money",
      "freshness_sql": "SELECT MAX(first_seen_at) FROM transactions"
                       " WHERE source IN ('IDFC','Bank','Card','Wise')",
+     "catch_up": False,          # a human has to drop the statement in
      "why": "the manual bank/card/Wise imports behind cash + operating expenses;"
             " an unfed ledger makes the P&L look complete when it is months"
             " behind"},
 )
+
+# Catch-up shim (bin/catch-up, 2026-07-20). macOS skips StartCalendarInterval
+# windows that pass while the Mac is asleep/off — it does NOT queue them — so a
+# machine that sleeps loses whole runs. Blanket RunAtLoad is the wrong cure: it
+# fires EVERY job on every load (a thundering herd at boot, and a spurious run
+# each time a plist is reloaded). Instead the shim asks the source registry what
+# is ACTUALLY overdue and restarts only that — which turns the freshness
+# mechanism into a self-healing one.
+CATCH_UP_COOLDOWN_MIN = 20     # never re-kick a task that ran this recently
+CATCH_UP_STAGGER_SEC = 5       # spread kickstarts; several rails share Chrome
+# A job that fails every attempt is BROKEN, not merely missed — restarting it on
+# a loop just spams critical anomalies and hides the real problem. After this
+# many consecutive failures catch-up gives up and lets the brief carry it to a
+# human. (Found the hard way: the connects rail fails whenever its shared Chrome
+# tab is parked hidden, so it would have been re-kicked every 30 min forever.)
+CATCH_UP_MAX_CONSECUTIVE_FAILURES = 3
 
 # ── Chief of Staff (M4) — nudge scoring + decay (design spec §6) ──────────────
 # urgency = COS_URGENCY_BASE[kind] * recency_decay(age) * stake_mult(money|score)

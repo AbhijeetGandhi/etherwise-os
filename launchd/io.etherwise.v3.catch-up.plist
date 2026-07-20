@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.catch-up</string>
+  <!-- Framework Python (June-14 TCC pattern); logs outside ~/Desktop -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>bin/catch-up</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string></dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/catch-up.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/catch-up.log</string>
+
+  <!-- This is the ONE agent that may RunAtLoad. It restarts nothing by itself;
+       it asks the source registry what is overdue, so loading it is cheap and
+       idempotent. Every other job stays RunAtLoad=false, which is what keeps
+       boot from becoming a thundering herd. -->
+  <key>RunAtLoad</key><true/>
+
+  <!-- StartInterval (unlike StartCalendarInterval) coalesces across sleep and
+       fires ONCE shortly after wake — exactly the moment we need to notice that
+       windows were skipped while the Mac was asleep. 30 min: frequent enough to
+       heal quickly, rare enough to be invisible. -->
+  <key>StartInterval</key><integer>1800</integer>
+
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+</dict>
+</plist>
