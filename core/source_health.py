@@ -189,8 +189,15 @@ def headline(health: dict) -> str:
     bad = [s for s in items if not s["ok"]]
     if not bad:
         return f"all {len(items)} sources fresh"
-    worst_esc = max((s["escalation"] for s in bad), default=1)
-    lead = "DEAD" if worst_esc >= 3 else "STALE"
+    # the lead word must match what is actually wrong: a DEGRADED source has no
+    # escalation (it ran, it was just thin), so keying off escalation alone
+    # mislabelled it as STALE
+    if any(s["escalation"] >= 3 for s in bad):
+        lead = "DEAD"
+    elif any(s["status"] in ("stale", "down") for s in bad):
+        lead = "STALE"
+    else:
+        lead = "DEGRADED"
     return f"{lead} — {len(bad)} of {len(items)} sources need attention"
 
 

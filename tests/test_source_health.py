@@ -190,6 +190,18 @@ class EscalationCase(unittest.TestCase):
         self.assertEqual(r["headline"], "all 6 sources fresh")
         self.assertEqual(r["lines"], [])
 
+    def test_headline_lead_word_matches_what_is_actually_wrong(self):
+        # a DEGRADED source has no escalation (it ran, just thin) — keying the
+        # lead word off escalation alone mislabelled it 'STALE'
+        degraded = {"sources": [
+            {"ok": True, "escalation": 0, "status": "ok"},
+            {"ok": False, "escalation": 0, "status": "degraded"}]}
+        self.assertTrue(sh.headline(degraded).startswith("DEGRADED —"))
+        stale = {"sources": [
+            {"ok": False, "escalation": 1, "status": "stale"},
+            {"ok": False, "escalation": 0, "status": "degraded"}]}
+        self.assertTrue(sh.headline(stale).startswith("STALE —"))
+
     def test_headline_leads_with_dead_when_anything_is_dead(self):
         h = {"sources": [{"ok": True, "escalation": 0},
                          dict(self._stale(200), ok=False, key="k")]}
