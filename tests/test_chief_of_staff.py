@@ -448,6 +448,59 @@ class TestBrief(CoSCase):
         self.assertIn("commitment_due item", body)                  # digest rendered
         self.assertIn("OVERDUE", body)
 
+    # ── source health reaches Abhijeet through the brief ─────────────────────
+    # bin/doctor is pull-based; the brief is what actually lands in front of
+    # him. The line is ALWAYS rendered so a missing line means the check broke,
+    # not that everything is fine.
+    def _brief_with_sources(self, report):
+        from modules.chief_of_staff import brief
+        b = brief.build_brief(self.db_path, "am", now=dt(d=22))
+        b["sources"] = report
+        return b
+
+    def test_healthy_sources_render_a_compact_always_present_line(self):
+        from modules.chief_of_staff import brief
+        b = self._brief_with_sources(
+            {"ok": True, "headline": "all 6 sources fresh", "lines": [],
+             "worst_escalation": 0, "count": 6, "unhealthy": 0})
+        txt = brief.render_text(b, self._narr(None, None))
+        self.assertIn("SOURCES: all 6 sources fresh", txt)
+        html_body = brief.render_html(b, self._narr(None, None))
+        self.assertIn("all 6 sources fresh", html_body)
+
+    def test_dead_source_is_loud_in_both_renderers(self):
+        from modules.chief_of_staff import brief
+        b = self._brief_with_sources(
+            {"ok": False, "headline": "DEAD — 1 of 6 sources need attention",
+             "lines": ["DEAD 6d: Upwork sync has produced nothing since 2026-07-06."],
+             "worst_escalation": 3, "count": 6, "unhealthy": 1})
+        txt = brief.render_text(b, self._narr(None, None))
+        self.assertIn("DEAD — 1 of 6", txt)
+        self.assertIn("DEAD 6d: Upwork sync", txt)
+        self.assertIn("not current", txt)
+        html_body = brief.render_html(b, self._narr(None, None))
+        self.assertIn("DEAD 6d: Upwork sync", html_body)
+        self.assertIn("#d23f31", html_body)          # escalation 3 -> red, not amber
+
+    def test_level_one_stale_is_amber_not_red(self):
+        from modules.chief_of_staff import brief
+        b = self._brief_with_sources(
+            {"ok": False, "headline": "STALE — 1 of 6 sources need attention",
+             "lines": ["STALE: Upwork sync last produced 5h ago."],
+             "worst_escalation": 1, "count": 6, "unhealthy": 1})
+        html_body = brief.render_html(b, self._narr(None, None))
+        self.assertIn("#e8a33d", html_body)
+        self.assertNotIn("#d23f31", html_body)
+
+    def test_real_brief_always_carries_a_sources_block(self):
+        from modules.chief_of_staff import brief
+        b = brief.build_brief(self.db_path, "am", now=dt(d=22))
+        self.assertIn("sources", b)
+        for k in ("ok", "headline", "lines", "count"):
+            self.assertIn(k, b["sources"])
+        # and it survives rendering even on an empty DB
+        self.assertIn("SOURCES", brief.render_text(b, self._narr(None, None)))
+
     def test_all_quiet_skips_opus(self):
         from modules.chief_of_staff import brief
         spy = mock.Mock()

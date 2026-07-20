@@ -222,6 +222,12 @@ select:focus,input[type=search]:focus{outline:none;border-color:var(--blue2)}
   pointer-events:none;overflow:visible}
 .trendline polyline{fill:none;stroke:var(--amber);stroke-width:2;
   vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
+/* money source-freshness banner (doctor GREEN != ledger up to date) */
+.srcbanner{margin:0 0 var(--sp-4);padding:10px 14px;border-radius:var(--rad-sm);
+  background:var(--amber-soft);color:var(--warn);border-left:4px solid var(--amber);
+  font-size:var(--fs-sm);line-height:1.45}
+.srcbanner.bad{background:var(--red-soft);color:var(--red);border-left-color:var(--red)}
+
 /* source-health stamps on a KPI: warn banner + stale de-emphasis */
 .kpiwarn{margin-top:8px;padding:5px 8px;border-radius:var(--rad-sm);
   background:var(--amber-soft);color:var(--warn);font-size:var(--fs-xs);

@@ -10,7 +10,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core import config, db, source_health as sh
@@ -150,6 +150,153 @@ class SourceHealthCase(unittest.TestCase):
         self.assertIsNone(sh.by_backs(h, "nothing"))
 
 
+class EscalationCase(unittest.TestCase):
+    """A source dead for days must not read like one that missed a single run —
+    the brief fires twice daily, so persistent failures have to get louder or
+    they blend into the noise."""
+
+    def _stale(self, hours, max_age=26, manual=False):
+        return {"status": "stale", "label": "Rail", "why": "the applied-truth source",
+                "last_success": "2026-07-10", "age_hours": hours,
+                "max_age_hours": max_age, "hours_overdue": hours - max_age,
+                "days_overdue": int((hours - max_age) // 24),
+                "escalation": sh._escalation(hours - max_age), "manual": manual}
+
+    def test_escalation_levels_by_time_past_deadline(self):
+        self.assertEqual(sh._escalation(1), 1)      # just missed
+        self.assertEqual(sh._escalation(23), 1)
+        self.assertEqual(sh._escalation(25), 2)     # ~2 briefs later
+        self.assertEqual(sh._escalation(71), 2)
+        self.assertEqual(sh._escalation(100), 3)    # days dead
+
+    def test_wording_gets_louder_and_differs_at_each_level(self):
+        l1 = sh.source_line(self._stale(27))
+        l2 = sh.source_line(self._stale(55))
+        l3 = sh.source_line(self._stale(150))
+        self.assertTrue(l1.startswith("STALE:"))
+        self.assertTrue(l2.startswith("STILL STALE"))
+        self.assertTrue(l3.startswith("DEAD"))
+        self.assertEqual(len({l1, l2, l3}), 3)      # three distinct voices
+
+    def test_manual_source_is_told_to_import_not_debugged(self):
+        line = sh.source_line(self._stale(1200, max_age=1080, manual=True))
+        self.assertIn("fed manually", line)
+        self.assertNotIn("Nothing is feeding it", line)
+
+    def test_headline_is_always_present_and_says_all_clear(self):
+        healthy = {"sources": [{"ok": True, "escalation": 0} for _ in range(6)]}
+        r = sh.report(healthy)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["headline"], "all 6 sources fresh")
+        self.assertEqual(r["lines"], [])
+
+    def test_headline_leads_with_dead_when_anything_is_dead(self):
+        h = {"sources": [{"ok": True, "escalation": 0},
+                         dict(self._stale(200), ok=False, key="k")]}
+        r = sh.report(h)
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["headline"].startswith("DEAD —"))
+        self.assertEqual(r["worst_escalation"], 3)
+
+
+class DataBackedSourceCase(unittest.TestCase):
+    """The finance importers are fed by hand — no runs row to age. Their
+    freshness comes from the age of the DATA they produced."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="src-data-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _src(self, max_age=1080):
+        return ({"key": "ledger", "label": "Statement imports",
+                 "task_name": "finance_import", "max_age_hours": max_age,
+                 "degrade_kinds": (), "critical": True, "backs": "money",
+                 "freshness_sql": "SELECT MAX(first_seen_at) FROM transactions",
+                 "why": "the manual imports behind cash"},)
+
+    def _insert(self, first_seen):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " amount_minor, currency, first_seen_at)"
+                " VALUES ('r1','k1','Other',100,'USD',?)", (first_seen,))
+
+    def test_recent_import_is_fresh(self):
+        # naive timestamps in this schema are UTC (SQLite datetime('now'))
+        utc_recent = (_now().astimezone(timezone.utc)
+                      - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+        self._insert(utc_recent)
+        with db.connect(self.db_path) as conn:
+            h = sh.source_health(conn, now=_now(), sources=self._src())
+        s = h["sources"][0]
+        self.assertEqual(s["status"], "ok")
+        self.assertTrue(s["manual"])
+
+    def test_naive_timestamp_is_read_as_utc_not_local(self):
+        # a naive stamp read as IST would look 5.5h younger than it is
+        utc = (_now().astimezone(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S")
+        self._insert(utc)
+        with db.connect(self.db_path) as conn:
+            h = sh.source_health(conn, now=_now(), sources=self._src())
+        self.assertLess(h["sources"][0]["age_hours"], 0.5)   # ~now, not -5.5h
+
+    def test_unfed_ledger_goes_stale(self):
+        old = (_now().astimezone(timezone.utc)
+               - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+        self._insert(old)
+        with db.connect(self.db_path) as conn:
+            h = sh.source_health(conn, now=_now(), sources=self._src())
+        s = h["sources"][0]
+        self.assertEqual(s["status"], "stale")
+        self.assertEqual(s["escalation"], 3)          # 15d past a 45d deadline
+        self.assertIn("fed manually", sh.source_line(s))
+
+    def test_empty_table_is_down_not_crash(self):
+        with db.connect(self.db_path) as conn:
+            h = sh.source_health(conn, now=_now(), sources=self._src())
+        self.assertEqual(h["sources"][0]["status"], "down")
+
+
+class WorstForCase(unittest.TestCase):
+    """Money is fed by several sources; a tab is only as trustworthy as its
+    sickest input, so the stamp must take the worst — not the first."""
+
+    def test_worst_for_picks_the_sickest_of_several(self):
+        health = {"sources": [
+            {"key": "a", "backs": "money", "status": "ok", "hours_overdue": 0},
+            {"key": "b", "backs": "money", "status": "stale", "hours_overdue": 10},
+            {"key": "c", "backs": "money", "status": "stale", "hours_overdue": 400},
+            {"key": "d", "backs": "pipeline", "status": "down", "hours_overdue": 0},
+        ]}
+        self.assertEqual(sh.worst_for(health, "money")["key"], "c")
+        self.assertEqual(sh.worst_for(health, "pipeline")["key"], "d")
+        self.assertIsNone(sh.worst_for(health, "nothing"))
+
+
+class RegistryCase(unittest.TestCase):
+    def test_every_declared_source_is_well_formed(self):
+        seen = set()
+        for s in config.SOURCES:
+            for key in ("key", "label", "task_name", "max_age_hours", "backs"):
+                self.assertIn(key, s, s.get("key"))
+            self.assertNotIn(s["key"], seen, "duplicate source key")
+            seen.add(s["key"])
+            self.assertGreater(s["max_age_hours"], 0)
+
+    def test_money_backing_sources_are_registered(self):
+        by_key = {s["key"]: s for s in config.SOURCES}
+        for k in ("upwork_sync", "crm_mirror", "finance_upwork_weekly",
+                  "finance_ledger"):
+            self.assertIn(k, by_key)
+        # the money tab must have more than one feeder (that is why worst_for exists)
+        money = [s for s in config.SOURCES if s["backs"] == "money"]
+        self.assertGreater(len(money), 1)
+
+
 class DoctorSourceCheckCase(unittest.TestCase):
     """The doctor check that turns a stale/degraded critical source amber."""
 
@@ -172,9 +319,19 @@ class DoctorSourceCheckCase(unittest.TestCase):
 
     def test_fresh_sources_pass(self):
         from core import doctor_checks as dc
+        recent_utc = (_now().astimezone(timezone.utc)
+                      - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
         with db.connect(self.db_path) as conn:
             for s in config.SOURCES:
-                _run(conn, s["task_name"], hours_ago=0.5)
+                if s.get("freshness_sql"):
+                    # data-backed: a runs row would not feed it, its DATA does
+                    conn.execute(
+                        "INSERT INTO transactions (record_id, canonical_key,"
+                        " type, amount_minor, currency, source, first_seen_at)"
+                        " VALUES ('r1','k1','Other',100,'USD','IDFC',?)",
+                        (recent_utc,))
+                else:
+                    _run(conn, s["task_name"], hours_ago=0.5)
         checks = dc.check_source_freshness(db_path=self.db_path, now=_now())
         self.assertTrue(all(c.status == "PASS" for c in checks),
                         [(c.name, c.status, c.detail) for c in checks])

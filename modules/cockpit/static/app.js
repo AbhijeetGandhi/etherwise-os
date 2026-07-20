@@ -1472,6 +1472,25 @@ async function renderMoney(view) {
     + ` bin/finance-pnl · ledger through ${esc(d.as_of || "")}</span>`
     + (parityOk ? "" : ' <span class="pill fail">⚠ parity mismatch — trust bin/finance-pnl</span>')));
 
+  // ── source freshness (doctor GREEN != the ledger is up to date) ──
+  // A GREEN finance-doctor proves the ledger is internally consistent; it says
+  // nothing about whether anything has been ADDED lately. A dead sync or an
+  // unfed statement import leaves these figures self-consistent and months old.
+  const mh = d.source_health;
+  if (mh && !mh.ok) {
+    const lvl3 = (mh.escalation || 0) >= 3;
+    const banner = el("div", "srcbanner" + (lvl3 ? " bad" : ""));
+    banner.innerHTML = `<b>${lvl3 ? "⚠ Money data is not current" : "Money data may be stale"}</b>`
+      + ` — ${esc(mh.label)} last produced `
+      + (mh.age_hours == null ? "never"
+         : mh.age_hours < 48 ? `${Math.round(mh.age_hours)}h ago`
+         : `${Math.round(mh.age_hours / 24)} days ago`)
+      + (mh.last_success ? ` (${esc(String(mh.last_success).slice(0, 10))})` : "")
+      + `. The figures below are internally consistent but may be missing`
+      + ` everything since then.`;
+    view.appendChild(banner);
+  }
+
   // ── range bar ──
   const bar = el("div", "rangebar");
   const seg = el("div", "rangeseg");

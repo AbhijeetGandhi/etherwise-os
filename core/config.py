@@ -181,6 +181,33 @@ SOURCES = (
      "backs": "pipeline",
      "why": "backs the funnel + carded board; a thin feed silently under-scans"
             " lead-gen"},
+    # ── money-backing sources (2026-07-20) ───────────────────────────────────
+    # A dead sync silently staling the Money tab is the same failure class as
+    # the dead connects rail, so the Money numbers get the same guarantee.
+    {"key": "upwork_sync", "label": "Upwork sync",
+     "task_name": "upwork_sync", "max_age_hours": 3,     # hourly at :45
+     "degrade_kinds": (), "critical": True, "backs": "money",
+     "why": "feeds proposals, contracts and Upwork transactions — the Money"
+            " tab's revenue side and the pipeline's thread state"},
+    {"key": "crm_mirror", "label": "CRM mirror (Airtable)",
+     "task_name": "crm_mirror", "max_age_hours": 3,      # hourly at :50
+     "degrade_kinds": (), "critical": True, "backs": "crm",
+     "why": "one-way copy-out to the Airtable CRM; when it stops, Airtable"
+            " quietly drifts from the v3 truth"},
+    {"key": "finance_upwork_weekly", "label": "Upwork finance pull (weekly)",
+     "task_name": "finance_upwork_weekly", "max_age_hours": 192,  # 8d = 7 + grace
+     "degrade_kinds": (), "critical": True, "backs": "money",
+     "why": "the weekly Upwork earnings/fee pull behind the P&L"},
+    # Manually fed: statement imports have no scheduled run to age, but the DATA
+    # still has an age — freshness_sql asks the ledger when it was last fed.
+    {"key": "finance_ledger", "label": "Statement imports (bank/card/Wise)",
+     "task_name": "finance_import", "max_age_hours": 1080,   # 45d: monthly + grace
+     "degrade_kinds": (), "critical": True, "backs": "money",
+     "freshness_sql": "SELECT MAX(first_seen_at) FROM transactions"
+                      " WHERE source IN ('IDFC','Bank','Card','Wise')",
+     "why": "the manual bank/card/Wise imports behind cash + operating expenses;"
+            " an unfed ledger makes the P&L look complete when it is months"
+            " behind"},
 )
 
 # ── Chief of Staff (M4) — nudge scoring + decay (design spec §6) ──────────────

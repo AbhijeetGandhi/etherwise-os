@@ -842,6 +842,20 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     }
 
 
+def _money_source_health(db_path: Optional[Path]) -> Optional[dict]:
+    """Worst-off source feeding the Money tab. Never raises — a health read must
+    not be able to take down the panel it is describing."""
+    try:
+        conn = _ro(db_path)
+        try:
+            return source_health.worst_for(
+                source_health.source_health(conn), "money")
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def money(db_path: Optional[Path] = None,
           today: Optional[str] = None) -> dict:
     """Money panel from the AUDITED M5 finance picture. GATED on finance-doctor:
@@ -973,6 +987,12 @@ def money(db_path: Optional[Path] = None,
                  "note": "savings + fixed deposits + Wise, base-USD"},
         "connects": {"this_month_usd": usd(connects_month),
                      "lifetime_usd": usd(connects_life)},
+        # Money is fed by several sources (the Upwork sync, the weekly finance
+        # pull, the manual statement imports) and is only as trustworthy as its
+        # sickest input — so this is the WORST of them, not the first. A GREEN
+        # doctor means the ledger is internally consistent; it says nothing
+        # about whether anything has been ADDED lately.
+        "source_health": _money_source_health(db_path),
         # corrected feed: pnl_bucket + base-USD (kept keys type/profile/amount for the UI)
         "transactions": [{"creation_dt": r["creation_dt"], "type": r["pnl_bucket"],
                           "amount": usd(r["amount_base_minor"]), "currency": r["currency"],

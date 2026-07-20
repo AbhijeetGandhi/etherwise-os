@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from core import config, db, runner
+from core import config, db, runner, source_health
 from modules.chief_of_staff import nudges, commitments
 
 _LOST = config.COS_LOST_STATUSES
@@ -93,12 +93,17 @@ def build_brief(db_path, slot: str, now: Optional[datetime] = None) -> dict:
     with db.connect(db_path) as conn:
         movement = _movement(conn, slot, now)
         system = _system(conn, now)
+        # Source health reaches Abhijeet HERE. bin/doctor is pull-based — it
+        # only speaks when someone runs it — so a silently dead source could sit
+        # broken for days (it did: the connects rail, 84h). The brief is what
+        # actually lands in front of him twice a day.
+        sources = source_health.report(source_health.source_health(conn, now=now))
     return {
         "slot": slot, "generated_at": now.strftime("%Y-%m-%d %H:%M IST"),
         "date": today, "top": top, "by_dept": by_dept,
         "commitments": {"overdue": overdue, "due_soon": due_soon,
                         "open_ours": len(ours), "awaiting_client": len(awaiting)},
-        "movement": movement, "system": system,
+        "movement": movement, "system": system, "sources": sources,
         "active_count": len(active),
     }
 
@@ -168,6 +173,25 @@ def render_html(brief: dict, narr: dict) -> str:
     for dept, items in sorted(brief["by_dept"].items()):
         parts.append(f"<li><b>{html.escape(dept)}</b>: {len(items)} open</li>")
     parts.append("</ul>")
+    # ── source health: ALWAYS rendered, so a missing line means the check
+    # itself broke rather than 'everything is fine'. Loud when anything is off.
+    src = brief.get("sources") or {}
+    if src:
+        if src.get("ok"):
+            parts.append("<div style='color:#0f9d58;font-size:13px;margin-top:14px'>"
+                         f"Sources: {html.escape(src['headline'])} &#10003;</div>")
+        else:
+            colour = "#d23f31" if src.get("worst_escalation", 0) >= 3 else "#e8a33d"
+            parts.append(
+                f"<div style='margin-top:14px;padding:10px 12px;border-radius:6px;"
+                f"background:{'#fdeceb' if colour == '#d23f31' else '#fdf4e3'};"
+                f"border-left:4px solid {colour}'>"
+                f"<b style='color:{colour}'>Sources: {html.escape(src['headline'])}</b>"
+                "<ul style='margin:6px 0 0;padding-left:18px'>"
+                + "".join(f"<li style='font-size:13px'>{html.escape(x)}</li>"
+                          for x in src["lines"])
+                + "</ul><div style='color:#888;font-size:12px;margin-top:6px'>"
+                  "Numbers fed by these sources are not current.</div></div>")
     parts.append(f"<div style='color:#888;font-size:13px'>System: spend "
                  f"${s['spend_today']}/{s['cap']:.0f} · failed runs (24h) "
                  f"{s['failed_runs_24h']} · last sweep {s['last_sweep'] or 'n/a'}"
@@ -192,6 +216,15 @@ def render_text(brief: dict, narr: dict) -> str:
              f"leads {m['new_hot_leads']} (since {m['window_from']})")
     L.append("QUEUE: " + " · ".join(f"{d} {len(v)}"
              for d, v in sorted(brief["by_dept"].items())) + f" ({brief['active_count']} total)")
+    # always present — see render_html
+    src = brief.get("sources") or {}
+    if src:
+        if src.get("ok"):
+            L.append(f"SOURCES: {src['headline']} OK")
+        else:
+            L.append(f"\nSOURCES: {src['headline']}")
+            L += [f"  {x}" for x in src["lines"]]
+            L.append("  (numbers fed by these sources are not current)")
     L.append(f"SYSTEM: spend ${s['spend_today']}/{s['cap']:.0f} · fails(24h) "
              f"{s['failed_runs_24h']} · {c['open_ours']} open commitments")
     return "\n".join(L)
