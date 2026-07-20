@@ -183,7 +183,10 @@ RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a h
 SOURCES = (
     {"key": "connects_rail", "label": "Connects-history rail",
      "task_name": "upwork_connects", "max_age_hours": 26,
-     "degrade_kinds": (), "critical": True, "backs": "applied",
+     # an empty window is degraded-not-failed: genuinely no activity looks
+     # identical to a throttled endpoint, and failing would spam criticals
+     "degrade_kinds": ("connects_empty_window",),
+     "critical": True, "backs": "applied",
      "launchd_label": "io.etherwise.v3.upwork-connects", "catch_up": True,
      "why": "the applied-truth source; a stale rail makes 'applied' look like a"
             " live 0 when nobody is actually counting"},

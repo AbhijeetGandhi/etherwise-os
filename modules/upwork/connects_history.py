@@ -28,6 +28,7 @@ import hashlib
 import json
 import re
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 from core import config, db, runner
@@ -38,9 +39,17 @@ import feed_bridge  # noqa: E402
 TASK_NAME = "upwork_connects"
 URL = "https://www.upwork.com/nx/plans/connects/history/"
 
+# Extraction + READINESS in one probe, so the poll below can tell three states
+# apart that all look like "no rows" from the outside:
+#   rows.length > 0   -> the table rendered; take it
+#   empty_state       -> the app rendered its own "No Connects transactions"
+#                        message: a real answer (or a throttle), not a hang
+#   neither           -> still fetching, or genuinely broken
 _EXTRACT_JS = """
 JSON.stringify({
   url: location.href,
+  empty_state: /No Connects transactions/i.test(
+      document.body ? document.body.innerText : ''),
   rows: [...document.querySelectorAll('table tbody tr')].map(tr => {
     const tds = [...tr.querySelectorAll('td')];
     const a = tds[1] ? tds[1].querySelector('a[href*="/jobs/"]') : null;
@@ -50,6 +59,21 @@ JSON.stringify({
             connects: tds[2] ? tds[2].innerText.trim() : null};
   })
 })"""
+
+# The table is fetched CLIENT-SIDE and takes ~9s to paint — the old fixed
+# 9s sleep sat exactly on that boundary and lost the race about half the time.
+# Poll for a definite state instead of guessing a duration.
+POLL_EVERY_SECONDS = 2
+POLL_TIMEOUT_SECONDS = 45
+# ...and once rows appear, let the count settle: the table paints progressively,
+# so the first sample is usually short of the full window.
+SETTLE_SAMPLES = 2
+# CRITICAL: "No Connects transactions" is the app's PRE-FETCH placeholder, not
+# an answer — observed true at t+3s and t+6s, with the real rows arriving at
+# t+9s. Believing it early makes the rail report an empty window on every run
+# and silently lose the applied truth. An empty window is only credible after
+# the table has had well past its paint time to appear.
+EMPTY_CONFIRM_SECONDS = 24
 
 _JOB_ID = re.compile(r"/jobs/.*?~02(\d+)")
 _DELTA = re.compile(r"([+-]\s?\d+)")
@@ -116,14 +140,72 @@ def parse_rows(payload_rows, today) -> list:
     return out
 
 
+@contextmanager
+def _tab_visible(sp, tab):
+    """Make the scan tab the ACTIVE tab of its window for the duration, then put
+    back whatever was showing.
+
+    Unlike the job feeds, this page embeds NO data in window.__NUXT__ (its state
+    holds `config` and nothing else) — it fetches the table client-side. Chrome
+    does not run that fetch/render in a hidden tab, so the SSR-payload trick that
+    fixed the scanner has nothing to read here and visibility is unavoidable.
+    Note this does NOT `activate` Chrome: the app is never brought to the front,
+    so it does not steal focus — it only changes which tab that window shows.
+    """
+    window_id, tab_index = tab
+    prev = None
+    try:
+        prev = sp._osascript('tell application "Google Chrome" to get active'
+                             f' tab index of window id {window_id}')
+        sp._osascript('tell application "Google Chrome" to set active tab index'
+                      f' of window id {window_id} to {tab_index}')
+    except Exception:                     # visibility is best-effort, never fatal
+        prev = None
+    try:
+        yield
+    finally:
+        if prev:
+            try:
+                sp._osascript('tell application "Google Chrome" to set active'
+                              f' tab index of window id {window_id} to {prev}')
+            except Exception:
+                pass
+
+
+def _poll_until_ready(tab, sleep, timeout=POLL_TIMEOUT_SECONDS) -> dict:
+    """Wait for a DEFINITE state rather than a fixed duration.
+
+    Rows always win. The empty state is only believed once EMPTY_CONFIRM_SECONDS
+    have passed without any row ever appearing — because that message is what the
+    page shows WHILE fetching, so an early read of it is a false negative.
+    """
+    waited, stable, last = 0, 0, {}
+    prev_n = -1
+    while waited < timeout:
+        last = json.loads(feed_bridge.chrome_eval(_EXTRACT_JS, tab_ref=tab))
+        n = len(last.get("rows") or [])
+        if n:
+            # let a progressively-painting table finish before trusting the count
+            stable = stable + 1 if n == prev_n else 0
+            prev_n = n
+            if stable >= SETTLE_SAMPLES:
+                return last
+        elif last.get("empty_state") and waited >= EMPTY_CONFIRM_SECONDS:
+            return last            # still empty long after it should have painted
+        sleep(POLL_EVERY_SECONDS)
+        waited += POLL_EVERY_SECONDS
+    return last
+
+
 def scrape(ctx, _sleep=None) -> dict:
     import time as _t
     sleep = _sleep or _t.sleep
     from modules.upwork import scan_pipeline as sp
     tab = sp.ensure_scan_tab()
-    sp.navigate_tab(tab, URL + sp.MARKER)
-    sleep(sp.SETTLE_SECONDS)
-    payload = json.loads(feed_bridge.chrome_eval(_EXTRACT_JS, tab_ref=tab))
+    with _tab_visible(sp, tab):
+        sp.navigate_tab(tab, URL + sp.MARKER)
+        sleep(POLL_EVERY_SECONDS)
+        payload = _poll_until_ready(tab, sleep)
     landed = payload.get("url") or ""
     if "/plans/connects/history" not in landed:
         raise RuntimeError(
@@ -132,9 +214,26 @@ def scrape(ctx, _sleep=None) -> dict:
     rows = parse_rows(payload.get("rows") or [],
                       datetime.now(config.TZ).date())
     if not rows:
-        raise RuntimeError("connects-history table rendered 0 parseable rows —"
-                           " layout change? (raw rows:"
-                           f" {len(payload.get('rows') or [])})")
+        # An empty window is NOT automatically a fault: with applications paused
+        # there may genuinely be nothing in the last 7 days, and the endpoint
+        # also serves an empty table when it throttles repeated loads. Failing
+        # here would spam criticals daily and (via bin/catch-up) invite a restart
+        # loop. Report it as a DEGRADED source instead — visible in the brief and
+        # the cockpit, but not a fake emergency. A layout break still surfaces:
+        # it shows up as neither rows NOR the app's own empty state.
+        if payload.get("empty_state"):
+            ctx.anomaly("connects_empty_window", "warn",
+                        {"note": "page rendered its empty state — genuinely no"
+                                 " connects activity in the window, or the"
+                                 " endpoint throttled a repeated load",
+                         "url": landed[:120]})
+            ctx.log("connects-history: page reported an EMPTY window —"
+                    " recorded as degraded, not failed")
+            return {"window_rows": 0, "new": 0, "kinds": {}, "empty": True,
+                    "window_from": None, "window_to": None}
+        raise RuntimeError("connects-history table never rendered and the page"
+                           " showed no empty-state either — layout change or a"
+                           f" hung fetch (raw rows: {len(payload.get('rows') or [])})")
     new = 0
     with db.connect(ctx.db_path) as conn:
         for r in rows:
