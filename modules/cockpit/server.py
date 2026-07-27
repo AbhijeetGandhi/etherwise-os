@@ -33,6 +33,7 @@ GET_ROUTES: dict = {
     "/api/today/rows": data.today_rows,                  # backlog drill (traceability)
     "/api/pipeline": data.pipeline,
     "/api/clients": data.clients,
+    "/api/clients/transactions": data.client_transactions,  # per-client drill
     "/api/knowledge": data.knowledge,
     "/api/system": data.system,
     "/api/money": data.money,

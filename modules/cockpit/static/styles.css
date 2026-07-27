@@ -223,6 +223,14 @@ select:focus,input[type=search]:focus{outline:none;border-color:var(--blue2)}
 .trendline polyline{fill:none;stroke:var(--amber);stroke-width:2;
   vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 /* money source-freshness banner (doctor GREEN != ledger up to date) */
+/* Clients — economics table */
+.kpi.static{cursor:default}
+.kpi.static:hover{background:var(--g1);border-color:var(--g3)}
+td.strong{font-weight:700;color:var(--g7)}
+.clients-table .linkname{border:0;background:none;font:inherit;font-weight:600;
+  color:var(--blue);cursor:pointer;padding:0;text-align:left}
+.clients-table .linkname:hover{text-decoration:underline}
+
 /* Today — source-health line (always present: quiet must read as quiet) */
 .srcline{margin:0 0 var(--sp-4);padding:8px 12px;border-radius:var(--rad-sm);
   font-size:var(--fs-sm);font-weight:600}

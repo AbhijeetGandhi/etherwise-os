@@ -364,7 +364,8 @@ class FakeAirtable:
         return self._records
 
 
-class TestClientsReader(unittest.TestCase):
+class TestClientsAirtableReader(unittest.TestCase):
+    """The secondary Airtable roster (kept as clients_airtable)."""
     def setUp(self):
         data._clients_cache["data"] = None  # reset module cache between tests
 
@@ -378,31 +379,123 @@ class TestClientsReader(unittest.TestCase):
         ])
 
     def test_maps_fields_and_counts_links(self):
-        out = data.clients(client=self.fake(), use_cache=False)
+        out = data.clients_airtable(client=self.fake(), use_cache=False)
         self.assertEqual(out["count"], 2)
         acme = next(c for c in out["clients"] if c["name"] == "Acme")
-        self.assertEqual(acme["status"], "Active")
         self.assertEqual(acme["contracts"], 2)
-        self.assertEqual(acme["transactions"], 1)
 
-    def test_active_sorts_first(self):
-        out = data.clients(client=self.fake(), use_cache=False)
-        self.assertEqual(out["clients"][0]["status"], "Active")
 
-    def test_by_status_summary(self):
-        out = data.clients(client=self.fake(), use_cache=False)
-        self.assertEqual(out["by_status"], {"Active": 1, "Paused": 1})
+# ── Client economics (the local ledger view) ──────────────────────────────────
+# Revenue attribution touches money, so the rules are pinned hard: Upwork and
+# Wise merge for one client, a passthrough is flagged not guessed, and the rows
+# behind a client sum to its total to the cent.
+def seed_client_econ(db_path):
+    with db.connect(db_path) as conn:
+        def rev(rid, source, company, desc, minor, dt):
+            # category='income' so bucket() reproduces 'revenue' (doctor #10)
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, assignment_company, description,"
+                " amount_minor, amount_base_minor, currency, pnl_bucket,"
+                " creation_dt) VALUES (?,?,?, 'income',?,?,?,?,?, 'USD','revenue',?)",
+                (rid, "k" + rid, "Fixed Earning", source, company, desc, minor,
+                 minor, dt))
+        # Adélye pays via BOTH rails -> must merge to one client
+        rev("u1", "Upwork", "Adélye", "Milestone 1", 1000000, "2026-05-01T00:00:00+0000")
+        rev("w1", "Wise", "", "Received money from Adélye Ltd. with reference X",
+            500000, "2026-07-02T00:00:00+0000")
+        # a Wise-only client
+        rev("w2", "Wise", "", "Received money from Horizons ABA MidCo LLC with reference Y",
+            2000000, "2026-07-03T00:00:00+0000")
+        # a passthrough (EOR) — flagged, never silently attributed
+        rev("w3", "Wise", "", "Received money from Deel, Inc. with reference Z",
+            800000, "2026-01-16T00:00:00+0000")
+        # bank revenue with no parseable payer -> unlinked bucket
+        rev("b1", "IDFC", "", "NEFT credit ref 8842", 300000, "2026-06-01T00:00:00+0000")
+        # an active contract whose room-name carries the client token
+        conn.execute("INSERT INTO threads (id, room_name, bucket) VALUES"
+                     " ('t1','Someone, Adélye','followup')")
+        conn.execute("INSERT INTO contracts (id, upwork_status, thread_id)"
+                     " VALUES ('c1','ACTIVE','t1')")
+        # authoritative cash aggregates so finance-doctor stays GREEN (the
+        # economics view is doctor-gated, same as Money)
+        for acct, ccy, closing in [("idfc", "INR", 50000073),
+                                    ("wise", "USD", 0)]:
+            conn.execute(
+                "INSERT INTO account_balances (account, currency, opening_minor,"
+                " closing_minor, statement_date, source_file) VALUES (?,?,?,?,?,?)",
+                (acct, ccy, closing, closing, "2026-06-30", f"authoritative:{acct}"))
 
-    def test_cache_avoids_second_fetch(self):
-        calls = {"n": 0}
 
-        class Counting(FakeAirtable):
-            def list_records(self, *a, **k):
-                calls["n"] += 1
-                return []
-        data.clients(client=Counting([]), use_cache=True)
-        data.clients(client=Counting([]), use_cache=True)
-        self.assertEqual(calls["n"], 1)  # second served from cache
+class TestClientEconomics(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-cliecon-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_client_econ(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_upwork_and_wise_merge_into_one_client(self):
+        out = data.clients(self.db_path)
+        adelye = next(c for c in out["clients"] if c["name"] == "Adélye")
+        self.assertEqual(adelye["revenue_usd"], 15000.0)     # 10k Upwork + 5k Wise
+        self.assertEqual(sorted(adelye["channels"]), ["Upwork", "Wise"])
+        self.assertEqual(adelye["payments"], 2)
+
+    def test_wise_payer_is_parsed_from_description(self):
+        out = data.clients(self.db_path)
+        names = [c["name"] for c in out["clients"]]
+        self.assertIn("Horizons ABA", names)                 # canonical-mapped
+
+    def test_passthrough_is_flagged_not_attributed(self):
+        out = data.clients(self.db_path)
+        deel = next(c for c in out["clients"] if c["name"] == "Deel")
+        self.assertTrue(deel["passthrough"])
+
+    def test_unparseable_revenue_goes_to_unlinked_never_a_client(self):
+        out = data.clients(self.db_path)
+        self.assertEqual(out["unlinked"]["usd"], 3000.0)     # the bank row
+        self.assertNotIn("NEFT credit ref 8842",
+                         [c["name"] for c in out["clients"]])
+
+    def test_default_sort_is_by_revenue(self):
+        out = data.clients(self.db_path)
+        revs = [c["revenue_usd"] for c in out["clients"]]
+        self.assertEqual(revs, sorted(revs, reverse=True))
+
+    def test_parity_clients_plus_unlinked_equals_total(self):
+        out = data.clients(self.db_path)
+        s = sum(c["revenue_usd"] for c in out["clients"]) + out["unlinked"]["usd"]
+        self.assertAlmostEqual(s, out["revenue_total_usd"], places=2)
+
+    def test_contract_links_by_exact_room_token(self):
+        out = data.clients(self.db_path)
+        adelye = next(c for c in out["clients"] if c["name"] == "Adélye")
+        self.assertEqual(adelye["active_contracts"], 1)
+
+    def test_client_drill_rows_sum_to_the_total(self):
+        d = data.client_transactions(self.db_path, client="Adélye")
+        self.assertEqual(d["count"], 2)
+        self.assertAlmostEqual(d["sum_usd"], 15000.0, places=2)
+        out = data.clients(self.db_path)
+        adelye = next(c for c in out["clients"] if c["name"] == "Adélye")
+        self.assertAlmostEqual(d["sum_usd"], adelye["revenue_usd"], places=2)
+
+    def test_unlinked_drill(self):
+        d = data.client_transactions(self.db_path, client="__unlinked__")
+        self.assertEqual(d["count"], 1)
+        self.assertAlmostEqual(d["sum_usd"], 3000.0, places=2)
+
+    def test_doctor_red_blocks_client_economics(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, canonical_key,"
+                         " type, amount_minor, currency) VALUES"
+                         " ('bad','kbad','Other',NULL,'USD')")
+        out = data.clients(self.db_path)
+        self.assertTrue(out["blocked"])
+        self.assertEqual(out.get("clients", []), [])
 
 
 class TestPipelineReader(unittest.TestCase):

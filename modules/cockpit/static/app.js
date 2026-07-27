@@ -1177,27 +1177,103 @@ const RENDERERS = {
   },
   Money: renderMoney,
   Clients: async (view) => {
-    const d = await api("/api/clients");
-    view.appendChild(el("h2", "section", `Clients (${d.count || 0})`));
-    const sb = d.by_status || {};
-    const grid = el("div", "grid");
-    const order = ["Active", "Paused", "Lead", "Ended", "Past"];
-    Object.keys(sb).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
-      .forEach((s) => grid.appendChild(card(s, `<div class="metric">${sb[s]}</div>`)));
-    view.appendChild(grid);
-    const t = el("table");
-    t.innerHTML = "<tr><th>Client</th><th>Status</th><th>Contracts</th><th>Activity</th><th>Tags</th></tr>";
-    (d.clients || []).forEach((c) => {
-      const tr = el("tr");
-      const tags = (c.tags || []).slice(0, 3).map((x) => `<span class="pill">${x}</span>`).join(" ");
-      tr.innerHTML = `<td><strong>${c.name}</strong></td>`
-        + `<td><span class="pill ${(c.status||"").toLowerCase()==="active"?"ok":""}">${c.status}</span></td>`
-        + `<td>${c.contracts}</td><td class="muted">${c.transactions} txns</td>`
-        + `<td>${tags}</td>`;
-      t.appendChild(tr);
-    });
-    view.appendChild(t);
-    view.appendChild(el("div", "muted", "Source: Airtable Clients · deeper per-client health (owed replies, hours vs cap) arrives with the comms mirror."));
+    let sort = localStorage.getItem("ew_clients_sort") || "revenue";
+    const drill = el("div", "drill");
+
+    async function render() {
+      view.innerHTML = "";
+      const d = await api("/api/clients?sort=" + sort);
+      view.appendChild(el("h2", "section",
+        `Clients <span class="hint muted">— revenue economics from the ledger;`
+        + ` every figure drills to its transactions</span>`));
+      if (d.blocked) {
+        view.appendChild(el("div", "blocked",
+          `<h3>Client economics hidden</h3><div>${esc(d.reason || "finance-doctor RED")}</div>`));
+        return;
+      }
+
+      // headline: total revenue, attributed vs unlinked, parity to the P&L
+      const clientSum = (d.clients || []).reduce((s, c) => s + c.revenue_usd, 0);
+      const parityOk = Math.abs(clientSum + (d.unlinked.usd || 0) - d.revenue_total_usd) < 0.01;
+      const kpis = el("div", "kpis");
+      const mk = (lbl, val, sub, act) => {
+        const k = el("button", "kpi" + (act ? "" : " static"));
+        k.innerHTML = `<div class="lbl">${lbl}</div><div class="val">${val}</div>`
+          + `<div class="sub2">${sub}</div>` + (act ? `<div class="tag">details →</div>` : "");
+        if (act) k.onclick = act;
+        return k;
+      };
+      kpis.appendChild(mk("Revenue to date", fmtUsd(d.revenue_total_usd),
+        `${d.count} clients · ${fmtUsd(d.attributed_usd)} attributed`, null));
+      kpis.appendChild(mk("Direct / unlinked", fmtUsd(d.unlinked.usd),
+        `${d.unlinked.payments} payments · no parseable payer`,
+        () => openTxns("__unlinked__", "Direct / unlinked revenue")));
+      kpis.appendChild(mk("Contracts linked",
+        `${d.linkage.contracts_linked}/${d.linkage.contracts_total}`,
+        "active contracts matched to a paying client", null));
+      view.appendChild(kpis);
+      if (!parityOk) view.appendChild(el("div", "muted small",
+        '⚠ client totals do not reconcile to the P&L — trust bin/finance-pnl'));
+
+      // sort toggle
+      const bar = el("div", "rangebar");
+      const seg = el("div", "rangeseg");
+      [["revenue", "By revenue"], ["recent", "By recent activity"]].forEach(([k, lbl]) => {
+        const b = el("button", "rbtn" + (sort === k ? " on" : ""), lbl);
+        b.onclick = () => { sort = k; localStorage.setItem("ew_clients_sort", k); render(); };
+        seg.appendChild(b);
+      });
+      bar.appendChild(seg);
+      view.appendChild(bar);
+
+      const wrap = el("div", "tablewrap");
+      const t = el("table", "clients-table");
+      t.innerHTML = "<tr><th>Client</th><th class='num'>Revenue to date</th>"
+        + "<th class='num'>Payments</th><th>Channels</th><th class='num'>Active</th>"
+        + "<th class='num'>Owed</th><th>Last activity</th></tr>";
+      (d.clients || []).forEach((c) => {
+        const tr = el("tr");
+        const nm = esc(c.name) + (c.passthrough
+          ? ' <span class="pill warn" title="a payment processor / EOR — the end client is not yet mapped">attribution pending</span>' : "");
+        tr.innerHTML =
+          `<td><button class="linkname">${nm}</button></td>`
+          + `<td class="num strong">${fmtUsd(c.revenue_usd)}</td>`
+          + `<td class="num">${c.payments}</td>`
+          + `<td>${(c.channels || []).map((x) => `<span class="pill">${esc(x)}</span>`).join(" ")}</td>`
+          + `<td class="num">${c.active_contracts || "—"}</td>`
+          + `<td class="num">${c.owed_replies || "—"}</td>`
+          + `<td class="muted">${esc(c.last || "—")}</td>`;
+        tr.querySelector(".linkname").onclick = () => openTxns(c.name, c.name);
+        t.appendChild(tr);
+      });
+      wrap.appendChild(t);
+      view.appendChild(wrap);
+      view.appendChild(el("div", "muted small", esc(d.linkage.note)));
+      view.appendChild(drill);
+    }
+
+    async function openTxns(key, title) {
+      const res = await api("/api/clients/transactions?client=" + encodeURIComponent(key));
+      drill.innerHTML = ""; drill.classList.add("open");
+      const h = el("h4", null, `${esc(title)} <span class="count">— ${res.count}`
+        + ` payment${res.count === 1 ? "" : "s"} · ${fmtUsd(res.sum_usd)}</span>`
+        + `<button class="close">✕ close</button>`);
+      h.querySelector(".close").onclick = () => drill.classList.remove("open");
+      drill.appendChild(h);
+      const wrap = el("div", "tablewrap"), t = el("table");
+      t.innerHTML = "<tr><th>Date</th><th>Source</th><th>Payer</th><th>Description</th><th class='num'>USD</th></tr>";
+      (res.rows || []).forEach((r) => {
+        const tr = el("tr");
+        tr.innerHTML = `<td>${esc(r.dt)}</td><td><span class="pill">${esc(r.source)}</span></td>`
+          + `<td>${esc(r.payer)}</td><td class="muted">${esc(r.desc)}</td>`
+          + `<td class="num">${fmtUsd(r.usd)}</td>`;
+        t.appendChild(tr);
+      });
+      wrap.appendChild(t); drill.appendChild(wrap);
+      drill.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    await render();
   },
   Nudges: async (view) => {
     const d = await api("/api/nudges");

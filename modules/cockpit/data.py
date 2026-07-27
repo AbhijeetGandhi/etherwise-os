@@ -221,13 +221,203 @@ def _kb_search(conn, q: str, client: Optional[str]) -> list:
     return [dict(r) for r in conn.execute(sql, args)]
 
 
-def clients(db_path: Optional[Path] = None, *, client=None,
-            use_cache: bool = True) -> dict:
-    """Clients panel — live from the Airtable Clients table via the stdlib
-    REST client (the cloud-data seam; independent of MCP). 60s cache so tab
-    switches don't hammer Airtable. Per-client deep health (owed replies,
-    hours vs cap) arrives when the comms mirror lands; v1 shows status,
-    contracts, activity, tags."""
+_CO_SUFFIX = _re.compile(
+    r"[\s.,]+(ltd|llc|inc|b\.?v|pte\.?\s*ltd|pty\.?\s*ltd|gmbh|corp|co|"
+    r"limited|midco|tbk|international)\.?$", _re.I)
+_WISE_PAYER = _re.compile(r"received money from (.+?)(?:\s+with reference\b|$)",
+                          _re.I)
+
+
+def _from_minor(minor) -> float:
+    """int minor units -> 2dp float for the UI (money stays integer in the DB)."""
+    from modules.finance import money as _fm
+    return round(float(_fm.from_minor(int(minor or 0))), 2)
+
+
+def _canon_client(raw: Optional[str]) -> Optional[str]:
+    """Canonical display name for a client. Strips a company suffix, looks up the
+    confident-merge map, else title-cases the cleaned name. Returns None for the
+    empty/placeholder labels the ledger uses for 'no company'."""
+    s = (raw or "").strip()
+    if not s or s.lower() in ("no company", "(inner)", "s"):
+        return None
+    core = _CO_SUFFIX.sub("", s).strip()
+    key = core.lower()
+    if key in config.CLIENT_CANONICAL:
+        return config.CLIENT_CANONICAL[key]
+    # also try the raw (pre-suffix-strip) against the map
+    if s.lower() in config.CLIENT_CANONICAL:
+        return config.CLIENT_CANONICAL[s.lower()]
+    return core or None
+
+
+def _wise_payer(description: Optional[str]) -> Optional[str]:
+    m = _WISE_PAYER.search(description or "")
+    return m.group(1).strip() if m else None
+
+
+def _client_key(row: dict) -> Optional[str]:
+    """The canonical client a revenue row belongs to, or None if unattributable.
+    Upwork rows carry assignment_company (Upwork's own label); Wise rows carry
+    the payer in the description; bank/other rows usually carry neither."""
+    if (row.get("source") or "") == "Wise":
+        return _canon_client(_wise_payer(row.get("description")))
+    return _canon_client(row.get("assignment_company"))
+
+
+def _is_passthrough(name: str) -> bool:
+    low = (name or "").lower()
+    return any(p in low for p in config.CLIENT_PASSTHROUGH_PAYERS)
+
+
+def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
+            today: Optional[str] = None) -> dict:
+    """Client-economics view from the LOCAL ledger (finance + contracts + threads
+    are both live now). Revenue-to-date per client is the spine — ground truth
+    from Upwork's assignment_company and the Wise payer, MERGED where they refer
+    to one client (Adélye pays via both). Doctor-gated like Money: no finance
+    number shows on RED. Every client's revenue drills to the exact transactions;
+    a parity line proves the client totals + unlinked == the P&L revenue, to the
+    cent. sort: 'revenue' (default) | 'recent'."""
+    from modules.finance import doctor as _fdoc
+    dbp = db_path or config.DB_PATH
+    day = today or _ist_today()
+    dr = _fdoc.run(dbp)
+    if not dr.green:
+        return {"doctor": "RED", "blocked": True,
+                "reason": "finance-doctor RED — client economics hidden until"
+                          " the ledger reconciles (same gate as Money)"}
+    conn = _ro(dbp)
+    try:
+        rev_rows = [dict(r) for r in conn.execute(
+            "SELECT source, description, assignment_company, amount_base_minor,"
+            " substr(creation_dt,1,10) AS d FROM transactions"
+            " WHERE pnl_bucket='revenue' AND canonical_key IS NOT NULL")]
+        # active contracts + owed replies, linked by a DETERMINISTIC token match
+        # to a revenue client (never a fuzzy guess) — unmatched surfaced, not faked
+        contracts = [dict(r) for r in conn.execute(
+            "SELECT c.upwork_status, t.room_name FROM contracts c"
+            " LEFT JOIN threads t ON t.id=c.thread_id"
+            " WHERE c.upwork_status IN ('ACTIVE','PENDING')")]
+        owed = [dict(r) for r in conn.execute(
+            "SELECT room_name FROM threads WHERE bucket IN ('owed','unmatched-owed')")]
+    finally:
+        conn.close()
+
+    agg: dict = {}
+    total_minor = 0
+    unlinked_minor, unlinked_n = 0, 0
+    for r in rev_rows:
+        total_minor += r["amount_base_minor"] or 0
+        k = _client_key(r)
+        if not k:
+            unlinked_minor += r["amount_base_minor"] or 0
+            unlinked_n += 1
+            continue
+        a = agg.setdefault(k, {"name": k, "revenue_minor": 0, "payments": 0,
+                               "first": None, "last": None, "channels": set(),
+                               "passthrough": _is_passthrough(k)})
+        a["revenue_minor"] += r["amount_base_minor"] or 0
+        a["payments"] += 1
+        a["channels"].add("Upwork" if (r["source"] or "").startswith("Upwork")
+                          else r["source"] or "?")
+        d = r["d"]
+        if d:
+            a["first"] = min(a["first"], d) if a["first"] else d
+            a["last"] = max(a["last"], d) if a["last"] else d
+
+    # deterministic linkage: a client's core token appearing as a comma-part of
+    # the room name. Unmatched contracts/threads are counted, never misassigned.
+    def _match(room_name: str):
+        parts = [p.strip().lower() for p in (room_name or "").split(",")]
+        for name in agg:
+            core = _canon_client(name)
+            if core and core.lower() in parts:
+                return name
+        return None
+
+    linked_contracts = 0
+    for c in contracts:
+        k = _match(c.get("room_name"))
+        if k:
+            agg[k]["active_contracts"] = agg[k].get("active_contracts", 0) + 1
+            linked_contracts += 1
+    linked_owed = 0
+    for o in owed:
+        k = _match(o.get("room_name"))
+        if k:
+            agg[k]["owed_replies"] = agg[k].get("owed_replies", 0) + 1
+            linked_owed += 1
+
+    rows = []
+    for a in agg.values():
+        rows.append({
+            "name": a["name"], "revenue_usd": _from_minor(a["revenue_minor"]),
+            "payments": a["payments"], "first": a["first"], "last": a["last"],
+            "channels": sorted(a["channels"]),
+            "active_contracts": a.get("active_contracts", 0),
+            "owed_replies": a.get("owed_replies", 0),
+            "passthrough": a["passthrough"]})
+    if sort == "recent":
+        rows.sort(key=lambda x: (x["last"] or "", x["revenue_usd"]), reverse=True)
+    else:
+        rows.sort(key=lambda x: x["revenue_usd"], reverse=True)
+
+    return {
+        "doctor": "GREEN", "blocked": False, "as_of": dr.as_of if hasattr(
+            dr, "as_of") else day, "sort": sort or "revenue",
+        "clients": rows, "count": len(rows),
+        "revenue_total_usd": _from_minor(total_minor),
+        "attributed_usd": _from_minor(total_minor - unlinked_minor),
+        "unlinked": {"usd": _from_minor(unlinked_minor), "payments": unlinked_n,
+                     "note": "bank/other revenue with no parseable payer —"
+                             " drills to its transactions"},
+        "linkage": {"contracts_linked": linked_contracts,
+                    "contracts_total": len(contracts),
+                    "owed_linked": linked_owed, "owed_total": len(owed),
+                    "note": "contracts/owed-replies linked by exact room-name"
+                            " token; unmatched are counted, never misassigned"},
+        "source": "ledger:transactions+contracts+threads"}
+
+
+def client_transactions(db_path: Optional[Path] = None, *,
+                        client: Optional[str] = None) -> dict:
+    """The exact revenue transactions behind a client's total (traceability —
+    the rows sum to the figure, to the cent). client='__unlinked__' returns the
+    bank/other revenue with no parseable payer. Doctor-gated like Money."""
+    from modules.finance import doctor as _fdoc
+    dbp = db_path or config.DB_PATH
+    if not _fdoc.run(dbp).green:
+        return {"blocked": True, "rows": [], "count": 0, "sum_usd": 0.0}
+    conn = _ro(dbp)
+    try:
+        rev = [dict(r) for r in conn.execute(
+            "SELECT source, description, assignment_company, amount_base_minor,"
+            " substr(creation_dt,1,10) AS dt FROM transactions"
+            " WHERE pnl_bucket='revenue' AND canonical_key IS NOT NULL"
+            " ORDER BY creation_dt DESC")]
+    finally:
+        conn.close()
+    want, rows, total = client, [], 0
+    for r in rev:
+        k = _client_key(r)
+        hit = (k is None and want == "__unlinked__") or (k is not None and k == want)
+        if not hit:
+            continue
+        total += r["amount_base_minor"] or 0
+        rows.append({"dt": r["dt"], "source": r["source"],
+                     "payer": _wise_payer(r["description"])
+                              or r["assignment_company"] or "—",
+                     "desc": (r["description"] or "")[:80],
+                     "usd": _from_minor(r["amount_base_minor"])})
+    return {"client": client, "rows": rows[:300], "count": len(rows),
+            "total": len(rows), "sum_usd": _from_minor(total)}
+
+
+def clients_airtable(db_path: Optional[Path] = None, *, client=None,
+                     use_cache: bool = True) -> dict:
+    """The prior Airtable-backed roster (status/tags/notes). Kept as a secondary
+    read; the primary Clients view is now the local economics one above."""
     now = time.monotonic()
     if use_cache and _clients_cache["data"] is not None \
             and now - _clients_cache["at"] < 60:

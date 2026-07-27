@@ -154,6 +154,25 @@ APPLICATIONS_PAUSED_SINCE = "2026-06-30"
 TODAY_BACKLOG_TOPN = 8            # how many ready-when-resumed leads to preview
 TODAY_FRESH_LEAD_DAYS = 10       # a lead older than this has almost surely expired
 TODAY_QUEUE_TOPN = 12            # the act-now queue is ruthless; the rest -> Nudges
+
+# ── Client revenue attribution (2026-07-27) ──────────────────────────────────
+# Revenue reaches us on two rails: Upwork (transactions.assignment_company is
+# Upwork's OWN client label) and Wise (the payer is parseable from the
+# 'Received money from X with reference ...' description). The same client can
+# use both (Adelye pays via Upwork AND Wise), so a per-client total must merge
+# them. CANONICAL merges names that DEMONSTRABLY refer to one entity; anything
+# not listed keeps its raw ledger name (honest — never guess a merge). Keys are
+# lowercased; the parser strips a trailing company suffix (Ltd/LLC/Inc/B.V.).
+CLIENT_CANONICAL = {
+    "adelye ltd": "Adélye",              # Wise 'Adélye Ltd.' == Upwork 'Adélye'
+    "adelye": "Adélye",
+    "horizons aba midco": "Horizons ABA",   # dossier: horizons-aba
+    "horizons aba": "Horizons ABA",
+}
+# Wise payers that are PAYMENT PROCESSORS / EORs, not the end client — the real
+# client is hidden behind them and must be supplied, never assumed. Shown under
+# their own name with an 'attribution pending' flag until mapped.
+CLIENT_PASSTHROUGH_PAYERS = ("deel",)
 # ── ICP / Prime (Abhijeet's ideal-client profile, 2026-07-13) ────────────────
 # A TOP tier above 'hot' — 16+ had become a rubber stamp (81% of scored jobs).
 # Deterministic, code-side (see modules/upwork/icp.py).
