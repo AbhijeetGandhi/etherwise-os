@@ -163,10 +163,12 @@ TODAY_QUEUE_TOPN = 12            # the act-now queue is ruthless; the rest -> Nu
 # them. CANONICAL merges names that DEMONSTRABLY refer to one entity; anything
 # not listed keeps its raw ledger name (honest — never guess a merge). Keys are
 # lowercased; the parser strips a trailing company suffix (Ltd/LLC/Inc/B.V.).
+# Canonical name is the DOSSIER client name where one exists, so Clients and
+# Knowledge reconcile. Keys are lowercased AND accent-stripped (data.py compares
+# on the deaccented form), so 'Adélye' in the ledger matches the plain key here.
 CLIENT_CANONICAL = {
-    "adelye ltd": "Adélye",              # Wise 'Adélye Ltd.' == Upwork 'Adélye'
-    "adelye": "Adélye",
-    "horizons aba midco": "Horizons ABA",   # dossier: horizons-aba
+    "adelye ltd": "Adelye", "adelye": "Adelye",         # -> dossier: adelye
+    "horizons aba midco": "Horizons ABA",               # -> dossier: horizons-aba
     "horizons aba": "Horizons ABA",
     # Remotual pays through Deel (EOR); Dilip Malave is the person there
     # (Abhijeet, 2026-07-27) — three ledger names, one client.
@@ -174,6 +176,11 @@ CLIENT_CANONICAL = {
     "dilip n malave": "Remotual",
     "dilip malave": "Remotual",
     "remotual": "Remotual",
+    # NOT merged on purpose (Abhijeet, 2026-07-27): these clients are real but
+    # have NO dossier, and we do not invent one — they stay named-but-unlinked:
+    #   'Consulting Systems B.V.' -> Hermon/Abel  (no hermon dossier)
+    #   'CMF Publishing LLC'      -> Mike/CMF     (no cmf dossier)
+    # Add the mapping here if/when a dossier is created under that client name.
 }
 # Wise payers that are PAYMENT PROCESSORS / EORs whose end client is NOT yet
 # supplied — shown under their own name with an 'attribution pending' flag until

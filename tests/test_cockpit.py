@@ -439,7 +439,7 @@ class TestClientEconomics(unittest.TestCase):
 
     def test_upwork_and_wise_merge_into_one_client(self):
         out = data.clients(self.db_path)
-        adelye = next(c for c in out["clients"] if c["name"] == "Adélye")
+        adelye = next(c for c in out["clients"] if c["name"] == "Adelye")
         self.assertEqual(adelye["revenue_usd"], 15000.0)     # 10k Upwork + 5k Wise
         self.assertEqual(sorted(adelye["channels"]), ["Upwork", "Wise"])
         self.assertEqual(adelye["payments"], 2)
@@ -484,15 +484,15 @@ class TestClientEconomics(unittest.TestCase):
 
     def test_contract_links_by_exact_room_token(self):
         out = data.clients(self.db_path)
-        adelye = next(c for c in out["clients"] if c["name"] == "Adélye")
+        adelye = next(c for c in out["clients"] if c["name"] == "Adelye")
         self.assertEqual(adelye["active_contracts"], 1)
 
     def test_client_drill_rows_sum_to_the_total(self):
-        d = data.client_transactions(self.db_path, client="Adélye")
+        d = data.client_transactions(self.db_path, client="Adelye")
         self.assertEqual(d["count"], 2)
         self.assertAlmostEqual(d["sum_usd"], 15000.0, places=2)
         out = data.clients(self.db_path)
-        adelye = next(c for c in out["clients"] if c["name"] == "Adélye")
+        adelye = next(c for c in out["clients"] if c["name"] == "Adelye")
         self.assertAlmostEqual(d["sum_usd"], adelye["revenue_usd"], places=2)
 
     def test_unlinked_drill(self):

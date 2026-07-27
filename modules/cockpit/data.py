@@ -234,20 +234,28 @@ def _from_minor(minor) -> float:
     return round(float(_fm.from_minor(int(minor or 0))), 2)
 
 
+def _deaccent(s: str) -> str:
+    """Accent-insensitive key: the ledger spells some names with accents
+    (Upwork/Wise 'Adélye') while the dossier and the merge map do not ('Adelye').
+    Comparing on the stripped form makes the two reconcile without listing every
+    accented spelling."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s or "")
+                   if not unicodedata.combining(c)).lower().strip()
+
+
 def _canon_client(raw: Optional[str]) -> Optional[str]:
     """Canonical display name for a client. Strips a company suffix, looks up the
-    confident-merge map, else title-cases the cleaned name. Returns None for the
-    empty/placeholder labels the ledger uses for 'no company'."""
+    confident-merge map (accent-insensitively), else title-cases the cleaned
+    name. Returns None for the placeholder labels the ledger uses for 'no
+    company'."""
     s = (raw or "").strip()
     if not s or s.lower() in ("no company", "(inner)", "s"):
         return None
     core = _CO_SUFFIX.sub("", s).strip()
-    key = core.lower()
-    if key in config.CLIENT_CANONICAL:
-        return config.CLIENT_CANONICAL[key]
-    # also try the raw (pre-suffix-strip) against the map
-    if s.lower() in config.CLIENT_CANONICAL:
-        return config.CLIENT_CANONICAL[s.lower()]
+    for key in (_deaccent(core), _deaccent(s)):
+        if key in config.CLIENT_CANONICAL:
+            return config.CLIENT_CANONICAL[key]
     return core or None
 
 
@@ -329,10 +337,9 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
     # deterministic linkage: a client's core token appearing as a comma-part of
     # the room name. Unmatched contracts/threads are counted, never misassigned.
     def _match(room_name: str):
-        parts = [p.strip().lower() for p in (room_name or "").split(",")]
+        parts = [_deaccent(p) for p in (room_name or "").split(",")]
         for name in agg:
-            core = _canon_client(name)
-            if core and core.lower() in parts:
+            if _deaccent(name) in parts:
                 return name
         return None
 
