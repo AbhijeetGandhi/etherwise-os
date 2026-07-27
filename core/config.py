@@ -145,6 +145,15 @@ SWEEP_INTERVAL_HOURS = 2       # within work hours; empty-skip short-circuit
 INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately (decision #9)
 HOT_LEAD_THRESHOLD = 16
 LOOM_FLAG_THRESHOLD = 22
+# Founder INTENT, carried as config so the system respects it instead of reading
+# neglect into deliberate choice: applications are paused since 2026-06-30. While
+# set, the Today screen shows accumulated hot leads as a 'ready when you resume'
+# backlog (ranked by ICP/score), never as an act-now queue that nags every
+# morning. Set to None to resume — hot leads then re-enter the act-now queue.
+APPLICATIONS_PAUSED_SINCE = "2026-06-30"
+TODAY_BACKLOG_TOPN = 8            # how many ready-when-resumed leads to preview
+TODAY_FRESH_LEAD_DAYS = 10       # a lead older than this has almost surely expired
+TODAY_QUEUE_TOPN = 12            # the act-now queue is ruthless; the rest -> Nudges
 # ── ICP / Prime (Abhijeet's ideal-client profile, 2026-07-13) ────────────────
 # A TOP tier above 'hot' — 16+ had become a rubber stamp (81% of scored jobs).
 # Deterministic, code-side (see modules/upwork/icp.py).

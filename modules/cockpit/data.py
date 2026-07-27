@@ -5,6 +5,7 @@ nothing invented.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from datetime import date, datetime, timedelta
@@ -731,10 +732,25 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
             "total": len(rows) if total is None else total}
 
 
+def _applications_paused(day: str):
+    """(paused_bool, since_or_None). Founder INTENT from config — the system
+    respects a deliberate pause instead of reading it as neglect."""
+    since = getattr(config, "APPLICATIONS_PAUSED_SINCE", None)
+    return (bool(since and since <= day), since)
+
+
 def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
-    """Today hero: actionable queue (follow-ups w/ draft, hot leads,
-    proto-nudges) + the metrics strip. Read-only; real data only."""
+    """The daily action screen: ONE ruthlessly ranked act-now queue, a paused-
+    aware 'ready when you resume' lead backlog, the source-health line (so a
+    quiet queue reads as genuinely quiet, not a dead feed), and a metrics strip
+    where every number drills and every zero explains itself. Read-only.
+
+    Design bar (2026-07-27): answer 'what do I act on right now?' in one view;
+    respect intent (applications paused since ~Jun 30) rather than nagging with
+    an accumulating guilt pile of hot leads."""
+    from modules.chief_of_staff import nudges as _eng
     day = today or _ist_today()
+    paused, paused_since = _applications_paused(day)
     conn = _ro(db_path)
     try:
         # items the founder has acted on: done/dismissed always hidden;
@@ -765,19 +781,49 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             " THEN 1 ELSE 2 END, d.generated_at DESC", (day,))
             if f"followup:{r['thread_id']}" not in suppressed]
 
-        # Today shows RECENT actionable hot leads only; the all-time untasked
-        # backlog is surfaced in Pipeline as "to triage" (Abhijeet, Phase 3).
-        recent_lo = (date.fromisoformat(day)
-                     - timedelta(days=_RECENT_HOT_DAYS)).isoformat()
-        hot_leads = [dict(r) for r in conn.execute(
-            "SELECT id, title, score, job_url,"
-            " (draft_proposal IS NOT NULL) AS has_draft FROM scored_jobs"
-            " WHERE score >= ? AND status IN ('Scored','Drafted')"
-            " AND clickup_task_id IS NULL"
-            " AND substr(first_scored_at,1,10) >= ?"
-            " ORDER BY first_scored_at DESC, score DESC LIMIT 10",
-            (_HOT, recent_lo))
-            if f"hotlead:{r['id']}" not in suppressed]
+        # ── Ready-when-you-resume backlog (paused-aware) ──────────────────────
+        # Applications are deliberately paused, so accumulated hot leads are a
+        # backlog to work through on resume, NOT daily neglect. Preview the best
+        # by ICP-then-score from a FRESH window (older leads have expired on
+        # Upwork — showing 600 dead posts as 'ready' would be a lie), and report
+        # the accumulated total since the pause as honest context.
+        fresh_lo = (date.fromisoformat(day)
+                    - timedelta(days=config.TODAY_FRESH_LEAD_DAYS)).isoformat()
+        _icp_rank = ("CASE icp_tier WHEN 'icp' THEN 2 WHEN 'icp_near' THEN 1"
+                     " ELSE 0 END")
+        # 'awaiting a proposal' = hot AND not yet applied to. Since the live
+        # cutover a hot lead is CARDED within the run (status 'ClickUp Created'),
+        # so carded-ness is NOT the signal — the connects rail's applied job_ids
+        # are. Excluding those keeps the backlog to leads genuinely still open.
+        applied_ids = {r[0] for r in conn.execute(
+            "SELECT DISTINCT job_id FROM connects_history WHERE kind='applied'"
+            " AND job_id IS NOT NULL")}
+        def _not_applied(rows):
+            return [r for r in rows if r["id"] not in applied_ids]
+        backlog_items = _not_applied([dict(r) for r in conn.execute(
+            f"SELECT id, title, score, job_url, icp_tier, clickup_task_url,"
+            f" substr(first_scored_at,1,10) AS d,"
+            f" (draft_proposal IS NOT NULL) AS has_draft FROM scored_jobs"
+            f" WHERE score >= ? AND substr(first_scored_at,1,10) >= ?"
+            f" ORDER BY {_icp_rank} DESC, score DESC, first_scored_at DESC"
+            f" LIMIT ?", (_HOT, fresh_lo, config.TODAY_BACKLOG_TOPN + len(applied_ids)))]
+                                   )[:config.TODAY_BACKLOG_TOPN]
+        # accumulated context since the pause began (or all-time if not paused)
+        acc_lo = paused_since if paused else fresh_lo
+        acc = conn.execute(
+            "SELECT COUNT(*) hot, COALESCE(SUM(icp_tier='icp'),0) icp,"
+            " COALESCE(SUM(icp_tier='icp_near'),0) near FROM scored_jobs"
+            " WHERE score >= ? AND substr(first_scored_at,1,10) >= ?",
+            (_HOT, acc_lo)).fetchone()
+        fresh_count = conn.execute(
+            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND"
+            " substr(first_scored_at,1,10) >= ?", (_HOT, fresh_lo)).fetchone()[0]
+        backlog = {
+            "paused": paused, "paused_since": paused_since,
+            "items": backlog_items, "fresh_count": fresh_count,
+            "fresh_days": config.TODAY_FRESH_LEAD_DAYS,
+            "accumulated": acc["hot"], "accumulated_since": acc_lo,
+            "icp": acc["icp"], "icp_near": acc["near"]}
 
         # string-compare the YYYY-MM-DD prefix — created_dt carries a
         # "+0000" offset SQLite's date() can't parse (would return NULL).
@@ -808,38 +854,123 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             f"SELECT COUNT(*) FROM contracts WHERE upwork_status IN"
             f" ({cmarks})", _ACTIVE_CONTRACT).fetchone()[0]
         follow_ups_due = len(follow_ups)
-        hot_count = conn.execute(
-            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND status IN"
-            " ('Scored','Drafted') AND clickup_task_id IS NULL"
-            " AND substr(first_scored_at,1,10) >= ?",
-            (_HOT, recent_lo)).fetchone()[0]
     finally:
         conn.close()
 
+    # ── the ONE ruthlessly ranked act-now queue ───────────────────────────────
+    # Merge the two concrete action streams under a single urgency scale so the
+    # founder reads one list, not three. A follow-up with a ready draft is the
+    # actionable form of an 'owed_reply', so it is ranked on that scale and the
+    # matching M4 nudge is DEDUPED out (never list the same thread twice). Hot
+    # leads are deliberately NOT here while paused — they are the backlog above.
+    now_dt = datetime.now(config.TZ)
+    queue = []
+    fu_threads = {f["thread_id"] for f in follow_ups}
+    for f in follow_ups:
+        owed = f["bucket"] in ("owed", "unmatched-owed")
+        urg = _eng.compute_urgency(
+            "owed_reply" if owed else "capture",
+            score=None, refreshed_at=None, now=now_dt,
+            overdue=(f.get("age_days") or 0) >= 3)
+        # age is the live signal: an owed reply sitting 8 days is hotter
+        urg = round(urg * (1.0 + min((f.get("age_days") or 0), 14) / 14.0), 3)
+        queue.append({
+            "kind": "followup", "urgency": urg,
+            "title": f["topic"], "tier": f["tier"], "bucket": f["bucket"],
+            "age_days": f["age_days"], "draft": f["draft"],
+            "thread_url": f["thread_url"], "item_key": f"followup:{f['thread_id']}"})
+    # actionable M4 nudges — everything except the paused hot-lead stream, and
+    # minus any owed_reply whose thread is already a follow-up row above
+    for n in _eng.active_nudges(db_path or config.DB_PATH, now=now_dt):
+        if n["kind"] == "hotlead_no_loom":
+            continue                        # that IS the paused backlog
+        if n["kind"] == "owed_reply":
+            try:
+                pl = json.loads(n.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                pl = {}
+            if pl.get("thread_id") in fu_threads:
+                continue                    # already shown with its draft
+        queue.append({
+            "kind": "nudge", "nudge_kind": n["kind"], "urgency": n["urgency_live"],
+            "title": n["title"], "action": n.get("action"), "due": n.get("due"),
+            "dept": n["dept"], "item_key": f"nudge:{n['dedup_key']}"})
+    queue.sort(key=lambda e: e["urgency"], reverse=True)
+    # ruthless: Today shows the sharpest few; the full ranked queue is the
+    # Nudges tab. Overflow is stated, never silently dropped.
+    queue_total = len(queue)
+    queue_more = max(0, queue_total - config.TODAY_QUEUE_TOPN)
+    queue = queue[:config.TODAY_QUEUE_TOPN]
+
+    # source health: a quiet queue must be provably quiet, not a dead feed
+    try:
+        sconn = _ro(db_path)
+        try:
+            sources = source_health.report(source_health.source_health(sconn))
+        finally:
+            sconn.close()
+    except Exception:  # noqa: BLE001 — never let a health read break Today
+        sources = {"headline": "source health unavailable", "ok": False,
+                   "lines": [], "count": 0}
+
     # money() omits 'revenue' when finance-doctor is RED (gated) — tolerate that
     rev = money(db_path, today=day).get("revenue", {})
-    # proto-nudges (v1): a revenue-pacing signal; M4 replaces with real feed
-    proto = []
-    if rev.get("pct_to_target") is not None and rev["pct_to_target"] < 100:
-        proto.append({"kind": "pacing",
-                      "text": f"Revenue {rev['pct_to_target']}% to "
-                              f"${int(rev['target_usd']):,} target ({rev['month']})",
-                      "ref": "money"})
+    # Applied's zero explains itself: paused by intent, not idle. The connects
+    # rail is the applied-truth source, so its freshness gates the number.
+    applied_note = None
+    if paused:
+        applied_note = f"paused by intent since {paused_since} — not idle"
+    elif applied_week == 0:
+        applied_note = "no applications in the last 7 days"
     return {
-        "follow_ups": follow_ups,
-        "hot_leads": hot_leads,
-        "proto_nudges": proto,
+        "sources": sources,
+        "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
+        "follow_ups": follow_ups,           # kept for back-compat / counts
+        "backlog": backlog,
         "metrics": {
             "applied": {"today": applied_today, "week": applied_week,
-                        "last_week": applied_last},
+                        "last_week": applied_last, "paused": paused,
+                        "paused_since": paused_since, "note": applied_note},
             "active": {"proposals": active_props, "interviews": interviews,
                        "contracts": active_contracts},
-            "follow_ups_due": follow_ups_due, "hot_leads": hot_count,
+            "queue_len": len(queue), "follow_ups_due": follow_ups_due,
+            "backlog_fresh": backlog["fresh_count"],
             "revenue": {"mtd_usd": rev.get("month_usd"),
                         "target_usd": rev.get("target_usd"),
                         "pct": rev.get("pct_to_target")},
         },
     }
+
+
+def today_rows(db_path: Optional[Path] = None, *, which: Optional[str] = None,
+               today: Optional[str] = None) -> dict:
+    """The rows behind a Today backlog figure (traceability contract). which:
+    'fresh' (hot leads in the fresh window, awaiting a proposal) or
+    'accumulated' (all hot leads since applications paused). Read-only, capped."""
+    if which not in ("fresh", "accumulated"):
+        return {"error": f"unknown scope {which!r}", "rows": [], "count": 0}
+    day = today or _ist_today()
+    paused, paused_since = _applications_paused(day)
+    fresh_lo = (date.fromisoformat(day)
+                - timedelta(days=config.TODAY_FRESH_LEAD_DAYS)).isoformat()
+    lo = fresh_lo if which == "fresh" else (paused_since if paused else fresh_lo)
+    conn = _ro(db_path)
+    try:
+        _icp_rank = ("CASE icp_tier WHEN 'icp' THEN 2 WHEN 'icp_near' THEN 1"
+                     " ELSE 0 END")
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT id, title, score, icp_tier, job_url, clickup_task_url,"
+            f" substr(first_scored_at,1,10) AS d FROM scored_jobs"
+            f" WHERE score >= ? AND substr(first_scored_at,1,10) >= ?"
+            f" ORDER BY {_icp_rank} DESC, score DESC, first_scored_at DESC"
+            f" LIMIT 300", (_HOT, lo))]
+        total = conn.execute(
+            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND"
+            " substr(first_scored_at,1,10) >= ?", (_HOT, lo)).fetchone()[0]
+    finally:
+        conn.close()
+    return {"which": which, "since": lo, "rows": rows, "count": len(rows),
+            "total": total}
 
 
 def _money_source_health(db_path: Optional[Path]) -> Optional[dict]:

@@ -109,6 +109,23 @@ async function nudge(itemKey, action, snoozeDays) {
   show("Today");  // refresh
 }
 
+// The Today queue mixes two action systems: follow-ups live in the local
+// nudge_state suppression (item_key 'followup:<thread>' -> /api/nudge), M4
+// nudges live in the real nudges table (dedup_key -> /api/cos-nudge). Route by
+// kind so the right one actually records the action.
+async function queueAct(item, action, snoozeDays) {
+  if (item.kind === "nudge") {
+    const body = { dedup_key: item.item_key.replace(/^nudge:/, ""), action };
+    if (snoozeDays) body.snooze_days = snoozeDays;
+    await fetch("/api/cos-nudge", { method: "POST",
+      headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    show("Today");
+  } else {
+    await nudge(item.item_key, action, snoozeDays);
+  }
+}
+
 const fmtUsd = (n) => "$" + (n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const fmtUsd2 = (n) => { const s = n < 0 ? "−" : ""; n = Math.abs(n || 0);
   return s + "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
@@ -241,7 +258,56 @@ const RENDERERS = {
   Today: async (view) => {
     const d = await api("/api/today");
     const m = d.metrics || {};
-    view.appendChild(el("h2", "section", "Today"));
+    const drill = el("div", "drill");
+
+    async function openRows(title, params, cols) {
+      const res = await api("/api/today/rows?" + qstr(params));
+      const rows = res.rows || [];
+      const total = res.total == null ? rows.length : res.total;
+      const capped = total > rows.length;
+      drill.innerHTML = ""; drill.classList.add("open");
+      const h = el("h4", null, `${esc(title)} <span class="count">— ${nfmtG(total)}`
+        + ` row${total === 1 ? "" : "s"}${capped ? ` (showing ${rows.length})` : ""}</span>`
+        + `<button class="close">✕ close</button>`);
+      h.querySelector(".close").onclick = () => drill.classList.remove("open");
+      drill.appendChild(h);
+      if (!rows.length) drill.appendChild(el("div", "emptystate", "No rows behind this figure."));
+      else {
+        const wrap = el("div", "tablewrap"), t = el("table");
+        t.innerHTML = "<tr>" + cols.map((c) => `<th${c.num ? " class='num'" : ""}>${c.label}</th>`).join("") + "</tr>";
+        rows.forEach((r) => {
+          const tr = el("tr");
+          tr.innerHTML = cols.map((c) => `<td${c.num ? " class='num'" : ""}>${c.render ? c.render(r) : esc(r[c.k] == null ? "—" : r[c.k])}</td>`).join("");
+          t.appendChild(tr);
+        });
+        wrap.appendChild(t); drill.appendChild(wrap);
+      }
+      drill.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    const leadCols = [
+      { k: "d", label: "Scored" },
+      { k: "title", label: "Job", render: (r) => r.job_url
+        ? `<a href="${esc(r.job_url)}" target="_blank" rel="noopener">${esc(r.title || r.id)}</a>` : esc(r.title || r.id) },
+      { k: "score", label: "Score", num: true },
+      { k: "icp_tier", label: "Tier", render: (r) => r.icp_tier
+        ? `<span class="pill ${r.icp_tier === "icp" ? "icp" : ""}">${esc(r.icp_tier)}</span>` : "—" },
+      { k: "clickup_task_url", label: "Card", render: (r) => r.clickup_task_url
+        ? `<a href="${esc(r.clickup_task_url)}" target="_blank" rel="noopener">card</a>` : "—" },
+    ];
+
+    view.appendChild(el("h2", "section",
+      `Today <span class="hint muted">— what to act on right now</span>`));
+
+    // ── source-health line: a quiet queue must read as genuinely quiet ──
+    const s = d.sources || {};
+    const sline = el("div", "srcline" + (s.ok ? " ok" : " bad"));
+    sline.innerHTML = (s.ok ? "✓ " : "⚠ ") + esc(s.headline || "");
+    if (!s.ok && (s.lines || []).length) {
+      const ul = el("ul", "srcline-list");
+      s.lines.forEach((x) => ul.appendChild(el("li", null, esc(x))));
+      sline.appendChild(ul);
+    }
+    view.appendChild(sline);
 
     // ── Quick Capture (zero-friction; next sweep classifies) ──
     const qc = el("div", "card");
@@ -267,69 +333,105 @@ const RENDERERS = {
     qc.appendChild(qrow);
     view.appendChild(qc);
 
-    // ── Actions (top) ──
-    const fu = el("div", "card");
-    fu.appendChild(el("h3", null, `Follow-ups due (${(d.follow_ups||[]).length})`));
-    if (!(d.follow_ups || []).length) fu.appendChild(el("div", "muted", "Nothing owed or due. ✓"));
-    (d.follow_ups || []).forEach((f) => {
-      const item = el("div", "fu-row");
-      const left = el("div", "fu-left");
-      const title = el("div", "fu-title", f.topic || f.thread_id);  // truncates via CSS
-      const meta = el("div", "fu-meta");
-      meta.append(pill(f.bucket, f.bucket), pill(f.tier, "tier-" + (f.tier || "").toLowerCase()));
-      if (f.age_days != null) meta.appendChild(el("span", "muted", ago(f.age_days)));
+    // ── ACT NOW: one ruthlessly ranked queue (follow-ups + nudges) ──
+    const q = d.queue || [];
+    view.appendChild(el("h3", "section",
+      `Act now <span class="hint muted">— ${q.length ? `top ${q.length}` : "0"}`
+      + ` by urgency${d.queue_more ? ` · +${d.queue_more} more in Nudges` : ""}</span>`));
+    const qcard = el("div", "card");
+    if (!q.length) {
+      qcard.appendChild(el("div", "emptystate",
+        s.ok ? "Nothing needs you right now. ✓ (queue is empty, and all sources are fresh)"
+             : "Queue is empty — but a source is degraded above, so this may be a feed gap, not a clear desk."));
+    }
+    q.forEach((it) => {
+      const row = el("div", "q-row q-" + it.kind);
+      const left = el("div", "q-left");
+      const title = el("div", "q-title", esc(it.title || "(untitled)"));
+      const meta = el("div", "q-meta");
+      if (it.kind === "followup") {
+        meta.append(pill("reply owed", "owed"),
+                    pill(it.tier, "tier-" + (it.tier || "").toLowerCase()));
+        if (it.age_days != null) meta.appendChild(el("span", "muted", ago(it.age_days) + " since client"));
+      } else {
+        meta.append(pill((it.nudge_kind || "").replace(/_/g, " "), ""),
+                    el("span", "muted", esc(it.dept || "")));
+        if (it.due) meta.appendChild(el("span", "muted", " · due " + esc(it.due.slice(0, 10))));
+      }
       left.append(title, meta);
-      const btns = el("div", "fu-actions");
-      const copy = el("button", "action", "Copy draft");
-      copy.onclick = () => { navigator.clipboard.writeText(f.draft || ""); copy.textContent = "Copied"; setTimeout(() => copy.textContent = "Copy draft", 1200); };
-      const open = el("button", "action", "Open thread");
-      open.onclick = () => window.open(f.thread_url, "_blank");
-      const done = el("button", "action", "Done");  // neutral until clicked
-      done.onclick = () => nudge("followup:" + f.thread_id, "done");
+      const btns = el("div", "q-actions");
+      if (it.kind === "followup") {
+        const copy = el("button", "action primary", "Copy draft");
+        copy.onclick = () => { navigator.clipboard.writeText(it.draft || ""); copy.textContent = "Copied ✓"; setTimeout(() => copy.textContent = "Copy draft", 1200); };
+        const open = el("button", "action", "Open thread");
+        open.onclick = () => window.open(it.thread_url, "_blank");
+        btns.append(copy, open);
+      } else if (it.action) {
+        meta.appendChild(el("div", "q-actionnote muted", esc(it.action)));
+      }
+      const done = el("button", "action", "Done");
+      done.onclick = () => queueAct(it, "done");
       const snooze = el("button", "action", "Snooze 3d");
-      snooze.onclick = () => nudge("followup:" + f.thread_id, "snooze", 3);
-      const dismiss = el("button", "action", "Dismiss");
-      dismiss.onclick = () => nudge("followup:" + f.thread_id, "dismiss");
-      btns.append(copy, open, done, snooze, dismiss);
-      item.append(left, btns);
-      fu.appendChild(item);
+      snooze.onclick = () => queueAct(it, "snooze", 3);
+      btns.append(done, snooze);
+      row.append(left, btns);
+      qcard.appendChild(row);
     });
-    view.appendChild(fu);
+    view.appendChild(qcard);
 
-    const hl = el("div", "card");
-    hl.appendChild(el("h3", null, `Hot leads (${(d.hot_leads||[]).length})`));
-    if (!(d.hot_leads || []).length) hl.appendChild(el("div", "muted", "No new hot leads awaiting a proposal."));
-    (d.hot_leads || []).forEach((h) => {
-      const item = el("div", "row");
-      const left = el("div", null, `<strong>${h.title || h.id}</strong> <span class="muted">${h.has_draft ? "· draft ready" : ""}</span>`);
-      const right = el("div");
+    // ── READY WHEN YOU RESUME: the lead backlog (paused-aware, not a nag) ──
+    const b = d.backlog || {};
+    const head = b.paused
+      ? `Ready when you resume <span class="hint muted">— applications paused`
+        + ` by intent since ${esc(b.paused_since || "")}; these wait, they don't nag</span>`
+      : `Hot leads to work <span class="hint muted">— top by ICP then score</span>`;
+    view.appendChild(el("h3", "section", head));
+    const bcard = el("div", "card");
+    // an honest context line: accumulated vs still-fresh, both drillable
+    const ctx = el("div", "backlog-ctx");
+    ctx.innerHTML =
+      `<button class="linknum">${nfmtG(b.accumulated || 0)}</button> hot leads`
+      + ` since ${esc((b.accumulated_since || "").slice(0, 10))}`
+      + ` · <button class="linknum">${nfmtG(b.fresh_count || 0)}</button> still fresh`
+      + ` (last ${b.fresh_days || 10}d)`
+      + ` · <b>${nfmtG(b.icp || 0)}</b> ICP · ${nfmtG(b.icp_near || 0)} near-miss`;
+    const [accBtn, freshBtn] = ctx.querySelectorAll(".linknum");
+    accBtn.onclick = () => openRows("Accumulated hot leads since the pause", { which: "accumulated" }, leadCols);
+    freshBtn.onclick = () => openRows("Fresh hot leads (still live)", { which: "fresh" }, leadCols);
+    bcard.appendChild(ctx);
+    if (!(b.items || []).length) {
+      bcard.appendChild(el("div", "emptystate", "No fresh hot leads in the window."));
+    }
+    (b.items || []).forEach((h) => {
+      const row = el("div", "row lead-row");
+      const left = el("div", null,
+        `<strong>${esc(h.title || h.id)}</strong>`
+        + (h.has_draft ? ' <span class="muted">· draft ready</span>' : ""));
+      const right = el("div", "lead-right");
+      if (h.icp_tier) right.appendChild(pill(h.icp_tier, h.icp_tier === "icp" ? "icp" : ""));
       right.appendChild(el("span", "pill ok", "score " + h.score));
       if (h.job_url) { const o = el("button", "action", "Open job"); o.onclick = () => window.open(h.job_url, "_blank"); right.appendChild(o); }
-      item.append(left, right);
-      hl.appendChild(item);
+      row.append(left, right);
+      bcard.appendChild(row);
     });
-    view.appendChild(hl);
+    view.appendChild(bcard);
+    view.appendChild(drill);
 
-    if ((d.proto_nudges || []).length) {
-      const pn = el("div", "card");
-      pn.appendChild(el("h3", null, "Nudges (proto · real feed with M4)"));
-      d.proto_nudges.forEach((n) => pn.appendChild(el("div", "row", `<div>${n.text}</div>`)));
-      view.appendChild(pn);
-    }
-
-    // ── Metrics strip (below) ──
-    view.appendChild(el("h2", "section", "At a glance"));
+    // ── At a glance: every zero explains itself; figures drill ──
+    view.appendChild(el("h3", "section", "At a glance"));
     const grid = el("div", "grid");
     const a = m.applied || {}, rev = m.revenue || {}, act = m.active || {};
-    grid.appendChild(card("Applied", `<div class="metric">${a.today||0} <small>today</small></div>`
-      + `<div class="muted">${a.week||0} this week · ${a.last_week||0} last week</div>`));
+    const appliedVal = a.paused ? "paused" : String(a.week || 0);
+    grid.appendChild(card("Applied (7d)",
+      `<div class="metric${a.paused ? " muted" : ""}">${appliedVal}</div>`
+      + `<div class="muted small">${esc(a.note || `${a.today || 0} today · ${a.last_week || 0} prev week`)}</div>`));
     const pct = Math.min(100, rev.pct || 0);
     grid.appendChild(card("Revenue MTD", `<div class="metric">${fmtUsd(rev.mtd_usd)} <small>/ ${fmtUsd(rev.target_usd)}</small></div>`
       + `<div class="bar"><span style="width:${pct}%"></span></div>`));
-    grid.appendChild(card("Pipeline", `<div class="metric">${act.proposals||0} <small>active</small></div>`
-      + `<div class="muted">${act.interviews||0} interviews · ${act.contracts||0} contracts</div>`));
-    grid.appendChild(card("Queue", `<div class="metric">${m.follow_ups_due||0} <small>follow-ups</small></div>`
-      + `<div class="muted">${m.hot_leads||0} hot leads</div>`));
+    grid.appendChild(card("Active pipeline", `<div class="metric">${act.proposals||0} <small>proposals</small></div>`
+      + `<div class="muted small">${act.interviews||0} interviews · ${act.contracts||0} contracts</div>`));
+    grid.appendChild(card("Your queue", `<div class="metric">${m.queue_total||0}</div>`
+      + `<div class="muted small">${m.follow_ups_due||0} replies owed · ${m.backlog_fresh||0} fresh leads waiting</div>`));
     view.appendChild(grid);
   },
   Pipeline: async (view) => {

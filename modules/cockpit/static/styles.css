@@ -223,6 +223,35 @@ select:focus,input[type=search]:focus{outline:none;border-color:var(--blue2)}
 .trendline polyline{fill:none;stroke:var(--amber);stroke-width:2;
   vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 /* money source-freshness banner (doctor GREEN != ledger up to date) */
+/* Today — source-health line (always present: quiet must read as quiet) */
+.srcline{margin:0 0 var(--sp-4);padding:8px 12px;border-radius:var(--rad-sm);
+  font-size:var(--fs-sm);font-weight:600}
+.srcline.ok{background:var(--green-soft);color:var(--green)}
+.srcline.bad{background:var(--amber-soft);color:var(--warn)}
+.srcline-list{margin:6px 0 0;padding-left:18px;font-weight:400}
+.srcline-list li{margin:2px 0}
+
+/* Today — the ruthless act-now queue */
+.q-row{display:flex;align-items:center;gap:16px;padding:11px 0;border-bottom:1px solid var(--g3)}
+.q-row:last-child{border-bottom:0}
+.q-left{flex:1;min-width:0}
+.q-title{font-weight:600;color:var(--g7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:var(--fs-sm)}
+.q-actionnote{flex-basis:100%;font-size:var(--fs-xs)}
+.q-actions{display:flex;gap:6px;flex:none}
+.q-row.q-followup{border-left:3px solid var(--blue);padding-left:10px}
+.action.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.action.primary:hover{filter:brightness(1.08)}
+
+/* Today — ready-when-you-resume backlog */
+.backlog-ctx{font-size:var(--fs-sm);color:var(--g6);padding-bottom:8px;
+  margin-bottom:8px;border-bottom:1px solid var(--g3)}
+.backlog-ctx .linknum{border:0;background:none;font:inherit;font-weight:700;
+  color:var(--blue);cursor:pointer;padding:0;text-decoration:underline}
+.backlog-ctx .linknum:hover{color:var(--blue2)}
+.lead-row .lead-right{display:flex;align-items:center;gap:8px}
+.pill.owed{background:var(--blue-soft);color:var(--blue)}
+
 .srcbanner{margin:0 0 var(--sp-4);padding:10px 14px;border-radius:var(--rad-sm);
   background:var(--amber-soft);color:var(--warn);border-left:4px solid var(--amber);
   font-size:var(--fs-sm);line-height:1.45}

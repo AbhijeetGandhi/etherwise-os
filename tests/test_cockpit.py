@@ -134,7 +134,7 @@ class TestRouting(CockpitServerCase):
         status, body = self.get("/api/today")
         self.assertEqual(status, 200)
         d = json.loads(body)
-        for key in ("follow_ups", "hot_leads", "proto_nudges", "metrics"):
+        for key in ("sources", "queue", "backlog", "metrics"):
             self.assertIn(key, d)
 
     def test_pipeline_endpoint_200(self):
@@ -289,11 +289,31 @@ class TestTodayReader(unittest.TestCase):
         self.assertEqual(fu["rA"]["age_days"], 5)   # Jun10 → Jun15
         self.assertEqual(fu["rB"]["age_days"], 10)  # Jun05 → Jun15
 
-    def test_hot_leads_recent_untasked_only(self):
+    def test_backlog_is_fresh_awaiting_leads_carded_still_counts(self):
+        # 'awaiting a proposal' = hot AND not applied. Being CARDED does not
+        # exclude a lead any more (since cutover every hot lead is carded).
         out = data.today(self.db_path, today="2026-06-15")
-        ids = [h["id"] for h in out["hot_leads"]]
-        self.assertIn("2065400000000000111", ids)
-        self.assertNotIn("2065400000000000112", ids)  # tasked → excluded
+        ids = [h["id"] for h in out["backlog"]["items"]]
+        self.assertIn("2065400000000000111", ids)       # fresh (06-15)
+        self.assertIn("2065400000000000112", ids)       # carded, still awaiting
+        self.assertNotIn("2065400000000000113", ids)    # 05-01 -> not fresh
+
+    def test_backlog_excludes_a_lead_already_applied_to(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO connects_history (id, event_date, kind,"
+                         " label, job_id, connects_delta) VALUES"
+                         " ('x1','2026-06-15','applied','Proposal',"
+                         "'2065400000000000111',-8)")
+        out = data.today(self.db_path, today="2026-06-15")
+        ids = [h["id"] for h in out["backlog"]["items"]]
+        self.assertNotIn("2065400000000000111", ids)    # applied -> off the backlog
+
+    def test_backlog_count_matches_its_drill(self):
+        # traceability: the drilled rows total equals the figure shown
+        out = data.today(self.db_path, today="2026-06-15")
+        fresh = out["backlog"]["fresh_count"]
+        rows = data.today_rows(self.db_path, which="fresh", today="2026-06-15")
+        self.assertEqual(rows["total"], fresh)
 
     def test_applied_counts_windows(self):
         out = data.today(self.db_path, today="2026-06-15")
@@ -308,14 +328,33 @@ class TestTodayReader(unittest.TestCase):
         self.assertEqual(m["active"]["interviews"], 1)
         self.assertEqual(m["active"]["contracts"], 1)
         self.assertEqual(m["follow_ups_due"], 2)
-        self.assertEqual(m["hot_leads"], 1)  # recent only; old (May) excluded
         self.assertEqual(m["revenue"]["target_usd"],
                          config.MONTHLY_REVENUE_TARGET_USD)
 
-    def test_hot_leads_today_is_recent_only(self):
+    def test_queue_merges_followups_and_nudges_ranked(self):
+        # a nudge below the follow-ups still lands in ONE ranked list
+        from modules.chief_of_staff import nudges as eng
+        eng.write_nudge(self.db_path, source="sales", dept="sales",
+                        kind="commitment_due", title="Ship the thing",
+                        dedup_key="c:x", now=datetime(2026, 6, 15, tzinfo=config.TZ))
         out = data.today(self.db_path, today="2026-06-15")
-        ids = [h["id"] for h in out["hot_leads"]]
-        self.assertNotIn("2065400000000000113", ids)  # May job excluded
+        kinds = {q["kind"] for q in out["queue"]}
+        self.assertIn("followup", kinds)
+        self.assertIn("nudge", kinds)
+        urg = [q["urgency"] for q in out["queue"]]
+        self.assertEqual(urg, sorted(urg, reverse=True))    # ruthlessly ranked
+
+    def test_paused_backlog_frames_intent_not_neglect(self):
+        with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", "2026-06-01"):
+            out = data.today(self.db_path, today="2026-06-15")
+        self.assertTrue(out["backlog"]["paused"])
+        self.assertEqual(out["backlog"]["paused_since"], "2026-06-01")
+        self.assertIn("paused", out["metrics"]["applied"]["note"])
+        self.assertTrue(out["metrics"]["applied"]["paused"])
+
+    def test_source_health_line_is_present(self):
+        out = data.today(self.db_path, today="2026-06-15")
+        self.assertIn("headline", out["sources"])
 
 
 class FakeAirtable:
