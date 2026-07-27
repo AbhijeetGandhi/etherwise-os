@@ -168,11 +168,17 @@ CLIENT_CANONICAL = {
     "adelye": "Adélye",
     "horizons aba midco": "Horizons ABA",   # dossier: horizons-aba
     "horizons aba": "Horizons ABA",
+    # Remotual pays through Deel (EOR); Dilip Malave is the person there
+    # (Abhijeet, 2026-07-27) — three ledger names, one client.
+    "deel": "Remotual",
+    "dilip n malave": "Remotual",
+    "dilip malave": "Remotual",
+    "remotual": "Remotual",
 }
-# Wise payers that are PAYMENT PROCESSORS / EORs, not the end client — the real
-# client is hidden behind them and must be supplied, never assumed. Shown under
-# their own name with an 'attribution pending' flag until mapped.
-CLIENT_PASSTHROUGH_PAYERS = ("deel",)
+# Wise payers that are PAYMENT PROCESSORS / EORs whose end client is NOT yet
+# supplied — shown under their own name with an 'attribution pending' flag until
+# mapped. (Deel is resolved above -> Remotual, so it is no longer here.)
+CLIENT_PASSTHROUGH_PAYERS = ()
 # ── ICP / Prime (Abhijeet's ideal-client profile, 2026-07-13) ────────────────
 # A TOP tier above 'hot' — 16+ had become a rubber stamp (81% of scored jobs).
 # Deterministic, code-side (see modules/upwork/icp.py).

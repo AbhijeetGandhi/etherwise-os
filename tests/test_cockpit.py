@@ -449,10 +449,22 @@ class TestClientEconomics(unittest.TestCase):
         names = [c["name"] for c in out["clients"]]
         self.assertIn("Horizons ABA", names)                 # canonical-mapped
 
-    def test_passthrough_is_flagged_not_attributed(self):
+    def test_resolved_passthrough_merges_all_its_names(self):
+        # Deel (EOR) + Dilip Malave + an Upwork 'Remotual' are one client once
+        # mapped — three ledger names collapse to Remotual (Abhijeet, 2026-07-27)
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, description, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt) VALUES"
+                " ('d2','kd2','Fixed Earning','income','Wise',"
+                "'Received money from DILIP N MALAVE with reference Q',"
+                " 100000,100000,'USD','revenue','2026-02-01T00:00:00+0000')")
         out = data.clients(self.db_path)
-        deel = next(c for c in out["clients"] if c["name"] == "Deel")
-        self.assertTrue(deel["passthrough"])
+        rem = next(c for c in out["clients"] if c["name"] == "Remotual")
+        self.assertEqual(rem["revenue_usd"], 9000.0)     # 8k Deel + 1k Dilip
+        self.assertFalse(rem["passthrough"])
+        self.assertNotIn("Deel", [c["name"] for c in out["clients"]])
 
     def test_unparseable_revenue_goes_to_unlinked_never_a_client(self):
         out = data.clients(self.db_path)
