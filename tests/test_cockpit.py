@@ -210,6 +210,37 @@ class TestSystemReader(unittest.TestCase):
         self.assertIsInstance(out["doctor"]["checks"], list)
         self.assertIn(out["doctor"]["worst"], ("PASS", "WARN", "FAIL"))
 
+    def test_spend_by_task_breakdown_present(self):
+        out = data.system(self.db_path)
+        bt = {r["task_name"]: r["usd"] for r in out["spend"]["by_task"]}
+        self.assertIn("upwork_scan", bt)                 # seed put usage here
+
+    def test_anomaly_open_count_excludes_self_healed(self):
+        """'open' must mean genuinely-active, not 'ever fired'. An anomaly whose
+        task has since completed is recovered — else a long-healed crashloop
+        reads as dozens of live fires (the 71-vs-0 correction, 2026-07-30)."""
+        with db.connect(self.db_path) as conn:
+            # a failure ~2 days ago (inside the 14d window), then a success
+            # AFTER it -> recovered
+            conn.execute("INSERT INTO anomalies (task_name, kind, severity,"
+                         " detected_at) VALUES ('upwork_scan','task_failure',"
+                         " 'critical', datetime('now','-2 days'))")
+            conn.execute("INSERT INTO runs (task_name, started_at, completed_at,"
+                         " status, shadow) VALUES ('upwork_scan',"
+                         " datetime('now','-1 day','+5 hours','+30 minutes'),"
+                         " datetime('now','-1 day','+5 hours','+30 minutes'),"
+                         " 'completed',0)")
+            # a second failure with NO success after it -> active
+            conn.execute("INSERT INTO anomalies (task_name, kind, severity,"
+                         " detected_at) VALUES ('crm_mirror','task_failure',"
+                         " 'critical', datetime('now'))")
+        out = data.system(self.db_path)
+        rows = {(a["task_name"], a["kind"]): a for a in out["anomalies"]["recent"]}
+        self.assertTrue(rows[("upwork_scan", "task_failure")]["recovered"])
+        self.assertFalse(rows[("crm_mirror", "task_failure")]["recovered"])
+        # open counts only the still-active crm_mirror fire
+        self.assertEqual(out["anomalies"]["open"], 1)
+
 
 def seed_today(db_path):
     with db.connect(db_path) as conn:

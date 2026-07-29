@@ -178,18 +178,42 @@ const RENDERERS = {
     runRow.appendChild(brief);
     run.appendChild(runRow);
     view.appendChild(run);
+    const sysDrill = el("div", "drill");
     const grid = el("div", "grid");
     const dr = d.doctor || {};
     grid.appendChild(card("Doctor",
       `<div class="metric"><span class="pill ${(dr.worst||"").toLowerCase()}">${dr.worst||"?"}</span></div>`
-      + `<div class="muted">${(dr.checks||[]).length} checks</div>`));
+      + `<div class="muted small">${(dr.checks||[]).length} checks · full list below</div>`));
     const sp = d.spend || {};
-    grid.appendChild(card("Spend today",
-      `<div class="metric">${fmtUsd(sp.today_usd)} <small>/ ${fmtUsd(sp.soft_limit_usd)} soft</small></div>`
-      + `<div class="muted">MTD ${fmtUsd(sp.mtd_usd)}</div>`));
+    const spCard = card("Spend today",
+      `<div class="metric">${fmtUsd2(sp.today_usd)} <small>/ ${fmtUsd(sp.soft_limit_usd)} soft</small></div>`
+      + `<div class="muted small">MTD ${fmtUsd2(sp.mtd_usd)}${(sp.by_task||[]).length ? " · click for the breakdown" : " · nothing spent today"}</div>`);
+    if ((sp.by_task || []).length) {
+      spCard.style.cursor = "pointer";
+      spCard.onclick = () => {
+        sysDrill.innerHTML = ""; sysDrill.classList.add("open");
+        sysDrill.appendChild(el("h4", null, `Model spend today <span class="count">— ${fmtUsd2(sp.today_usd)}</span>`
+          + `<button class="close">✕ close</button>`));
+        sysDrill.querySelector(".close").onclick = () => sysDrill.classList.remove("open");
+        const wrap = el("div", "tablewrap"), t = el("table");
+        t.innerHTML = "<tr><th>Task</th><th class='num'>Calls</th><th class='num'>USD</th></tr>";
+        sp.by_task.forEach((r) => t.appendChild(el("tr", null,
+          `<td>${esc(r.task_name)}</td><td class="num">${r.calls}</td><td class="num">${fmtUsd2(r.usd)}</td>`)));
+        wrap.appendChild(t); sysDrill.appendChild(wrap);
+        sysDrill.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      };
+    }
+    grid.appendChild(spCard);
+    const sh = (d.shadow||{});
     grid.appendChild(card("Shadow ledger",
-      `<div class="metric">${(d.shadow||{}).pending||0} <small>pending intents</small></div>`));
+      `<div class="metric">${sh.pending||0} <small>pending intents</small></div>`
+      + `<div class="muted small">${sh.pending ? "captured writes, held while shadowed" : "no writes held — modules live or idle"}</div>`));
+    const an = d.anomalies || {};
+    grid.appendChild(card("Anomalies (14d)",
+      `<div class="metric${an.open ? "" : " muted"}">${an.open || 0} <small>open</small></div>`
+      + `<div class="muted small">${an.open ? "unresolved operational signals below" : "nothing unresolved ✓"}</div>`));
     view.appendChild(grid);
+    view.appendChild(sysDrill);
     view.appendChild(el("h2", "section", "Jobs"));
     const t = el("table");
     t.innerHTML = "<tr><th>Job</th><th>Status</th><th>Last run</th></tr>";
@@ -228,6 +252,35 @@ const RENDERERS = {
         stbl.appendChild(tr);
       });
       view.appendChild(stbl);
+    }
+
+    // ── Anomalies: the operational incident feed (was invisible until now) ──
+    const anoms = (d.anomalies || {}).recent || [];
+    view.appendChild(el("h2", "section",
+      `Anomalies <span class="hint muted">— operational incidents, last`
+      + ` ${(d.anomalies || {}).window_days || 14} days · unresolved first · a`
+      + ` crashlooping task collapses to one counted row</span>`));
+    if (!anoms.length) {
+      view.appendChild(el("div", "srcline ok", "✓ no anomalies filed in the window"));
+    } else {
+      const at = el("table");
+      at.innerHTML = "<tr><th>When</th><th>Task</th><th>Kind</th><th>Severity</th>"
+        + "<th class='num'>Count</th><th>State</th></tr>";
+      anoms.forEach((a) => {
+        const sev = a.severity === "critical" ? "red" : "amber";
+        // 'recovered' = the task succeeded after this fired (self-healed); only
+        // genuinely-active ones wear the loud severity colour
+        const state = a.recovered
+          ? `<span class="pill green" title="task has succeeded since">recovered</span>`
+          : `<span class="pill ${sev}">active</span>`;
+        const tr = el("tr", a.recovered ? "muted" : null,
+          `<td class="muted">${esc((a.last || "").replace("T", " ").slice(0, 16))}</td>`
+          + `<td>${esc(a.task_name)}</td><td><code>${esc(a.kind)}</code></td>`
+          + `<td><span class="pill ${a.recovered ? "" : sev}">${esc(a.severity)}</span></td>`
+          + `<td class="num">${a.n}</td><td>${state}</td>`);
+        at.appendChild(tr);
+      });
+      view.appendChild(at);
     }
 
     // doctor check list (full System)

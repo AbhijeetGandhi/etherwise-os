@@ -97,6 +97,38 @@ def system(db_path: Optional[Path] = None) -> dict:
         shadow_by_task = {r["task_name"]: r["n"] for r in conn.execute(
             "SELECT task_name, COUNT(*) AS n FROM shadow_ledger"
             " GROUP BY task_name ORDER BY n DESC")}
+        # spend-by-task today, so the spend figure is explainable (drills to it)
+        spend_by_task = [dict(r) for r in conn.execute(
+            "SELECT task_name, ROUND(SUM(total_cost_usd),4) usd, COUNT(*) calls"
+            " FROM claude_usage WHERE ist_date=? GROUP BY task_name"
+            " ORDER BY usd DESC", (today,))]
+        # the operational INCIDENT feed — the anomalies table has been invisible
+        # in the cockpit until now. Recent first; a failing task collapses to one
+        # counted row so a crashloop doesn't bury everything else.
+        #
+        # 'open' is computed HONESTLY, not read off resolved_at (nothing sets it):
+        # an anomaly is RECOVERED once its task completed successfully AFTER the
+        # anomaly's last occurrence — same self-heal principle as source-health.
+        # Otherwise a long-healed crashloop would read as dozens of live fires.
+        # detected_at is UTC; runs.completed_at is IST-offset — compare as epoch
+        # via julianday so the two clocks reconcile.
+        anomalies = []
+        for r in conn.execute(
+                "SELECT task_name, kind, severity, MAX(detected_at) last,"
+                " COUNT(*) n FROM anomalies"
+                " WHERE detected_at >= datetime('now','-14 days')"
+                " GROUP BY task_name, kind, severity"
+                " ORDER BY last DESC LIMIT 40"):
+            a = dict(r)
+            recovered = conn.execute(
+                "SELECT 1 FROM runs WHERE task_name=? AND status='completed'"
+                " AND julianday(completed_at) > julianday(?) LIMIT 1",
+                (a["task_name"], a["last"])).fetchone() is not None
+            a["recovered"] = recovered
+            anomalies.append(a)
+        # already newest-first from SQL; stable-sort unrecovered ahead of recovered
+        anomalies.sort(key=lambda a: a["recovered"])
+        anom_open = sum(a["n"] for a in anomalies if not a["recovered"])
         sources = source_health.source_health(conn)
     finally:
         conn.close()
@@ -105,9 +137,11 @@ def system(db_path: Optional[Path] = None) -> dict:
         "spend": {"today_usd": round(spend_today, 4),
                   "mtd_usd": round(spend_mtd, 4),
                   "soft_limit_usd": config.DAILY_SOFT_LIMIT_USD,
-                  "hard_limit_usd": config.DAILY_HARD_LIMIT_USD},
+                  "hard_limit_usd": config.DAILY_HARD_LIMIT_USD,
+                  "by_task": spend_by_task},
         "shadow": {"pending": shadow.get("pending", 0), "by_status": shadow,
                    "by_task": shadow_by_task},
+        "anomalies": {"recent": anomalies, "open": anom_open, "window_days": 14},
         "sources": sources,
         "doctor": _doctor_light(),
     }
