@@ -497,6 +497,30 @@ class TestClientEconomics(unittest.TestCase):
         self.assertEqual(sorted(h["channels"]), ["Upwork", "Wise"])
         self.assertEqual(h["revenue_usd"], 27000.0)          # 20k Wise + 7k Upwork
 
+    def test_person_and_company_names_merge_without_a_dossier(self):
+        # Mike Gandia (Upwork person) == CMF Publishing (Wise company); one
+        # client, no dossier — canonical is the company name (Abhijeet 2026-07-30)
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, assignment_company, amount_minor,"
+                " amount_base_minor, currency, pnl_bucket, creation_dt) VALUES"
+                " ('mg','kmg','Fixed Earning','income','Upwork','Mike Gandia',"
+                " 120000,120000,'USD','revenue','2026-03-01T00:00:00+0000')")
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, description, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt) VALUES"
+                " ('cmf','kcmf','Fixed Earning','income','Wise',"
+                "'Received money from CMF Publishing LLC with reference R',"
+                " 400000,400000,'USD','revenue','2026-04-01T00:00:00+0000')")
+        out = data.clients(self.db_path)
+        names = [c["name"] for c in out["clients"]]
+        self.assertNotIn("Mike Gandia", names)
+        cmf = next(c for c in out["clients"] if c["name"] == "CMF Publishing")
+        self.assertEqual(cmf["revenue_usd"], 5200.0)         # 4k Wise + 1.2k Upwork
+        self.assertEqual(sorted(cmf["channels"]), ["Upwork", "Wise"])
+
     def test_resolved_passthrough_merges_all_its_names(self):
         # Deel (EOR) + Dilip Malave + an Upwork 'Remotual' are one client once
         # mapped — three ledger names collapse to Remotual (Abhijeet, 2026-07-27)

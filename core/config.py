@@ -179,11 +179,15 @@ CLIENT_CANONICAL = {
     "dilip n malave": "Remotual",
     "dilip malave": "Remotual",
     "remotual": "Remotual",
-    # NOT merged on purpose (Abhijeet, 2026-07-27): these clients are real but
-    # have NO dossier, and we do not invent one — they stay named-but-unlinked:
+    # Ledger-identity merge (Abhijeet, 2026-07-30): same client across two names,
+    # no dossier yet — canonical is the company name (not the person). This is an
+    # identity fact, distinct from a dossier link.
+    "mike gandia": "CMF Publishing",         # Upwork person == Wise 'CMF Publishing LLC'
+    "cmf publishing llc": "CMF Publishing",
+    "cmf publishing": "CMF Publishing",
+    # NOT merged on purpose (Abhijeet, 2026-07-27): real client, NO dossier, and
+    # we do not invent one — stays named-but-unlinked until a dossier exists:
     #   'Consulting Systems B.V.' -> Hermon/Abel  (no hermon dossier)
-    #   'CMF Publishing LLC'      -> Mike/CMF     (no cmf dossier)
-    # Add the mapping here if/when a dossier is created under that client name.
 }
 # Wise payers that are PAYMENT PROCESSORS / EORs whose end client is NOT yet
 # supplied — shown under their own name with an 'attribution pending' flag until
