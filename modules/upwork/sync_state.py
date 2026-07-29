@@ -60,7 +60,8 @@ def iso_dt(value) -> Optional[str]:
 
 # ── upserts (terminal-protected) ─────────────────────────────────────────────
 
-def upsert_proposal(conn, vp: dict, thread_id: Optional[str]) -> str:
+def upsert_proposal(conn, vp: dict, thread_id: Optional[str],
+                    room_name: Optional[str] = None) -> str:
     """Returns 'inserted' | 'updated' | 'terminal-preserved'."""
     pid = vp["id"]
     upwork_status = ((vp.get("status") or {}).get("status")
@@ -68,6 +69,9 @@ def upsert_proposal(conn, vp: dict, thread_id: Optional[str]) -> str:
                      else vp.get("status"))
     job = vp.get("job") or {}
     client = vp.get("client") or {}
+    # same as contracts: fall back to the room display name when the payload
+    # carries no companyName, so a proposal is never nameless
+    client_company = client.get("companyName") or room_name
     exists = conn.execute("SELECT status FROM proposals WHERE id=?",
                           (pid,)).fetchone()
     if exists is None:
@@ -80,7 +84,7 @@ def upsert_proposal(conn, vp: dict, thread_id: Optional[str]) -> str:
             (pid, upwork_status, money(vp.get("chargeRate")),
              (vp.get("chargeRate") or {}).get("currency"),
              vp.get("coverLetter"), job.get("id"), job.get("title"),
-             client.get("companyName"), client.get("country"),
+             client_company, client.get("country"),
              money(client.get("totalSpent")),
              iso_dt(vp.get("createdDateTime")),
              iso_dt(vp.get("modifiedDateTime")), thread_id))
@@ -100,22 +104,28 @@ def upsert_proposal(conn, vp: dict, thread_id: Optional[str]) -> str:
            updated_at=datetime('now')
            WHERE id=? AND (status IS NULL OR status NOT IN (?,?,?,?,?))""",
         (upwork_status, money(vp.get("chargeRate")), vp.get("coverLetter"),
-         job.get("title"), client.get("companyName"),
+         job.get("title"), client_company,
          iso_dt(vp.get("modifiedDateTime")), thread_id, pid, *TERMINAL))
     return "updated"
 
 
 def upsert_contract(conn, c: dict, thread_id: Optional[str],
-                    profile: str) -> str:
+                    profile: str, room_name: Optional[str] = None) -> str:
     cid = c["id"]
     exists = conn.execute("SELECT 1 FROM contracts WHERE id=?",
                           (cid,)).fetchone()
+    # the contract node has no client sub-object in ROOM_LIST, so companyName is
+    # always None here; the room's display name (roomName) is the only client
+    # identity the messaging API exposes on a personal-profile contract, so it
+    # is the fallback. Upwork names the PERSON (e.g. 'Amanda Thomas'), not the
+    # company brand — a person->company alias (CLIENT_CANONICAL) covers the rest.
+    client_company = (c.get("client") or {}).get("companyName") or room_name
     fields = (c.get("title"), c.get("status"), c.get("contractType"),
               c.get("startDateTime"), c.get("endDateTime"),
               (c.get("hourlyChargeRate") or {}).get("amount"),
               (c.get("job") or {}).get("id"),
               (c.get("job") or {}).get("title"),
-              (c.get("client") or {}).get("companyName"),
+              client_company,
               profile, thread_id)
     if exists:
         conn.execute(
@@ -400,13 +410,15 @@ def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14) -> dict:
     with db.connect(dbp) as conn:
         for room in rooms:
             thread_id = room.get("id")
+            room_name = room.get("roomName")
             vp = room.get("vendorProposal")
             if vp and vp.get("id"):
-                r = upsert_proposal(conn, vp, thread_id)
+                r = upsert_proposal(conn, vp, thread_id, room_name=room_name)
                 metrics["proposals"][r] = metrics["proposals"].get(r, 0) + 1
             c = room.get("contract")
             if c and c.get("id"):
-                r = upsert_contract(conn, c, thread_id, profile="personal")
+                r = upsert_contract(conn, c, thread_id, profile="personal",
+                                    room_name=room_name)
                 metrics["contracts"][r] = metrics["contracts"].get(r, 0) + 1
             for o in (room.get("offers") or []):
                 if o and o.get("id"):

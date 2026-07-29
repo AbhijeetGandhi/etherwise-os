@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Backfill client_company on contracts + proposals from their thread room name.
+
+The sync stored job title/id/room but never the client, so Abhijeet was winning
+contracts the system could not name (all 57 contracts + 79 proposals had an empty
+client_company). The ROOM_LIST payload's `contract` block never requested a
+client, but every row links to a thread whose room_name IS the client identity
+Upwork exposes (a PERSON, e.g. 'Amanda Thomas', not always the company brand).
+
+This fills client_company from that room_name where it is currently empty. Only
+fills blanks — never overwrites a real value — so it is safe and idempotent. The
+going-forward sync now captures roomName directly (upsert_contract/proposal).
+
+    PYTHONPATH=. python3 bin/upwork-backfill-client-names            # dry-run
+    PYTHONPATH=. python3 bin/upwork-backfill-client-names --commit
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db                                    # noqa: E402
+
+
+def _rows(conn, table):
+    return conn.execute(
+        f"SELECT x.id, t.room_name FROM {table} x"
+        " JOIN threads t ON t.id = x.thread_id"
+        " WHERE (x.client_company IS NULL OR x.client_company='')"
+        "   AND t.room_name IS NOT NULL AND t.room_name != ''").fetchall()
+
+
+def main() -> int:
+    commit = "--commit" in sys.argv
+    dbp = config.DB_PATH
+    with db.connect(dbp) as conn:
+        plan = {t: _rows(conn, t) for t in ("contracts", "proposals")}
+
+    for table, rows in plan.items():
+        print(f"\n{table}: {len(rows)} rows fillable from room_name")
+        for r in rows[:8]:
+            print(f"   {r['id']}  <-  {r['room_name']}")
+        if len(rows) > 8:
+            print(f"   … and {len(rows) - 8} more")
+
+    if not commit:
+        print("\ndry-run — pass --commit to write (fills blanks only)")
+        return 0
+
+    with db.connect(dbp) as conn:
+        for table, rows in plan.items():
+            conn.executemany(
+                f"UPDATE {table} SET client_company=?,"
+                " updated_at=datetime('now') WHERE id=?"
+                " AND (client_company IS NULL OR client_company='')",
+                [(r["room_name"], r["id"]) for r in rows])
+    print(f"\nwrote {sum(len(r) for r in plan.values())} rows")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

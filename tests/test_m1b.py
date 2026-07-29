@@ -190,6 +190,33 @@ class TestSyncUpserts(M1bCase):
         self.assertTrue(row["created_dt"].startswith("2026-"))  # ISO, not epoch
         self.assertNotIn("17791", row["created_dt"])
 
+    def test_room_name_fills_client_company_when_payload_has_none(self):
+        # ROOM_LIST's contract/proposal nodes carry no client, so the room
+        # display name is the only client identity — never leave a row nameless
+        # (2026-07-30: 57 contracts + 79 proposals had empty client_company)
+        with db.connect(self.db_path) as conn:
+            v = vp(pid="pRN", status="Submitted")
+            v["client"] = {}                     # payload carries no company
+            sync_state.upsert_proposal(conn, v, "t1",
+                                       room_name="Amanda Thomas, Amanda T")
+            sync_state.upsert_contract(
+                conn, {"id": "cRN", "title": "Airtable build", "status": "ACTIVE",
+                       "job": {"id": "j1", "title": "Airtable"}},
+                "t1", profile="personal", room_name="Brandi Jordan")
+            p = conn.execute("SELECT client_company FROM proposals WHERE id='pRN'").fetchone()
+            c = conn.execute("SELECT client_company FROM contracts WHERE id='cRN'").fetchone()
+        self.assertEqual(p["client_company"], "Amanda Thomas, Amanda T")
+        self.assertEqual(c["client_company"], "Brandi Jordan")
+
+    def test_payload_company_wins_over_room_name(self):
+        # if Upwork ever DOES supply companyName, it takes precedence
+        with db.connect(self.db_path) as conn:
+            v = vp(pid="pC", status="Submitted")
+            v["client"] = {"companyName": "Real Co Ltd"}
+            sync_state.upsert_proposal(conn, v, "t1", room_name="Some Person")
+            row = conn.execute("SELECT client_company FROM proposals WHERE id='pC'").fetchone()
+        self.assertEqual(row["client_company"], "Real Co Ltd")
+
     def test_proposal_insert_then_update(self):
         with db.connect(self.db_path) as conn:
             self.assertEqual(sync_state.upsert_proposal(conn, vp(), "t1"),
