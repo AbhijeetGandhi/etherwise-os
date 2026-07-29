@@ -538,6 +538,32 @@ class TestClientEconomics(unittest.TestCase):
         self.assertFalse(rem["passthrough"])
         self.assertNotIn("Deel", [c["name"] for c in out["clients"]])
 
+    def test_csv_revenue_links_via_job_title_to_its_contract(self):
+        # the agency Upwork-CSV rows carry no assignment_company — only a job
+        # title in the description. That title bridges to a contract that names
+        # the client, so the earning is attributed, not stranded in unlinked
+        # (2026-07-30: $10.6k of real revenue was sitting unlinked).
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO contracts (id, title, client_company, upwork_status)"
+                " VALUES ('c9','Ai Automations sales outbound & Inbound',"
+                "'Ioannis Pirigkos, Ioannis P','ACTIVE')")
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, description, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt) VALUES"
+                " ('csv1','kcsv1','Fixed Earning','income','Upwork-CSV',"
+                "'Ai Automations sales outbound & Inbound · Earnings for Jul 20-26',"
+                " 90000,90000,'USD','revenue','2026-07-26T00:00:00+0000')")
+        out = data.clients(self.db_path)
+        # attributed to the contract's client (canonicalised: Ioannis -> Beglaubigt)
+        beg = next(c for c in out["clients"] if c["name"] == "Beglaubigt")
+        self.assertEqual(beg["revenue_usd"], 900.0)
+        # and NOT sitting in the unlinked bucket
+        unlinked = data.client_transactions(self.db_path, client="__unlinked__")
+        self.assertFalse(any("Ai Automations" in (r["desc"] or "")
+                             for r in unlinked["rows"]))
+
     def test_unparseable_revenue_goes_to_unlinked_never_a_client(self):
         out = data.clients(self.db_path)
         self.assertEqual(out["unlinked"]["usd"], 3000.0)     # the bank row

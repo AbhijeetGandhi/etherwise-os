@@ -179,6 +179,12 @@ CLIENT_CANONICAL = {
     "dilip n malave": "Remotual",
     "dilip malave": "Remotual",
     "remotual": "Remotual",
+    # Ioannis Pirigkos == Beglaubigt (Abhijeet, 2026-07-30): Upwork names the
+    # person across two truncations; the company is Beglaubigt. Unifies the
+    # Upwork-API 'Ioannis P' row with the CSV rows linked via contract title.
+    "ioannis pirigkos, ioannis p": "Beglaubigt",
+    "ioannis pirigkos": "Beglaubigt",
+    "ioannis p": "Beglaubigt",
     # Ledger-identity merge (Abhijeet, 2026-07-30): same client across two names,
     # no dossier yet — canonical is the company name (not the person). This is an
     # identity fact, distinct from a dossier link.
