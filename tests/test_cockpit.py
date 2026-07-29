@@ -480,6 +480,23 @@ class TestClientEconomics(unittest.TestCase):
         names = [c["name"] for c in out["clients"]]
         self.assertIn("Horizons ABA", names)                 # canonical-mapped
 
+    def test_same_client_across_eras_merges_upwork_and_wise(self):
+        # Alexander Apfel (Upwork, earlier) and Horizons ABA (Wise, now) are one
+        # client (Abhijeet, 2026-07-30) — both map to the dossier name
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, assignment_company, amount_minor,"
+                " amount_base_minor, currency, pnl_bucket, creation_dt) VALUES"
+                " ('ax','kax','Fixed Earning','income','Upwork','Alexander Apfel',"
+                " 700000,700000,'USD','revenue','2025-11-01T00:00:00+0000')")
+        out = data.clients(self.db_path)
+        names = [c["name"] for c in out["clients"]]
+        self.assertNotIn("Alexander Apfel", names)           # folded in
+        h = next(c for c in out["clients"] if c["name"] == "Horizons ABA")
+        self.assertEqual(sorted(h["channels"]), ["Upwork", "Wise"])
+        self.assertEqual(h["revenue_usd"], 27000.0)          # 20k Wise + 7k Upwork
+
     def test_resolved_passthrough_merges_all_its_names(self):
         # Deel (EOR) + Dilip Malave + an Upwork 'Remotual' are one client once
         # mapped — three ledger names collapse to Remotual (Abhijeet, 2026-07-27)

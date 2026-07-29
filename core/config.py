@@ -170,6 +170,9 @@ CLIENT_CANONICAL = {
     "adelye ltd": "Adelye", "adelye": "Adelye",         # -> dossier: adelye
     "horizons aba midco": "Horizons ABA",               # -> dossier: horizons-aba
     "horizons aba": "Horizons ABA",
+    # same client across two eras: Upwork as 'Alexander Apfel' first, now Wise as
+    # Horizons ABA (Abhijeet, 2026-07-30)
+    "alexander apfel": "Horizons ABA",
     # Remotual pays through Deel (EOR); Dilip Malave is the person there
     # (Abhijeet, 2026-07-27) — three ledger names, one client.
     "deel": "Remotual",
