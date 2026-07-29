@@ -163,15 +163,48 @@ def knowledge(db_path: Optional[Path] = None, *, client: Optional[str] = None,
                     "results": _kb_search(conn, q, client)}
         if client:
             return _kb_dossier(conn, client)
-        return _kb_overview(conn)
+        return _kb_overview(conn, db_path=db_path)
     finally:
         conn.close()
 
 
-def _kb_overview(conn) -> dict:
+_KB_STALE_DAYS = 30       # a dossier not recompiled in this long is stale
+
+
+def _kb_overview(conn, db_path: Optional[Path] = None) -> dict:
+    today = _ist_today()
     dossiers = [dict(r) for r in conn.execute(
         "SELECT client_id, client_name, fact_count, source_count,"
         " last_compiled_at FROM dossier_index ORDER BY fact_count DESC")]
+
+    # revenue cross-link: the dossier names now reconcile with the Clients
+    # economics view, so each dossier can carry what the client is worth. Best
+    # effort — if finance-doctor is RED the revenue simply isn't shown (never a
+    # wrong number). Keyed accent-insensitively, same as the Clients merge.
+    rev_by_client = {}
+    try:
+        cl = clients(db_path)
+        if not cl.get("blocked"):
+            rev_by_client = {_deaccent(c["name"]): c["revenue_usd"]
+                             for c in cl["clients"]}
+    except Exception:  # noqa: BLE001 — a cross-link must never break the panel
+        rev_by_client = {}
+
+    def _stale_days(iso):
+        try:
+            return (date.fromisoformat(today)
+                    - date.fromisoformat((iso or "")[:10])).days
+        except ValueError:
+            return None
+    for d in dossiers:
+        d["revenue_usd"] = rev_by_client.get(_deaccent(d["client_name"] or ""))
+        d["stale_days"] = _stale_days(d["last_compiled_at"])
+        d["stale"] = bool(d["stale_days"] is not None
+                          and d["stale_days"] > _KB_STALE_DAYS)
+        # a zero that explains itself: no facts is 'not compiled', not 'known empty'
+        d["empty_reason"] = ("never compiled" if not d["last_compiled_at"]
+                             else None) if not d["fact_count"] else None
+
     totals = conn.execute(
         "SELECT (SELECT COUNT(*) FROM facts) facts,"
         " (SELECT COUNT(*) FROM sources) sources,"
@@ -179,14 +212,32 @@ def _kb_overview(conn) -> dict:
         " (SELECT COUNT(*) FROM facts WHERE scope='agency') agency_facts,"
         " (SELECT COUNT(*) FROM facts WHERE scope='cross-client') cross_facts"
     ).fetchone()
+    compiled = [d["last_compiled_at"] for d in dossiers if d["last_compiled_at"]]
+    oldest = min(compiled) if compiled else None
+    freshness = {
+        "dossiers": len(dossiers),
+        "stale": sum(1 for d in dossiers if d["stale"]),
+        "oldest_compile": oldest,
+        "oldest_days": _stale_days(oldest) if oldest else None,
+        "kb_daily_last": _last_success(conn, "kb_daily"),
+        "stale_after_days": _KB_STALE_DAYS,
+    }
     return {
         "mode": "overview",
         "dossiers": dossiers,
         "totals": dict(totals),
+        "freshness": freshness,
         "proof_points": {"agency": totals["agency_facts"],
                          "cross": totals["cross_facts"]},
         "fathom": _fathom_status(conn),
     }
+
+
+def _last_success(conn, task_name: str) -> Optional[str]:
+    row = conn.execute(
+        "SELECT completed_at FROM runs WHERE task_name=? AND status='completed'"
+        " ORDER BY completed_at DESC LIMIT 1", (task_name,)).fetchone()
+    return row["completed_at"] if row else None
 
 
 def _kb_dossier(conn, client: str) -> dict:

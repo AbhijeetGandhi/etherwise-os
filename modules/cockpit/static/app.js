@@ -1340,22 +1340,42 @@ const RENDERERS = {
   },
   Knowledge: async (view) => {
     const d = await api("/api/knowledge");
-    view.appendChild(el("h2", "section", "Knowledge"));
+    view.appendChild(el("h2", "section",
+      `Knowledge <span class="hint muted">— the cited client memory; every`
+      + ` dossier carries what the client is worth</span>`));
     if (d.status === "stub") { placeholder(view, d.message); return; }
+
+    // ── freshness line (a stale KB serving old facts is a dead feed) ──
+    const fr = d.freshness || {};
+    const kbOk = !fr.stale && fr.oldest_days != null;
+    const sline = el("div", "srcline" + (kbOk ? " ok" : " bad"));
+    sline.innerHTML = (kbOk ? "✓ " : "⚠ ")
+      + (fr.dossiers
+          ? `${fr.dossiers} dossiers · ${fr.stale || 0} stale (>${fr.stale_after_days}d)`
+            + (fr.oldest_days != null ? ` · oldest recompiled ${fr.oldest_days}d ago` : "")
+            + (fr.kb_daily_last ? ` · kb-daily ran ${esc(fr.kb_daily_last.replace("T", " ").slice(5, 16))}` : " · kb-daily never ran")
+          : "no dossiers compiled yet");
+    view.appendChild(sline);
 
     const t = d.totals || {};
     const strip = el("div", "grid");
     strip.appendChild(card("Facts", `<div class="metric">${t.facts || 0}</div>`
-      + `<div class="muted">${t.client_facts || 0} client · ${t.agency_facts || 0} agency · ${t.cross_facts || 0} cross</div>`));
-    strip.appendChild(card("Sources", `<div class="metric">${t.sources || 0}</div>`));
+      + `<div class="muted small">${t.client_facts || 0} client · ${t.agency_facts || 0} agency · ${t.cross_facts || 0} cross</div>`));
+    strip.appendChild(card("Sources", `<div class="metric">${t.sources || 0}</div>`
+      + `<div class="muted small">meetings, docs & threads behind the facts</div>`));
     const f = d.fathom || {};
-    strip.appendChild(card("Fathom poller",
-      `<div class="muted">HWM: ${esc(f.cursor) || "—"}</div>`
-      + `<div class="muted">Last poll: ${esc(f.last_poll) || "never"}</div>`));
+    strip.appendChild(card("Fathom ingest",
+      `<div class="metric small">${f.last_poll ? "live" : "idle"}</div>`
+      + `<div class="muted small">${f.last_poll
+          ? "last poll " + esc(String(f.last_poll).replace("T", " ").slice(0, 16))
+          : "no poll yet — transcripts flow in once it runs"}</div>`
+      + `<div class="muted small">watermark ${esc((f.cursor || "—")).slice(0, 16)}</div>`));
     const pp = d.proof_points || {};
+    const ppn = (pp.agency || 0) + (pp.cross || 0);
     strip.appendChild(card("Proof-points",
-      `<div class="metric">${(pp.agency || 0) + (pp.cross || 0)}</div>`
-      + `<div class="muted">${pp.agency || 0} agency · ${pp.cross || 0} cross-client</div>`));
+      `<div class="metric">${ppn}</div>`
+      + `<div class="muted small">${ppn ? `${pp.agency || 0} agency · ${pp.cross || 0} cross-client`
+          : "none captured yet — agency/cross-client facts you can cite in pitches"}</div>`));
     view.appendChild(strip);
 
     // Ask box — proxies the kb-librarian (model runs out-of-process)
@@ -1415,14 +1435,21 @@ const RENDERERS = {
     search.append(srow, sres);
     view.appendChild(search);
 
-    // Dossier browser
-    view.appendChild(el("h2", "section", "Dossiers"));
+    // Dossier browser — each card ties knowledge to economics + freshness
+    view.appendChild(el("h2", "section",
+      `Dossiers <span class="hint muted">— facts + revenue-to-date · click to`
+      + ` open</span>`));
     const detail = el("div", "kb-detail");
     const grid = el("div", "grid");
     (d.dossiers || []).forEach((x) => {
-      const c = card(esc(x.client_name),
+      const rev = x.revenue_usd != null
+        ? `<span class="pill ok">${fmtUsd(x.revenue_usd)}</span>` : "";
+      const stale = x.stale
+        ? ` <span class="pill warn" title="not recompiled in over ${fr.stale_after_days} days">stale ${x.stale_days}d</span>` : "";
+      const c = card(esc(x.client_name) + " " + rev,
         `<div class="metric">${x.fact_count}</div>`
-        + `<div class="muted">${x.source_count} sources · compiled ${esc((x.last_compiled_at||"").slice(0,10))}</div>`);
+        + `<div class="muted small">${x.source_count} sources · compiled `
+        + `${esc((x.last_compiled_at || "").slice(0, 10)) || (x.empty_reason || "—")}${stale}</div>`);
       c.style.cursor = "pointer";
       c.onclick = () => openDossier(x.client_id, detail);
       grid.appendChild(c);

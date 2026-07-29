@@ -824,6 +824,30 @@ class TestKnowledgeReader(unittest.TestCase):
         self.assertEqual(out["fathom"]["cursor"], "2026-06-10T00:00:00Z")
         self.assertEqual(out["dossiers"][0]["client_id"], "adelye")
 
+    def test_freshness_flags_a_stale_dossier(self):
+        self._seed_kb()   # dossier compiled 2026-06-17
+        # far in the future -> the dossier is well past the stale window
+        out = data.knowledge(self.db_path)  # _ist_today() is 'now' (2026-07+)
+        fr = out["freshness"]
+        self.assertEqual(fr["dossiers"], 1)
+        self.assertGreater(fr["oldest_days"], 30)
+        self.assertEqual(fr["stale"], 1)
+        self.assertTrue(out["dossiers"][0]["stale"])
+
+    def test_revenue_cross_link_uses_dossier_name(self):
+        # a dossier whose name matches a paying client shows that revenue; the
+        # names reconcile because Clients canonicalises to the dossier spelling
+        self._seed_kb()
+        seed_client_econ(self.db_path)   # adds Adelye revenue (Upwork+Wise)
+        out = data.knowledge(self.db_path)
+        adelye = next(d for d in out["dossiers"] if d["client_name"] == "Adelye")
+        self.assertEqual(adelye["revenue_usd"], 15000.0)
+
+    def test_revenue_absent_when_no_matching_client(self):
+        self._seed_kb()          # Adelye dossier, but no ledger revenue seeded
+        out = data.knowledge(self.db_path)
+        self.assertIsNone(out["dossiers"][0]["revenue_usd"])   # honest: no number
+
     def test_dossier_detail_client_scope_only(self):
         self._seed_kb()
         out = data.knowledge(self.db_path, client="adelye")
