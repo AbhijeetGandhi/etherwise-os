@@ -161,13 +161,24 @@ _FTS_TERM = _re.compile(r"[A-Za-z0-9]+")
 
 
 def _fathom_status(conn) -> dict:
+    """Fathom ingest state. The poll runs INSIDE the daily kb_daily task (there
+    is no separate 'fathom_poll' task — reading that name reported 'never' while
+    it was in fact polling every morning). Surface the last kb_daily completion
+    and how many transcripts that run saved."""
     row = conn.execute("SELECT value FROM sync_cursors WHERE name="
                        "'fathom_created_after'").fetchone()
     last = conn.execute(
-        "SELECT completed_at FROM runs WHERE task_name='fathom_poll' AND"
-        " status='completed' ORDER BY id DESC LIMIT 1").fetchone()
+        "SELECT completed_at, metrics_json FROM runs WHERE task_name='kb_daily'"
+        " AND status='completed' ORDER BY completed_at DESC LIMIT 1").fetchone()
+    saved = None
+    if last and last["metrics_json"]:
+        try:
+            saved = (json.loads(last["metrics_json"]).get("fathom") or {}).get("saved")
+        except (TypeError, ValueError):
+            saved = None
     return {"cursor": row["value"] if row else None,
-            "last_poll": last["completed_at"] if last else None}
+            "last_poll": last["completed_at"] if last else None,
+            "last_saved": saved}
 
 
 def nudges(db_path: Optional[Path] = None) -> dict:

@@ -1418,11 +1418,12 @@ const RENDERERS = {
       + `<div class="muted small">meetings, docs & threads behind the facts</div>`));
     const f = d.fathom || {};
     strip.appendChild(card("Fathom ingest",
-      `<div class="metric small">${f.last_poll ? "live" : "idle"}</div>`
+      `<div class="metric small">${f.last_poll ? "daily ✓" : "not running"}</div>`
       + `<div class="muted small">${f.last_poll
-          ? "last poll " + esc(String(f.last_poll).replace("T", " ").slice(0, 16))
-          : "no poll yet — transcripts flow in once it runs"}</div>`
-      + `<div class="muted small">watermark ${esc((f.cursor || "—")).slice(0, 16)}</div>`));
+          ? "last pull " + esc(String(f.last_poll).replace("T", " ").slice(5, 16))
+            + (f.last_saved != null ? ` · ${f.last_saved} new transcript${f.last_saved === 1 ? "" : "s"}` : "")
+          : "kb-daily has not completed — transcripts are not being pulled"}</div>`
+      + `<div class="muted small">through ${esc((f.cursor || "—")).slice(0, 16)}</div>`));
     const pp = d.proof_points || {};
     const ppn = (pp.agency || 0) + (pp.cross || 0);
     strip.appendChild(card("Proof-points",

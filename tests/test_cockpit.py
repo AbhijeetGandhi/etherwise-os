@@ -896,6 +896,20 @@ class TestKnowledgeReader(unittest.TestCase):
         self.assertEqual(out["fathom"]["cursor"], "2026-06-10T00:00:00Z")
         self.assertEqual(out["dossiers"][0]["client_id"], "adelye")
 
+    def test_fathom_status_reads_kb_daily_not_a_phantom_task(self):
+        # the poll runs INSIDE kb_daily; reading a 'fathom_poll' task reported
+        # 'never' while it was polling every morning (2026-07-30 fix)
+        self._seed_kb()
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO runs (task_name, started_at, completed_at, status,"
+                " shadow, metrics_json) VALUES ('kb_daily',"
+                " '2026-07-29T05:15:00+05:30','2026-07-29T05:15:40+05:30',"
+                " 'completed',0,'{\"fathom\":{\"saved\":3}}')")
+        f = data.knowledge(self.db_path)["fathom"]
+        self.assertEqual(f["last_poll"], "2026-07-29T05:15:40+05:30")
+        self.assertEqual(f["last_saved"], 3)
+
     def test_freshness_flags_a_stale_dossier(self):
         self._seed_kb()   # dossier compiled 2026-06-17
         # far in the future -> the dossier is well past the stale window
