@@ -360,6 +360,19 @@ def _wise_payer(description: Optional[str]) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
+_BANK_SOURCES = ("IDFC", "Bank")
+_BANK_PAYER = _re.compile(r"^(?:IMPS|NEFT|RTGS|IMPS-OPM)/[^/]+/([^/]+)/", _re.I)
+
+
+def _bank_payer(description: Optional[str]) -> Optional[str]:
+    """The remitter name in an IMPS/NEFT/RTGS credit ('IMPS/<ref>/<PAYER>/...').
+    Used ONLY to attribute a bank credit to a KNOWN client alias — raw payer
+    strings ('VISAPAYMENTSLIM', 'APIBankingEB') are processor noise, so the
+    caller must require a CLIENT_CANONICAL hit, never the raw fallback."""
+    m = _BANK_PAYER.match((description or "").strip())
+    return m.group(1).strip() if m else None
+
+
 def _job_title(description: Optional[str]) -> Optional[str]:
     """The job title an Upwork earning names before its ' · Earnings/Contract'
     suffix. The agency weekly CSV puts ONLY this in the description — no
@@ -390,6 +403,13 @@ def _client_key(row: dict, title_map: Optional[dict] = None) -> Optional[str]:
         jt = _job_title(row.get("description"))
         if jt and jt in title_map:
             return _canon_client(title_map[jt])
+    # 4th path: a bank credit (IMPS/NEFT) whose remitter maps to a KNOWN client
+    # alias. Requires an explicit CLIENT_CANONICAL hit — never the raw payer, so
+    # processor names never become junk clients.
+    if (row.get("source") or "") in _BANK_SOURCES:
+        payer = _bank_payer(row.get("description"))
+        if payer and _deaccent(payer) in config.CLIENT_CANONICAL:
+            return config.CLIENT_CANONICAL[_deaccent(payer)]
     return None
 
 

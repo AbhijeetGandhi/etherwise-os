@@ -189,6 +189,7 @@ CLIENT_CANONICAL = {
     # no dossier yet — canonical is the company name (not the person). This is an
     # identity fact, distinct from a dossier link.
     "mike gandia": "CMF Publishing",         # Upwork person == Wise 'CMF Publishing LLC'
+    "michaelxavierga": "CMF Publishing",     # IMPS bank remitter (Abhijeet, 2026-07-30)
     "cmf publishing llc": "CMF Publishing",
     "cmf publishing": "CMF Publishing",
     # NOT merged on purpose (Abhijeet, 2026-07-27): real client, NO dossier, and

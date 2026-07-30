@@ -572,6 +572,27 @@ class TestClientEconomics(unittest.TestCase):
         self.assertFalse(any("Ai Automations" in (r["desc"] or "")
                              for r in unlinked["rows"]))
 
+    def test_bank_imps_payer_attributes_only_via_known_alias(self):
+        # a bank credit whose IMPS remitter maps to a known alias attributes;
+        # an unmapped processor name (VISAPAYMENTSLIM) stays unlinked, never junk
+        with db.connect(self.db_path) as conn:
+            for rid, desc, minor in [
+                ("mx", "IMPS/517927008007/MichaelXavierGa/RATN0000088/4553", 100000),
+                ("vp", "IMPS/534521507789/VISAPAYMENTSLIM/HDFC0000240/6389", 7000)]:
+                conn.execute(
+                    "INSERT INTO transactions (record_id, canonical_key, type,"
+                    " category, source, description, amount_minor,"
+                    " amount_base_minor, currency, pnl_bucket, creation_dt)"
+                    " VALUES (?,?, 'Fixed Earning','income','IDFC',?,?,?, 'USD',"
+                    "'revenue','2025-10-02T00:00:00+0000')",
+                    (rid, "k" + rid, desc, minor, minor))
+        out = data.clients(self.db_path)
+        names = [c["name"] for c in out["clients"]]
+        cmf = next(c for c in out["clients"] if c["name"] == "CMF Publishing")
+        self.assertEqual(cmf["revenue_usd"], 1000.0)      # Michael Xavier folded in
+        self.assertNotIn("VISAPAYMENTSLIM", names)        # processor noise -> unlinked
+        self.assertNotIn("MichaelXavierGa", names)
+
     def test_unparseable_revenue_goes_to_unlinked_never_a_client(self):
         out = data.clients(self.db_path)
         self.assertEqual(out["unlinked"]["usd"], 3000.0)     # the bank row

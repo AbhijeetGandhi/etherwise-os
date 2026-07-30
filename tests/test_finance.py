@@ -878,6 +878,24 @@ class TestPnl(unittest.TestCase):
         # non-bank sources with category=expense keep opex (unchanged behavior)
         self.assertEqual(b({"category": "expense", "source": "Wise"}), "opex")
 
+    def test_personal_counterparty_return_is_not_revenue(self):
+        # Dynatech: a private transfer Abhijeet sent (-) and got back (+). The
+        # RETURN carried category='income' and was mis-booked revenue; a personal
+        # counterparty overrides that -> owner_draw, both directions (2026-07-30).
+        from modules.finance import pnl
+        b = pnl.bucket
+        ret = {"category": "income", "source": "IDFC",
+               "description": "NEFT/002651944142/DYNATECH ENGINEERING/UBIN05",
+               "amount_base_minor": 1055000}
+        self.assertEqual(b(ret), "owner_draw")           # NOT revenue
+        out = {"category": "expense", "source": "IDFC",
+               "description": "NEFT/IDFB5/DYNATECH ENGINEERING/UB",
+               "amount_base_minor": -1114000}
+        self.assertEqual(b(out), "owner_draw")
+        # a genuine income row from a real client is untouched
+        self.assertEqual(b({"category": "income", "source": "IDFC",
+                            "description": "IMPS/1/RealClient/HDFC"}), "revenue")
+
 
 class TestBucketizeAmountDependent(unittest.TestCase):
     """Regression (2026-07-08): bucket() became amount-dependent (salary floor),

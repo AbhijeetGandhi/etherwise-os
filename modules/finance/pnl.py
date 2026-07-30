@@ -46,6 +46,11 @@ BUSINESS_POS_VENDORS = (
 _RENT_PAYEES = ("RAKHI MUKESH BOHRA",)                 # office rent
 _CONTRACTOR_PAYEES = ("HARSHIT SINGHAL", "ATHARVA AJAY BARAWKA")
 _EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
+# personal (non-business) counterparties: bank money EITHER direction is
+# personal, never revenue/opex. Dynatech was a private transfer Abhijeet sent
+# (-$11,140, correctly owner_draw) that was returned (+$10,550) — but the return
+# carried category='income' and got mis-booked as revenue (Abhijeet, 2026-07-30).
+_PERSONAL_COUNTERPARTIES = ("DYNATECH",)
 _SALARY_MIN_BASE_MINOR = 100_000                       # $1,000 — salary-shaped floor
 
 
@@ -84,6 +89,12 @@ def bucket(row: dict) -> str:
         return "sweep"
     if cat == "cc_settlement":
         return "cc_settlement"
+    # personal counterparties override any category (incl. a mis-tagged 'income'
+    # on a returned private transfer) — bank money with them is never business
+    if (row.get("source") or "") in BANK_SOURCES and any(
+            p in (row.get("description") or "").upper()
+            for p in _PERSONAL_COUNTERPARTIES):
+        return "owner_draw"
     if cat == "owner_draw":
         return "owner_draw"
     if cat == "income":
