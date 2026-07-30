@@ -375,6 +375,14 @@ class TestTodayReader(unittest.TestCase):
         urg = [q["urgency"] for q in out["queue"]]
         self.assertEqual(urg, sorted(urg, reverse=True))    # ruthlessly ranked
 
+    def test_queue_items_carry_client_and_detail(self):
+        # every card names who it's about + a detail block for the click-to-expand
+        out = data.today(self.db_path, today="2026-06-15")
+        fu = next(q for q in out["queue"] if q["kind"] == "followup")
+        self.assertEqual(fu["client"], "Room rA")          # thread room_name
+        self.assertIn("draft", fu["detail"])
+        self.assertEqual(fu["detail"]["tier"], "HOT")
+
     def test_paused_backlog_frames_intent_not_neglect(self):
         with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", "2026-06-01"):
             out = data.today(self.db_path, today="2026-06-15")

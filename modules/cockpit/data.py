@@ -1092,6 +1092,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         follow_ups = [{
             "thread_id": r["thread_id"],
             "topic": r["topic"] or r["room_name"],
+            "client": r["room_name"],           # who the thread is with
             "tier": r["tier"], "bucket": r["bucket"],
             "draft": r["body"], "word_count": r["word_count"],
             # real thread age (days) so the queue reads honestly — the old UI
@@ -1192,6 +1193,18 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     # matching M4 nudge is DEDUPED out (never list the same thread twice). Hot
     # leads are deliberately NOT here while paused — they are the backlog above.
     now_dt = datetime.now(config.TZ)
+    # lookups so every card can name its CLIENT and show detail on click: a
+    # thread's room name (owed_reply dedup is 'followup:<room_id>'), and a
+    # commitment's source citation (commitment dedup is 'commitment:<id>').
+    tconn = _ro(db_path)
+    try:
+        room_client = {r["id"]: r["room_name"] for r in tconn.execute(
+            "SELECT id, room_name FROM threads WHERE room_name IS NOT NULL")}
+        commit_info = {str(r["id"]): dict(r) for r in tconn.execute(
+            "SELECT id, text, due, source_cite, state FROM commitments")}
+    finally:
+        tconn.close()
+
     queue = []
     fu_threads = {f["thread_id"] for f in follow_ups}
     for f in follow_ups:
@@ -1204,25 +1217,44 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         urg = round(urg * (1.0 + min((f.get("age_days") or 0), 14) / 14.0), 3)
         queue.append({
             "kind": "followup", "urgency": urg,
-            "title": f["topic"], "tier": f["tier"], "bucket": f["bucket"],
+            "title": f["topic"], "client": f.get("client"),
+            "tier": f["tier"], "bucket": f["bucket"],
             "age_days": f["age_days"], "draft": f["draft"],
-            "thread_url": f["thread_url"], "item_key": f"followup:{f['thread_id']}"})
+            "thread_url": f["thread_url"], "item_key": f"followup:{f['thread_id']}",
+            "detail": {"kind": "Follow-up (draft ready)", "client": f.get("client"),
+                       "age_days": f["age_days"], "tier": f["tier"],
+                       "thread_url": f["thread_url"], "draft": f["draft"]}})
     # actionable M4 nudges — everything except the paused hot-lead stream, and
     # minus any owed_reply whose thread is already a follow-up row above
     for n in _eng.active_nudges(db_path or config.DB_PATH, now=now_dt):
         if n["kind"] == "hotlead_no_loom":
             continue                        # that IS the paused backlog
-        if n["kind"] == "owed_reply":
-            try:
-                pl = json.loads(n.get("payload_json") or "{}")
-            except (TypeError, ValueError):
-                pl = {}
-            if pl.get("thread_id") in fu_threads:
-                continue                    # already shown with its draft
+        dk = n["dedup_key"] or ""
+        try:
+            pl = json.loads(n.get("payload_json") or "{}")
+        except (TypeError, ValueError):
+            pl = {}
+        if n["kind"] == "owed_reply" and pl.get("thread_id") in fu_threads:
+            continue                        # already shown with its draft
+        # derive the client + detail for the clickable card
+        client, detail = None, {"kind": n["kind"].replace("_", " ")}
+        if dk.startswith("followup:"):
+            client = room_client.get(dk.split(":", 1)[1])
+            detail.update({"client": client, "thread_url":
+                           ROOM_URL.format(tid=dk.split(":", 1)[1]),
+                           "idle_days": pl.get("idle_days")})
+        elif dk.startswith("commitment:"):
+            ci = commit_info.get(dk.split(":", 1)[1]) or {}
+            client = pl.get("client")
+            detail.update({"full_text": ci.get("text"), "due": ci.get("due"),
+                           "source": ci.get("source_cite"), "client": client})
+        else:
+            detail.update({"job_url": pl.get("job_url"), "cite": pl.get("cite")})
         queue.append({
             "kind": "nudge", "nudge_kind": n["kind"], "urgency": n["urgency_live"],
             "title": n["title"], "action": n.get("action"), "due": n.get("due"),
-            "dept": n["dept"], "item_key": f"nudge:{n['dedup_key']}"})
+            "dept": n["dept"], "client": client,
+            "item_key": f"nudge:{n['dedup_key']}", "detail": detail})
     queue.sort(key=lambda e: e["urgency"], reverse=True)
     # ruthless: Today shows the sharpest few; the full ranked queue is the
     # Nudges tab. Overflow is stated, never silently dropped.

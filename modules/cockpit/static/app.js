@@ -18,6 +18,36 @@ function qstr(params) {
 }
 const nfmtG = (n) => Number(n).toLocaleString();
 
+// The expanded detail for a Today queue card — everything known about the item
+// (client, full text, when/where it came from, the draft), so a card answers
+// "what is this and who's it about?" on click.
+function qDetail(it) {
+  const d = it.detail || {};
+  const wrap = el("div", "q-detail-inner");
+  const rowKV = (k, v) => { if (v == null || v === "") return;
+    const r = el("div", "q-kv");
+    r.innerHTML = `<span class="k">${esc(k)}</span><span class="v">${v}</span>`;
+    wrap.appendChild(r); };
+  rowKV("Client", d.client ? esc(d.client) : '<span class="muted">not linked to a client</span>');
+  rowKV("Type", esc(d.kind));
+  if (d.full_text) rowKV("Detail", esc(d.full_text));
+  if (d.due) rowKV("Due", esc(String(d.due).slice(0, 10)));
+  if (d.idle_days != null) rowKV("Idle", esc(d.idle_days) + " days since the client wrote");
+  if (d.tier) rowKV("Tier", esc(d.tier));
+  if (d.source) rowKV("From", esc(d.source));      // e.g. the Fathom call cite
+  if (d.thread_url) rowKV("Thread",
+    `<a href="${esc(d.thread_url)}" target="_blank" rel="noopener">open in Upwork ↗</a>`);
+  if (d.job_url) rowKV("Job",
+    `<a href="${esc(d.job_url)}" target="_blank" rel="noopener">open job ↗</a>`);
+  if (d.draft) {
+    const dr = el("div", "q-draft");
+    dr.appendChild(el("div", "k", "Draft reply"));
+    dr.appendChild(el("div", "q-draft-body", esc(d.draft)));
+    wrap.appendChild(dr);
+  }
+  return wrap;
+}
+
 // ── theme (persisted; tokens.css carries the palettes) ──
 function initTheme() {
   const t = localStorage.getItem(THEME_KEY);
@@ -400,8 +430,12 @@ const RENDERERS = {
     q.forEach((it) => {
       const row = el("div", "q-row q-" + it.kind);
       const left = el("div", "q-left");
-      const title = el("div", "q-title", esc(it.title || "(untitled)"));
+      const title = el("div", "q-title clickable", esc(it.title || "(untitled)")
+        + ' <span class="q-expand muted">▸</span>');
       const meta = el("div", "q-meta");
+      // the CLIENT is the first thing on the meta line — who this is about
+      if (it.client) meta.appendChild(el("span", "q-client",
+        "👤 " + esc(it.client)));
       if (it.kind === "followup") {
         meta.append(pill("reply owed", "owed"),
                     pill(it.tier, "tier-" + (it.tier || "").toLowerCase()));
@@ -412,6 +446,17 @@ const RENDERERS = {
         if (it.due) meta.appendChild(el("span", "muted", " · due " + esc(it.due.slice(0, 10))));
       }
       left.append(title, meta);
+
+      // clickable card -> inline detail panel (more info about the item)
+      const detail = el("div", "q-detail");
+      detail.style.display = "none";
+      detail.appendChild(qDetail(it));
+      title.onclick = () => {
+        const open = detail.style.display === "none";
+        detail.style.display = open ? "block" : "none";
+        title.querySelector(".q-expand").textContent = open ? "▾" : "▸";
+      };
+
       const btns = el("div", "q-actions");
       if (it.kind === "followup") {
         const copy = el("button", "action primary", "Copy draft");
@@ -429,6 +474,7 @@ const RENDERERS = {
       btns.append(done, snooze);
       row.append(left, btns);
       qcard.appendChild(row);
+      qcard.appendChild(detail);
     });
     view.appendChild(qcard);
 
