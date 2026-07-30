@@ -14,6 +14,7 @@ pinned USD presentation (amount_base_minor); pure integer minor units, no float.
 """
 from __future__ import annotations
 
+import re as _re
 from collections import defaultdict
 from typing import Optional
 
@@ -51,6 +52,12 @@ _EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
 # (-$11,140, correctly owner_draw) that was returned (+$10,550) — but the return
 # carried category='income' and got mis-booked as revenue (Abhijeet, 2026-07-30).
 _PERSONAL_COUNTERPARTIES = ("DYNATECH",)
+# bank CREDITS that are NOT client revenue (Abhijeet, 2026-07-30): quarterly FD
+# interest (bank interest income) and refunds/reversals of expenses (cancelled
+# subscriptions, POS refunds, UPI reversals). Excluded from revenue -> owner_draw
+# (personal / non-operating), so they never inflate the top line.
+_NONREVENUE_BANK_RE = _re.compile(
+    r"FD INTEREST|/REV/|REF/POS|REF/VISAPOS|-CANCELLED", _re.I)
 _SALARY_MIN_BASE_MINOR = 100_000                       # $1,000 — salary-shaped floor
 
 
@@ -100,6 +107,11 @@ def bucket(row: dict) -> str:
     if (row.get("source") or "") in BANK_SOURCES and any(
             p in (row.get("description") or "").upper()
             for p in _PERSONAL_COUNTERPARTIES):
+        return "owner_draw"
+    # FD interest + expense refunds/reversals: bank credits that are not client
+    # revenue -> owner_draw (excluded from the operating P&L)
+    if (row.get("source") or "") in BANK_SOURCES and \
+            _NONREVENUE_BANK_RE.search(row.get("description") or ""):
         return "owner_draw"
     if cat == "owner_draw":
         return "owner_draw"

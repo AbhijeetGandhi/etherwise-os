@@ -384,6 +384,25 @@ def _job_title(description: Optional[str]) -> Optional[str]:
     return d.split(" · ")[0].strip() if " · " in d else None
 
 
+_INVOICE_FOR_RE = _re.compile(r"^Invoice for (.+?):", _re.I)
+
+
+def _upwork_label(description: Optional[str]) -> Optional[str]:
+    """A human label for an Upwork earning whose client Upwork masked ('no
+    company'/'S'). Abhijeet's call (2026-07-30): mark these by the JOB TITLE
+    itself so the money is at least named by what it was for, never 'unlinked'.
+    Handles 'Invoice for <title>: Milestone', '<title> · Earnings', and
+    '(id) <title> - hrs'."""
+    d = (description or "").strip()
+    m = _INVOICE_FOR_RE.match(d)
+    if m:
+        return m.group(1).strip()
+    if " · " in d:
+        return d.split(" · ")[0].strip()
+    m = _re.match(r"^\(\d+\)\s*(.+?)\s*-\s", d)
+    return m.group(1).strip() if m else None
+
+
 def _client_key(row: dict, title_map: Optional[dict] = None,
                 id_map: Optional[dict] = None) -> Optional[str]:
     """The canonical client a revenue row belongs to, or None if unattributable.
@@ -412,13 +431,19 @@ def _client_key(row: dict, title_map: Optional[dict] = None,
         m = _CONTRACT_ID_RE.match(desc.strip())
         if m and m.group(1) in id_map:
             return _canon_client(id_map[m.group(1)])
-    # 4th path: a bank credit (IMPS/NEFT) whose remitter maps to a KNOWN client
-    # alias. Requires an explicit CLIENT_CANONICAL hit — never the raw payer, so
+    # bank credit (IMPS/NEFT) whose remitter maps to a KNOWN client alias.
+    # Requires an explicit CLIENT_CANONICAL hit — never the raw payer, so
     # processor names never become junk clients.
     if (row.get("source") or "") in _BANK_SOURCES:
         payer = _bank_payer(row.get("description"))
         if payer and _deaccent(payer) in config.CLIENT_CANONICAL:
             return config.CLIENT_CANONICAL[_deaccent(payer)]
+    # LAST resort for Upwork earnings Upwork masked the client on: label by the
+    # job title itself so it is never nameless (Abhijeet, 2026-07-30).
+    if (row.get("source") or "").startswith("Upwork"):
+        lbl = _upwork_label(desc)
+        if lbl:
+            return _canon_client(lbl) or lbl
     return None
 
 

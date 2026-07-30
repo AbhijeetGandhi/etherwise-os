@@ -909,6 +909,20 @@ class TestPnl(unittest.TestCase):
         self.assertEqual(pnl.bucket({"type": "Hourly Earning",
                                      "description": "work"}), "revenue")
 
+    def test_fd_interest_and_refunds_are_not_revenue(self):
+        # bank interest + expense refunds/reversals -> owner_draw, not revenue
+        from modules.finance import pnl
+        for desc in ("QUARTERLY FD INTEREST CREDIT FOR 10241213363/Gross",
+                     "REF/POS-VISA/ADITYA BIRLA HE/160395/080725",
+                     "POS-VISA/WWW.MAKE.COM-CANCELLED/525418121293",
+                     "UPI/REV/618028066528/TRUPTI A/SBIN/truptig/UPI"):
+            self.assertEqual(pnl.bucket({"category": "income", "source": "IDFC",
+                                         "description": desc}), "owner_draw", desc)
+        # a normal IMPS client credit stays revenue
+        self.assertEqual(pnl.bucket({"category": "income", "source": "IDFC",
+                                     "description": "IMPS/1/SomeClient/HDFC"}),
+                         "revenue")
+
 
 class TestBucketizeAmountDependent(unittest.TestCase):
     """Regression (2026-07-08): bucket() became amount-dependent (salary floor),

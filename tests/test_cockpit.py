@@ -613,6 +613,25 @@ class TestClientEconomics(unittest.TestCase):
         self.assertNotIn("VISAPAYMENTSLIM", names)        # processor noise -> unlinked
         self.assertNotIn("MichaelXavierGa", names)
 
+    def test_masked_upwork_client_is_labelled_by_job_title(self):
+        # Upwork masked the client ('no company') -> label by the job title so
+        # it is never 'unlinked' (Abhijeet, 2026-07-30); milestones of one job
+        # merge under the same title
+        with db.connect(self.db_path) as conn:
+            for rid, minor in (("i1", 20000), ("i2", 14000)):
+                conn.execute(
+                    "INSERT INTO transactions (record_id, canonical_key, type,"
+                    " category, source, assignment_company, description,"
+                    " amount_minor, amount_base_minor, currency, pnl_bucket,"
+                    " creation_dt) VALUES (?,?, 'Fixed Earning','income','Upwork',"
+                    "'no company','Invoice for Voice Agent for Driving School:"
+                    " Milestone',?,?, 'USD','revenue','2025-04-20T00:00:00+0000')",
+                    (rid, "k" + rid, minor, minor))
+        out = data.clients(self.db_path)
+        c = next(x for x in out["clients"]
+                 if x["name"] == "Voice Agent for Driving School")
+        self.assertEqual(c["revenue_usd"], 340.0)          # both milestones merged
+
     def test_unparseable_revenue_goes_to_unlinked_never_a_client(self):
         out = data.clients(self.db_path)
         self.assertEqual(out["unlinked"]["usd"], 3000.0)     # the bank row
