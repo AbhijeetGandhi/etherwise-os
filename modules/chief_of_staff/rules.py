@@ -139,15 +139,20 @@ def rule_stale_dossier(db_path, now=None) -> List[dict]:
 
 
 def rule_commitments_due(db_path, now=None) -> List[dict]:
-    """Our open commitments due within COS_COMMITMENT_DUE_DAYS (or overdue) ->
-    escalate. Reads the commitments table (Phase 2 populates it; inert until)."""
+    """Our open commitments due within COS_COMMITMENT_DUE_DAYS (or recently
+    overdue) -> escalate. Bounded on BOTH sides: nothing overdue by more than
+    COS_COMMITMENT_STALE_DAYS, whose relative due date ('demo tomorrow' from an
+    old call) is no longer meaningful and only floods Today. Reads the
+    commitments table."""
     horizon = (_now(now) + timedelta(days=config.COS_COMMITMENT_DUE_DAYS))
+    stale_floor = (_now(now) - timedelta(days=config.COS_COMMITMENT_STALE_DAYS))
     out = []
     with db.connect(db_path) as conn:
         for r in conn.execute(
             "SELECT id, text, due, source_cite FROM commitments"
             " WHERE state='open' AND who='us' AND due IS NOT NULL"
-            " AND substr(due,1,10) <= ?", (horizon.strftime("%Y-%m-%d"),)):
+            " AND substr(due,1,10) <= ? AND substr(due,1,10) >= ?",
+            (horizon.strftime("%Y-%m-%d"), stale_floor.strftime("%Y-%m-%d"))):
             out.append({
                 "source": "commitment", "dept": "knowledge",
                 "kind": "commitment_due",

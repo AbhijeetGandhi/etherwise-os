@@ -316,6 +316,22 @@ COS_URGENCY_BASE = {
     "capture":          30,   # a captured note awaiting classification/action
 }
 COS_RECENCY_HALFLIFE_DAYS = 7.0   # urgency decays by half every 7 days of age
+# ONE-SHOT kinds: 'done'/'dismissed' is terminal — never resurrect on the next
+# sweep. A commitment, once fulfilled, does not recur, and (unlike owed_reply,
+# whose 'condition recurred' refire is intentional) its rule does not self-clear,
+# so without this a done commitment was re-created every hour and flooded Today
+# with months-old items (2026-07-30). Recurring kinds (owed_reply, system,
+# stale_dossier, escalate_client) are deliberately absent — they SHOULD refire
+# while their condition holds.
+COS_DONE_TERMINAL_KINDS = {"commitment_due", "won_no_outcome",
+                           "hotlead_no_loom", "deadline", "capture"}
+# A commitment overdue by MORE than this stops nudging. Commitments are
+# extracted with due dates RELATIVE to the call ('demo tomorrow' -> call+1), so
+# an old call leaves a permanently-overdue item that nagged Today for months
+# (2026-07-30: 54 of 79 dated commitments were >30d overdue). Past this window
+# the stated deadline is meaningless — it stays in the commitments table for
+# review but leaves the act-now queue. Today is for what's actionable now.
+COS_COMMITMENT_STALE_DAYS = 30
 # decay TTL in days per kind: None = never (until done); 0 = clears past its due
 COS_DECAY_TTL_DAYS = {
     "owed_reply":       7,

@@ -54,6 +54,8 @@ class TestDedup(CoSCase):
         self.assertEqual(active[0]["title"], "Reply to X (ping 2)")
 
     def test_done_then_refire_creates_new(self):
+        # owed_reply is a RECURRING kind: if the condition recurs after done, it
+        # SHOULD refire (this is by design, not the resurrection bug)
         a = self.nudge()
         nudges.set_state(self.db_path, state="done", dedup_key="followup:t1")
         c = self.nudge()                       # condition recurred
@@ -62,6 +64,21 @@ class TestDedup(CoSCase):
         self.assertEqual(len(self.rows("SELECT * FROM nudges")), 2)  # history kept
         self.assertEqual(len(self.rows(
             "SELECT * FROM nudges WHERE state='open'")), 1)
+
+    def test_one_shot_done_is_terminal_not_resurrected(self):
+        # a commitment, once done, must NOT come back on the next sweep — the
+        # bug that flooded Today with months-old items (2026-07-30)
+        w = lambda: nudges.write_nudge(
+            self.db_path, source="knowledge", dept="knowledge",
+            kind="commitment_due", title="Ship the POC",
+            dedup_key="commitment:99", now=dt())
+        a = w()
+        self.assertEqual(a["op"], "created")
+        nudges.set_state(self.db_path, state="done", dedup_key="commitment:99")
+        b = w()                                # next sweep re-derives it
+        self.assertEqual(b["op"], "suppressed-actioned")
+        self.assertEqual(len(self.rows(
+            "SELECT * FROM nudges WHERE state='open' AND dedup_key='commitment:99'")), 0)
 
     def test_active_unique_index_backstops(self):
         self.nudge()
@@ -389,6 +406,19 @@ class TestCommitments(CoSCase):
                          " ('client','theirs due','2026-06-23','c2','k2','open')")
         c = rules.rule_commitments_due(self.db_path, dt(d=22))
         self.assertEqual([x["title"] for x in c], ["Commitment due: ours due"])
+
+    def test_rule_drops_stale_overdue_commitments(self):
+        # a 'demo tomorrow' from an old call is permanently overdue and must NOT
+        # nag Today forever; only recently-due / upcoming ones surface
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO commitments (who,text,due,source_cite,"
+                         "dedup_key,state) VALUES"
+                         " ('us','ancient demo','2026-04-15','c1','k1','open'),"
+                         " ('us','recent deliverable','2026-06-20','c2','k2','open')")
+        c = rules.rule_commitments_due(self.db_path, dt(d=22))   # 'now' = 2026-06-22
+        titles = [x["title"] for x in c]
+        self.assertIn("Commitment due: recent deliverable", titles)
+        self.assertNotIn("Commitment due: ancient demo", titles)   # >30d overdue
 
     def test_extract_new_advances_cursor(self):
         s1 = self.seed_source(sid_ref="fathom/a")

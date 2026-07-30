@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Close the open nudges that were resurrected after being marked done.
+
+write_nudge used to re-INSERT a fresh open nudge whenever a done/dismissed one
+existed for the same dedup_key (it only deduped against open|snoozed). So every
+commitment Abhijeet marked done came back on the next sweep, and the Today queue
+filled with months-old items. The resurrection is fixed in write_nudge; this
+heals the rows already created — any OPEN nudge whose dedup_key also has a
+done/dismissed twin is set back to the state the human chose (done).
+
+    PYTHONPATH=. python3 bin/cos-heal-resurrected-nudges            # dry-run
+    PYTHONPATH=. python3 bin/cos-heal-resurrected-nudges --commit
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db                                    # noqa: E402
+
+# only ONE-SHOT kinds: a resurrected owed_reply is the DESIGNED refire (its
+# condition recurred), not a bug — leave those alone.
+_KINDS = tuple(config.COS_DONE_TERMINAL_KINDS)
+_FIND = f"""
+SELECT n.id, n.kind, n.dedup_key,
+       (SELECT d.state FROM nudges d WHERE d.dedup_key=n.dedup_key
+        AND d.state IN ('done','dismissed') ORDER BY d.id DESC LIMIT 1) twin_state
+FROM nudges n
+WHERE n.state='open' AND n.kind IN ({','.join('?' * len(_KINDS))})
+  AND EXISTS (SELECT 1 FROM nudges d WHERE d.dedup_key=n.dedup_key
+              AND d.state IN ('done','dismissed'))
+"""
+
+
+def main() -> int:
+    commit = "--commit" in sys.argv
+    with db.connect(config.DB_PATH) as conn:
+        rows = conn.execute(_FIND, _KINDS).fetchall()
+
+    by_kind: dict = {}
+    for r in rows:
+        by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
+    print(f"resurrected OPEN nudges (have a done/dismissed twin): {len(rows)}")
+    for k, n in sorted(by_kind.items(), key=lambda x: -x[1]):
+        print(f"   {k:16} {n}")
+
+    if not commit:
+        print("\ndry-run — pass --commit to set each back to its human-chosen state")
+        return 0
+
+    with db.connect(config.DB_PATH) as conn:
+        conn.executemany(
+            "UPDATE nudges SET state=?, updated_at=datetime('now') WHERE id=?",
+            [(r["twin_state"], r["id"]) for r in rows])
+    print(f"\nhealed {len(rows)} nudges")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

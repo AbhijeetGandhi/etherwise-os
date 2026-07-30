@@ -108,6 +108,20 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
                 (source, dept, kind, title, action, due, urgency, money_at_stake,
                  score, pj, ts, ts, row["id"]))
             return {"id": row["id"], "op": "refreshed", "urgency": urgency}
+        # RESPECT THE HUMAN for ONE-SHOT kinds: if a commitment (etc.) was marked
+        # done/dismissed, do NOT resurrect it. The old dedup only checked
+        # open|snoozed, so a done commitment was re-INSERTed as a fresh open row
+        # on the very next sweep — 'Done' never stuck and months-old commitments
+        # flooded Today every hour (2026-07-30: 55/55 open were resurrections).
+        # Recurring kinds (owed_reply) intentionally fall through and refire.
+        if kind in config.COS_DONE_TERMINAL_KINDS:
+            actioned = conn.execute(
+                "SELECT id FROM nudges WHERE dedup_key=? AND state IN"
+                " ('done','dismissed') ORDER BY id DESC LIMIT 1",
+                (dedup_key,)).fetchone()
+            if actioned:
+                return {"id": actioned["id"], "op": "suppressed-actioned",
+                        "urgency": 0.0}
         cur = conn.execute(
             "INSERT INTO nudges (source, dept, kind, title, action, due, urgency,"
             " money_at_stake, score, dedup_key, state, payload_json, created_at,"
