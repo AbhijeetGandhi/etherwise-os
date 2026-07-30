@@ -89,6 +89,12 @@ def bucket(row: dict) -> str:
         return "sweep"
     if cat == "cc_settlement":
         return "cc_settlement"
+    # ARPayment = the settlement leg of an Upwork membership/connects ARInvoice,
+    # paid via the freelancer's OWN card/PayPal (Abhijeet, 2026-07-30). The cost
+    # is the paired ARInvoice (already platform_fee); the payment leg is a
+    # non-P&L settlement, never revenue — it was inflating the top line.
+    if (row.get("upwork_type") or "").strip() == "ARPayment":
+        return "transfer"
     # personal counterparties override any category (incl. a mis-tagged 'income'
     # on a returned private transfer) — bank money with them is never business
     if (row.get("source") or "") in BANK_SOURCES and any(

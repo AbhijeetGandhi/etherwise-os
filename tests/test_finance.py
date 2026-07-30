@@ -896,6 +896,19 @@ class TestPnl(unittest.TestCase):
         self.assertEqual(b({"category": "income", "source": "IDFC",
                             "description": "IMPS/1/RealClient/HDFC"}), "revenue")
 
+    def test_arpayment_settlement_leg_is_not_revenue(self):
+        # 'Payment - Visa' funding an Upwork connects/membership ARInvoice is the
+        # settlement leg — the cost is the paired ARInvoice (platform_fee), so
+        # the payment is non-P&L, never revenue (Abhijeet, 2026-07-30)
+        from modules.finance import pnl
+        self.assertEqual(pnl.bucket({
+            "upwork_type": "ARPayment", "accounting_subtype": "Payment",
+            "description": "Payment - Visa 3368", "amount_base_minor": 4500}),
+            "transfer")
+        # a real earning is still revenue
+        self.assertEqual(pnl.bucket({"type": "Hourly Earning",
+                                     "description": "work"}), "revenue")
+
 
 class TestBucketizeAmountDependent(unittest.TestCase):
     """Regression (2026-07-08): bucket() became amount-dependent (salary floor),

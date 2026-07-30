@@ -190,6 +190,10 @@ CLIENT_CANONICAL = {
     # identity fact, distinct from a dossier link.
     "mike gandia": "CMF Publishing",         # Upwork person == Wise 'CMF Publishing LLC'
     "michaelxavierga": "CMF Publishing",     # IMPS bank remitter (Abhijeet, 2026-07-30)
+    # Upwork masks this client as '(inner)'; it is one client — inner.garden
+    # (contact Martin Butterfly), across contracts 37683592 & 37182507 (Abhijeet,
+    # 2026-07-30). Requires removing '(inner)' from the _canon_client exclusion.
+    "(inner)": "inner.garden",
     "cmf publishing llc": "CMF Publishing",
     "cmf publishing": "CMF Publishing",
     # NOT merged on purpose (Abhijeet, 2026-07-27): real client, NO dossier, and

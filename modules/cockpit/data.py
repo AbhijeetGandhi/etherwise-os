@@ -346,7 +346,9 @@ def _canon_client(raw: Optional[str]) -> Optional[str]:
     name. Returns None for the placeholder labels the ledger uses for 'no
     company'."""
     s = (raw or "").strip()
-    if not s or s.lower() in ("no company", "(inner)", "s"):
+    # '(inner)' is NOT excluded here anymore — it maps to a real client
+    # (inner.garden) via CLIENT_CANONICAL. 'no company'/'s' stay unmappable.
+    if not s or s.lower() in ("no company", "s"):
         return None
     core = _CO_SUFFIX.sub("", s).strip()
     for key in (_deaccent(core), _deaccent(s)):
