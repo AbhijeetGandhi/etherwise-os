@@ -572,6 +572,26 @@ class TestClientEconomics(unittest.TestCase):
         self.assertFalse(any("Ai Automations" in (r["desc"] or "")
                              for r in unlinked["rows"]))
 
+    def test_contract_id_in_description_attributes_hourly_earnings(self):
+        # Upwork hourly lines name the client by contract id, not company:
+        # '(43495766) NETFLY - 8:00 hrs @ $40.50' -> the contract -> the client
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO contracts (id, title, client_company,"
+                         " upwork_status) VALUES ('43495766','GHL build',"
+                         "'Haleema Umair, NETFLY','ACTIVE')")
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, description, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt) VALUES"
+                " ('h1','kh1','Hourly Earning','income','Upwork',"
+                "'(43495766) NETFLY - 8:00 hrs @ $40.50/hr - 06/01/2026',"
+                " 32400,32400,'USD','revenue','2026-06-12T00:00:00+0000')")
+        out = data.clients(self.db_path)
+        names = [c["name"] for c in out["clients"]]
+        self.assertIn("Haleema Umair, NETFLY", names)   # attributed via contract id
+        c = next(x for x in out["clients"] if x["name"] == "Haleema Umair, NETFLY")
+        self.assertEqual(c["revenue_usd"], 324.0)
+
     def test_bank_imps_payer_attributes_only_via_known_alias(self):
         # a bank credit whose IMPS remitter maps to a known alias attributes;
         # an unmapped processor name (VISAPAYMENTSLIM) stays unlinked, never junk

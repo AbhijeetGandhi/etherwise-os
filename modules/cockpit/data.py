@@ -382,15 +382,17 @@ def _job_title(description: Optional[str]) -> Optional[str]:
     return d.split(" · ")[0].strip() if " · " in d else None
 
 
-def _client_key(row: dict, title_map: Optional[dict] = None) -> Optional[str]:
+def _client_key(row: dict, title_map: Optional[dict] = None,
+                id_map: Optional[dict] = None) -> Optional[str]:
     """The canonical client a revenue row belongs to, or None if unattributable.
-    Three paths, in order of directness:
+    Paths, in order of directness:
       1. Wise rows carry the payer in the description.
       2. Upwork API rows carry assignment_company (Upwork's own label).
-      3. agency Upwork-CSV rows carry NEITHER — only a job title in the
-         description. That title matches a contract we synced, and the contract
-         names the client (title_map). Without this, real earnings (e.g. the
-         Ioannis 'Ai Automations' weekly CSV rows) sit in the unlinked bucket."""
+      3. a job title in the description ('Title · Earnings') -> the contract.
+      4. a contract id in the description ('(43495766) NETFLY - hrs') -> the
+         contract. Upwork hourly lines name the client this way, not by company.
+      5. a bank IMPS remitter that maps to a KNOWN alias.
+    Without 3/4, real earnings (Ioannis CSV, NETFLY hourly) sit in unlinked."""
     if (row.get("source") or "") == "Wise":
         k = _canon_client(_wise_payer(row.get("description")))
         if k:
@@ -399,10 +401,15 @@ def _client_key(row: dict, title_map: Optional[dict] = None) -> Optional[str]:
         k = _canon_client(row.get("assignment_company"))
         if k:
             return k
+    desc = row.get("description") or ""
     if title_map:
-        jt = _job_title(row.get("description"))
+        jt = _job_title(desc)
         if jt and jt in title_map:
             return _canon_client(title_map[jt])
+    if id_map:
+        m = _CONTRACT_ID_RE.match(desc.strip())
+        if m and m.group(1) in id_map:
+            return _canon_client(id_map[m.group(1)])
     # 4th path: a bank credit (IMPS/NEFT) whose remitter maps to a KNOWN client
     # alias. Requires an explicit CLIENT_CANONICAL hit — never the raw payer, so
     # processor names never become junk clients.
@@ -413,13 +420,22 @@ def _client_key(row: dict, title_map: Optional[dict] = None) -> Optional[str]:
     return None
 
 
-def _contract_title_map(conn) -> dict:
-    """contract.title -> its client identity, for the description-title bridge.
-    NB the job title lives in contracts.title (the job_title column is empty in
-    the current sync), so match on title."""
-    return {r["title"]: r["client_company"] for r in conn.execute(
-        "SELECT title, client_company FROM contracts"
-        " WHERE COALESCE(title,'') != '' AND COALESCE(client_company,'') != ''")}
+_CONTRACT_ID_RE = _re.compile(r"^\((\d+)\)")
+
+
+def _contract_maps(conn) -> tuple:
+    """(title_map, id_map) -> client identity. Upwork earnings name the client
+    two ways: by job title ('Title · Earnings for ...') and by contract id
+    ('(43495766) NETFLY - 8:00 hrs @ ...'). Both bridge to a synced contract
+    that carries the client_company."""
+    title_map, id_map = {}, {}
+    for r in conn.execute(
+            "SELECT id, title, client_company FROM contracts"
+            " WHERE COALESCE(client_company,'') != ''"):
+        if r["title"]:
+            title_map[r["title"]] = r["client_company"]
+        id_map[str(r["id"])] = r["client_company"]
+    return title_map, id_map
 
 
 def _is_passthrough(name: str) -> bool:
@@ -458,7 +474,7 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
             " WHERE c.upwork_status IN ('ACTIVE','PENDING')")]
         owed = [dict(r) for r in conn.execute(
             "SELECT room_name FROM threads WHERE bucket IN ('owed','unmatched-owed')")]
-        title_map = _contract_title_map(conn)
+        title_map, id_map = _contract_maps(conn)
     finally:
         conn.close()
 
@@ -467,7 +483,7 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
     unlinked_minor, unlinked_n = 0, 0
     for r in rev_rows:
         total_minor += r["amount_base_minor"] or 0
-        k = _client_key(r, title_map)
+        k = _client_key(r, title_map, id_map)
         if not k:
             unlinked_minor += r["amount_base_minor"] or 0
             unlinked_n += 1
@@ -553,12 +569,12 @@ def client_transactions(db_path: Optional[Path] = None, *,
             " substr(creation_dt,1,10) AS dt FROM transactions"
             " WHERE pnl_bucket='revenue' AND canonical_key IS NOT NULL"
             " ORDER BY creation_dt DESC")]
-        title_map = _contract_title_map(conn)
+        title_map, id_map = _contract_maps(conn)
     finally:
         conn.close()
     want, rows, total = client, [], 0
     for r in rev:
-        k = _client_key(r, title_map)
+        k = _client_key(r, title_map, id_map)
         hit = (k is None and want == "__unlinked__") or (k is not None and k == want)
         if not hit:
             continue
