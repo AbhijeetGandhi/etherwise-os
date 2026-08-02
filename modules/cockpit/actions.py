@@ -57,12 +57,16 @@ UPLOAD_KINDS = {
     "card":           ("card",   (".pdf",),                 "{d}-card-statement.pdf"),
     "upwork-personal": ("upwork", (".csv",), "{d}-upwork-personal-fullhistory.csv"),
     "upwork-agency":   ("upwork", (".csv",), "{d}-upwork-agency-fullhistory.csv"),
+    # Stripe export (balance_history and/or the Payments export) — the balance
+    # file name is preserved so a re-upload of the same export dedups by name
+    "stripe":         ("stripe", (".csv",),                 None),
 }
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 _IMPORTER_BIN = {"idfc": "finance-import-idfc", "wise": "finance-import-wise",
                  "card": "finance-import-card",
                  "upwork-personal": "finance-import-upwork",
-                 "upwork-agency": "finance-import-upwork"}
+                 "upwork-agency": "finance-import-upwork",
+                 "stripe": "finance-import-stripe"}
 
 
 def _safe_name(filename: str) -> str:

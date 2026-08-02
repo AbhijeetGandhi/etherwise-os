@@ -1837,11 +1837,12 @@ async function renderMoney(view) {
     ["upwork-personal", "Upwork personal", "full-history CSV", ".csv"],
     ["upwork-agency", "Upwork agency", "full-history CSV", ".csv"],
     ["card", "Credit card", "IDFC Mayura PDF", ".pdf"],
+    ["stripe", "Stripe", "balance_history / Payments CSV", ".csv"],
   ];
   const impWrap = el("details", "card importcard");
   impWrap.appendChild(el("summary", null,
     `<b>Import data</b> <span class="muted small">— upload bank / card / Wise /`
-    + ` Upwork exports; dry-run first, commit is a second click</span>`));
+    + ` Upwork / Stripe exports; dry-run first, commit is a second click</span>`));
   const tiles = el("div", "imptiles");
   const impOut = el("div", "impout");
   KINDS.forEach(([kind, label, hint, accept]) => {

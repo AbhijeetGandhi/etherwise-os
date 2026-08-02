@@ -1336,6 +1336,21 @@ class TestFinanceIngest(CockpitServerCase):
                              b"x", token=None)
         self.assertEqual(s, 401)
 
+    def test_stripe_upload_and_import_wired(self):
+        # the Import-data tab's Stripe tile: CSV stages into finance-inbox/stripe
+        # and the import routes to the Stripe bin
+        s, out = self.post_raw(
+            "/api/finance/upload?kind=stripe&filename=balance_history.csv",
+            b"id,Type,Amount,Currency\ntxn_1,payment,100,inr\n")
+        self.assertTrue(out["ok"])
+        self.assertTrue(out["importable"])
+        self.assertEqual(out["dir"], "finance-inbox/stripe")
+        fake = mock.MagicMock()
+        fake.run.return_value = {"mode": "DRY-RUN", "inserted": 1}
+        with mock.patch.object(actions, "_load_importer", return_value=fake):
+            s, body = self.post("/api/finance/import", body={"kind": "stripe"})
+            self.assertTrue(json.loads(body)["ok"])
+
     def test_card_upload_importable_and_forced_name(self):
         # a Google-Drive token filename once lost its extension to truncation;
         # card uploads are now force-named and fully importable (2026-07-07)
