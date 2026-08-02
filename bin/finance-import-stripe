@@ -85,14 +85,31 @@ def run(apply: bool) -> dict:
     if not files:
         return {"abort": "no *.csv in finance-inbox/stripe/"}
 
-    rec = stripe_csv.reconcile(payments, balance_rows)
+    if not balance_rows:
+        return {"abort": "no balance_history export in finance-inbox/stripe/"
+                         " — it carries the income + settlements + the reconcile"}
+    rec = stripe_csv.reconcile(balance_rows)
     if not rec["ok"]:
-        return {"abort": "Stripe reconcile failed (Σpayments < Σpayouts+fees)",
+        return {"abort": "Stripe reconcile failed (Σpayments < Σsettlements+fees)",
                 "reconcile": rec}
 
-    # rows that actually hit the ledger: income + payout + fee + refund
-    # (balance_history 'charge' rows are dropped — income owns them)
-    writable = payments + [b for b in balance_rows if b["kind"] != "charge"]
+    # balance_history IS the ledger source (income + settlement + fee). The
+    # Payments export, if present, only attributes income to a client (by id).
+    cust = stripe_csv.customer_lookup(payments)
+    for b in balance_rows:
+        if b["kind"] == "income" and b.get("source_id") in cust:
+            b["customer"] = cust[b["source_id"]]
+    # embedded per-row fees on income rows -> their own platform_fee line
+    fee_lines = []
+    for b in balance_rows:
+        if b["kind"] == "income" and (b.get("fee_minor") or 0) != 0:
+            fee_lines.append({
+                "stripe_id": f"{b['stripe_id']}:fee", "kind": "fee",
+                "canonical_key": f"stripe:{b['stripe_id']}:fee",
+                "date": b["date"], "currency": b["currency"],
+                "amount_minor": -abs(b["fee_minor"]),
+                "description": "Stripe processing fee", "_file": b.get("_file")})
+    writable = [b for b in balance_rows if b["kind"] != "charge"] + fee_lines
 
     # FX-pin INR -> base-USD, once per value date (cached)
     fetched = 0

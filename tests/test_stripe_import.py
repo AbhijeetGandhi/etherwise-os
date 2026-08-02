@@ -21,12 +21,14 @@ py_3,2026-07-20 12:00:00,15000.00,inr,Succeeded,Acme Retail Pvt Ltd,Invoice INV-
 py_4,2026-07-21 12:00:00,9999.00,inr,Failed,Someone,should be skipped
 """
 
-BALANCE_CSV = """balance_transaction_id,Created (UTC),reporting_category,Amount,Currency,Fee,Net
-txn_c1,2026-07-03 10:00:05,charge,20000.00,inr,0,20000.00
-txn_c2,2026-07-10 09:00:05,charge,20015.53,inr,0,20015.53
-txn_c3,2026-07-20 12:00:05,charge,15000.00,inr,0,15000.00
-txn_po1,2026-07-12 00:00:00,payout,-20441.45,inr,0,-20441.45
-txn_po2,2026-07-24 00:00:00,payout,-20000.00,inr,0,-20000.00
+# the REAL July export shape: Type column + Source (py_/po_ id); the payment
+# rows ARE the income (balance_history reconciles + books on its own)
+BALANCE_CSV = """id,Type,Source,Amount,Fee,Net,Currency,Created (UTC),Available On (UTC)
+txn_e,payment,py_2,23111.76,0.00,23111.76,inr,2026-07-02 21:13,2026-07-03 22:00
+txn_d,payout,po_d,-23111.76,0.00,-23111.76,inr,2026-07-05 00:10,2026-07-08 00:00
+txn_c,payment,py_3,17329.69,0.00,17329.69,inr,2026-07-16 20:03,2026-07-17 21:00
+txn_b,payout,po_b,-17329.69,0.00,-17329.69,inr,2026-07-19 00:05,2026-07-22 00:00
+txn_a,payment,py_1,14574.08,0.00,14574.08,inr,2026-07-30 18:35,2026-07-31 19:00
 """
 
 
@@ -42,25 +44,30 @@ class ParseCase(unittest.TestCase):
         self.assertEqual(rows[0]["amount_minor"], 2000000)   # ₹20,000 -> paise
         self.assertTrue(all(r["kind"] == "income" for r in rows))
 
-    def test_balance_history_classifies_payouts(self):
+    def test_balance_history_carries_income_and_settlements(self):
         rows = stripe_csv.parse_balance_history(BALANCE_CSV)
         kinds = [r["kind"] for r in rows]
         self.assertEqual(kinds.count("settlement"), 2)
-        self.assertEqual(kinds.count("charge"), 3)
+        self.assertEqual(kinds.count("income"), 3)          # payment rows -> income
+        inc = next(r for r in rows if r["kind"] == "income")
+        self.assertTrue(inc["source_id"].startswith("py_"))  # join key to Payments
 
-    def test_reconcile_matches_the_july_sample(self):
-        rec = stripe_csv.reconcile(stripe_csv.parse_payments(PAYMENTS_CSV),
-                                   stripe_csv.parse_balance_history(BALANCE_CSV))
+    def test_reconcile_from_balance_history_alone(self):
+        # the real July drop was balance_history ONLY — it must reconcile + book
+        rec = stripe_csv.reconcile(stripe_csv.parse_balance_history(BALANCE_CSV))
         self.assertTrue(rec["ok"])
         self.assertEqual(rec["payments_total_minor"], 5501553)   # ₹55,015.53
-        self.assertEqual(rec["settlement_total_minor"], 4044145)     # ₹40,441.45
+        self.assertEqual(rec["settlement_total_minor"], 4044145)  # ₹40,441.45
         self.assertEqual(rec["balance_minor"], 1457408)          # ₹14,574.08
 
-    def test_reconcile_fails_when_payouts_exceed_payments(self):
+    def test_payments_export_is_a_customer_lookup(self):
+        cust = stripe_csv.customer_lookup(stripe_csv.parse_payments(PAYMENTS_CSV))
+        self.assertEqual(cust.get("py_1"), "Acme Retail Pvt Ltd")
+
+    def test_reconcile_fails_when_settlements_exceed_payments(self):
         bad = stripe_csv.parse_balance_history(
-            BALANCE_CSV.replace("-20000.00", "-99000.00"))
-        rec = stripe_csv.reconcile(stripe_csv.parse_payments(PAYMENTS_CSV), bad)
-        self.assertFalse(rec["ok"])
+            BALANCE_CSV.replace("-17329.69", "-99000.00"))
+        self.assertFalse(stripe_csv.reconcile(bad)["ok"])
 
 
 class BucketCase(unittest.TestCase):

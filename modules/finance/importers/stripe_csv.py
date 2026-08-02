@@ -47,6 +47,8 @@ _ALIASES = {
     "customer email": "customer_email",
     "customer description": "customer_name", "customer name": "customer_name",
     "description": "description", "invoice id": "invoice", "invoice": "invoice",
+    "source": "source_id", "source id": "source_id",
+    "available on (utc)": "available_on",
 }
 # Stripe reporting_category values that mean 'settled to the bank' — read-only
 # classification of an export row; the OS never initiates one (SOUL: no money
@@ -140,8 +142,11 @@ def parse_payments(text: str) -> List[dict]:
 
 
 def parse_balance_history(text: str) -> List[dict]:
-    """Balance changes -> settlement / fee / charge rows (charges are NOT
-    re-booked as income; the Payments export owns income)."""
+    """Balance changes -> the ledger source. This export carries BOTH the income
+    events (Type 'payment'/'charge': the amount that entered the Stripe balance)
+    AND the bank settlements, so it reconciles and books income
+    on its own; the Payments export is only a customer LOOKUP on top. The Source
+    column (py_/po_ id) is the join key to that lookup."""
     reader = csv.DictReader(io.StringIO(text))
     norm = _norm(reader.fieldnames)
     out = []
@@ -158,7 +163,7 @@ def parse_balance_history(text: str) -> List[dict]:
         elif "refund" in cat:
             kind = "refund"
         else:
-            kind = "charge"                # duplicate of a Payments row -> not re-booked
+            kind = "income"                # Type 'payment'/'charge' = money in
         out.append({
             "stripe_id": sid, "canonical_key": f"stripe:{sid}",
             "kind": kind, "date": iso_date(_get(r, norm, "created")),
@@ -166,7 +171,18 @@ def parse_balance_history(text: str) -> List[dict]:
             "currency": (_get(r, norm, "currency") or "INR").upper(),
             "fee_minor": _minor(_get(r, norm, "fee")),
             "net_minor": _minor(_get(r, norm, "net")),
+            "source_id": _get(r, norm, "source_id"),   # py_/po_ -> Payments lookup
             "description": _get(r, norm, "description")})
+    return out
+
+
+def customer_lookup(payments: List[dict]) -> dict:
+    """payment id -> customer, from a Payments export. Used to attribute the
+    balance_history income rows (which carry the id but no customer)."""
+    out = {}
+    for p in payments:
+        if p.get("stripe_id") and p.get("customer"):
+            out[p["stripe_id"]] = p["customer"]
     return out
 
 
@@ -181,19 +197,22 @@ def parse(text: str) -> dict:
     return {"kind": "unknown", "rows": []}
 
 
-def reconcile(payments: List[dict], balance_rows: List[dict],
-              tolerance_minor: int = 1) -> dict:
-    """The identity Abhijeet stated: Σ payments = Σ settlements + ending balance.
-    Settlements are the money that left Stripe for the bank; the balance is what
-    has not been settled yet. A settlement amount in balance_history is negative
-    (money leaving), so we sum its magnitude."""
-    pay_total = sum(p["amount_minor"] for p in payments if p["kind"] == "income")
+def reconcile(balance_rows: List[dict], tolerance_minor: int = 1) -> dict:
+    """The identity Abhijeet stated, computed from balance_history ALONE:
+    Σ payments(gross) = Σ settlements + Σ fees + ending balance. Fees are both
+    the per-row Fee on income rows and any standalone fee rows; settlements are
+    negative (money leaving), summed by magnitude. Balance = what has not settled
+    yet and must not go negative beyond rounding."""
+    income = [b for b in balance_rows if b["kind"] == "income"]
+    gross = sum(b["amount_minor"] for b in income)
+    embedded_fees = sum(abs(b.get("fee_minor") or 0) for b in income)
+    standalone_fees = sum(abs(b["amount_minor"]) for b in balance_rows
+                          if b["kind"] == "fee")
+    fees = embedded_fees + standalone_fees
     settlements = [b for b in balance_rows if b["kind"] == "settlement"]
-    settled_total = sum(abs(b["amount_minor"]) for b in settlements)
-    fees = sum(abs(b["amount_minor"]) for b in balance_rows if b["kind"] == "fee")
-    balance = pay_total - settled_total - fees
-    ok = balance >= -tolerance_minor      # never negative beyond rounding
-    return {"ok": ok, "payments_total_minor": pay_total,
-            "settlement_total_minor": settled_total, "fees_minor": fees,
-            "balance_minor": balance, "settlement_count": len(settlements),
-            "payment_count": sum(1 for p in payments if p["kind"] == "income")}
+    settled = sum(abs(b["amount_minor"]) for b in settlements)
+    balance = gross - fees - settled
+    return {"ok": balance >= -tolerance_minor,
+            "payments_total_minor": gross, "settlement_total_minor": settled,
+            "fees_minor": fees, "balance_minor": balance,
+            "settlement_count": len(settlements), "payment_count": len(income)}
