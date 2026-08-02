@@ -105,6 +105,39 @@ def insert_wise_row(conn, row: dict, *, source_file: str) -> None:
          f"wise:{wid}", f"wise:{wid}"))
 
 
+def insert_stripe_row(conn, row: dict, *, source_file: str) -> None:
+    """INSERT one classified Stripe row (INR; base-USD pinned by the caller).
+    kind -> the field that makes bucket() classify it correctly:
+      income     -> category 'income' (-> revenue); the resolved client is in
+                    assignment_company so the cockpit's attribution finds it
+      settlement -> category 'transfer_out' (-> transfer, excluded from P&L: it
+                    is the move of already-booked Stripe income to the IDFC bank;
+                    the OS only records it, it never initiates one)
+      fee        -> category 'fee' (-> platform_fee, the Stripe processing cost)
+      refund     -> type 'Refund' (-> refund)
+    Charge rows from balance_history are NEVER inserted (the Payments export owns
+    income) — the caller filters them out before calling this."""
+    sid = row["stripe_id"]
+    amt = row["amount_minor"]
+    base = row.get("amount_base_minor")
+    base = amt if base is None else base
+    kind = row["kind"]
+    category = {"income": "income", "settlement": "transfer_out",
+                "fee": "fee"}.get(kind)
+    rtype = "Refund" if kind == "refund" else (category or kind)
+    conn.execute(
+        "INSERT INTO transactions (record_id, type, accounting_subtype, category,"
+        " description, assignment_company, currency, amount_minor,"
+        " amount_credited_minor, amount_base_minor, fx_rate, fx_date, creation_dt,"
+        " source, source_file, canonical_key, dedup_key)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (sid, rtype, category, category, row.get("description"),
+         row.get("customer"), row.get("currency") or "INR", amt, amt, base,
+         row.get("_base_rate") or "1", row.get("_fx_date") or row.get("date"),
+         row.get("date"), "Stripe", source_file,
+         f"stripe:{sid}", f"stripe:{sid}"))
+
+
 def pending_missing_amount(conn, canonical: str) -> int:
     """Read-only: count UNRESOLVED missing-amount quarantine entries for a canonical
     (the dry-run import reports what a --commit WOULD resolve, without writing)."""

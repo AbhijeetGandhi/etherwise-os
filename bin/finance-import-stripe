@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Stripe rail import into the ledger. REPRODUCIBLE + idempotent.
+Source = finance-inbox/stripe/*.csv (periodic Stripe exports, INR account).
+
+Two export types (auto-detected per file):
+  PAYMENTS export       -> each succeeded payment is the REVENUE event (income),
+                           attributed to the client (customer -> assignment_company
+                           -> the cockpit's existing attribution + CLIENT_CANONICAL).
+  BALANCE_HISTORY export -> payouts (transfer of already-booked income to the IDFC
+                           bank -> NOT revenue) + Stripe fees. Its charge rows
+                           duplicate the Payments export and are NEVER re-booked.
+
+The identity that must hold before any write (Abhijeet, 2026-07-30):
+  Σ payments = Σ payouts + Σ fees + ending balance.
+
+A payout is the transfer to the IDFC bank, so its matching IDFC +INR credit must
+be marked 'transfer' (never revenue) to avoid double-counting — the payment is
+the single revenue event. This importer matches payouts to IDFC credits by
+amount+date and reclassifies them; unmatched payouts (e.g. IDFC not yet imported
+for the period) are reported, never guessed.
+
+INR -> base-USD is pinned ONCE per value date via frankfurter (cached), same as
+the IDFC INR rail. Reconcile-before-commit; dry-run default.
+
+Usage: PYTHONPATH=. python3 bin/finance-import-stripe [--apply]
+"""
+import json
+import sys
+from collections import Counter
+from datetime import date, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db                                   # noqa: E402
+from modules.finance import money, ledger, fx                 # noqa: E402
+from modules.finance.importers import stripe_csv              # noqa: E402
+
+INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "stripe"
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-stripe.md"
+PAYOUT_MATCH_WINDOW_DAYS = 4      # a Stripe payout lands in IDFC within a few days
+
+
+def _payout_to_idfc_matches(conn, payouts):
+    """Match each Stripe payout to an IDFC INR credit of the SAME paise amount
+    within a few days -> that credit is the transfer-in leg. Exact-amount only,
+    never fuzzy; a payout with no (or many) matches is reported, not guessed."""
+    matched, ambiguous, unmatched = [], [], []
+    for p in payouts:
+        amt = abs(p["amount_minor"])
+        d = p.get("date")
+        if not d:
+            unmatched.append(p["stripe_id"]); continue
+        lo = (date.fromisoformat(d) - timedelta(days=PAYOUT_MATCH_WINDOW_DAYS)).isoformat()
+        hi = (date.fromisoformat(d) + timedelta(days=PAYOUT_MATCH_WINDOW_DAYS)).isoformat()
+        rows = conn.execute(
+            "SELECT record_id, pnl_bucket FROM transactions WHERE source='IDFC'"
+            " AND currency='INR' AND amount_minor=? AND substr(creation_dt,1,10)"
+            " BETWEEN ? AND ?", (amt, lo, hi)).fetchall()
+        if len(rows) == 1:
+            matched.append((p["stripe_id"], rows[0]["record_id"], rows[0]["pnl_bucket"]))
+        elif rows:
+            ambiguous.append((p["stripe_id"], [r["record_id"] for r in rows]))
+        else:
+            unmatched.append(p["stripe_id"])
+    return matched, ambiguous, unmatched
+
+
+def run(apply: bool) -> dict:
+    if not INBOX.is_dir():
+        return {"abort": f"{INBOX} missing"}
+    payments, balance_rows, seen_types, files = [], [], Counter(), []
+    for f in sorted(INBOX.glob("*.csv")):
+        parsed = stripe_csv.parse(f.read_text())
+        seen_types[parsed["kind"]] += 1
+        if parsed["kind"] == "unknown":
+            return {"abort": f"{f.name}: unrecognised Stripe export "
+                             "(no customer and no reporting_category columns)"}
+        for r in parsed["rows"]:
+            r["_file"] = f.name
+        if parsed["kind"] == "payments":
+            payments += parsed["rows"]
+        else:
+            balance_rows += parsed["rows"]
+        files.append(f.name)
+    if not files:
+        return {"abort": "no *.csv in finance-inbox/stripe/"}
+
+    rec = stripe_csv.reconcile(payments, balance_rows)
+    if not rec["ok"]:
+        return {"abort": "Stripe reconcile failed (Σpayments < Σpayouts+fees)",
+                "reconcile": rec}
+
+    # rows that actually hit the ledger: income + payout + fee + refund
+    # (balance_history 'charge' rows are dropped — income owns them)
+    writable = payments + [b for b in balance_rows if b["kind"] != "charge"]
+
+    # FX-pin INR -> base-USD, once per value date (cached)
+    fetched = 0
+    if apply:
+        cache = {}
+        for r in writable:
+            cur = (r.get("currency") or "INR").upper()
+            if cur == "USD":
+                r["amount_base_minor"] = r["amount_minor"]; r["_base_rate"] = "1"
+                continue
+            ck = (cur, r["date"])
+            if ck not in cache:
+                cache[ck] = fx.frankfurter_fetch(r["date"], cur, "USD"); fetched += 1
+            rate, fxd = cache[ck]
+            r["amount_base_minor"] = money.apply_rate(r["amount_minor"], rate)
+            r["_base_rate"] = str(rate); r["_fx_date"] = fxd
+
+    inserted = reclassified = 0
+    with db.connect(config.DB_PATH) as conn:
+        have = {r["canonical_key"] for r in conn.execute(
+            "SELECT canonical_key FROM transactions WHERE canonical_key LIKE 'stripe:%'")}
+        for r in writable:
+            if r["canonical_key"] in have:
+                continue
+            inserted += 1
+            if apply:
+                ledger.insert_stripe_row(conn, r, source_file=r["_file"])
+
+        # payout -> IDFC transfer reclassification (avoid double-count)
+        payouts = [b for b in balance_rows if b["kind"] == "settlement"]
+        matched, ambiguous, unmatched = _payout_to_idfc_matches(conn, payouts)
+        if apply:
+            for _sid, idfc_rid, _bucket in matched:
+                conn.execute(
+                    "UPDATE transactions SET category='transfer_in',"
+                    " pnl_bucket='transfer', updated_at=datetime('now')"
+                    " WHERE record_id=?", (idfc_rid,))
+                reclassified += 1
+
+    return {"mode": "APPLY" if apply else "DRY-RUN", "files": files,
+            "export_types": dict(seen_types), "reconcile": rec,
+            "by_kind": dict(Counter(r["kind"] for r in writable)),
+            "inserted": inserted, "fx_dates_fetched": fetched,
+            "payout_idfc_matched": [m[0] for m in matched],
+            "payout_idfc_reclassified": reclassified if apply else 0,
+            "payout_idfc_ambiguous": ambiguous,
+            "payout_idfc_unmatched": unmatched}
+
+
+def main() -> int:
+    res = run("--apply" in sys.argv)
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("# Stripe import\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
+    print(json.dumps(res, indent=1))
+    return 0 if "abort" not in res else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
