@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Scheduled Stripe rail: import any dropped export, bucketize, verify.
+
+A launchd job runs this daily. It imports whatever is in finance-inbox/stripe/
+(idempotent — an unchanged export inserts nothing and does no network), then
+bucketizes the new rows and checks finance-doctor. Runs as a tracked task so it
+shows in the cockpit System jobs and a doctor-RED or a reconcile break surfaces
+as an anomaly, never silently.
+
+Safe to run on a schedule: the underlying import is reconcile-before-commit
+(aborts on a break) and idempotent (canonical_key dedup, no double-book).
+
+    PYTHONPATH=. python3 bin/finance-stripe-sync
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, runner                              # noqa: E402
+from modules.finance import doctor as fdoc                   # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+PY = sys.executable
+TASK_NAME = "finance_stripe"
+
+
+def _bin(name, *args):
+    proc = subprocess.run([PY, str(ROOT / "bin" / name), *args],
+                          capture_output=True, text=True, timeout=180,
+                          cwd=str(ROOT), env={"PYTHONPATH": str(ROOT),
+                                              "PATH": "/usr/bin:/bin"})
+    out = (proc.stdout or "").strip()
+    try:
+        return json.loads(out.split("\n", 0)[0]) if out.startswith("{") \
+            else json.loads(out)
+    except (ValueError, IndexError):
+        return {"_raw": out[-400:], "_stderr": (proc.stderr or "")[-400:],
+                "_rc": proc.returncode}
+
+
+def sync(ctx) -> dict:
+    imp = _bin("finance-import-stripe", "--apply")
+    if "abort" in imp:
+        ctx.anomaly("finance_stripe_reconcile", "critical",
+                    {"abort": imp["abort"], "reconcile": imp.get("reconcile")})
+        raise RuntimeError(f"stripe import aborted: {imp['abort']}")
+    inserted = imp.get("inserted", 0)
+    if inserted:
+        _bin("finance-bucketize", "--apply")     # set pnl_bucket for the new rows
+    dr = fdoc.run(config.DB_PATH)
+    if not dr.green:
+        ctx.anomaly("finance_stripe_doctor_red", "critical", {"reds": dr.reds})
+    ctx.log(f"stripe sync: inserted {inserted}, reclassified"
+            f" {imp.get('payout_idfc_reclassified', 0)}, doctor"
+            f" {'GREEN' if dr.green else 'RED ' + ','.join(dr.reds)}")
+    return {"inserted": inserted,
+            "reconcile_ok": (imp.get("reconcile") or {}).get("ok"),
+            "payout_idfc_reclassified": imp.get("payout_idfc_reclassified", 0),
+            "payout_idfc_unmatched": len(imp.get("payout_idfc_unmatched", []) or []),
+            "doctor_green": dr.green}
+
+
+def main() -> int:
+    # module='system': a LOCAL ledger operation (no external writes), so it runs
+    # live, not shadow — same as bin/catch-up.
+    result = runner.run_task(TASK_NAME, sync, module="system")
+    print(json.dumps({"status": result.status, "metrics": result.metrics}))
+    return 0 if result.status == "completed" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -282,6 +282,13 @@ SOURCES = (
      "degrade_kinds": (), "critical": True, "backs": "money",
      "launchd_label": "io.etherwise.v3.finance-upwork-weekly", "catch_up": True,
      "why": "the weekly Upwork earnings/fee pull behind the P&L"},
+    {"key": "finance_stripe", "label": "Stripe rail (daily)",
+     "task_name": "finance_stripe", "max_age_hours": 26,      # daily at 06:20
+     "degrade_kinds": ("finance_stripe_reconcile", "finance_stripe_doctor_red"),
+     "critical": True, "backs": "money",
+     "launchd_label": "io.etherwise.v3.finance-stripe", "catch_up": True,
+     "why": "imports Stripe payments (revenue) + settlements; a stale/failed run"
+            " means new Stripe income is not reaching the P&L"},
     # Manually fed: statement imports have no scheduled run to age, but the DATA
     # still has an age — freshness_sql asks the ledger when it was last fed.
     {"key": "finance_ledger", "label": "Statement imports (bank/card/Wise)",

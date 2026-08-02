@@ -114,31 +114,29 @@ def run(apply: bool) -> dict:
                 "description": "Stripe processing fee", "_file": b.get("_file")})
     writable = [b for b in balance_rows if b["kind"] != "charge"] + fee_lines
 
-    # FX-pin INR -> base-USD, once per value date (cached)
-    fetched = 0
-    if apply:
-        cache = {}
-        for r in writable:
-            cur = (r.get("currency") or "INR").upper()
-            if cur == "USD":
-                r["amount_base_minor"] = r["amount_minor"]; r["_base_rate"] = "1"
-                continue
-            ck = (cur, r["date"])
-            if ck not in cache:
-                cache[ck] = fx.frankfurter_fetch(r["date"], cur, "USD"); fetched += 1
-            rate, fxd = cache[ck]
-            r["amount_base_minor"] = money.apply_rate(r["amount_minor"], rate)
-            r["_base_rate"] = str(rate); r["_fx_date"] = fxd
-
-    inserted = reclassified = 0
+    inserted = reclassified = fetched = 0
     with db.connect(config.DB_PATH) as conn:
         have = {r["canonical_key"] for r in conn.execute(
             "SELECT canonical_key FROM transactions WHERE canonical_key LIKE 'stripe:%'")}
-        for r in writable:
-            if r["canonical_key"] in have:
-                continue
-            inserted += 1
-            if apply:
+        new_rows = [r for r in writable if r["canonical_key"] not in have]
+        inserted = len(new_rows)
+
+        # FX-pin INR -> base-USD, once per value date (cached) — only for NEW
+        # rows, so a scheduled re-run over an unchanged export does no network
+        if apply:
+            cache = {}
+            for r in new_rows:
+                cur = (r.get("currency") or "INR").upper()
+                if cur == "USD":
+                    r["amount_base_minor"] = r["amount_minor"]; r["_base_rate"] = "1"
+                    continue
+                ck = (cur, r["date"])
+                if ck not in cache:
+                    cache[ck] = fx.frankfurter_fetch(r["date"], cur, "USD"); fetched += 1
+                rate, fxd = cache[ck]
+                r["amount_base_minor"] = money.apply_rate(r["amount_minor"], rate)
+                r["_base_rate"] = str(rate); r["_fx_date"] = fxd
+            for r in new_rows:
                 ledger.insert_stripe_row(conn, r, source_file=r["_file"])
 
         # payout -> IDFC transfer reclassification (avoid double-count)
