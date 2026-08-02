@@ -221,6 +221,12 @@ ICP_SPEND_PER_HIRE_USD = 2000.0  # readiness-to-pay proxy (avg-rate enrichment p
 RATE_UNSTATED_MIN_CLIENT_SPEND_USD = 5000.0   # proven-spender proxy for a missing rate
 RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a hire history
 
+# Stripe currently has ONE paying client, so every Stripe income row is
+# attributed here unless a Payments export names a different customer for that
+# payment id (Abhijeet, 2026-07-30). Set to None once Stripe has >1 client and
+# the Payments export is dropped alongside balance_history for real attribution.
+STRIPE_DEFAULT_CLIENT = "Optimize IS"
+
 # ── Source-health registry (2026-07-16) ──────────────────────────────────────
 # Every number-backing source self-reports freshness + health so a source that
 # silently degrades (a dead rail, a scanner extracting 2 tiles/feed) can never

@@ -96,9 +96,12 @@ def run(apply: bool) -> dict:
     # balance_history IS the ledger source (income + settlement + fee). The
     # Payments export, if present, only attributes income to a client (by id).
     cust = stripe_csv.customer_lookup(payments)
+    default_client = getattr(config, "STRIPE_DEFAULT_CLIENT", None)
     for b in balance_rows:
-        if b["kind"] == "income" and b.get("source_id") in cust:
-            b["customer"] = cust[b["source_id"]]
+        if b["kind"] == "income":
+            # a named Payments-export customer wins; else the single-client
+            # default (Stripe has one payer for now)
+            b["customer"] = cust.get(b.get("source_id")) or default_client
     # embedded per-row fees on income rows -> their own platform_fee line
     fee_lines = []
     for b in balance_rows:

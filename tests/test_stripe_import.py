@@ -8,6 +8,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from core import db
@@ -63,6 +64,18 @@ class ParseCase(unittest.TestCase):
     def test_payments_export_is_a_customer_lookup(self):
         cust = stripe_csv.customer_lookup(stripe_csv.parse_payments(PAYMENTS_CSV))
         self.assertEqual(cust.get("py_1"), "Acme Retail Pvt Ltd")
+
+    def test_single_client_default_attributes_income(self):
+        # Stripe has one payer for now -> every income row attributes to the
+        # default, unless a Payments export names a different customer
+        from core import config
+        with mock.patch.object(config, "STRIPE_DEFAULT_CLIENT", "Optimize IS"):
+            rows = stripe_csv.parse_balance_history(BALANCE_CSV)
+            for b in rows:
+                if b["kind"] == "income":
+                    b["customer"] = (None) or config.STRIPE_DEFAULT_CLIENT
+            income = [b for b in rows if b["kind"] == "income"]
+        self.assertTrue(all(b["customer"] == "Optimize IS" for b in income))
 
     def test_reconcile_fails_when_settlements_exceed_payments(self):
         bad = stripe_csv.parse_balance_history(
