@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Set the effective P&L month (accrual) for a transaction — for a salary/expense
+paid in one month but FOR another (a late salary).
+
+The payment DATE is never touched (cash + statement integrity depend on it);
+only pnl_month, which the monthly P&L reads instead of the payment month. NULL
+(the default) means 'use the payment date'. All-time totals + finance-doctor are
+unaffected — only the month split moves.
+
+    PYTHONPATH=. python3 bin/finance-accrue-month <record_id> <YYYY-MM>
+    PYTHONPATH=. python3 bin/finance-accrue-month <record_id> --clear
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db                                    # noqa: E402
+
+
+def main() -> int:
+    if len(sys.argv) != 3:
+        print(__doc__); return 2
+    rid, month = sys.argv[1], sys.argv[2]
+    val = None if month == "--clear" else month
+    if val is not None and not re.fullmatch(r"\d{4}-\d{2}", val):
+        print(f"month must be YYYY-MM (got {val!r})"); return 2
+    with db.connect(config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT substr(creation_dt,1,10) d, amount_minor, pnl_bucket,"
+            " substr(description,1,45) desc FROM transactions WHERE record_id=?",
+            (rid,)).fetchone()
+        if not row:
+            print(f"no transaction {rid!r}"); return 1
+        conn.execute("UPDATE transactions SET pnl_month=?,"
+                     " updated_at=datetime('now') WHERE record_id=?", (val, rid))
+    print(f"{rid}: paid {row['d']} ({row['pnl_bucket']}, "
+          f"{row['amount_minor']/100:.0f}) -> P&L month "
+          f"{val or 'payment date (' + row['d'][:7] + ')'}  [{row['desc']}]")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

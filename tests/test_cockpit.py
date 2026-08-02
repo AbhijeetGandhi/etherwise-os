@@ -1415,6 +1415,24 @@ class TestMoneyDrill(unittest.TestCase):
             self.assertTrue(all(r["b"] == "revenue" and r["m"] == month
                                 for r in d["rows"]))
 
+    def test_pnl_month_accrues_a_late_salary_to_the_month_it_was_for(self):
+        # a salary PAID 2026-07-02 but FOR June: pnl_month='2026-06' attributes it
+        # to June's P&L while its payment date stays July (cash unaffected)
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, description, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt, pnl_month) VALUES"
+                " ('late','klate','Salary','salary','IDFC','NEFT/x/JAY/y',"
+                " -216000,-226368,'INR','payroll','2026-07-02T00:00:00+0000',"
+                " '2026-06')")
+        june = data.money_transactions(self.db_path, month="2026-06", bucket="payroll")
+        july = data.money_transactions(self.db_path, month="2026-07", bucket="payroll")
+        # the July-paid salary is counted in JUNE, not July
+        self.assertTrue(any(r["dt"] == "2026-07-02" for r in june["rows"]))
+        self.assertFalse(any(r["dt"] == "2026-07-02" for r in july["rows"]))
+        self.assertEqual(june["rows"][0]["m"], "2026-06")   # attributed month
+
     def test_bucket_drills_sum_to_waterfall_lines(self):
         m = data.money(self.db_path, today="2026-06-15")
         for b, total in m["buckets"].items():

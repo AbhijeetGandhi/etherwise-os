@@ -1439,8 +1439,8 @@ def money(db_path: Optional[Path] = None,
     try:
         rows = [dict(r) for r in conn.execute(
             "SELECT source, type, upwork_type, category, accounting_subtype,"
-            " description, pnl_bucket, amount_base_minor, creation_dt FROM"
-            " transactions WHERE canonical_key IS NOT NULL")]
+            " description, pnl_bucket, amount_base_minor, creation_dt, pnl_month"
+            " FROM transactions WHERE canonical_key IS NOT NULL")]
         # LATEST closing per account: with overlapping/re-imported statements an
         # account has several balance rows — summing them double-counted cash
         # (2026-07-07: two idfc statements would have shown ~2x savings).
@@ -1467,7 +1467,9 @@ def money(db_path: Optional[Path] = None,
         return round(float(fmoney.from_minor(int(minor or 0))), 2)
 
     def mo(r):
-        return (r.get("creation_dt") or "")[:7]
+        # pnl_month accrual override (late salaries etc.) wins over the payment
+        # date for the monthly P&L split; cash + all-time totals are unaffected
+        return r.get("pnl_month") or (r.get("creation_dt") or "")[:7]
 
     # revenue = the pnl 'revenue' bucket (base-USD), MTD-vs-same-day-last-month
     def rev_minor(pred):
@@ -1581,7 +1583,8 @@ def money_transactions(db_path: Optional[Path] = None, *,
     try:
         rows = [dict(r) for r in conn.execute(
             "SELECT source, type, description, pnl_bucket, amount_base_minor,"
-            " creation_dt FROM transactions WHERE canonical_key IS NOT NULL")]
+            " creation_dt, pnl_month FROM transactions"
+            " WHERE canonical_key IS NOT NULL")]
     finally:
         conn.close()
 
@@ -1594,7 +1597,8 @@ def money_transactions(db_path: Optional[Path] = None, *,
     out, total_minor = [], 0
     for r in rows:
         b = r.get("pnl_bucket") or "uncategorized"
-        m = (r.get("creation_dt") or "")[:7]
+        # pnl_month accrual override wins for the month a row is attributed to
+        m = r.get("pnl_month") or (r.get("creation_dt") or "")[:7]
         if want_buckets is not None and b not in want_buckets:
             continue
         if month and m != month:
