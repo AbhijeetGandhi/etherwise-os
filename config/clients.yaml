@@ -164,6 +164,8 @@ clients:
     clickup: Discover Data
     billing:
       canonical: Diskover Data
+    emails:
+      - diskoverdata.com
   -
     id: dr-rajiv-siotia
     name: Dr Rajiv Siotia
