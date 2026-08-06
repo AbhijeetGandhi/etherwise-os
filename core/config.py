@@ -20,6 +20,8 @@ V3_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = V3_ROOT.parent                      # ~/Desktop/Etherwise
 V2_ROOT = WORKSPACE_ROOT / "etherwise-os"            # live v2 (until cutover)
 
+CONFIG_DIR = V3_ROOT / "config"                      # git-versioned, human-readable
+CLIENTS_REGISTRY = CONFIG_DIR / "clients.yaml"       # the identity spine (Jarvis J1)
 VAR_DIR = V3_ROOT / "var"
 DB_PATH = VAR_DIR / "etherwise.db"
 LOG_DIR = VAR_DIR / "logs"

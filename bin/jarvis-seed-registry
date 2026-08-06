@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""Seed config/clients.yaml by merging the four identity islands (Jarvis J1 §4.1).
+
+Islands:
+  1. knowledge dossiers   -> modules.knowledge.clients.PILOT_CLIENTS (id/name/identifiers)
+  2. finance CLIENT_CANONICAL -> core.config.CLIENT_CANONICAL (alias -> display name)
+  3. ClickUp Client Projects  -> var/registry-seed/clickup_spaces.json  (MCP snapshot)
+  4. Airtable Clients         -> var/registry-seed/airtable_clients.json (MCP snapshot)
+
+Merging is CONSERVATIVE: entries merge only on an exact normalized name/alias match.
+Anything ambiguous (a token matching >1 entry, a ClickUp space with no client match)
+is NOT silently resolved — it is written into the seeding report for Abhijeet.
+
+Emits (idempotent, reproducible):
+  - config/clients.yaml          (validated through the loader before writing)
+  - reports/jarvis-registry-seed.md
+
+    PYTHONPATH=. python3 bin/jarvis-seed-registry            # dry-run (report to stdout tail)
+    PYTHONPATH=. python3 bin/jarvis-seed-registry --write    # write both files
+"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, registry                              # noqa: E402
+from modules.knowledge.clients import PILOT_CLIENTS            # noqa: E402
+
+SEED_DIR = config.VAR_DIR / "registry-seed"
+_DOMAIN_RE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
+
+
+def slug(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", registry.norm(name)).strip("-")
+    return s or "client"
+
+
+class Seeder:
+    def __init__(self) -> None:
+        self.entries: list[dict] = []
+        self._by_norm: dict[str, dict] = {}     # norm(name|alias) -> entry
+        self.conflicts: list[str] = []
+        self.clickup_unmatched: list[str] = []
+
+    # ── entry primitives ────────────────────────────────────────────────────
+    def _index(self, entry: dict, text: str) -> None:
+        key = registry.norm(text)
+        if key:
+            self._by_norm.setdefault(key, entry)
+
+    def _find(self, *texts: str) -> list[dict]:
+        hits, seen = [], set()
+        for t in texts:
+            e = self._by_norm.get(registry.norm(t))
+            if e is not None and id(e) not in seen:
+                seen.add(id(e)); hits.append(e)
+        return hits
+
+    def new_entry(self, name: str, island: str, *, cid: str | None = None) -> dict:
+        e = {"id": cid or slug(name), "name": name, "aliases": [], "emails": [],
+             "upwork_rooms": [], "fathom_names": [], "billing": {"canonical": name},
+             "scope_notes": "", "_islands": {island}}
+        self.entries.append(e)
+        self._index(e, name)
+        return e
+
+    def add_alias(self, entry: dict, text: str) -> None:
+        text = (text or "").strip()
+        if not text:
+            return
+        if registry.norm(text) == registry.norm(entry["name"]):
+            return
+        if text not in entry["aliases"]:
+            entry["aliases"].append(text)
+        self._index(entry, text)
+
+    def add_list(self, entry: dict, field: str, value: str) -> None:
+        value = (value or "").strip()
+        if value and value not in entry[field]:
+            entry[field].append(value)
+
+    # ── island 4: Airtable (the spine) ──────────────────────────────────────
+    def load_airtable(self, rows: list[dict]) -> None:
+        canon = config.CLIENT_CANONICAL
+        for r in rows:
+            raw_name = (r.get("name") or "").strip()
+            if not raw_name:
+                continue
+            others = [x.strip() for x in (r.get("other") or "").split("\n") if x.strip()]
+            label = (r.get("label") or "").strip()
+            candidates = [raw_name, label, *others]
+            # canonical display name if finance already merges any candidate
+            display = None
+            for c in candidates:
+                if registry.norm(c) in canon:
+                    display = canon[registry.norm(c)]; break
+            name = display or raw_name.replace("-", " ")
+            existing = self._find(name, *candidates)
+            entry = existing[0] if existing else self.new_entry(name, "airtable")
+            entry["_islands"].add("airtable")
+            if display:
+                entry["billing"]["canonical"] = display
+                entry["name"] = display
+            for c in candidates:
+                self.add_alias(entry, c)
+            if (r.get("status") or "").strip():
+                entry.setdefault("_status", r["status"])
+
+    # ── island 1: dossiers ──────────────────────────────────────────────────
+    def load_dossiers(self, pilots: list[dict]) -> None:
+        for p in pilots:
+            name, cid = p["name"], p["client_id"]
+            hits = self._find(name, *p.get("identifiers", []))
+            entry = hits[0] if hits else self.new_entry(name, "dossier", cid=cid)
+            entry["_islands"].add("dossier")
+            entry["id"] = cid                    # dossier slug is the canonical id
+            self.add_alias(entry, name)
+            for ident in p.get("identifiers", []):
+                if _DOMAIN_RE.match(ident.strip().lower()):
+                    self.add_list(entry, "emails", ident.strip().lower())
+                else:
+                    self.add_list(entry, "fathom_names", ident.strip().lower())
+
+    # ── island 2: CLIENT_CANONICAL ──────────────────────────────────────────
+    def load_canonical(self, canon: dict) -> None:
+        # target display name -> [source alias keys]
+        targets: dict[str, list[str]] = {}
+        for src, tgt in canon.items():
+            targets.setdefault(tgt, []).append(src)
+        for tgt, srcs in targets.items():
+            hits = self._find(tgt, *srcs)
+            if len({id(h) for h in hits}) > 1:
+                self.conflicts.append(
+                    f"CLIENT_CANONICAL '{tgt}' matches multiple entries: "
+                    + ", ".join(sorted({h['id'] for h in hits})))
+            entry = hits[0] if hits else self.new_entry(tgt, "canonical")
+            entry["_islands"].add("canonical")
+            entry["billing"]["canonical"] = tgt
+            for src in srcs:
+                self.add_alias(entry, src)
+
+    # ── island 3: ClickUp ───────────────────────────────────────────────────
+    def load_clickup(self, spaces: list[dict], folders: list[dict]) -> None:
+        for loc in [*spaces, *folders]:
+            nm = loc["name"]
+            # try the whole name and any parenthetical token: "chris cave (Adelye)"
+            paren = re.findall(r"\(([^)]+)\)", nm)
+            base = re.sub(r"\([^)]*\)", "", nm).strip(" -")
+            no_tld = re.sub(r"\.[a-z]{2,3}$", "", nm)      # beglaubigt.de -> beglaubigt
+            hits = self._find(nm, base, no_tld, *paren)
+            uniq = {id(h): h for h in hits}
+            if len(uniq) > 1:
+                self.conflicts.append(
+                    f"ClickUp '{nm}' matches multiple entries: "
+                    + ", ".join(sorted({h['id'] for h in hits})))
+                continue
+            if uniq:
+                entry = next(iter(uniq.values()))
+                entry["_islands"].add("clickup")
+                entry.setdefault("clickup", nm)
+            else:
+                self.clickup_unmatched.append(nm)
+
+    # ── explicit J1 seeds ───────────────────────────────────────────────────
+    def ensure_explicit(self) -> None:
+        # Diskover Data — its Fathom calls are the unmapped-heal acceptance case.
+        hits = self._find("Diskover Data", "Discover Data", "diskover")
+        d = hits[0] if hits else self.new_entry("Diskover Data", "explicit",
+                                                cid="diskover-data")
+        d["_islands"].add("explicit")
+        for a in ("Discover Data", "Diskover"):
+            self.add_alias(d, a)
+        for fn in ("diskover", "discover data"):
+            self.add_list(d, "fathom_names", fn)
+        d.setdefault("clickup", "Discover Data")
+
+        # Optimize IS — Charlie Melendez, Stripe rail (billing spine for Stripe).
+        hits = self._find("Optimize IS", config.STRIPE_DEFAULT_CLIENT)
+        o = hits[0] if hits else self.new_entry("Optimize IS", "explicit",
+                                                cid="optimize-is")
+        o["_islands"].add("explicit")
+        self.add_alias(o, "Charlie Melendez")
+        self.add_list(o, "upwork_rooms", "room_3f05d369265d2bbf781699fa78bc0131")
+        o["billing"] = {"rail": "stripe", "canonical": "Optimize IS"}
+        o["scope_notes"] = "Upwork proposal 2052826862360911873; Stripe billing"
+
+    # ── emit ────────────────────────────────────────────────────────────────
+    def finalize(self) -> list[dict]:
+        # unique, stable ids
+        seen: dict[str, int] = {}
+        for e in sorted(self.entries, key=lambda x: registry.norm(x["name"])):
+            base = e["id"]
+            if base in seen:
+                seen[base] += 1
+                e["id"] = f"{base}-{seen[base]}"
+            else:
+                seen[base] = 1
+        return self.entries
+
+    def to_yaml_doc(self) -> dict:
+        out = []
+        for e in sorted(self.entries, key=lambda x: registry.norm(x["name"])):
+            c = {"id": e["id"], "name": e["name"]}
+            if e["aliases"]:
+                c["aliases"] = e["aliases"]
+            if e["emails"]:
+                c["emails"] = e["emails"]
+            if e["upwork_rooms"]:
+                c["upwork_rooms"] = e["upwork_rooms"]
+            if e["fathom_names"]:
+                c["fathom_names"] = e["fathom_names"]
+            if e.get("clickup"):
+                c["clickup"] = e["clickup"]
+            c["billing"] = e["billing"]
+            if e.get("scope_notes"):
+                c["scope_notes"] = e["scope_notes"]
+            out.append(c)
+        return {"clients": out}
+
+
+def build() -> Seeder:
+    air = json.loads((SEED_DIR / "airtable_clients.json").read_text())
+    cu = json.loads((SEED_DIR / "clickup_spaces.json").read_text())
+    s = Seeder()
+    s.load_airtable(air)
+    s.load_dossiers(PILOT_CLIENTS)
+    s.load_canonical(config.CLIENT_CANONICAL)
+    s.ensure_explicit()          # before clickup, so Diskover/Optimize can match spaces
+    s.load_clickup(cu.get("spaces", []), cu.get("client_projects_folders", []))
+    s.finalize()
+    return s
+
+
+HEADER = (
+    "# Etherwise client registry — the identity spine (Jarvis J1, architecture v2 §4.1).\n"
+    "# GENERATED by bin/jarvis-seed-registry from the four identity islands, then\n"
+    "# reviewed. From here it changes ONLY via the mapping-queue approval flow\n"
+    "# (audited git commits) or a hand edit. The loader (core/registry.py) validates\n"
+    "# on read: unique ids, no overlapping email/alias claims. No agent writes here.\n"
+)
+
+
+def report(s: Seeder) -> str:
+    entries = sorted(s.entries, key=lambda x: registry.norm(x["name"]))
+    L = ["# Jarvis registry — seeding report", "",
+         f"_{len(entries)} clients merged from 4 islands "
+         "(dossiers · CLIENT_CANONICAL · ClickUp · Airtable). "
+         "Reviewed by Abhijeet before the registry is trusted._", "",
+         "_Sources: dossiers = modules.knowledge.clients.PILOT_CLIENTS · canonical = "
+         "core.config.CLIENT_CANONICAL · ClickUp + Airtable = MCP snapshots in "
+         "var/registry-seed/ (pulled 2026-08-06). Merges are exact-normalized-match "
+         "only; near-misses fall to the review lists below, never silently resolved._",
+         ""]
+    counts = {"dossier": 0, "canonical": 0, "clickup": 0, "airtable": 0, "explicit": 0}
+    for e in entries:
+        for isl in e["_islands"]:
+            counts[isl] = counts.get(isl, 0) + 1
+    L += ["## Island coverage",
+          "| island | clients matched |", "|---|---|"]
+    for k in ("airtable", "dossier", "canonical", "clickup", "explicit"):
+        L.append(f"| {k} | {counts.get(k, 0)} |")
+    L += ["", "## Per-client (islands · id · aliases)", "",
+          "| client | id | islands | aliases | emails | clickup |", "|---|---|---|---|---|---|"]
+    for e in entries:
+        isl = "".join(sorted("DCKAE"[["dossier", "canonical", "clickup", "airtable",
+              "explicit"].index(i)] for i in e["_islands"]))
+        L.append(f"| {e['name']} | `{e['id']}` | {isl} | "
+                 f"{', '.join(e['aliases'][:4])}{'…' if len(e['aliases'])>4 else ''} | "
+                 f"{', '.join(e['emails']) or '—'} | {e.get('clickup','—')} |")
+    L += ["", "_islands key: D=dossier C=canonical K=clickup A=airtable E=explicit_", ""]
+
+    thin = [e for e in entries if len(e["_islands"]) == 1 and "airtable" in e["_islands"]]
+    L += ["## Thin entries (Airtable-only — likely Upwork leads/persons, review)",
+          ", ".join(f"{e['name']}" for e in thin) or "none", ""]
+    L += ["## ClickUp spaces with NO client match (review — new client, or product/internal?)",
+          ", ".join(s.clickup_unmatched) or "none", ""]
+    L += ["## Conflicts (NOT auto-resolved)"]
+    L += ([f"- {c}" for c in s.conflicts] or ["none"])
+    L += ["", "## Explicit J1 seeds present",
+          "- Diskover Data: " + ("YES" if s._find("Diskover Data") else "MISSING"),
+          "- Optimize IS: " + ("YES" if s._find("Optimize IS") else "MISSING"), ""]
+    return "\n".join(L)
+
+
+def main() -> int:
+    write = "--write" in sys.argv[1:]
+    s = build()
+    doc = s.to_yaml_doc()
+    body = HEADER + registry.dumps(doc)
+    # validate through the loader BEFORE writing — never emit a broken spine
+    reg = registry.Registry(doc["clients"], sha="0" * 64)
+    rep = report(s)
+    if write:
+        config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        config.CLIENTS_REGISTRY.write_text(body)
+        (config.V3_ROOT / "reports").mkdir(exist_ok=True)
+        (config.V3_ROOT / "reports" / "jarvis-registry-seed.md").write_text(rep)
+        # confirm it reloads clean from disk
+        registry.load(config.CLIENTS_REGISTRY, force=True)
+        print(f"wrote {config.CLIENTS_REGISTRY} ({len(reg.ids())} clients) + report")
+    else:
+        print(rep)
+        print(f"\n[dry-run] {len(reg.ids())} clients validated; pass --write to emit")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
