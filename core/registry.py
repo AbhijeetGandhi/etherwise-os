@@ -257,6 +257,12 @@ class Registry:
                     raise RegistryError(f"{cid}.{f} must be a list, got {v!r}")
             self.by_id[cid] = c
 
+            # no_match entries (products/internal) stay in the registry + the
+            # trust view, but are NEVER used to map an event or proposed as a
+            # candidate — skip all match indexing for them.
+            if c.get("no_match"):
+                continue
+
             # emails: unique across the whole registry (domain or full address)
             for e in c["emails"]:
                 key = norm(e)
@@ -304,6 +310,10 @@ class Registry:
 
     def ids(self) -> list[str]:
         return list(self.by_id)
+
+    def matchable_ids(self) -> list[str]:
+        """Client ids eligible for matching/assignment (excludes no_match)."""
+        return [cid for cid, c in self.by_id.items() if not c.get("no_match")]
 
 
 # ── cached loader (mtime-invalidated; approval flow calls invalidate()) ──────

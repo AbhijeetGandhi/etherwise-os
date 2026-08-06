@@ -81,8 +81,10 @@ clients:
     aliases:
       - Celsius Herbs
       - Rick K
+      - CelsiusHerbs
     billing:
       canonical: celciusherbs
+    clickup: CelsiusHerbs
   -
     id: christoph-weingartner-unternehmensberatung
     name: Christoph Weingartner Unternehmensberatung
@@ -150,8 +152,10 @@ clients:
       - Diat-Khan
       - Diat Khan (Remote Office Australia)
       - Remote Office Australia Pty Ltd
+      - Remote Office
     billing:
       canonical: Diat Khan
+    clickup: Remote Office (Diat)
   -
     id: diskover-data
     name: Diskover Data
@@ -497,3 +501,25 @@ clients:
     name: Vitaliy Kahanets
     billing:
       canonical: Vitaliy Kahanets
+    clickup: Vitaliy
+    aliases:
+      - Vitaliy
+  -
+    id: the-cradle-company
+    name: The Cradle Company
+    aliases:
+      - TCC
+    fathom_names:
+      - the cradle company
+      - cradle company
+    clickup: TCC
+    billing:
+      canonical: The Cradle Company
+  -
+    id: phonicflow
+    name: PhonicFlow
+    clickup: PhonicFlow
+    billing:
+      canonical: PhonicFlow
+    scope_notes: product
+    no_match: "True"

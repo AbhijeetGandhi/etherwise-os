@@ -47,7 +47,7 @@ def match_deterministic(reg, author: str) -> Optional[str]:
 def candidates(reg) -> list[dict]:
     """Compact candidate set for the proposer (id + name + a few match hints)."""
     out = []
-    for cid in reg.ids():
+    for cid in reg.matchable_ids():
         c = reg.by_id[cid]
         hints = (c.get("aliases") or [])[:3] + (c.get("emails") or [])[:2]
         out.append({"id": cid, "name": c["name"], "hints": hints})

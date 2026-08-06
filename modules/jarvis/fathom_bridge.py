@@ -48,7 +48,7 @@ def _match(reg, participants: list[str], title: str) -> Optional[str]:
             return cid
     # last resort: a fathom_name / alias token appears in title or a participant
     hay = (title or "").lower() + " " + " ".join(participants).lower()
-    for cid in reg.ids():
+    for cid in reg.matchable_ids():
         c = reg.by_id[cid]
         for tok in (c.get("fathom_names") or []):
             if tok and tok.lower() in hay:

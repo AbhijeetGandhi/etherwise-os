@@ -122,6 +122,14 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             self._load(bad)
 
+    def test_no_match_entry_registered_but_not_matchable(self):
+        text = (SAMPLE + "  -\n    id: phonicflow\n    name: PhonicFlow\n"
+                "    aliases:\n      - PhonicFlow\n    no_match: true\n")
+        reg = self._load(text)
+        self.assertIn("phonicflow", reg.ids())            # in the registry
+        self.assertNotIn("phonicflow", reg.matchable_ids())  # excluded from match
+        self.assertIsNone(reg.match_name("PhonicFlow"))    # never maps an event
+
     def test_cache_invalidation(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "clients.yaml"

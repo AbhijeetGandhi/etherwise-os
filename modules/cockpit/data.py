@@ -1751,6 +1751,6 @@ def queue(db_path: Optional[Path] = None) -> dict:
 
     return {"groups": ordered, "queued_total": len(rows), "counts": counts,
             "clients": [{"id": cid, "name": reg.by_id[cid]["name"]}
-                        for cid in sorted(reg.ids(),
+                        for cid in sorted(reg.matchable_ids(),
                                           key=lambda i: reg.by_id[i]["name"].lower())],
             "registry_sha": reg.sha[:12], "last_sweep": last_sweep}
