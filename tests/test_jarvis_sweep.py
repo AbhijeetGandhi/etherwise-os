@@ -196,6 +196,25 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(r["proposed_client_id"], "adelye")   # a proposal, not truth
         self.assertAlmostEqual(r["proposal_confidence"], 0.6)
 
+    def test_self_noise_excluded_before_body_or_proposer(self):
+        msgs = {
+            "s1": ("Etherwise Bot <contact@etherwise.io>",
+                   "Upwork scan: 2 scored, 1 hot", "digest", 5000),
+            "s2": ("Etherwise Bot <bot@etherwise.io>", "Hot Upwork Leads",
+                   "leads", 6000),
+            "s3": ("Chris <chris@adelye.com>", "Real client mail", "hi", 7000),
+        }
+        metrics, ctx, fg = self._run(msgs)
+        self.assertEqual(metrics["excluded"], 2)      # s1 (sender) + s2 (domain)
+        self.assertNotIn("s1", fg.full_calls)          # never fetched a body
+        self.assertNotIn("s2", fg.full_calls)
+        self.assertEqual(metrics["mapped"], 1)         # s3 real client
+        self.assertEqual(ctx.claude_calls, [])         # self-noise never proposed
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT exclude_reason FROM events WHERE"
+                             " id='evt:email:s1'").fetchone()
+        self.assertTrue(r["exclude_reason"].startswith("self-noise"))
+
     def test_empty_skip_no_llm(self):
         from core import runner
         fg = FakeGmail({})

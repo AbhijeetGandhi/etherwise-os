@@ -237,6 +237,20 @@ JARVIS_SWEEP_TIMES = ("11:00", "19:00", "00:00")   # IST (informational; see pli
 JARVIS_SWEEP_MAX_EVENTS = 60        # collect at most N new items per sweep
 JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
                                     # the rest stay 'held' for the next sweep
+# Self-noise: the rail NEVER ingests our OWN automation output (bot digests,
+# scan alerts, reports). Excluded at the metadata stage BEFORE any body fetch or
+# token is spent (reason 'self-noise'). Add a sender or subject here — one line —
+# whenever a new system email appears; this is code-enforced, not prompt-hoped.
+SELF_SENDERS = (
+    "contact@etherwise.io",         # our primary SMTP identity (SMTP_FROM)
+    "etherwise bot",                # the automation display name (From header)
+)
+SELF_SENDER_DOMAINS = ("etherwise.io",)   # any @etherwise.io sender is internal
+SELF_SUBJECT_PATTERNS = (
+    "upwork scan:", "hot upwork leads", "source-health", "source health",
+    "weekly sales report", "monthly connect roi", "roi report",
+    "finance-upwork-weekly", "upwork agency",
+)
 
 # ── Source-health registry (2026-07-16) ──────────────────────────────────────
 # Every number-backing source self-reports freshness + health so a source that

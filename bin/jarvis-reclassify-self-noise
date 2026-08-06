@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Re-classify already-queued events that are OUR OWN automation output to
+excluded (reason self-noise). Idempotent backfill for the self-noise rule added
+after the first live sweep — so Abhijeet never hand-ignores our own bot mail.
+
+Only touches state in (queued, held); never a mapped or human-resolved event.
+
+    PYTHONPATH=. python3 bin/jarvis-reclassify-self-noise           # dry-run
+    PYTHONPATH=. python3 bin/jarvis-reclassify-self-noise --apply
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db                                  # noqa: E402
+from modules.jarvis import gmail_rail                         # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    args = ap.parse_args()
+
+    hits = []
+    with db.connect(config.DB_PATH) as conn:
+        rows = conn.execute("SELECT id, author, subject FROM events"
+                            " WHERE state IN ('queued','held')").fetchall()
+        for r in rows:
+            # stored rows have no raw From header — the address + subject rules
+            # (domain @etherwise.io, template subjects) catch our automation
+            reason = gmail_rail.self_noise_reason(r["author"], r["author"],
+                                                  r["subject"])
+            if reason:
+                hits.append((r["id"], reason, r["author"], r["subject"]))
+        if args.apply:
+            for eid, reason, *_ in hits:
+                conn.execute(
+                    "UPDATE events SET state='excluded', exclude_reason=?,"
+                    " proposed_client_id=NULL, proposal_confidence=NULL,"
+                    " proposal_evidence=NULL, updated_at=datetime('now')"
+                    " WHERE id=?", (reason, eid))
+
+    verb = "EXCLUDED" if args.apply else "would-exclude"
+    for eid, reason, author, subj in hits:
+        print(f"{verb}  {eid}  [{reason}]  {author}  {str(subj)[:48]}")
+    tail = "excluded" if args.apply else "matched (dry-run; pass --apply)"
+    print(f"\n{len(hits)} self-noise event(s) {tail}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -5,6 +5,11 @@ message ids since the cursor, fetch HEADERS ONLY to classify against a noise
 blocklist, and pull the full body ONLY for messages that pass — cutting the
 prompt-injection surface (and the token bill) by not loading bulk/automated mail.
 
+Principle: the rail NEVER ingests our own automation output. Self-noise (bot
+digests, scan alerts, reports — see config.SELF_SENDERS/SELF_SUBJECT_PATTERNS) is
+excluded at the metadata stage before any body fetch, proposer call, or token
+spent. A new system email is one line in config, never a code change.
+
 Reuses the tested token + HTTP seams from modules.knowledge.email_poll; HTTP is
 injectable (_list/_meta/_full) so all logic is covered without a live token.
 Produces normalized, un-stored event dicts — the sweep stores + maps them.
@@ -45,6 +50,27 @@ _NOISE_SUBJECT_SUBSTR = (
     "sign-in", "sign in to", "security alert", "your invoice", "newsletter",
     "weekly digest", "[automated]", "password reset", "confirm your",
 )
+
+
+def self_noise_reason(from_header: str, from_addr: str, subject: str) -> str | None:
+    """Our OWN automation output — excluded before any body fetch or token spend.
+    Matches our sending identities (address, @etherwise.io domain, or the bot
+    display name in the raw From) and our template subjects. Config-driven so a
+    new system email is one line in config, never a code change."""
+    frm = (from_header or "").lower()
+    a = (from_addr or "").lower()
+    dom = ep.sender_domain(from_header) or (a.rsplit("@", 1)[-1] if "@" in a else "")
+    for s in config.SELF_SENDERS:
+        if s == a or s in frm:
+            return f"self-noise:sender:{s}"
+    for d in config.SELF_SENDER_DOMAINS:
+        if dom == d or dom.endswith("." + d):
+            return f"self-noise:domain:{dom}"
+    subj = (subject or "").lower()
+    for p in config.SELF_SUBJECT_PATTERNS:
+        if p in subj:
+            return f"self-noise:subject:{p}"
+    return None
 
 
 def noise_reason(from_addr: str, subject: str) -> str | None:
@@ -112,7 +138,8 @@ def _classify(msg_meta: dict, msg_id: str) -> dict:
             pass
     from email.utils import parseaddr
     _, addr = parseaddr(frm)
-    reason = noise_reason(addr or frm, subject)
+    # self-noise (our own automation) is checked FIRST — never fetched, never proposed
+    reason = self_noise_reason(frm, addr, subject) or noise_reason(addr or frm, subject)
     return {
         "id": events.canonical_id(SOURCE, msg_id),
         "source": SOURCE, "native_id": msg_id, "ts": ts,
