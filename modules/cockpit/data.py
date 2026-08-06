@@ -44,6 +44,57 @@ def _ist_today() -> str:
     return datetime.now(config.TZ).strftime("%Y-%m-%d")
 
 
+# ── card identity + provenance law (J1 D4) ───────────────────────────────────
+# A card's identity is (client, intent), NOT the surface that produced it. The
+# follow-up CARD (from drafts+threads) and the owed_reply NUDGE (from the M4
+# store) are the same intent for the same thread; they must collapse to ONE card
+# rolled forward with an honest age — never render twice (the "follow-up ×2").
+_CLIENT_FACING_KINDS = {"owed_reply", "commitment_due", "won_no_outcome",
+                        "hotlead_no_loom"}
+
+
+def _card_key(item_key: str, client) -> str:
+    """Canonical render identity. Follow-up threads key on the thread alone so a
+    follow-up card and its owed_reply nudge collapse even if their client labels
+    differ; everything else keys on client + intent."""
+    ik = item_key or ""
+    if ik.startswith("followup:"):
+        return f"card:thread:{ik.split(':', 1)[1]}"
+    if ik.startswith("nudge:followup:"):
+        return f"card:thread:{ik.split(':', 2)[2]}"
+    return f"card:{client or '-'}:{ik}"
+
+
+def _card_provenance(entry: dict):
+    d = entry.get("detail") or {}
+    return (entry.get("thread_url") or d.get("thread_url") or d.get("source")
+            or d.get("job_url") or d.get("cite") or d.get("permalink"))
+
+
+def _card_client_facing(entry: dict) -> bool:
+    return (bool(entry.get("client")) or entry.get("kind") == "followup"
+            or entry.get("nudge_kind") in _CLIENT_FACING_KINDS)
+
+
+def _flag_no_provenance(db_path, count: int, keys: list) -> None:
+    """The provenance law is loud, not silent: a client-facing card with no
+    evidence link is hidden AND raises a once-a-day warn anomaly."""
+    try:
+        from core import db as _db
+        with _db.connect(db_path or config.DB_PATH) as conn:
+            dup = conn.execute(
+                "SELECT 1 FROM anomalies WHERE kind='card_no_provenance'"
+                " AND resolved_at IS NULL AND substr(detected_at,1,10)=date('now')"
+                " LIMIT 1").fetchone()
+            if not dup:
+                conn.execute(
+                    "INSERT INTO anomalies (task_name, kind, detail_json, severity)"
+                    " VALUES ('cockpit_today','card_no_provenance',?, 'warn')",
+                    (json.dumps({"hidden": count, "keys": keys[:20]}),))
+    except Exception:  # noqa: BLE001 — never let flagging break the page
+        pass
+
+
 # Canonical earnings definition — mirrors v2 reconcile_airtable.py (the
 # reconciled revenue parity set). amount>0 guards refunds/reversals.
 EARNING_TYPES = ("Hourly Earning", "Fixed Earning", "Bonus")
@@ -1297,7 +1348,10 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             pl = json.loads(n.get("payload_json") or "{}")
         except (TypeError, ValueError):
             pl = {}
-        if n["kind"] == "owed_reply" and pl.get("thread_id") in fu_threads:
+        # dedup an owed_reply against its follow-up card by THREAD (the dedup_key
+        # carries the thread even when the payload does not) — the ×2 root cause
+        _tid = dk.split(":", 1)[1] if dk.startswith("followup:") else pl.get("thread_id")
+        if n["kind"] == "owed_reply" and _tid in fu_threads:
             continue                        # already shown with its draft
         # derive the client + detail for the clickable card
         client, detail = None, {"kind": n["kind"].replace("_", " ")}
@@ -1318,7 +1372,30 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             "title": n["title"], "action": n.get("action"), "due": n.get("due"),
             "dept": n["dept"], "client": client,
             "item_key": f"nudge:{n['dedup_key']}", "detail": detail})
-    queue.sort(key=lambda e: e["urgency"], reverse=True)
+    # rank, then collapse to one card per (client, intent): a follow-up card is
+    # preferred over a bare owed_reply nudge for the same thread (it has the draft)
+    queue.sort(key=lambda e: (-e["urgency"], 0 if e["kind"] == "followup" else 1))
+    _seen: dict = {}
+    _deduped: list = []
+    for e in queue:
+        k = _card_key(e.get("item_key", ""), e.get("client"))
+        if k not in _seen:
+            _seen[k] = len(_deduped); _deduped.append(e)
+        elif e["kind"] == "followup" and _deduped[_seen[k]]["kind"] != "followup":
+            _deduped[_seen[k]] = e          # prefer the actionable draft card
+    queue = _deduped
+    # provenance law (§4.5): a client-facing card with no evidence link may not
+    # render — hide it and raise a loud (not silent) anomaly.
+    _hidden_keys: list = []
+    _kept: list = []
+    for e in queue:
+        if _card_client_facing(e) and not _card_provenance(e):
+            _hidden_keys.append(_card_key(e.get("item_key", ""), e.get("client")))
+        else:
+            _kept.append(e)
+    queue = _kept
+    if _hidden_keys:
+        _flag_no_provenance(db_path, len(_hidden_keys), _hidden_keys)
     # ruthless: Today shows the sharpest few; the full ranked queue is the
     # Nudges tab. Overflow is stated, never silently dropped.
     queue_total = len(queue)
@@ -1348,6 +1425,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     return {
         "sources": sources,
         "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
+        "queue_hidden_no_provenance": len(_hidden_keys),
         "follow_ups": follow_ups,           # kept for back-compat / counts
         "backlog": backlog,
         "metrics": {

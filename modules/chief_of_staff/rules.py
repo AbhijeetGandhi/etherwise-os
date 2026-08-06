@@ -48,7 +48,10 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
                 "title": f"Follow up: {topic}",
                 "action": "Draft is ready — review + send in Upwork.",
                 "due": None, "dedup_key": f"followup:{r['thread_id']}",
-                "payload": {"idle_days": r["idle_days"]}})
+                # thread_id in the payload so the Today assembler can dedup this
+                # nudge against its follow-up card (the "follow-up x2" root cause)
+                "payload": {"idle_days": r["idle_days"],
+                            "thread_id": r["thread_id"]}})
     return out
 
 

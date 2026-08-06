@@ -367,7 +367,8 @@ class TestTodayReader(unittest.TestCase):
         from modules.chief_of_staff import nudges as eng
         eng.write_nudge(self.db_path, source="sales", dept="sales",
                         kind="commitment_due", title="Ship the thing",
-                        dedup_key="c:x", now=datetime(2026, 6, 15, tzinfo=config.TZ))
+                        dedup_key="c:x", payload={"cite": "fathom/x @ 0"},
+                        now=datetime(2026, 6, 15, tzinfo=config.TZ))
         out = data.today(self.db_path, today="2026-06-15")
         kinds = {q["kind"] for q in out["queue"]}
         self.assertIn("followup", kinds)
