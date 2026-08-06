@@ -303,7 +303,11 @@ SOURCES = (
     {"key": "jarvis_sweep", "label": "Jarvis sweep (Gmail contact@)",
      "task_name": "jarvis_sweep", "max_age_hours": 16,   # 3x/day (max gap 11h)+grace
      "degrade_kinds": ("sweep_reconcile_mismatch",),
-     "critical": True, "backs": "today",
+     # NOT critical until cutover: the plist is authored but UNLOADED, so the
+     # rail has never run — flip to True in the same commit that loads the
+     # launchd job at the J1 checkpoint (else a not-yet-live rail false-reds
+     # overall health). Registered now so it shows in the trust view.
+     "critical": False, "backs": "today",
      "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
      "why": "the client-centric sweep behind Today + the mapping queue; a stale"
             " sweep means new client mail is not being seen or routed"},
