@@ -229,6 +229,15 @@ RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a h
 # the Payments export is dropped alongside balance_history for real attribution.
 STRIPE_DEFAULT_CLIENT = "Optimize IS"
 
+# ── Jarvis sweep (J1) — collect+map ceilings ─────────────────────────────────
+# The 3x/day sweep (11:00 / 19:00 / 00:00 IST) reads contact@ read-only, maps
+# each item to a client via the registry, and proposes the rest via Haiku. Hard
+# per-run bounds so a bad day can never run away (§4.3 per-run ceilings):
+JARVIS_SWEEP_TIMES = ("11:00", "19:00", "00:00")   # IST (informational; see plist)
+JARVIS_SWEEP_MAX_EVENTS = 60        # collect at most N new items per sweep
+JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
+                                    # the rest stay 'held' for the next sweep
+
 # ── Source-health registry (2026-07-16) ──────────────────────────────────────
 # Every number-backing source self-reports freshness + health so a source that
 # silently degrades (a dead rail, a scanner extracting 2 tiles/feed) can never
@@ -291,6 +300,13 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.finance-stripe", "catch_up": True,
      "why": "imports Stripe payments (revenue) + settlements; a stale/failed run"
             " means new Stripe income is not reaching the P&L"},
+    {"key": "jarvis_sweep", "label": "Jarvis sweep (Gmail contact@)",
+     "task_name": "jarvis_sweep", "max_age_hours": 16,   # 3x/day (max gap 11h)+grace
+     "degrade_kinds": ("sweep_reconcile_mismatch",),
+     "critical": True, "backs": "today",
+     "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
+     "why": "the client-centric sweep behind Today + the mapping queue; a stale"
+            " sweep means new client mail is not being seen or routed"},
     # Manually fed: statement imports have no scheduled run to age, but the DATA
     # still has an age — freshness_sql asks the ledger when it was last fed.
     {"key": "finance_ledger", "label": "Statement imports (bank/card/Wise)",
