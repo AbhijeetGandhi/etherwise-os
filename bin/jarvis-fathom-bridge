@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Re-map unmapped Fathom recordings through the client registry (Jarvis J1 D3).
+
+Auto-heals recordings the registry now recognizes (reattributes the source + its
+facts, recompiles that client's dossier); queues external-but-unmatched calls to
+the mapping queue for a one-time human assign; skips signal-less internal calls.
+Bounded (newest-first) so hundreds of old calls never flood the queue.
+
+    PYTHONPATH=. python3 bin/jarvis-fathom-bridge [--limit N] [--queue-cap N]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, runner                              # noqa: E402
+from modules.jarvis import fathom_bridge                     # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--limit", type=int, default=50)
+    ap.add_argument("--queue-cap", type=int, default=40)
+    args = ap.parse_args()
+
+    def task(ctx):
+        return fathom_bridge.sync_unmapped(
+            ctx.db_path or config.DB_PATH, limit=args.limit,
+            queue_cap=args.queue_cap, run_id=ctx.run_id)
+
+    result = runner.run_task("jarvis_fathom_bridge", task, module="system")
+    print(json.dumps({"status": result.status, "metrics": result.metrics}))
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

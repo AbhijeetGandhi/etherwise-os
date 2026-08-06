@@ -3,7 +3,7 @@
 // localStorage, stripped from the URL; sent as X-Cockpit-Token on every API
 // call. No send actions anywhere (drafts-only).
 
-const SECTIONS = ["Today", "Nudges", "Pipeline", "Money", "Clients", "Knowledge", "System"];
+const SECTIONS = ["Today", "Nudges", "Mapping", "Pipeline", "Money", "Clients", "Knowledge", "System"];
 const TOKEN_KEY = "ew_cockpit_token";
 const THEME_KEY = "ew_cockpit_theme";
 const LAST_SECTION_KEY = "ew_cockpit_section";
@@ -2387,6 +2387,82 @@ function sectionFromHash() {
   const h = (location.hash || "").replace("#", "").toLowerCase();
   return SECTIONS.find((s) => s.toLowerCase() === h) || null;
 }
+
+// ── Jarvis mapping queue (J1 D3) ──
+async function qResolve(eventId, action, clientId, reason) {
+  const body = { event_id: eventId, action };
+  if (clientId) body.client_id = clientId;
+  if (reason) body.reason = reason;
+  const r = await fetch("/api/queue/resolve", {
+    method: "POST",
+    headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const res = await r.json().catch(() => ({}));
+  if (res && res.error) { alert("Resolve failed: " + res.error); return; }
+  if (res && res.registry && res.registry.commit) {
+    // brief confirmation that the registry learned + committed
+    console.log("registry commit", res.registry.commit, res.registry.note);
+  }
+  show("Mapping");
+}
+
+RENDERERS.Mapping = async (view) => {
+  const d = await api("/api/queue");
+  view.appendChild(el("h2", "section", "Mapping queue"));
+  const c = d.counts || {};
+  const rec = d.last_sweep;
+  let txt = `Registry ${esc(d.registry_sha)} · events: ${c.mapped || 0} mapped · `
+    + `${c.queued || 0} queued · ${c.held || 0} held · ${c.excluded || 0} excluded `
+    + `(total ${c.total || 0})`;
+  if (rec) txt += ` · last sweep ${rec.at ? esc(String(rec.at).slice(0, 16)) : "—"}: `
+    + (rec.reconciled === false ? "⚠ RECONCILE MISMATCH" : "reconciled ✓");
+  view.appendChild(el("div", "muted", txt));
+
+  if (!d.queued_total) {
+    placeholder(view, "Queue clear — every collected event is mapped or excluded.");
+    return;
+  }
+  const optionsHtml = (sel) => ['<option value="">— pick client —</option>']
+    .concat((d.clients || []).map((cl) =>
+      `<option value="${esc(cl.id)}" ${cl.id === sel ? "selected" : ""}>${esc(cl.name)}</option>`))
+    .join("");
+
+  (d.groups || []).forEach((g) => {
+    const gc = el("div", "card");
+    gc.appendChild(el("h3", null, esc(g.proposed_name) + "  ·  " + g.count));
+    g.items.forEach((it) => {
+      const row = el("div", "fu-item");
+      row.appendChild(el("div", null,
+        `<b>${esc(it.author || "?")}</b> — ${esc(it.subject || "(no subject)")}`));
+      let sub = `${esc(it.source)}`;
+      if (it.ts) sub += " · " + esc(String(it.ts).slice(0, 16));
+      if (it.confidence != null) sub += ` · proposer ${(it.confidence * 100).toFixed(0)}%`;
+      if (it.evidence) sub += " · " + esc(it.evidence);
+      row.appendChild(el("div", "muted", sub));
+      if (it.preview) { const p = el("div", "muted"); p.textContent = it.preview; row.appendChild(p); }
+      const actions = el("div", "fu-actions");
+      const selEl = el("select", "unlock-input");
+      selEl.innerHTML = optionsHtml(g.proposed_client_id);
+      const assign = el("button", "action primary", "Assign");
+      assign.onclick = () => {
+        if (!selEl.value) { alert("Pick a client first."); return; }
+        qResolve(it.event_id, "assign", selEl.value);
+      };
+      const ignore = el("button", "action", "Ignore");
+      ignore.onclick = () => qResolve(it.event_id, "ignore", null, "not a client");
+      actions.append(selEl, assign, ignore);
+      if (it.permalink) {
+        const a = el("a", "action", "Open");
+        a.href = it.permalink; a.target = "_blank"; a.rel = "noopener";
+        actions.appendChild(a);
+      }
+      row.appendChild(actions);
+      gc.appendChild(row);
+    });
+    view.appendChild(gc);
+  });
+};
 
 // ── boot ──
 initTheme();

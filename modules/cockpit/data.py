@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from core import config, doctor_checks, source_health
+from core import config, doctor_checks, registry, source_health
 from core.airtable_client import AirtableClient
 
 _STATUS_ORDER = {"Active": 0, "Paused": 1, "Lead": 2, "Ended": 3, "Past": 4}
@@ -1616,3 +1616,63 @@ def money_transactions(db_path: Optional[Path] = None, *,
     out.sort(key=lambda x: x["dt"], reverse=True)
     return {"doctor": "GREEN", "blocked": False, "rows": out,
             "count": len(out), "sum_usd": usd(total_minor)}
+
+
+# ── Jarvis mapping queue (J1 D3) ──────────────────────────────────────────────
+def queue(db_path: Optional[Path] = None) -> dict:
+    """Unmapped events grouped by proposed client, with evidence + provenance,
+    plus the client list for assignment and the latest sweep's reconciliation.
+    Counts reconcile: total = mapped + queued + held + excluded."""
+    conn = _ro(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, source, author, subject, ts, permalink, proposed_client_id,"
+            " proposal_confidence, proposal_evidence, substr(text,1,180) preview"
+            " FROM events WHERE state='queued'"
+            " ORDER BY proposed_client_id IS NULL, proposed_client_id, ts DESC")]
+        counts = {s: 0 for s in ("mapped", "queued", "held", "excluded")}
+        for r in conn.execute("SELECT state, COUNT(*) n FROM events GROUP BY state"):
+            if r["state"] in counts:
+                counts[r["state"]] = r["n"]
+        counts["total"] = sum(counts[s] for s in
+                              ("mapped", "queued", "held", "excluded"))
+        last = conn.execute(
+            "SELECT id, metrics_json, completed_at FROM runs WHERE"
+            " task_name='jarvis_sweep' AND status IN ('completed','skipped_empty')"
+            " ORDER BY id DESC LIMIT 1").fetchone()
+    finally:
+        conn.close()
+
+    reg = registry.load()
+    groups: dict = {}
+    for r in rows:
+        pid = r.get("proposed_client_id")
+        key = pid or "__unassigned__"
+        g = groups.setdefault(key, {
+            "proposed_client_id": pid,
+            "proposed_name": (reg.by_id.get(pid) or {}).get("name") if pid
+            else "Unassigned (no confident proposal)",
+            "count": 0, "items": []})
+        g["count"] += 1
+        g["items"].append({
+            "event_id": r["id"], "source": r["source"], "author": r["author"],
+            "subject": r["subject"], "ts": r["ts"], "permalink": r["permalink"],
+            "confidence": r["proposal_confidence"],
+            "evidence": r["proposal_evidence"], "preview": r["preview"]})
+    ordered = sorted(groups.values(),
+                     key=lambda g: (g["proposed_client_id"] is None, -g["count"]))
+
+    last_sweep = None
+    if last:
+        try:
+            m = json.loads(last["metrics_json"] or "{}")
+        except (TypeError, ValueError):
+            m = {}
+        last_sweep = {"at": last["completed_at"], "run_id": last["id"],
+                      "reconciled": m.get("reconciled"), "metrics": m}
+
+    return {"groups": ordered, "queued_total": len(rows), "counts": counts,
+            "clients": [{"id": cid, "name": reg.by_id[cid]["name"]}
+                        for cid in sorted(reg.ids(),
+                                          key=lambda i: reg.by_id[i]["name"].lower())],
+            "registry_sha": reg.sha[:12], "last_sweep": last_sweep}

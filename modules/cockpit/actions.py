@@ -274,3 +274,23 @@ def nudge(db_path: Optional[Path], body: dict,
     return apply_nudge(db_path, body.get("item_key"), body.get("action"),
                        snooze_days=body.get("snooze_days"),
                        note=body.get("note"), today=today)
+
+
+# ── Jarvis mapping-queue resolution (J1 D3) ──────────────────────────────────
+# assign/create_alias write the registry via an AUDITED git commit (the only
+# registry write path); ignore excludes the event. All go through the approval
+# module so the cockpit process never touches clients.yaml directly.
+_QUEUE_ACTIONS = {"assign", "create_alias", "ignore"}
+
+
+def queue_resolve(db_path, body: dict) -> dict:
+    from modules.jarvis import approve
+    body = body or {}
+    action, event_id = body.get("action"), body.get("event_id")
+    if action not in _QUEUE_ACTIONS:
+        return {"error": f"action must be one of {sorted(_QUEUE_ACTIONS)}"}
+    if not event_id:
+        return {"error": "event_id required"}
+    return approve.resolve(db_path, event_id, action,
+                           client_id=body.get("client_id"),
+                           reason=body.get("reason"), by="cockpit-approval")

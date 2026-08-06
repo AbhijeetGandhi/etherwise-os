@@ -41,9 +41,11 @@ GET_ROUTES: dict = {
     "/api/pipeline/rows": data.pipeline_rows,            # drill-down (traceability)
     "/api/pipeline/facts": data.pipeline_facts,          # chart source (one row/job)
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
+    "/api/queue": data.queue,     # Jarvis J1 mapping queue (unmapped events)
 }
 POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
+    "/api/queue/resolve": actions.queue_resolve,  # assign|create_alias|ignore
     "/api/wake": actions.wake,    # allowlisted launchd kick
     "/api/rail": actions.rail,    # allowlisted rail trigger
     "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
