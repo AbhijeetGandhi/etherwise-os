@@ -24,12 +24,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=50)
     ap.add_argument("--queue-cap", type=int, default=40)
+    ap.add_argument("--recheck", action="store_true",
+                    help="re-evaluate already-queued Fathom events (owner rules)")
     args = ap.parse_args()
 
     def task(ctx):
+        dbp = ctx.db_path or config.DB_PATH
+        if args.recheck:
+            return fathom_bridge.recheck_queued(dbp)
         return fathom_bridge.sync_unmapped(
-            ctx.db_path or config.DB_PATH, limit=args.limit,
-            queue_cap=args.queue_cap, run_id=ctx.run_id)
+            dbp, limit=args.limit, queue_cap=args.queue_cap, run_id=ctx.run_id)
 
     result = runner.run_task("jarvis_fathom_bridge", task, module="system")
     print(json.dumps({"status": result.status, "metrics": result.metrics}))

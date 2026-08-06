@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from core import db, registry
+from core import config, db, registry
 from modules.jarvis import events
 from modules.knowledge import dossier, ingest
 
@@ -57,12 +57,15 @@ def _match(reg, participants: list[str], title: str) -> Optional[str]:
 
 
 def _external_signal(participants: list[str]) -> Optional[str]:
-    """The first external (non-internal) participant email — else None."""
+    """The first external client participant email — skips our own people (an
+    owner-only call is internal, not a client signal), else None."""
     for p in participants:
         if "@" in p:
-            dom = p.rsplit("@", 1)[-1].lower()
-            if dom not in _INTERNAL:
-                return p
+            a = p.lower()
+            dom = a.rsplit("@", 1)[-1]
+            if a in config.OWNER_IDENTITIES or dom in _INTERNAL:
+                continue
+            return p
     return None
 
 
@@ -133,3 +136,40 @@ def sync_unmapped(db_path, reg=None, *, limit: int = 50, queue_cap: int = 40,
                 skipped += 1
     return {"scanned": len(unmapped), "auto_healed": healed,
             "queued": queued, "skipped": skipped}
+
+
+def recheck_queued(db_path, reg=None, *,
+                   read_participants: Callable = _read_participants,
+                   dossier_dir: Optional[Path] = None,
+                   now_iso: Optional[str] = None) -> dict:
+    """Re-evaluate queued Fathom events with the current registry + owner rules.
+    A registry match heals; a real external client (behind an owner) keeps it
+    queued with the corrected author; an owner-only call is excluded (internal)."""
+    reg = reg or registry.load()
+    with db.connect(db_path) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT e.id, e.raw_ref, s.raw_path, s.title FROM events e"
+            " LEFT JOIN sources s ON s.source_ref = e.raw_ref"
+            " WHERE e.source='fathom' AND e.state='queued'")]
+    healed = requeued = excluded = 0
+    for e in rows:
+        parts, _ = read_participants(e["raw_path"] or "")
+        cid = _match(reg, parts, e["title"] or "")
+        if cid:
+            heal_source(db_path, e["raw_ref"], cid, reg.by_id[cid]["name"],
+                        now_iso=now_iso, dossier_dir=dossier_dir)
+            with db.connect(db_path) as conn:
+                events.set_mapped(conn, e["id"], cid)
+            healed += 1
+            continue
+        signal = _external_signal(parts)
+        with db.connect(db_path) as conn:
+            if signal:
+                conn.execute("UPDATE events SET author=?, updated_at="
+                             "datetime('now') WHERE id=?", (signal, e["id"]))
+                requeued += 1
+            else:
+                events.set_excluded(conn, e["id"], "internal:owner-only")
+                excluded += 1
+    return {"rechecked": len(rows), "healed": healed,
+            "requeued": requeued, "excluded": excluded}

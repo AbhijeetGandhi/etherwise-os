@@ -63,6 +63,9 @@ def self_noise_reason(from_header: str, from_addr: str, subject: str) -> str | N
     for s in config.SELF_SENDERS:
         if s == a or s in frm:
             return f"self-noise:sender:{s}"
+    for o in config.OWNER_IDENTITIES:          # our own people are not clients
+        if o == a:
+            return f"self-noise:owner:{o}"
     for d in config.SELF_SENDER_DOMAINS:
         if dom == d or dom.endswith("." + d):
             return f"self-noise:domain:{dom}"

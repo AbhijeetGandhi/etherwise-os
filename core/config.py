@@ -246,6 +246,14 @@ SELF_SENDERS = (
     "etherwise bot",                # the automation display name (From header)
 )
 SELF_SENDER_DOMAINS = ("etherwise.io",)   # any @etherwise.io sender is internal
+# Owner/team identities — the humans who are US, not clients. A call/email where
+# the only outside party is an owner is internal, never a client signal (the
+# Fathom bridge skips them; the email rail treats them as self-noise). Extend as
+# team members' personal addresses surface.
+OWNER_IDENTITIES = (
+    "contact@etherwise.io",
+    "abhijeetgandhi02@gmail.com",   # Abhijeet (personal)
+)
 SELF_SUBJECT_PATTERNS = (
     "upwork scan:", "hot upwork leads", "source-health", "source health",
     "weekly sales report", "monthly connect roi", "roi report",

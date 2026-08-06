@@ -234,6 +234,35 @@ class BridgeTests(unittest.TestCase):
     def _read(self, raw_path):
         return self.parts.get(raw_path, ([], None))
 
+    def test_external_signal_skips_owner(self):
+        # our own people are not a client signal
+        self.assertIsNone(fathom_bridge._external_signal(
+            ["abhijeetgandhi02@gmail.com", "abhijeet@etherwise.io"]))
+        self.assertEqual(fathom_bridge._external_signal(
+            ["abhijeetgandhi02@gmail.com", "bob@bigco.com"]), "bob@bigco.com")
+
+    def test_recheck_excludes_owner_only_call(self):
+        with db.connect(self.dbp) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, content_type, density, title, occurred_dt, raw_path,"
+                " status) VALUES ('fathom','fathom/OW','hOW',NULL,'unknown',0.5,"
+                " 'Impromptu','2026-07-01','fathom/OW','ingested')")
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, author, subject, state,"
+                " raw_ref) VALUES ('evt:fathom:OW','fathom','OW',"
+                " 'abhijeetgandhi02@gmail.com','Impromptu','queued','fathom/OW')")
+        res = fathom_bridge.recheck_queued(
+            self.dbp, self.reg,
+            read_participants=lambda p: (["abhijeetgandhi02@gmail.com"], None),
+            dossier_dir=self.dossiers)
+        self.assertEqual(res["excluded"], 1)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state, exclude_reason FROM events WHERE"
+                             " id='evt:fathom:OW'").fetchone()
+        self.assertEqual((r["state"], r["exclude_reason"]),
+                         ("excluded", "internal:owner-only"))
+
     def test_sync_classifies(self):
         res = fathom_bridge.sync_unmapped(
             self.dbp, self.reg, read_participants=self._read,
