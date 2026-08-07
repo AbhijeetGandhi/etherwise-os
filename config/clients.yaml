@@ -230,6 +230,8 @@ clients:
       - Hipp Health Inc
     billing:
       canonical: Hipp Health
+    emails:
+      - hipp.health
   -
     id: homestyling
     name: Homestyling
