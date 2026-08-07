@@ -213,6 +213,8 @@ clients:
     clickup: Hermon
     billing:
       canonical: Hermon
+    emails:
+      - hermon.io
   -
     id: hero-marketing-agency
     name: Hero Marketing Agency
