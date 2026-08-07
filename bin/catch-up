@@ -17,6 +17,12 @@ mechanism we already have becomes self-healing.
 Guards:
   - only sources marked catch_up (manual imports and emailing jobs opt out)
   - only sources whose status is stale/down; a healthy source is never touched
+  - NOT INSTALLED != failed-to-start: a launchd label absent from `launchctl
+    list` was never bootstrapped — a one-time setup error, flagged loudly with
+    the exact bootstrap command, never a retry loop (2026-08-07: jarvis_sweep's
+    plist existed but was never loaded, so the shim raised catch_up_failed 26x)
+  - give up after N consecutive failures, held PER SOURCE KEY off the kickstart
+    trail (not the target's run log, which is empty for a job that never ran)
   - a per-task cooldown, so a job that is broken (not merely missed) is not
     re-kicked on every wake
   - staggered starts; several rails share the one Chrome marker tab
@@ -60,6 +66,61 @@ def _keeps_failing(conn, task: str, limit: int) -> bool:
     return len(rows) == limit and all(r[0] == "failed" for r in rows)
 
 
+def _kick_failures_for(conn, key: str, target_task: str) -> int:
+    """How many times catch-up has failed to KICKSTART this source since its
+    target last succeeded — unresolved `catch_up_failed` anomalies naming the
+    key, detected after the most recent successful target run.
+
+    This, NOT the target's run log, is the give-up signal that actually holds.
+    The 2026-08-07 loop happened because `_keeps_failing` reads the TARGET's
+    `runs`: a job that was never installed has ZERO runs, so `0 == 3` is False
+    and the guard never tripped — the shim re-kicked and re-raised
+    `catch_up_failed` every 30 min. The kickstart failures themselves are the
+    consecutive evidence. Anchoring on the last success makes the guard
+    self-clear: once the source runs again, the count resets to 0.
+    (detected_at is the anomaly clock, completed_at IST-offset — julianday
+    reconciles the two, same as the System tab's recovered logic.)"""
+    like = f'%"key": "{key}"%'
+    last_ok = conn.execute(
+        "SELECT MAX(completed_at) FROM runs WHERE task_name=?"
+        " AND status='completed'", (target_task,)).fetchone()[0]
+    if last_ok:
+        return conn.execute(
+            "SELECT COUNT(*) FROM anomalies WHERE kind='catch_up_failed'"
+            " AND resolved_at IS NULL AND detail_json LIKE ?"
+            " AND julianday(detected_at) > julianday(?)",
+            (like, last_ok)).fetchone()[0]
+    return conn.execute(
+        "SELECT COUNT(*) FROM anomalies WHERE kind='catch_up_failed'"
+        " AND resolved_at IS NULL AND detail_json LIKE ?", (like,)).fetchone()[0]
+
+
+def _already_open(conn, kind: str, key: str) -> bool:
+    """True if there is already an UNRESOLVED anomaly of this kind naming the
+    key. Keeps the not-installed / gave-up signals one-time-loud: raised once
+    and then quiet until the fault is fixed, never a fresh critical every wake."""
+    return conn.execute(
+        "SELECT 1 FROM anomalies WHERE kind=? AND resolved_at IS NULL"
+        " AND detail_json LIKE ? LIMIT 1",
+        (kind, f'%"key": "{key}"%')).fetchone() is not None
+
+
+def _bootstrap_cmd(label: str, uid: int) -> str:
+    """The exact command a human runs to install a job launchd has never heard
+    of — surfaced verbatim in the anomaly so nobody has to reconstruct it."""
+    return (f"launchctl bootstrap gui/{uid} "
+            f"{config.LAUNCH_AGENTS_DIR}/{label}.plist")
+
+
+def is_loaded(label: str, uid: int, _run=subprocess.run) -> bool:
+    """True if launchd knows this label (present in `launchctl list`). A label
+    ABSENT was never bootstrapped: a setup error, not a transient failure — so
+    catch-up must not treat it as something a kickstart could ever fix."""
+    proc = _run(["launchctl", "list", label],
+                capture_output=True, text=True, timeout=30)
+    return proc.returncode == 0
+
+
 def overdue_sources(conn, now: datetime, sources=None) -> list:
     """The sources that are both unhealthy AND safe to restart unattended."""
     health = sh.source_health(conn, now=now, sources=sources)
@@ -83,7 +144,7 @@ def kickstart(label: str, uid: int, _run=subprocess.run) -> tuple:
 
 
 def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
-        _kick=kickstart, dry_run: bool = False) -> dict:
+        _kick=kickstart, _loaded=is_loaded, dry_run: bool = False) -> dict:
     import os
     now = now or datetime.now(config.TZ)
     uid = os.getuid() if uid is None else uid
@@ -91,16 +152,40 @@ def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
 
     with db.connect(dbp) as conn:
         candidates = overdue_sources(conn, now)
-        due, skipped, gave_up = [], [], []
+        due, skipped, gave_up, not_installed = [], [], [], []
+        max_fail = config.CATCH_UP_MAX_CONSECUTIVE_FAILURES
         for s in candidates:
-            if _recently_ran(conn, s["task_name"], now,
-                             config.CATCH_UP_COOLDOWN_MIN):
+            label = s["launchd_label"]
+            # NOT INSTALLED != failed-to-start. A label launchd has never heard
+            # of was never bootstrapped — a setup error a kickstart can never
+            # fix. Flag it once, loudly, with the command, and never loop on it.
+            if not _loaded(label, uid):
+                not_installed.append(
+                    {"key": s["key"], "label": label,
+                     "bootstrap": _bootstrap_cmd(label, uid),
+                     "overdue_h": s["hours_overdue"]})
+            elif _recently_ran(conn, s["task_name"], now,
+                               config.CATCH_UP_COOLDOWN_MIN):
                 skipped.append({"key": s["key"], "why": "ran within cooldown"})
-            elif _keeps_failing(conn, s["task_name"],
-                                config.CATCH_UP_MAX_CONSECUTIVE_FAILURES):
+            # give up when EITHER the target keeps crashing (its runs all fail)
+            # OR the kickstart itself keeps failing (per-key, from the anomaly
+            # trail) — the latter is what the target-run guard alone missed.
+            elif (_keeps_failing(conn, s["task_name"], max_fail)
+                  or _kick_failures_for(conn, s["key"], s["task_name"])
+                  >= max_fail):
                 gave_up.append({"key": s["key"], "why": "failing every attempt"})
             else:
                 due.append(s)
+        # one-time-loud: which not-installed / gave-up keys have no OPEN anomaly
+        # yet. Resolved inside the connection; the kickstarts (below) are I/O and
+        # stay outside the with-block per the tight-transaction rule.
+        fresh_not_installed = [
+            n for n in not_installed
+            if dry_run or not _already_open(conn, "catch_up_not_installed",
+                                            n["key"])]
+        fresh_gave_up = [
+            g for g in gave_up
+            if dry_run or not _already_open(conn, "catch_up_gave_up", g["key"])]
 
     kicked, failed = [], []
     for i, s in enumerate(due):
@@ -125,21 +210,31 @@ def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
         # mechanism exists to prevent — say so loudly
         ctx.anomaly("catch_up_failed", "critical",
                     {"failed": failed, "uid": uid})
-    if gave_up:
+    for n in not_installed:
+        ctx.log(f"NOT restarting {n['key']} — its launchd label {n['label']} is"
+                f" not loaded. Install it once:  {n['bootstrap']}")
+    if fresh_not_installed:
+        # a setup error, not a transient failure — point the human at the fix
+        ctx.anomaly("catch_up_not_installed", "critical",
+                    {"sources": fresh_not_installed, "uid": uid,
+                     "detail": "launchd label absent — run the bootstrap command"
+                               " once; this is not a restart problem"})
+    if fresh_gave_up:
         # not a restart problem — say plainly that a human is needed
         ctx.anomaly("catch_up_gave_up", "critical",
-                    {"sources": [g["key"] for g in gave_up],
+                    {"sources": [g["key"] for g in fresh_gave_up],
                      "detail": "failing every attempt; restarting will not fix it"})
-        for g in gave_up:
-            ctx.log(f"NOT restarting {g['key']} — it has failed its last"
-                    f" {config.CATCH_UP_MAX_CONSECUTIVE_FAILURES} runs;"
-                    " this needs a human, not another kickstart")
+    for g in gave_up:
+        ctx.log(f"NOT restarting {g['key']} — it has failed its last"
+                f" {config.CATCH_UP_MAX_CONSECUTIVE_FAILURES} attempts;"
+                " this needs a human, not another kickstart")
     if not candidates:
         ctx.log("all sources fresh — nothing to catch up")
     return {"overdue": len(candidates), "kicked": [k["key"] for k in kicked],
             "failed": [f["key"] for f in failed],
             "skipped_cooldown": [s["key"] for s in skipped],
-            "gave_up": [g["key"] for g in gave_up]}
+            "gave_up": [g["key"] for g in gave_up],
+            "not_installed": [n["key"] for n in not_installed]}
 
 
 def main() -> int:

@@ -80,9 +80,21 @@ class CatchUpCase(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _go(self, **kw):
+        # default: every label is loaded (tests exercise the kickstart path);
+        # the not-installed guard is opted into per-test with _loaded.
         with mock.patch.object(config, "SOURCES", SRC):
             return cu.run(self.ctx, now=_now(), uid=501, _sleep=lambda s: None,
-                          _kick=kw.pop("_kick", self.fake_kick), **kw)
+                          _kick=kw.pop("_kick", self.fake_kick),
+                          _loaded=kw.pop("_loaded", lambda label, uid: True),
+                          **kw)
+
+    def _anomaly(self, conn, kind, key, resolved=False, when_h=1):
+        ts = (_now() - timedelta(hours=when_h)).isoformat(timespec="seconds")
+        conn.execute(
+            "INSERT INTO anomalies (task_name, kind, severity, detail_json,"
+            " detected_at, resolved_at) VALUES ('catch_up',?, 'critical',?,?,?)",
+            (kind, f'{{"failed": [{{"key": "{key}"}}]}}', ts,
+             ts if resolved else None))
 
     # ── the core behaviour ───────────────────────────────────────────────────
     def test_healthy_sources_are_never_touched(self):
@@ -195,6 +207,73 @@ class CatchUpCase(unittest.TestCase):
             _run_row(conn, "t_scan", 0.5)
         out = self._go()
         self.assertEqual(out["kicked"], ["rail"])
+
+    # ── not-installed vs failed-to-start (2026-08-07 jarvis_sweep loop) ────────
+    def test_not_installed_is_flagged_once_never_kicked(self):
+        """A launchd label that was never bootstrapped is absent from `launchctl
+        list`. That is a SETUP error, not a transient failure — flag it loudly
+        with the bootstrap command and never enter a retry loop."""
+        with db.connect(self.db_path) as conn:
+            _run_row(conn, "t_rail", 72)
+            _run_row(conn, "t_scan", 0.5)
+        # rail's label is not loaded; scan's is
+        loaded = lambda label, uid: label != "io.test.rail"
+        out = self._go(_loaded=loaded)
+        self.assertEqual(out["not_installed"], ["rail"])
+        self.assertEqual(out["kicked"], [])           # never kickstarted
+        self.assertEqual(out["failed"], [])           # NOT a catch_up_failed
+        self.assertEqual(self.kicks, [])
+        self.ctx.anomaly.assert_called_once()
+        kind, sev = self.ctx.anomaly.call_args[0][0], self.ctx.anomaly.call_args[0][1]
+        self.assertEqual(kind, "catch_up_not_installed")
+        self.assertEqual(sev, "critical")
+        detail = self.ctx.anomaly.call_args[0][2]
+        cmd = detail["sources"][0]["bootstrap"]
+        self.assertIn("launchctl bootstrap gui/501", cmd)
+        self.assertIn("io.test.rail.plist", cmd)
+
+    def test_give_up_holds_per_key_off_the_kickstart_trail(self):
+        """The guard the 26x loop needed: 3 consecutive kickstart failures for a
+        key ⇒ the 4th attempt is suppressed and ONE catch_up_gave_up is raised,
+        not a 4th catch_up_failed — even though the target task has no failed
+        RUNS of its own (it was never installed / never ran)."""
+        with db.connect(self.db_path) as conn:
+            _run_row(conn, "t_rail", 72)              # a stale-making success…
+            _run_row(conn, "t_scan", 0.5)
+            for h in (3, 2, 1):                       # …then 3 kickstart failures
+                self._anomaly(conn, "catch_up_failed", "rail", when_h=h)
+        out = self._go()
+        self.assertEqual(out["kicked"], [])           # 4th attempt suppressed
+        self.assertEqual(out["gave_up"], ["rail"])
+        self.assertEqual(out["failed"], [])           # not a 4th catch_up_failed
+        self.assertEqual(self.kicks, [])
+        self.ctx.anomaly.assert_called_once()
+        self.assertEqual(self.ctx.anomaly.call_args[0][0], "catch_up_gave_up")
+
+    def test_two_kickstart_failures_still_get_retried(self):
+        # below the give-up bar: still a missed window worth one more kick
+        with db.connect(self.db_path) as conn:
+            _run_row(conn, "t_rail", 72)
+            _run_row(conn, "t_scan", 0.5)
+            for h in (2, 1):
+                self._anomaly(conn, "catch_up_failed", "rail", when_h=h)
+        out = self._go()
+        self.assertEqual(out["kicked"], ["rail"])
+        self.assertEqual(out["gave_up"], [])
+
+    def test_kickstart_failures_clear_after_a_success(self):
+        # once the source runs again, prior kickstart failures no longer count.
+        # (recovery at 30h postdates the failures but rail is stale past 26h, so
+        # it is still overdue — the give-up is what clears, not the staleness.)
+        with db.connect(self.db_path) as conn:
+            _run_row(conn, "t_rail", 72)
+            _run_row(conn, "t_scan", 0.5)
+            for h in (40, 39, 38):
+                self._anomaly(conn, "catch_up_failed", "rail", when_h=h)
+            _run_row(conn, "t_rail", 30)              # recovered after the failures
+        out = self._go()
+        self.assertEqual(out["kicked"], ["rail"])     # give-up cleared
+        self.assertEqual(out["gave_up"], [])
 
     def test_dry_run_kicks_nothing(self):
         with db.connect(self.db_path) as conn:

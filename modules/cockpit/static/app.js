@@ -724,7 +724,10 @@ const RENDERERS = {
     kpis.appendChild(appliedKpi);
     kpis.appendChild(mkKpi("Client replies", String(cr.this_month || 0),
       `this month · ${cr.total || 0} all-time · last reply ${ago(cr.days_since)}`
-      + (cr.this_month ? "" : " — nothing applied, so nothing to reply to"),
+      // the trailing clause is RAIL-derived (server: cr.note), never a pause
+      // assumption — if applications went out, a zero is a lag, not "nothing
+      // applied". null when there ARE replies this month.
+      + (cr.note ? ` — ${esc(cr.note)}` : ""),
       () => openRows("Client replies (room-sourced proposals)",
         { stage: "replied" }, threadCols)));
     view.appendChild(kpis);
@@ -865,46 +868,20 @@ const RENDERERS = {
       const js = J(), rl = rangeLabel();
 
       // ── 1. CONVERSION FUNNEL ────────────────────────────────────────────
-      // Each stage is a strict subset of the one above it, so the drop-off
-      // between two bars IS the rows that failed that step — clickable too.
-      const scanned = js.length;
-      const passed = js.filter((j) => !j.k);
-      const scored = js.filter((j) => j.s != null && j.s >= FLOOR);
-      const hot = js.filter((j) => j.s != null && j.s >= HOT);
-      const carded = js.filter((j) => j.c);
-      // applied is only KNOWN where the connects rail covers the range
-      // The applied count is only KNOWN for a period the rail actually measured.
-      // Coverage is judged on the period's START DATE, and 'all time' is the
-      // LEAST covered range there is, not the most: it reaches back to 2024,
-      // while the rail began on 2026-06-30. Two bugs lived here — 'all time'
-      // short-circuited to covered, and a month-granularity compare called June
-      // covered when the rail only holds Jun 30. Both produced a bare 0 where
-      // the truth is "never measured" (2026-07-14).
+      // Topology + counts come from the pure EW_FUNNEL.computeFunnel (also unit-
+      // tested under node): every band is derived by NARROWING the one above, so
+      // the subset law holds by construction and no step can read >100%. Order:
+      // Scanned → Passed → Scored → Carded → (of which) Hot. This file only
+      // renders — it maps each step's scope descriptor onto the live scopeQ.
       const railSince = F.rail_since;
       const [rf] = bounds();
       const rangeStart = isAll() || !rf ? null : rf + "-01";
       const railCovers = !!railSince && !!rangeStart && rangeStart >= railSince;
-      // ONLY the scanner stages belong in the funnel. Each of these five IS a
-      // strict subset of the one above (same table, same rows, narrowing
-      // predicate), so the taper is a real loss and the step-% is a real
-      // conversion. Applied/replied/hired are NOT subsets of these — they come
-      // from other tables with other time coverage (contracts reach back to
-      // 2024; 51 of 55 predate the scanner's first scan) — so they are shown
-      // BELOW as outcomes, with no step-% pretending they divide into this.
-      const steps = [
-        { k: "scanned", lbl: "Scanned", n: scanned, q: scopeQ({}),
-          note: "every job the feeds returned" },
-        { k: "passed", lbl: "Passed the floors", n: passed.length,
-          q: scopeQ({ skip: "__none__" }),
-          note: "survived n8n / rate / fixed-budget hard rules" },
-        { k: "scored", lbl: `Scored ≥${FLOOR}`, n: scored.length,
-          q: scopeQ({ skip: "__none__", score_min: FLOOR }),
-          note: "the model found real fit" },
-        { k: "hot", lbl: `Hot ≥${HOT}`, n: hot.length,
-          q: scopeQ({ score_min: HOT }), note: "cleared the hot bar" },
-        { k: "carded", lbl: "Carded to ClickUp", n: carded.length,
-          q: scopeQ({ carded: "1" }), note: "made it onto the board" },
-      ];
+      const fnl = EW_FUNNEL.computeFunnel(js, { FLOOR, HOT });
+      const scanned = fnl.scanned;
+      const steps = fnl.steps.map((s) => ({ ...s, q: scopeQ(s.scope) }));
+      const dropsAfter = {};   // step-key → its drop bands, rendered beneath it
+      fnl.drops.forEach((d) => (dropsAfter[d.after] ||= []).push(d));
       charts.appendChild(el("h2", "section",
         `Conversion funnel <span class="hint muted">— ${esc(rl)} · the scanner`
         + ` stages, where each band IS a subset of the one above · click a band`
@@ -916,39 +893,25 @@ const RENDERERS = {
         const row = el("div", "fnstep");
         const w = scanned ? Math.max(0.6, (100 * (s.n || 0)) / scanned) : 0;
         const conv = prev && prev.n ? pctOf(s.n || 0, prev.n) : null;
-        const btn = el("button", "fnbar" + (s.outcome ? " out" : "")
-          + (s.q ? "" : " nodrill"));
+        const btn = el("button", "fnbar" + (s.q ? "" : " nodrill"));
         btn.style.width = w + "%";
         btn.title = s.note;
         if (s.q) btn.onclick = () => openRows(`${s.lbl} — ${rl}`, s.q, chartCols);
         const meta = el("div", "fnmeta");
         meta.innerHTML = `<span class="fnlbl">${esc(s.lbl)}</span>`
           + `<span class="fnnum">${s.n == null ? "—" : nfmt(s.n)}</span>`
-          + (scanned && s.n != null && !s.outcome
+          + (scanned && s.n != null
               ? `<span class="fnpct">${pctOf(s.n, scanned)}% of scanned</span>` : "")
           + (conv != null && s.n != null
               ? `<span class="fnconv ${conv < 50 ? "warn" : ""}">${conv}% step</span>` : "");
         row.append(meta, btn);
         fn.appendChild(row);
-        // the drop-off band between this step and the next (only where the
-        // failing rows are actually identifiable, i.e. inside the job table)
-        if (i === 0) {
-          const lost = scanned - passed.length;
-          if (lost > 0) fn.appendChild(dropRow(`${nfmt(lost)} killed by the hard`
-            + ` floors`, scopeQ({ skip: "__any__" }), rl));
-        }
-        if (i === 2) {
-          const lost = scored.length - hot.length;
-          if (lost > 0) fn.appendChild(dropRow(`${nfmt(lost)} scored ${FLOOR}–`
-            + `${HOT - 1} — real but not hot`,
-            scopeQ({ score_min: FLOOR, score_max: HOT }), rl));
-        }
-        if (i === 3) {
-          const lost = hot.length - carded.length;
-          if (lost > 0) fn.appendChild(dropRow(`${nfmt(lost)} hot but never`
-            + ` carded (shadow era / expired)`,
-            scopeQ({ score_min: HOT, carded: "0" }), rl));
-        }
+        // the drop-off band(s) beneath this step — only where the failing rows
+        // are actually identifiable inside the job table.
+        (dropsAfter[s.k] || []).forEach((d) => {
+          if (d.n > 0) fn.appendChild(
+            dropRow(`${nfmt(d.n)} ${d.lbl}`, scopeQ(d.scope), rl));
+        });
       });
       fc.appendChild(fn);
       charts.appendChild(fc);

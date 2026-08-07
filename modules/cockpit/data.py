@@ -118,6 +118,22 @@ def _flag_applied_anomaly(db_path, kind: str, detail: dict) -> None:
         pass
 
 
+def _rail_applied_between(conn, lo: str, hi: str) -> int:
+    """Applied-truth from the connects-history rail over [lo, hi] inclusive.
+
+    The SINGLE source of the rail's applied count. today() (the act-now applied
+    tile) and pipeline() (the KPI strip + the client-replies context line) both
+    read it, so a stated assumption can never override observed applications on
+    one surface while another tells the truth — the same no-silent-override law
+    behind the applied-tile reconciliation. 0 on a pre-013 DB (no rail table)."""
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM connects_history WHERE kind='applied'"
+            " AND event_date BETWEEN ? AND ?", (lo, hi)).fetchone()[0]
+    except Exception:  # noqa: BLE001 — pre-013 DB has no connects_history
+        return 0
+
+
 # Canonical earnings definition — mirrors v2 reconcile_airtable.py (the
 # reconciled revenue parity set). amount>0 guards refunds/reversals.
 EARNING_TYPES = ("Hourly Earning", "Fixed Earning", "Bonus")
@@ -189,20 +205,28 @@ def system(db_path: Optional[Path] = None) -> dict:
         anomalies = []
         for r in conn.execute(
                 "SELECT task_name, kind, severity, MAX(detected_at) last,"
-                " COUNT(*) n FROM anomalies"
+                " COUNT(*) n,"
+                " SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END) n_open"
+                " FROM anomalies"
                 " WHERE detected_at >= datetime('now','-14 days')"
                 " GROUP BY task_name, kind, severity"
                 " ORDER BY last DESC LIMIT 40"):
             a = dict(r)
-            recovered = conn.execute(
+            self_healed = conn.execute(
                 "SELECT 1 FROM runs WHERE task_name=? AND status='completed'"
                 " AND julianday(completed_at) > julianday(?) LIMIT 1",
                 (a["task_name"], a["last"])).fetchone() is not None
-            a["recovered"] = recovered
+            # closed two ways, both honest: the task SELF-HEALED (a completed run
+            # postdates the last fire) OR every occurrence was EXPLICITLY resolved
+            # (root cause fixed by hand). Either way it stops counting as open —
+            # a resolved incident must never inflate the open count (2026-08-08:
+            # 26 catch_up_failed rows resolved once jarvis_sweep was loaded).
+            a["recovered"] = self_healed or (a["n_open"] or 0) == 0
+            a["open"] = 0 if a["recovered"] else (a["n_open"] or 0)
             anomalies.append(a)
         # already newest-first from SQL; stable-sort unrecovered ahead of recovered
         anomalies.sort(key=lambda a: a["recovered"])
-        anom_open = sum(a["n"] for a in anomalies if not a["recovered"])
+        anom_open = sum(a["open"] for a in anomalies)
         sources = source_health.source_health(conn)
     finally:
         conn.close()
@@ -814,9 +838,7 @@ def pipeline(db_path: Optional[Path] = None,
             ch = {"n": 0, "since": None}
         if ch["n"]:
             def applied_between(lo, hi):
-                return conn.execute(
-                    "SELECT COUNT(*) FROM connects_history WHERE kind='applied'"
-                    " AND event_date BETWEEN ? AND ?", (lo, hi)).fetchone()[0]
+                return _rail_applied_between(conn, lo, hi)
             applied = {
                 "available": True, "since": ch["since"],
                 "today": applied_between(day, day),
@@ -859,6 +881,23 @@ def pipeline(db_path: Optional[Path] = None,
             "SELECT MAX(substr(created_dt,1,10)) FROM proposals").fetchone()[0]
         client_replied = {"total": replied_total, "this_month": replied_month,
                           "last": last_reply}
+        # The client-replies context line derives from OBSERVED applications (the
+        # connects rail), NEVER from a pause assumption. If applications DID go
+        # out in the window, a zero-reply month is a LAG ("give it time"), never
+        # "nothing applied, so nothing to reply to" — that stale-assumption copy
+        # was flatly contradicted by the rail (2026-08-08: 8 applied in 7d while
+        # the tile still said nothing applied). Same helper the applied tile
+        # reads, so the two surfaces can never disagree.
+        rail_week = _rail_applied_between(
+            conn, (d0 - timedelta(days=6)).isoformat(), day)
+        if replied_month:
+            client_replied["note"] = None
+        elif rail_week > 0:
+            client_replied["note"] = (
+                f"{rail_week} applied in the last 7 days — replies typically lag"
+                f" {config.REPLY_LAG_DAYS}+ days")
+        else:
+            client_replied["note"] = "no applications recorded in the last 7 days"
 
         # by-status: blank status rows fall back to the raw upwork_status so
         # nothing shows as 'Unknown' when the API gave us a real state.
@@ -1335,10 +1374,9 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         applied_week = applied_between(week_lo, day)
         applied_last = applied_between(lw_lo, lw_hi)
         # applied-truth rail (connects_history) over the same 7-day window — the
-        # honest cross-check on the proposals-sourced count (§ no fabricated zeros)
-        rail_applied_week = conn.execute(
-            "SELECT COUNT(*) FROM connects_history WHERE kind='applied'"
-            " AND event_date BETWEEN ? AND ?", (week_lo, day)).fetchone()[0]
+        # honest cross-check on the proposals-sourced count (§ no fabricated
+        # zeros). Same shared helper pipeline() reads, so the two never disagree.
+        rail_applied_week = _rail_applied_between(conn, week_lo, day)
 
         prop_marks = ",".join("?" * len(_TERMINAL_PROP))
         active_props = conn.execute(

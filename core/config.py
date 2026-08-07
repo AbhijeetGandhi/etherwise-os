@@ -169,6 +169,10 @@ STALE_INTENT_MIN_EVENTS = 2
 TODAY_BACKLOG_TOPN = 8            # how many ready-when-resumed leads to preview
 TODAY_FRESH_LEAD_DAYS = 10       # a lead older than this has almost surely expired
 TODAY_QUEUE_TOPN = 12            # the act-now queue is ruthless; the rest -> Nudges
+# When applications DID go out but no client has replied yet, replies lag by a
+# few days — so a zero-reply window reads as "give it time", not "nothing to
+# reply to". Typical proposal→reply lag; tune from observed thread timings.
+REPLY_LAG_DAYS = 3
 
 # ── Client revenue attribution (2026-07-27) ──────────────────────────────────
 # Revenue reaches us on two rails: Upwork (transactions.assignment_company is
@@ -377,6 +381,12 @@ CATCH_UP_STAGGER_SEC = 5       # spread kickstarts; several rails share Chrome
 # human. (Found the hard way: the connects rail fails whenever its shared Chrome
 # tab is parked hidden, so it would have been re-kicked every 30 min forever.)
 CATCH_UP_MAX_CONSECUTIVE_FAILURES = 3
+# Where launchd agents are installed on the Mac. A label the shim is asked to
+# restart but that is ABSENT from `launchctl list` was never bootstrapped — a
+# one-time setup error, not a transient failure; catch-up points a human at the
+# exact bootstrap command instead of retry-looping (2026-08-07: jarvis_sweep's
+# plist existed but was never loaded, so the shim raised catch_up_failed 26x).
+LAUNCH_AGENTS_DIR = str(Path.home() / "Library" / "LaunchAgents")
 
 # ── Chief of Staff (M4) — nudge scoring + decay (design spec §6) ──────────────
 # urgency = COS_URGENCY_BASE[kind] * recency_decay(age) * stake_mult(money|score)

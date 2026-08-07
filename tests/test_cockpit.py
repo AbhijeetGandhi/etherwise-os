@@ -241,6 +241,25 @@ class TestSystemReader(unittest.TestCase):
         # open counts only the still-active crm_mirror fire
         self.assertEqual(out["anomalies"]["open"], 1)
 
+    def test_explicitly_resolved_anomaly_does_not_count_open(self):
+        """A root-cause-fixed incident marked resolved must drop out of the open
+        count even if its task never runs again (2026-08-08: the 26 catch_up_
+        failed rows were resolved once jarvis_sweep was finally loaded)."""
+        with db.connect(self.db_path) as conn:
+            for _ in range(26):
+                conn.execute(
+                    "INSERT INTO anomalies (task_name, kind, severity,"
+                    " detected_at, resolved_at) VALUES ('catch_up',"
+                    " 'catch_up_failed','critical', datetime('now','-1 day'),"
+                    " datetime('now'))")
+        out = data.system(self.db_path)
+        row = {(a["task_name"], a["kind"]): a
+               for a in out["anomalies"]["recent"]}
+        grp = row[("catch_up", "catch_up_failed")]
+        self.assertEqual(grp["n"], 26)          # still shown for context
+        self.assertEqual(grp["open"], 0)        # but none are open
+        self.assertTrue(grp["recovered"])
+
 
 def seed_today(db_path):
     with db.connect(db_path) as conn:
@@ -808,6 +827,37 @@ class TestPipelineReader(unittest.TestCase):
         self.assertFalse(out["applied"]["available"])
         self.assertIn("connects-history", out["applied"]["rail"])
         self.assertIsNone(out["funnel_weeks"][-1]["applied"])
+
+    def test_client_replies_note_derives_from_rail_not_pause_assumption(self):
+        """Bug (2026-08-08): the KPI read 'nothing applied, so nothing to reply
+        to' while the connects rail had recorded applications in the same window.
+        A zero-reply window with applications OUT is a lag, not 'nothing applied'
+        — the note must derive from the rail (same helper the applied tile uses).
+        """
+        with db.connect(self.db_path) as conn:
+            for i, d in enumerate(("2026-08-02", "2026-08-04", "2026-08-05")):
+                conn.execute(
+                    "INSERT INTO connects_history (id, event_date, kind, label,"
+                    " connects_delta) VALUES (?,?, 'applied','x',-8)", (f"a{i}", d))
+        out = data.pipeline(self.db_path, today="2026-08-08")
+        self.assertEqual(out["client_replied"]["this_month"], 0)  # no Aug replies
+        note = out["client_replied"]["note"]
+        self.assertIn("3 applied in the last 7 days", note)
+        self.assertNotIn("nothing applied", note)
+
+    def test_client_replies_note_absent_when_replies_this_month(self):
+        # replies exist this month → no trailing clause at all
+        out = data.pipeline(self.db_path, today="2026-06-15")
+        self.assertGreater(out["client_replied"]["this_month"], 0)
+        self.assertIsNone(out["client_replied"]["note"])
+
+    def test_client_replies_note_is_true_zero_when_no_applications(self):
+        # no applications recorded AND no replies → honest zero, not a claim
+        # about "nothing to reply to" pinned on a pause assumption
+        out = data.pipeline(self.db_path, today="2026-08-08")
+        self.assertEqual(out["client_replied"]["this_month"], 0)
+        self.assertIn("no applications recorded",
+                      out["client_replied"]["note"])
 
     def test_pre_rail_weeks_are_unknown_not_zero(self):
         # 2026-07-13: the funnel printed 0 applied for EVERY historical week,
