@@ -70,6 +70,8 @@ clients:
     clickup: beglaubigt.de
     billing:
       canonical: Beglaubigt
+    emails:
+      - beglaubigt.de
   -
     id: brendan-jansen
     name: Brendan Jansen
