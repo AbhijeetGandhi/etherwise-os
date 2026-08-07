@@ -294,3 +294,25 @@ def queue_resolve(db_path, body: dict) -> dict:
     return approve.resolve(db_path, event_id, action,
                            client_id=body.get("client_id"),
                            reason=body.get("reason"), by="cockpit-approval")
+
+
+# ── Card closure confirm/reject (J1.5) ───────────────────────────────────────
+# A possibly-resolved card shows a "confirm?" chip. Confirm closes it (hidden);
+# reject keeps it open and stops re-chipping. Resolves the card by its item_key.
+def card_closure(db_path, body: dict) -> dict:
+    from modules.chief_of_staff import nudges
+    body = body or {}
+    item_key, action = body.get("item_key") or "", body.get("action")
+    if action not in ("confirm", "reject"):
+        return {"error": "action must be confirm|reject"}
+    dedup_key = item_key[6:] if item_key.startswith("nudge:") else item_key
+    if not dedup_key:
+        return {"error": "item_key required"}
+    with db.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM nudges WHERE dedup_key=? AND state IN ('open','snoozed')"
+            " ORDER BY id DESC LIMIT 1", (dedup_key,)).fetchone()
+    if not row:
+        return {"error": "no open card for that key"}
+    state = "confirmed" if action == "confirm" else "rejected"
+    return nudges.set_closure(db_path, row["id"], closure_state=state)

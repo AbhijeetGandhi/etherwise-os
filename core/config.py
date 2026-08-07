@@ -421,6 +421,12 @@ COS_SWEEP_OPUS_MAXITEMS = 30       # cap nudges sent to Opus (top by urgency) + 
                                    # by-kind summary of the rest -> bounded cost
 COS_QUEUE_GROUP_MIN = 5            # cockpit queue collapses a kind into ONE
                                    # expandable group once it exceeds N items
+# Cross-source closure (J1.5): a Fathom call / thread update resolving an open
+# ask. Metered per client per sweep; bounded + only cards not yet decided.
+COS_CLOSURE_AUTO_CONF = 0.75       # >= this -> auto-close (linked to the call)
+COS_CLOSURE_CHIP_CONF = 0.40       # >= this (and < auto) -> "confirm?" chip
+COS_CLOSURE_MAX_CLIENTS = 8        # per-run cap on closure LLM calls
+COS_CLOSURE_LOOKBACK_DAYS = 30     # only recent calls can close a card
 
 # ── Airtable (decision #5: extend base appgE1QoEOXvbrUE4) ────────────────────
 AIRTABLE_BASE = "appgE1QoEOXvbrUE4"

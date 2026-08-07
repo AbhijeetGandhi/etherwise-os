@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""One-shot: bring existing OPEN cards to the J1.5 shape (idempotent).
+
+- strip relative-date strings from due-bearing titles ("...demo tomorrow (Aug 6)"
+  -> "...demo"); the due DATE is already stored + rendered live.
+- backfill client + intent_hash (canonical card:<client>:<intent_hash>) where the
+  client is cheaply derivable from the dedup_key.
+The next sweep also re-mints these clean; this makes it immediate.
+
+    PYTHONPATH=. python3 bin/cos-migrate-cards [--apply]
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db                                  # noqa: E402
+from modules.chief_of_staff import nudges                     # noqa: E402
+
+
+def _client(conn, dedup_key: str):
+    try:
+        kind, _, rest = dedup_key.partition(":")
+        if dedup_key.startswith("commitment:"):
+            r = conn.execute("SELECT client_id FROM commitments WHERE id=?",
+                             (rest,)).fetchone()
+            return r["client_id"] if r else None
+        if dedup_key.startswith("followup:"):
+            r = conn.execute("SELECT room_name FROM threads WHERE id=?",
+                             (rest,)).fetchone()
+            return r["room_name"] if r else None
+        if dedup_key.startswith("won_outcome:"):
+            r = conn.execute("SELECT client_company FROM proposals WHERE id=?",
+                             (rest,)).fetchone()
+            return r["client_company"] if r else None
+        if dedup_key.startswith("stale_dossier:"):
+            return rest
+    except Exception:
+        return None
+    return None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    args = ap.parse_args()
+    changed = 0
+    with db.connect(config.DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, title, due, dedup_key, client, intent_hash FROM nudges"
+            " WHERE state IN ('open','snoozed')")]
+        for r in rows:
+            new_title = nudges.clean_card_title(r["title"]) if r["due"] else r["title"]
+            client = r["client"] or _client(conn, r["dedup_key"] or "")
+            ih = nudges.intent_hash(client, new_title)
+            if (new_title != r["title"] or client != r["client"]
+                    or ih != r["intent_hash"]):
+                changed += 1
+                if new_title != r["title"]:
+                    print(f"  title: {r['title']!r} -> {new_title!r}")
+                if args.apply:
+                    conn.execute("UPDATE nudges SET title=?, client=?,"
+                                 " intent_hash=?, updated_at=datetime('now')"
+                                 " WHERE id=?", (new_title, client, ih, r["id"]))
+    verb = "updated" if args.apply else "would change (dry-run)"
+    print(f"\n{changed} card(s) {verb}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

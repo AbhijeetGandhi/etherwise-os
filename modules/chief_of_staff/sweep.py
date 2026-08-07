@@ -13,12 +13,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
+# A correlation that ROLLS UP a count ("Five commitments due", "Seven follow-ups
+# owed") is a render-time grouping, not a stored card (J1.5). "ManyChat" etc. are
+# not count words — a following space is required.
+_COUNT_TITLE = re.compile(
+    r"^(one|two|three|four|five|six|seven|eight|nine|ten|several|multiple|\d+)\s",
+    re.I)
+
+
+def _is_cluster_card(kind: str, title: str) -> bool:
+    return (bool(kind) and (kind.endswith("cluster") or kind == "escalate_pipeline")
+            or bool(_COUNT_TITLE.match(title or "")))
+
 from core import config, db, runner
 from modules.chief_of_staff import (rules, nudges, commitments, capture,
-                                    interrupts)
+                                    interrupts, closure)
 
 TASK_NAME = "cos_sweep"
 
@@ -172,6 +185,7 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
               _commitments: Optional[Callable] = commitments.extract_new,
               _capture: Optional[Callable] = capture.classify_new,
               _interrupts: Optional[Callable] = interrupts.check_hot_leads,
+              _closure: Optional[Callable] = closure.find_and_apply,
               now: Optional[datetime] = None) -> dict:
     db_path = ctx.db_path or config.DB_PATH
     now = now or datetime.now(config.TZ)
@@ -213,6 +227,17 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
     # 3. TTL decay sweep
     nudges.decay_expired(db_path, now=now)
 
+    # 3b. cross-source closure — a recent Fathom call / thread update may have
+    # resolved an open ask. Runs BEFORE empty-skip so a new closing signal is
+    # caught even when the nudge picture is otherwise unchanged. Metered Haiku
+    # (cheap, bounded per client), and only cards not yet decided.
+    closure_stats = {"auto_closed": 0, "chipped": 0}
+    if _closure:
+        try:
+            closure_stats = _closure(ctx, db_path, now=now)
+        except Exception:
+            pass
+
     # 4. empty-skip decision
     new_hash = candidate_hash(candidates)
     with db.connect(db_path) as conn:
@@ -234,6 +259,10 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
     opus = _opus(db_path, active, _context(db_path, now))
     new_corr = 0
     for c in (opus.get("correlations") or [])[:3]:
+        # cluster/count correlations are render-time groupings, never stored
+        # cards (J1.5) — an atomic per-client / per-commitment escalation is kept
+        if _is_cluster_card(c.get("kind", ""), c.get("title", "")):
+            continue
         try:
             nudges.write_nudge(
                 db_path, now=now, source="sweep", dept=c.get("dept", "sales"),
@@ -246,6 +275,7 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
             continue
     metrics = {"candidates": len(candidates), "active": len(active),
                "cleared": len(stale), "correlations": new_corr,
+               "closure": closure_stats,
                "priorities": opus.get("priorities", []),
                "narrative": opus.get("narrative", "")}
     _save_state(db_path, candidate_hash=new_hash, last_swept_at=nowiso,

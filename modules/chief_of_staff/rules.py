@@ -45,7 +45,7 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
             topic = r["topic"] or r["room_name"] or r["thread_id"]
             out.append({
                 "source": "sales", "dept": "sales", "kind": "owed_reply",
-                "title": f"Follow up: {topic}",
+                "title": f"Follow up: {topic}", "client": r["room_name"],
                 "action": "Draft is ready — review + send in Upwork.",
                 "due": None, "dedup_key": f"followup:{r['thread_id']}",
                 # thread_id in the payload so the Today assembler can dedup this
@@ -94,6 +94,7 @@ def rule_won_no_outcome(db_path, now=None) -> List[dict]:
             out.append({
                 "source": "sales", "dept": "sales", "kind": "won_no_outcome",
                 "title": f"Capture why we won: {r['job_title'] or r['id']}",
+                "client": r["client_company"],
                 "action": "Record the outcome reason (feeds scoring + proof-points).",
                 "due": None, "dedup_key": f"won_outcome:{r['id']}"})
     return out
@@ -112,8 +113,10 @@ def rule_lost_pattern(db_path, now=None) -> List[dict]:
             f" GROUP BY sj.category HAVING n >= ?",
                 (*config.COS_LOST_STATUSES, config.COS_LOST_PATTERN_MIN)):
             out.append({
+                # count lives in the payload (rendered live), never the stored
+                # title — cluster/count is a render-time grouping, not a card
                 "source": "sales", "dept": "sales", "kind": "lost_pattern",
-                "title": f"{r['n']} losses in {r['category']} — revisit scoring",
+                "title": f"Revisit scoring: {r['category']}",
                 "action": "Review positioning/rate/scoring for this category.",
                 "due": None, "dedup_key": f"lost_pattern:{r['category']}",
                 "payload": {"losses": r["n"]}})
@@ -134,7 +137,8 @@ def rule_stale_dossier(db_path, now=None) -> List[dict]:
             out.append({
                 "source": "knowledge", "dept": "knowledge",
                 "kind": "stale_dossier",
-                "title": f"{r['n']} unprocessed sources for {r['client_id']}",
+                "title": f"Unprocessed sources: {r['client_id']}",
+                "client": r["client_id"],
                 "action": f"Run extraction so {r['client_id']}'s dossier is current.",
                 "due": None, "dedup_key": f"stale_dossier:{r['client_id']}",
                 "payload": {"ingested": r["n"]}})
@@ -152,14 +156,17 @@ def rule_commitments_due(db_path, now=None) -> List[dict]:
     out = []
     with db.connect(db_path) as conn:
         for r in conn.execute(
-            "SELECT id, text, due, source_cite FROM commitments"
+            "SELECT id, text, due, source_cite, client_id FROM commitments"
             " WHERE state='open' AND who='us' AND due IS NOT NULL"
             " AND substr(due,1,10) <= ? AND substr(due,1,10) >= ?",
             (horizon.strftime("%Y-%m-%d"), stale_floor.strftime("%Y-%m-%d"))):
             out.append({
+                # write_nudge strips relative-date strings from a dated title; the
+                # due DATE is stored and rendered as "due tomorrow / overdue 1d"
                 "source": "commitment", "dept": "knowledge",
                 "kind": "commitment_due",
                 "title": f"Commitment due: {r['text'][:80]}",
+                "client": r["client_id"],
                 "action": "Deliver or update the client.",
                 "due": r["due"], "dedup_key": f"commitment:{r['id']}",
                 "payload": {"cite": r["source_cite"]}})

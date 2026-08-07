@@ -14,13 +14,47 @@ API:
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import datetime
 from typing import List, Optional
 
 from core import config, db
 
 _ACTIVE = ("open", "snoozed")
+
+# Client-facing asks a cross-source signal can close (J1.5 closure pass).
+CLOSEABLE_KINDS = ("commitment_due", "owed_reply", "won_no_outcome")
+
+# ── card identity + title hygiene (J1.5) ─────────────────────────────────────
+# Stored card text carries NO relative-date strings: the due DATE is stored and
+# the view renders "due tomorrow / overdue 1d" live. Strip parenthetical date
+# annotations + trailing relative-date clauses (e.g. "...demo tomorrow (Aug 6)").
+_PAREN_MON = re.compile(
+    r"\s*\((?:on\s+)?(?:mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|"
+    r"aug|sep|oct|nov|dec)[a-z]*\.?[^)]*\)", re.I)
+_PAREN_ISO = re.compile(
+    r"\s*\((?:\d{4}-\d\d-\d\d|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)\)", re.I)
+_TRAIL_REL = re.compile(
+    r"\s*\b(?:by\s+)?(?:today|tomorrow|tonight|yesterday|this\s+(?:week|morning|"
+    r"afternoon|evening)|next\s+\w+|end\s+of\s+(?:day|week|month)|eod|eow)\b\.?$",
+    re.I)
+
+
+def clean_card_title(title: str) -> str:
+    t = _PAREN_ISO.sub("", _PAREN_MON.sub("", title or ""))
+    for _ in range(2):                       # up to two trailing relative clauses
+        t2 = _TRAIL_REL.sub("", t).rstrip(" ,;-–")
+        if t2 == t:
+            break
+        t = t2
+    return t.strip() or (title or "").strip()
+
+
+def intent_hash(client: Optional[str], intent: str) -> str:
+    key = f"{(client or '-').lower()}|{(intent or '').lower().strip()}"
+    return hashlib.sha1(key.encode()).hexdigest()[:10]
 
 
 # ── time helpers (IST throughout) ─────────────────────────────────────────────
@@ -87,14 +121,23 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
                 dedup_key: str, action: Optional[str] = None,
                 due: Optional[str] = None, money_at_stake: Optional[float] = None,
                 score: Optional[int] = None, payload: Optional[dict] = None,
+                client: Optional[str] = None, intent: Optional[str] = None,
                 now: Optional[datetime] = None) -> dict:
     """Upsert by dedup_key. If an ACTIVE (open|snoozed) nudge exists, REFRESH it
-    (title/action/due/stake/urgency/refreshed_at) keeping its state + created_at;
-    else INSERT a new open nudge. Never duplicates an active item."""
+    (title/action/due/stake/urgency/refreshed_at) keeping its state + created_at
+    + any CLOSURE (closure columns are never touched on refresh); else INSERT a
+    new open nudge. Never duplicates an active item.
+
+    Stored title carries no relative dates (a due-bearing card is cleaned); the
+    canonical identity is card:<client>:<intent_hash> (intent defaults to the
+    pre-clean title)."""
     ts = _iso(_now(now))
     overdue = _is_overdue(due, now)
     urgency = compute_urgency(kind, money_at_stake=money_at_stake, score=score,
                               refreshed_at=ts, now=now, overdue=overdue)
+    ih = intent_hash(client, intent or title)
+    if due:
+        title = clean_card_title(title)      # no relative-date strings when dated
     pj = json.dumps(payload) if payload is not None else None
     with db.connect(db_path) as conn:
         row = conn.execute(
@@ -104,9 +147,9 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
             conn.execute(
                 "UPDATE nudges SET source=?, dept=?, kind=?, title=?, action=?,"
                 " due=?, urgency=?, money_at_stake=?, score=?, payload_json=?,"
-                " refreshed_at=?, updated_at=? WHERE id=?",
+                " client=?, intent_hash=?, refreshed_at=?, updated_at=? WHERE id=?",
                 (source, dept, kind, title, action, due, urgency, money_at_stake,
-                 score, pj, ts, ts, row["id"]))
+                 score, pj, client, ih, ts, ts, row["id"]))
             return {"id": row["id"], "op": "refreshed", "urgency": urgency}
         # RESPECT THE HUMAN for ONE-SHOT kinds: if a commitment (etc.) was marked
         # done/dismissed, do NOT resurrect it. The old dedup only checked
@@ -124,11 +167,43 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
                         "urgency": 0.0}
         cur = conn.execute(
             "INSERT INTO nudges (source, dept, kind, title, action, due, urgency,"
-            " money_at_stake, score, dedup_key, state, payload_json, created_at,"
-            " refreshed_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,'open',?,?,?,?)",
+            " money_at_stake, score, dedup_key, state, payload_json, client,"
+            " intent_hash, created_at, refreshed_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?)",
             (source, dept, kind, title, action, due, urgency, money_at_stake,
-             score, dedup_key, pj, ts, ts, ts))
+             score, dedup_key, pj, client, ih, ts, ts, ts))
         return {"id": cur.lastrowid, "op": "created", "urgency": urgency}
+
+
+# ── cross-source closure overlay (J1.5) ──────────────────────────────────────
+def closeable_open_cards(db_path, *, now: Optional[datetime] = None) -> List[dict]:
+    """Open client-facing cards eligible for a closure check: a client is set and
+    closure hasn't been decided yet (closure_state NULL). These are what the
+    closure pass evaluates against recent Fathom calls + thread updates."""
+    marks = ",".join("?" * len(CLOSEABLE_KINDS))
+    with db.connect(db_path) as conn:
+        return [dict(r) for r in conn.execute(
+            f"SELECT id, kind, title, due, client, dedup_key, payload_json,"
+            f" created_at FROM nudges WHERE state='open' AND client IS NOT NULL"
+            f" AND closure_state IS NULL AND kind IN ({marks})", CLOSEABLE_KINDS)]
+
+
+def set_closure(db_path, nudge_id: int, *, closure_state: str,
+                evidence: Optional[str] = None, source: Optional[str] = None,
+                confidence: Optional[float] = None,
+                now: Optional[datetime] = None) -> dict:
+    """Record a closure decision on a card (persists across roll-forward re-mint;
+    applied at render). closure_state: possibly_resolved|auto_closed|confirmed|
+    rejected."""
+    ts = _iso(_now(now))
+    with db.connect(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE nudges SET closure_state=?, closure_evidence=COALESCE(?,"
+            " closure_evidence), closure_source=COALESCE(?, closure_source),"
+            " closure_confidence=COALESCE(?, closure_confidence), updated_at=?"
+            " WHERE id=?", (closure_state, evidence, source, confidence, ts,
+                            nudge_id))
+    return {"updated": cur.rowcount, "closure_state": closure_state}
 
 
 # ── state transitions (the action layer) ──────────────────────────────────────

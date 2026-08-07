@@ -53,16 +53,17 @@ _CLIENT_FACING_KINDS = {"owed_reply", "commitment_due", "won_no_outcome",
                         "hotlead_no_loom"}
 
 
-def _card_key(item_key: str, client) -> str:
+def _card_key(item_key: str, client=None) -> str:
     """Canonical render identity. Follow-up threads key on the thread alone so a
-    follow-up card and its owed_reply nudge collapse even if their client labels
-    differ; everything else keys on client + intent."""
+    follow-up card and its owed_reply nudge collapse; every other card keys on
+    its item_key (already unique per intent), so the closure overlay matches
+    regardless of how the client label was derived."""
     ik = item_key or ""
     if ik.startswith("followup:"):
         return f"card:thread:{ik.split(':', 1)[1]}"
     if ik.startswith("nudge:followup:"):
         return f"card:thread:{ik.split(':', 2)[2]}"
-    return f"card:{client or '-'}:{ik}"
+    return f"card:{ik}"
 
 
 def _card_provenance(entry: dict):
@@ -1339,8 +1340,20 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                        "age_days": f["age_days"], "tier": f["tier"],
                        "thread_url": f["thread_url"], "draft": f["draft"]}})
     # actionable M4 nudges — everything except the paused hot-lead stream, and
-    # minus any owed_reply whose thread is already a follow-up row above
-    for n in _eng.active_nudges(db_path or config.DB_PATH, now=now_dt):
+    # minus any owed_reply whose thread is already a follow-up row above.
+    # First build the CLOSURE overlay (J1.5): a card whose cross-source closure
+    # was decided is keyed by canonical card key so it applies to the matching
+    # queue entry whatever surface produced it.
+    active_n = _eng.active_nudges(db_path or config.DB_PATH, now=now_dt)
+    closures = {}
+    for n in active_n:
+        cs = n.get("closure_state")
+        if cs and cs != "rejected":
+            closures[_card_key(f"nudge:{n['dedup_key']}")] = {
+                "state": cs, "source": n.get("closure_source"),
+                "confidence": n.get("closure_confidence"),
+                "evidence": n.get("closure_evidence")}
+    for n in active_n:
         if n["kind"] == "hotlead_no_loom":
             continue                        # that IS the paused backlog
         dk = n["dedup_key"] or ""
@@ -1384,6 +1397,21 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         elif e["kind"] == "followup" and _deduped[_seen[k]]["kind"] != "followup":
             _deduped[_seen[k]] = e          # prefer the actionable draft card
     queue = _deduped
+    # cross-source closure overlay (J1.5): a resolved card is never rendered as
+    # still-open. auto_closed/confirmed -> hidden; possibly_resolved -> a chip.
+    _auto_closed = 0
+    _open_q = []
+    for e in queue:
+        cl = closures.get(_card_key(e.get("item_key", ""), e.get("client")))
+        if cl and cl["state"] in ("auto_closed", "confirmed"):
+            _auto_closed += 1
+            continue
+        if cl and cl["state"] == "possibly_resolved":
+            e["possibly_resolved"] = {"source": cl.get("source"),
+                                      "confidence": cl.get("confidence"),
+                                      "evidence": cl.get("evidence")}
+        _open_q.append(e)
+    queue = _open_q
     # provenance law (§4.5): a client-facing card with no evidence link may not
     # render — hide it and raise a loud (not silent) anomaly.
     _hidden_keys: list = []
@@ -1396,6 +1424,20 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     queue = _kept
     if _hidden_keys:
         _flag_no_provenance(db_path, len(_hidden_keys), _hidden_keys)
+    # render-time clusters: counts by type over the ATOMIC set ("5 commitments
+    # due · 7 follow-ups owed"). These are groupings, never stored cards.
+    _CLUSTER = {"followup": "follow-ups", "owed_reply": "follow-ups",
+                "commitment_due": "commitments", "hotlead_no_loom": "hot leads",
+                "won_no_outcome": "win outcomes", "escalate_client": "escalations",
+                "lost_pattern": "scoring", "stale_dossier": "dossiers",
+                "system": "system", "capture": "captures"}
+    _cl_counts: dict = {}
+    for e in queue:
+        label = _CLUSTER.get(e.get("nudge_kind") or e.get("kind"), "other")
+        _cl_counts[label] = _cl_counts.get(label, 0) + 1
+    clusters = [{"label": k, "count": v}
+                for k, v in sorted(_cl_counts.items(), key=lambda x: -x[1])]
+
     # ruthless: Today shows the sharpest few; the full ranked queue is the
     # Nudges tab. Overflow is stated, never silently dropped.
     queue_total = len(queue)
@@ -1426,6 +1468,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         "sources": sources,
         "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
         "queue_hidden_no_provenance": len(_hidden_keys),
+        "queue_auto_closed": _auto_closed, "clusters": clusters,
         "follow_ups": follow_ups,           # kept for back-compat / counts
         "backlog": backlog,
         "metrics": {

@@ -51,6 +51,7 @@ POST_ROUTES: dict = {
     "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
     "/api/note": actions.note,    # Quick Capture -> CoS notes inbox
     "/api/cos-nudge": actions.cos_nudge,  # act on a real M4 nudge
+    "/api/card/closure": actions.card_closure,  # J1.5 confirm/reject a chip
     "/api/finance/import": actions.finance_import,  # dry-run/commit via importer bins
 }
 # raw-body route (file bytes, not JSON): staged into finance-inbox, kind-allowlisted

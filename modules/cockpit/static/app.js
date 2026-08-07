@@ -156,6 +156,29 @@ async function queueAct(item, action, snoozeDays) {
   }
 }
 
+// due date rendered LIVE from the stored date (no relative strings are stored)
+function dueLabel(due) {
+  if (!due) return "";
+  const d = new Date(String(due).slice(0, 10) + "T00:00:00");
+  if (isNaN(d)) return "due " + String(due).slice(0, 10);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((d - today) / 86400000);
+  if (days < 0) return "overdue " + (-days) + "d";
+  if (days === 0) return "due today";
+  if (days === 1) return "due tomorrow";
+  return "due in " + days + "d";
+}
+
+// J1.5: confirm/reject a "possibly resolved" chip
+async function cardClosure(itemKey, action) {
+  await fetch("/api/card/closure", {
+    method: "POST",
+    headers: { "X-Cockpit-Token": bootToken(), "Content-Type": "application/json" },
+    body: JSON.stringify({ item_key: itemKey, action }),
+  });
+  show("Today");
+}
+
 const fmtUsd = (n) => "$" + (n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const fmtUsd2 = (n) => { const s = n < 0 ? "−" : ""; n = Math.abs(n || 0);
   return s + "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
@@ -421,6 +444,13 @@ const RENDERERS = {
     view.appendChild(el("h3", "section",
       `Act now <span class="hint muted">— ${q.length ? `top ${q.length}` : "0"}`
       + ` by urgency${d.queue_more ? ` · +${d.queue_more} more in Nudges` : ""}</span>`));
+    // render-time clusters over the atomic set ("5 commitments · 7 follow-ups")
+    if (d.clusters && d.clusters.length) {
+      const line = d.clusters.map((c) => c.count + " " + esc(c.label)).join(" · ");
+      const extra = d.queue_auto_closed
+        ? ` · <span class="q-closed">${d.queue_auto_closed} auto-closed</span>` : "";
+      view.appendChild(el("div", "q-clusters muted", line + extra));
+    }
     const qcard = el("div", "card");
     if (!q.length) {
       qcard.appendChild(el("div", "emptystate",
@@ -443,9 +473,23 @@ const RENDERERS = {
       } else {
         meta.append(pill((it.nudge_kind || "").replace(/_/g, " "), ""),
                     el("span", "muted", esc(it.dept || "")));
-        if (it.due) meta.appendChild(el("span", "muted", " · due " + esc(it.due.slice(0, 10))));
+        if (it.due) meta.appendChild(el("span", "muted", " · " + dueLabel(it.due)));
       }
       left.append(title, meta);
+
+      // J1.5 closure chip: possibly resolved on a call — confirm or keep open
+      if (it.possibly_resolved) {
+        const chip = el("div", "q-chip");
+        const src = (it.possibly_resolved.source || "a recent call");
+        chip.appendChild(el("span", "muted",
+          "🔗 possibly resolved in " + esc(src) + " — "));
+        const conf = el("button", "action primary", "Confirm resolved");
+        conf.onclick = () => cardClosure(it.item_key, "confirm");
+        const keep = el("button", "action", "Keep open");
+        keep.onclick = () => cardClosure(it.item_key, "reject");
+        chip.append(conf, keep);
+        left.appendChild(chip);
+      }
 
       // clickable card -> inline detail panel (more info about the item)
       const detail = el("div", "q-detail");
