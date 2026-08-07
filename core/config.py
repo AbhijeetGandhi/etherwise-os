@@ -253,6 +253,10 @@ SELF_SENDER_DOMAINS = ("etherwise.io",)   # any @etherwise.io sender is internal
 OWNER_IDENTITIES = (
     "contact@etherwise.io",
     "abhijeetgandhi02@gmail.com",   # Abhijeet (personal)
+    # Abhijeet's own account on a client's domain: mail FROM it is US, so it's
+    # self-noise; other @optimizeis.com senders stay client signal (registry maps
+    # the optimizeis.com domain to optimize-is; owner check runs FIRST) (2026-08-08)
+    "abhijeet.gandhi@optimizeis.com",
 )
 SELF_SUBJECT_PATTERNS = (
     "upwork scan:", "hot upwork leads", "source-health", "source health",

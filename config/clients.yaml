@@ -68,6 +68,8 @@ clients:
       - ioannis pirigkos
       - ioannis p
     clickup: beglaubigt.de
+    slack:
+      workspace: Beglaubigt.de
     billing:
       canonical: Beglaubigt
     emails:
@@ -105,6 +107,9 @@ clients:
       - mike gandia
       - michaelxavierga
       - cmf publishing llc
+      - Charles Michaels Firm
+    slack:
+      workspace: Charles Michaels Firm
     billing:
       canonical: CMF Publishing
   -
@@ -334,6 +339,10 @@ clients:
     name: Optimize IS
     aliases:
       - Charlie Melendez
+    emails:
+      - optimizeis.com
+    slack:
+      workspace: Optimize Information Systems
     upwork_rooms:
       - room_3f05d369265d2bbf781699fa78bc0131
     billing:
@@ -515,6 +524,8 @@ clients:
       - the cradle company
       - cradle company
     clickup: TCC
+    slack:
+      workspace: The Cradle Company
     billing:
       canonical: The Cradle Company
   -

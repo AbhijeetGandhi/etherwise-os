@@ -49,6 +49,10 @@ _NOISE_SENDER_DOMAINS = (
     # SaaS product/newsletter blasts that leaked into 'held' (2026-08-07)
     "neon.tech", "instantly.ai", "getaiperks.com", "smartlead-team.com",
     "mail.airtable.com", "denave.com",
+    # dev-platform + recruitment blasts still landing in 'excluded' (2026-08-08).
+    # render.com covers dx@render.com (no-reply@render.com already caught by the
+    # no-reply substr); naukri.com covers all @naukri.com, not just naukritalentcloud@
+    "render.com", "naukri.com",
 )
 _NOISE_SUBJECT_SUBSTR = (
     "unsubscribe", "your receipt", "payment received", "verify your email",
