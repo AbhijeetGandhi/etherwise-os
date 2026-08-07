@@ -45,6 +45,15 @@ class TestGmailAuth(unittest.TestCase):
         self.assertNotIn("gmail.send", ga.SCOPE)
         self.assertNotIn("gmail.modify", ga.SCOPE)
 
+    def test_inbox_resolves_to_per_inbox_file_legacy_default(self):
+        # gmail-auth writes to the same resolver email_poll reads from
+        self.assertEqual(ga.ep.token_for(None), ga.TOKEN_FILE)
+        self.assertEqual(ga.ep.token_for("contact@etherwise.io"), ga.TOKEN_FILE)
+        p = ga.ep.token_for("abhijeet.gandhi@optimizeis.com")
+        self.assertEqual(p, ga.ep.GMAIL_TOKENS_DIR /
+                         "abhijeet.gandhi_optimizeis.com.json")
+        self.assertNotEqual(p, ga.TOKEN_FILE)
+
     def test_free_port_is_loopback_int(self):
         p = ga._free_port()
         self.assertIsInstance(p, int)

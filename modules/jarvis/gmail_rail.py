@@ -29,6 +29,13 @@ API = ep.API
 CURSOR = "jarvis_gmail_contact_epoch"     # distinct from the knowledge poller's cursor
 SOURCE = "email"
 
+
+def access_token(inbox: str | None = None) -> str:
+    """Inbox-aware token accessor for the sweep. Defaults to contact@ (the live
+    rail) — delegates to email_poll so every caller shares one resolver + refresh
+    path. Extra inboxes pass their address; contact@ stays on the legacy file."""
+    return ep.access_token(inbox)
+
 # ── noise blocklist (metadata-first gate) ────────────────────────────────────
 # Automated/bulk senders + subjects that are structurally NOT a client 1:1
 # message. Kept conservative: a false-exclude only means an item won't reach the

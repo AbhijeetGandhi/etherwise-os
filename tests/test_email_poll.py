@@ -155,6 +155,85 @@ class TestTokenGate(unittest.TestCase):
                 ep.access_token()
         self.assertIn("GATED", str(cm.exception))
 
+    def test_missing_inbox_token_names_the_inbox(self):
+        # a per-inbox miss must tell Abhijeet exactly which --inbox to run
+        with mock.patch.object(ep, "GMAIL_TOKENS_DIR", Path("/nonexistent/gmail")):
+            with self.assertRaises(RuntimeError) as cm:
+                ep.access_token("abhijeetgandhi01@gmail.com")
+        msg = str(cm.exception)
+        self.assertIn("GATED", msg)
+        self.assertIn("abhijeetgandhi01@gmail.com", msg)
+        self.assertIn("--inbox", msg)
+
+
+class TestTokenPathResolution(unittest.TestCase):
+    """Multi-inbox path resolution + legacy fallback (contact@ never moves)."""
+
+    def test_legacy_fallback_none_is_contact(self):
+        self.assertEqual(ep.token_for(), ep.TOKEN_FILE)
+        self.assertEqual(ep.token_for(None), ep.TOKEN_FILE)
+
+    def test_contact_maps_to_legacy_case_insensitive(self):
+        self.assertEqual(ep.token_for("contact@etherwise.io"), ep.TOKEN_FILE)
+        self.assertEqual(ep.token_for("  Contact@Etherwise.IO  "), ep.TOKEN_FILE)
+
+    def test_per_inbox_path_is_sanitized_under_gmail_dir(self):
+        for inbox, stem in [
+            ("abhijeetgandhi01@gmail.com", "abhijeetgandhi01_gmail.com"),
+            ("abhijeetgandhi02@gmail.com", "abhijeetgandhi02_gmail.com"),
+            ("abhijeet.gandhi@optimizeis.com", "abhijeet.gandhi_optimizeis.com"),
+        ]:
+            p = ep.token_for(inbox)
+            self.assertEqual(p, ep.GMAIL_TOKENS_DIR / f"{stem}.json")
+            self.assertNotEqual(p, ep.TOKEN_FILE)   # never collides with contact@
+
+    def test_distinct_inboxes_get_distinct_files(self):
+        paths = {ep.token_for(i) for i in
+                 ("a@gmail.com", "b@gmail.com", "contact@etherwise.io")}
+        self.assertEqual(len(paths), 3)
+
+
+class TestPerInboxRefresh(unittest.TestCase):
+    """Each token file refreshes independently — refreshing an extra inbox must
+    rewrite ONLY that inbox's file and never touch the contact@ token."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_refresh_writes_only_the_inbox_file(self):
+        legacy = self.tmp / "gmail-api.json"
+        gdir = self.tmp / "gmail"
+        gdir.mkdir()
+        # contact@ token — untouched, must not change
+        legacy.write_text(json.dumps({"access_token": "contact-live",
+                                      "expiry": "2099-01-01T00:00:00+00:00"}))
+        # the extra inbox's token is EXPIRED -> access_token must refresh it
+        inbox_file = gdir / "abhijeetgandhi01_gmail.com.json"
+        inbox_file.write_text(json.dumps({
+            "client_id": "c", "client_secret": "s", "refresh_token": "rt",
+            "access_token": "stale", "expiry": "2000-01-01T00:00:00+00:00"}))
+
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps(
+                {"access_token": "fresh-01", "expires_in": 3600}).encode()
+
+        with mock.patch.object(ep, "TOKEN_FILE", legacy), \
+             mock.patch.object(ep, "GMAIL_TOKENS_DIR", gdir), \
+             mock.patch.object(ep.urllib.request, "urlopen",
+                               lambda req, timeout=0: _Resp()):
+            tok = ep.access_token("abhijeetgandhi01@gmail.com")
+
+        self.assertEqual(tok, "fresh-01")
+        # the inbox file was rewritten with the fresh token
+        self.assertEqual(json.loads(inbox_file.read_text())["access_token"],
+                         "fresh-01")
+        # contact@ token is byte-for-byte untouched
+        self.assertEqual(json.loads(legacy.read_text())["access_token"],
+                         "contact-live")
+
 
 if __name__ == "__main__":
     unittest.main()

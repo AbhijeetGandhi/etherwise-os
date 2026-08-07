@@ -15,6 +15,7 @@ Prereqs Abhijeet provides once:
   3. Scope: https://www.googleapis.com/auth/gmail.readonly (READ-ONLY).
 stdlib only; no send/modify scope is ever requested.
 """
+import argparse
 import json
 import socket
 import sys
@@ -26,10 +27,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config  # noqa: E402
+from modules.knowledge import email_poll as ep  # noqa: E402
 
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 CLIENT_FILE = config.CREDENTIALS_DIR / "gmail-oauth-client.json"
-TOKEN_FILE = config.CREDENTIALS_DIR / "gmail-api.json"
+TOKEN_FILE = ep.TOKEN_FILE   # legacy contact@ path (single source: email_poll)
 
 
 def _free_port() -> int:
@@ -70,10 +72,25 @@ def build_token(cfg: dict, tok: dict, now: datetime) -> dict:
 
 
 def main():
+    ap = argparse.ArgumentParser(
+        description="Mint a READ-ONLY Gmail token via loopback OAuth consent.")
+    ap.add_argument("--inbox", nargs="?", const="", default="",
+                    help="email to authorize (e.g. abhijeet@optimizeis.com). "
+                         "Omit (or pass with no value) to (re)mint contact@ on "
+                         "the legacy path — the live rail, unchanged.")
+    args = ap.parse_args()
+    inbox = (args.inbox or "").strip() or None
+    label = inbox or ep.CONTACT_INBOX
+    out_file = ep.token_for(inbox)
+
     if not CLIENT_FILE.exists():
         sys.exit(f"missing {CLIENT_FILE} — add client_id/client_secret first "
                  "(see this script's docstring).")
     cfg = json.loads(CLIENT_FILE.read_text())
+
+    print(f"\nLog into {label} in your default browser FIRST, then approve.")
+    print("  (If a DIFFERENT Google account is active in that browser, consent "
+          "will bind the WRONG inbox — switch account or use a fresh profile.)")
 
     port = _free_port()
     redirect = f"http://127.0.0.1:{port}/"
@@ -116,9 +133,13 @@ def main():
     except RuntimeError as e:
         sys.exit(f"\n{e}")
     out = build_token(cfg, tok, datetime.now(timezone.utc))
-    TOKEN_FILE.write_text(json.dumps(out))
-    TOKEN_FILE.chmod(0o600)
-    print(f"\n✓ wrote {TOKEN_FILE} (600). email_poll.py can now read client mail.")
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text(json.dumps(out))
+    out_file.chmod(0o600)
+    granted = tok.get("scope", SCOPE)
+    print(f"\n[OK] connected {label}")
+    print(f"     granted scopes: {granted}")
+    print(f"     token written : {out_file} (600)")
 
 
 if __name__ == "__main__":

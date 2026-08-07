@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from email.utils import parseaddr
+from pathlib import Path
 
 from core import config, db, runner
 from modules.knowledge import clients
@@ -28,7 +29,29 @@ API = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 CURSOR = "gmail_after_epoch"      # internalDate (ms) high-water-mark
 TASK_NAME = "email_poll"
 PAGE_CAP = 20
-TOKEN_FILE = config.CREDENTIALS_DIR / "gmail-api.json"
+
+# ── token file resolution (multi-inbox; contact@ keeps the legacy path) ───────
+# contact@ is the live rail and stays on the single flat token file. Additional
+# inboxes each get their own file under gmail/<sanitized-email>.json so they can
+# be minted + refreshed independently without touching the contact@ token.
+CONTACT_INBOX = "contact@etherwise.io"
+TOKEN_FILE = config.CREDENTIALS_DIR / "gmail-api.json"   # legacy = contact@
+GMAIL_TOKENS_DIR = config.CREDENTIALS_DIR / "gmail"      # per-inbox token files
+
+
+def sanitize_inbox(inbox: str) -> str:
+    """Filesystem-safe stem for a per-inbox token file. Lowercased; every run of
+    non [a-z0-9.] chars collapses to '_' (so '@' -> '_'). Deterministic:
+    abhijeetgandhi01@gmail.com -> abhijeetgandhi01_gmail.com."""
+    return re.sub(r"[^a-z0-9.]+", "_", (inbox or "").strip().lower()).strip("_")
+
+
+def token_for(inbox: str | None = None) -> Path:
+    """Resolve the token file for an inbox. None or contact@ -> the legacy flat
+    file (unchanged, the live rail); any other inbox -> its own per-inbox file."""
+    if not inbox or inbox.strip().lower() == CONTACT_INBOX:
+        return TOKEN_FILE
+    return GMAIL_TOKENS_DIR / f"{sanitize_inbox(inbox)}.json"
 
 
 # ── pure parsing + filtering (no network) ─────────────────────────────────────
@@ -112,18 +135,22 @@ def build_query(dmap: dict, after_epoch=None) -> str:
 
 # ── token (read-only; consent is GATED) ───────────────────────────────────────
 
-def access_token() -> str:
-    """Read (refreshing if needed) the Gmail token. Raises a clear, actionable
-    error if consent hasn't been run — never attempts consent itself."""
-    if not TOKEN_FILE.exists():
+def access_token(inbox: str | None = None) -> str:
+    """Read (refreshing if needed) the Gmail token for `inbox` (defaults to
+    contact@ = the legacy path). Raises a clear, actionable error if consent
+    hasn't been run for that inbox — never attempts consent itself."""
+    path = token_for(inbox)
+    if not path.exists():
+        who = inbox or CONTACT_INBOX
+        flag = "" if path == TOKEN_FILE else f" --inbox {who}"
         raise RuntimeError(
-            "Gmail not connected. The OAuth consent step is GATED — run "
-            "bin/gmail-auth with Abhijeet (needs a Google Cloud OAuth app + "
-            "browser consent). This poller only reads an existing token.")
-    tok = json.loads(TOKEN_FILE.read_text())
+            f"Gmail not connected for {who}. The OAuth consent step is GATED — "
+            f"run bin/gmail-auth{flag} with Abhijeet (needs a Google Cloud OAuth "
+            "app + browser consent). This poller only reads an existing token.")
+    tok = json.loads(path.read_text())
     if tok.get("access_token") and not _expired(tok):
         return tok["access_token"]
-    return _refresh(tok)
+    return _refresh(tok, path)
 
 
 def _expired(tok: dict) -> bool:
@@ -136,7 +163,9 @@ def _expired(tok: dict) -> bool:
         return True
 
 
-def _refresh(tok: dict) -> str:
+def _refresh(tok: dict, path: Path = TOKEN_FILE) -> str:
+    """Refresh in place and persist back to THIS inbox's file — each token file
+    refreshes independently (contact@'s token is never touched by another inbox)."""
     data = urllib.parse.urlencode({
         "client_id": tok["client_id"], "client_secret": tok["client_secret"],
         "refresh_token": tok["refresh_token"], "grant_type": "refresh_token",
@@ -150,7 +179,7 @@ def _refresh(tok: dict) -> str:
     tok["expiry"] = (datetime.now(timezone.utc)
                      + timedelta(seconds=fresh.get("expires_in", 3000) - 60)
                      ).isoformat()
-    TOKEN_FILE.write_text(json.dumps(tok))
+    path.write_text(json.dumps(tok))
     return tok["access_token"]
 
 
