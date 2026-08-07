@@ -2412,56 +2412,70 @@ RENDERERS.Mapping = async (view) => {
   view.appendChild(el("h2", "section", "Mapping queue"));
   const c = d.counts || {};
   const rec = d.last_sweep;
-  let txt = `Registry ${esc(d.registry_sha)} · events: ${c.mapped || 0} mapped · `
-    + `${c.queued || 0} queued · ${c.held || 0} held · ${c.excluded || 0} excluded `
-    + `(total ${c.total || 0})`;
+  let txt = `<b>${d.queued_total || 0} queued · ${d.held_total || 0} held</b> · `
+    + `${c.mapped || 0} mapped · ${c.excluded || 0} excluded · registry ${esc(d.registry_sha)}`;
   if (rec) txt += ` · last sweep ${rec.at ? esc(String(rec.at).slice(0, 16)) : "—"}: `
     + (rec.reconciled === false ? "⚠ RECONCILE MISMATCH" : "reconciled ✓");
   view.appendChild(el("div", "muted", txt));
 
-  if (!d.queued_total) {
-    placeholder(view, "Queue clear — every collected event is mapped or excluded.");
-    return;
-  }
   const optionsHtml = (sel) => ['<option value="">— pick client —</option>']
     .concat((d.clients || []).map((cl) =>
       `<option value="${esc(cl.id)}" ${cl.id === sel ? "selected" : ""}>${esc(cl.name)}</option>`))
     .join("");
 
+  // one row builder for both queued (has a proposal) and held (awaiting) items
+  const itemRow = (it, defaultClient) => {
+    const row = el("div", "fu-item");
+    row.appendChild(el("div", null,
+      `<b>${esc(it.author || "?")}</b> — ${esc(it.subject || "(no subject)")}`));
+    let sub = `${esc(it.source)}`;
+    if (it.ts) sub += " · " + esc(String(it.ts).slice(0, 16));
+    if (it.confidence != null) sub += ` · proposal ${(it.confidence * 100).toFixed(0)}%`;
+    if (it.evidence) sub += " · " + esc(it.evidence);
+    row.appendChild(el("div", "muted", sub));
+    if (it.preview) { const p = el("div", "muted"); p.textContent = it.preview; row.appendChild(p); }
+    const actions = el("div", "fu-actions");
+    const selEl = el("select", "unlock-input");
+    selEl.innerHTML = optionsHtml(defaultClient);
+    const assign = el("button", "action primary", "Assign");
+    assign.onclick = () => {
+      if (!selEl.value) { alert("Pick a client first."); return; }
+      qResolve(it.event_id, "assign", selEl.value);
+    };
+    const ignore = el("button", "action", "Ignore");
+    ignore.onclick = () => qResolve(it.event_id, "ignore", null, "not a client");
+    actions.append(selEl, assign, ignore);
+    if (it.permalink) {
+      const a = el("a", "action", "Open");
+      a.href = it.permalink; a.target = "_blank"; a.rel = "noopener";
+      actions.appendChild(a);
+    }
+    row.appendChild(actions);
+    return row;
+  };
+
+  if (!d.queued_total && !d.held_total) {
+    placeholder(view, "Queue clear — every collected event is mapped or excluded.");
+    return;
+  }
+
   (d.groups || []).forEach((g) => {
     const gc = el("div", "card");
     gc.appendChild(el("h3", null, esc(g.proposed_name) + "  ·  " + g.count));
-    g.items.forEach((it) => {
-      const row = el("div", "fu-item");
-      row.appendChild(el("div", null,
-        `<b>${esc(it.author || "?")}</b> — ${esc(it.subject || "(no subject)")}`));
-      let sub = `${esc(it.source)}`;
-      if (it.ts) sub += " · " + esc(String(it.ts).slice(0, 16));
-      if (it.confidence != null) sub += ` · proposer ${(it.confidence * 100).toFixed(0)}%`;
-      if (it.evidence) sub += " · " + esc(it.evidence);
-      row.appendChild(el("div", "muted", sub));
-      if (it.preview) { const p = el("div", "muted"); p.textContent = it.preview; row.appendChild(p); }
-      const actions = el("div", "fu-actions");
-      const selEl = el("select", "unlock-input");
-      selEl.innerHTML = optionsHtml(g.proposed_client_id);
-      const assign = el("button", "action primary", "Assign");
-      assign.onclick = () => {
-        if (!selEl.value) { alert("Pick a client first."); return; }
-        qResolve(it.event_id, "assign", selEl.value);
-      };
-      const ignore = el("button", "action", "Ignore");
-      ignore.onclick = () => qResolve(it.event_id, "ignore", null, "not a client");
-      actions.append(selEl, assign, ignore);
-      if (it.permalink) {
-        const a = el("a", "action", "Open");
-        a.href = it.permalink; a.target = "_blank"; a.rel = "noopener";
-        actions.appendChild(a);
-      }
-      row.appendChild(actions);
-      gc.appendChild(row);
-    });
+    g.items.forEach((it) => gc.appendChild(itemRow(it, g.proposed_client_id)));
     view.appendChild(gc);
   });
+
+  // held = collected but not yet proposed. A state Abhijeet must act on cannot
+  // be invisible — show it with the same controls.
+  if (d.held_total) {
+    const hc = el("div", "card");
+    hc.appendChild(el("h3", null, "Awaiting proposal (held)  ·  " + d.held_total));
+    hc.appendChild(el("div", "muted",
+      "Collected, no confident proposal yet — assign now or leave for the next sweep."));
+    (d.held_items || []).forEach((it) => hc.appendChild(itemRow(it, "")));
+    view.appendChild(hc);
+  }
 };
 
 // ── boot ──

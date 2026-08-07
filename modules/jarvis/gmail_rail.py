@@ -38,12 +38,17 @@ _NOISE_SENDER_SUBSTR = (
     "mailer-daemon", "postmaster", "bounce", "notifications@", "notification@",
     "notify@", "newsletter", "digest@", "updates@", "mailer@", "alerts@",
     "alert@", "automated", "auto-confirm", "receipts@", "billing@", "invoice@",
+    # marketing/outreach roles are not a client contact (2026-08-07)
+    "marketing@", "productmarketing@", "make-events@", "naukritalentcloud@",
 )
 _NOISE_SENDER_DOMAINS = (
     "google.com", "accounts.google.com", "github.com", "linkedin.com",
     "slack.com", "stripe.com", "mailchimp.com", "sendgrid.net", "substack.com",
     "notion.so", "calendly.com", "atlassian.net", "intercom.io", "zoom.us",
     "docusign.net", "quickbooks.com", "amazonses.com",
+    # SaaS product/newsletter blasts that leaked into 'held' (2026-08-07)
+    "neon.tech", "instantly.ai", "getaiperks.com", "smartlead-team.com",
+    "mail.airtable.com", "denave.com",
 )
 _NOISE_SUBJECT_SUBSTR = (
     "unsubscribe", "your receipt", "payment received", "verify your email",

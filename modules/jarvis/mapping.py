@@ -11,7 +11,10 @@ candidate set — a hallucinated id is dropped to null, never trusted.
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
+
+from core import config, registry
 
 PROPOSAL_SCHEMA = {
     "type": "object",
@@ -42,6 +45,43 @@ TEXT_CAP = 2000     # cap body chars sent to the proposer (cost + injection surf
 def match_deterministic(reg, author: str) -> Optional[str]:
     """Registry match on the sender address/domain — the only authoritative path."""
     return reg.match_email(author or "")
+
+
+_FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com",
+             "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com",
+             "aol.com", "live.com", "msn.com"}
+
+
+def _alnum(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", registry.norm(s))
+
+
+def _domain_root(domain: str) -> str:
+    """The second-level label — 'beglaubigt.de'->'beglaubigt', 'x.co'->'x'."""
+    parts = domain.split(".")
+    return parts[-2] if len(parts) >= 2 else domain
+
+
+def domain_echo(reg, author: str) -> Optional[dict]:
+    """Deterministic pre-pass: a sender's domain root that EXACTLY (normalized)
+    equals a matchable client's id/name/alias is a high-confidence proposal — no
+    LLM. Exact-normalized equality only; near-misses fall through to the proposer.
+    Skips freemail + our own domains (they are never a client's own domain)."""
+    a = (author or "").strip().lower()
+    if "@" not in a:
+        return None
+    dom = a.rsplit("@", 1)[-1]
+    if dom in _FREEMAIL or dom in config.SELF_SENDER_DOMAINS:
+        return None
+    root = _alnum(_domain_root(dom))
+    if not root:
+        return None
+    for cid in reg.matchable_ids():
+        c = reg.by_id[cid]
+        if any(_alnum(x) == root for x in (cid, c["name"], *(c.get("aliases") or []))):
+            return {"proposed_client_id": cid, "confidence": 0.95,
+                    "evidence": f"domain '{dom}' echoes client '{c['name']}'"}
+    return None
 
 
 def candidates(reg) -> list[dict]:

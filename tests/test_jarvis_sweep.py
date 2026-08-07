@@ -215,6 +215,26 @@ class SweepTests(unittest.TestCase):
                              " id='evt:email:s1'").fetchone()
         self.assertTrue(r["exclude_reason"].startswith("self-noise"))
 
+    def test_domain_echo_unit(self):
+        from modules.jarvis import mapping
+        # domain root echoes a client name, but the email domain isn't registered
+        self.assertEqual(mapping.domain_echo(self.reg, "a@adelye.io")
+                         ["proposed_client_id"], "adelye")
+        self.assertIsNone(mapping.domain_echo(self.reg, "a@gmail.com"))    # freemail
+        self.assertIsNone(mapping.domain_echo(self.reg, "a@stranger.com"))  # no echo
+
+    def test_domain_echo_queues_without_proposer(self):
+        msgs = {"e1": ("Info <info@adelye.io>", "Question", "body", 9000)}
+        metrics, ctx, fg = self._run(msgs)
+        self.assertEqual(metrics["domain_echoed"], 1)
+        self.assertEqual(ctx.claude_calls, [])          # deterministic, zero LLM
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state, proposed_client_id, proposal_confidence"
+                             " FROM events WHERE id='evt:email:e1'").fetchone()
+        self.assertEqual(r["state"], "queued")
+        self.assertEqual(r["proposed_client_id"], "adelye")
+        self.assertAlmostEqual(r["proposal_confidence"], 0.95)
+
     def test_empty_skip_no_llm(self):
         from core import runner
         fg = FakeGmail({})

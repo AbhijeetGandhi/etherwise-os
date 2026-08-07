@@ -49,17 +49,23 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
         if new_cursor and new_cursor != cursor:
             gmail_rail.write_cursor(conn, new_cursor)
 
-    # 3a. MAP deterministic ────────────────────────────────────────────────────
+    # 3a. MAP deterministic: registry match, then domain-echo (both zero-LLM) ───
     with db.connect(dbp) as conn:
         held = [dict(r) for r in events.held_for_run(conn, ctx.run_id)]
-        mapped = 0
+        mapped = echoed = 0
         still_held = []
         for ev in held:
             cid = mapping.match_deterministic(reg, ev["author"])
             if cid:
                 events.set_mapped(conn, ev["id"], cid); mapped += 1
-            else:
-                still_held.append(ev)
+                continue
+            echo = mapping.domain_echo(reg, ev["author"])
+            if echo:
+                events.set_queued(conn, ev["id"], echo["proposed_client_id"],
+                                  echo["confidence"], echo["evidence"])
+                echoed += 1
+                continue
+            still_held.append(ev)
 
     # 3b. PROPOSER (LLM, OUTSIDE the transaction) ──────────────────────────────
     cand, valid = mapping.candidates(reg), set(reg.ids())
@@ -89,7 +95,8 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
     return {"collected": len(collected), "inserted": inserted,
             "mapped": counts["mapped"], "queued": counts["queued"],
             "held": counts["held"], "excluded": counts["excluded"],
-            "proposer_calls": len(proposals), "reconciled": reconciled}
+            "domain_echoed": echoed, "proposer_calls": len(proposals),
+            "reconciled": reconciled}
 
 
 def main() -> int:

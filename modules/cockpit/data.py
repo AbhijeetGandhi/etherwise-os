@@ -1714,6 +1714,10 @@ def queue(db_path: Optional[Path] = None) -> dict:
                 counts[r["state"]] = r["n"]
         counts["total"] = sum(counts[s] for s in
                               ("mapped", "queued", "held", "excluded"))
+        held_rows = [dict(r) for r in conn.execute(
+            "SELECT id, source, author, subject, ts, permalink,"
+            " substr(text,1,180) preview FROM events WHERE state='held'"
+            " ORDER BY ts DESC")]
         last = conn.execute(
             "SELECT id, metrics_json, completed_at FROM runs WHERE"
             " task_name='jarvis_sweep' AND status IN ('completed','skipped_empty')"
@@ -1749,7 +1753,13 @@ def queue(db_path: Optional[Path] = None) -> dict:
         last_sweep = {"at": last["completed_at"], "run_id": last["id"],
                       "reconciled": m.get("reconciled"), "metrics": m}
 
-    return {"groups": ordered, "queued_total": len(rows), "counts": counts,
+    held_items = [{"event_id": r["id"], "source": r["source"],
+                   "author": r["author"], "subject": r["subject"], "ts": r["ts"],
+                   "permalink": r["permalink"], "preview": r["preview"]}
+                  for r in held_rows]
+    return {"groups": ordered, "queued_total": len(rows),
+            "held_items": held_items, "held_total": len(held_items),
+            "counts": counts,
             "clients": [{"id": cid, "name": reg.by_id[cid]["name"]}
                         for cid in sorted(reg.matchable_ids(),
                                           key=lambda i: reg.by_id[i]["name"].lower())],

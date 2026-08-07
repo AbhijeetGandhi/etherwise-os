@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Re-run the deterministic map pass over CURRENT held events (Jarvis J1).
+
+Zero-LLM: registry match -> mapped; domain-echo -> queued (0.95 proposal);
+self-noise / (refreshed) noise blocklist -> excluded; otherwise left held for the
+next sweep's proposer. Used after tuning the registry or the noise list so the
+queue reflects the new rules without waiting for a scheduled sweep.
+
+    PYTHONPATH=. python3 bin/jarvis-remap-held [--apply]
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db, registry, runner                # noqa: E402
+from modules.jarvis import events, gmail_rail, mapping        # noqa: E402
+
+
+def _remap(dbp, reg, apply: bool) -> dict:
+    with db.connect(dbp) as conn:
+        held = [dict(r) for r in conn.execute(
+            "SELECT id, author, subject FROM events WHERE state='held'")]
+    out = {"held": len(held), "mapped": 0, "echoed": 0, "excluded": 0,
+           "left_held": 0, "detail": []}
+    for e in held:
+        author, subj = e["author"], e["subject"]
+        cid = mapping.match_deterministic(reg, author)
+        echo = None if cid else mapping.domain_echo(reg, author)
+        noise = (None if (cid or echo) else
+                 (gmail_rail.self_noise_reason(author, author, subj)
+                  or gmail_rail.noise_reason(author, subj)))
+        if cid:
+            out["mapped"] += 1; out["detail"].append((e["id"], "mapped", cid))
+            if apply:
+                with db.connect(dbp) as c:
+                    events.set_mapped(c, e["id"], cid)
+        elif echo:
+            out["echoed"] += 1
+            out["detail"].append((e["id"], "echo", echo["evidence"]))
+            if apply:
+                with db.connect(dbp) as c:
+                    events.set_queued(c, e["id"], echo["proposed_client_id"],
+                                      echo["confidence"], echo["evidence"])
+        elif noise:
+            out["excluded"] += 1; out["detail"].append((e["id"], "excluded", noise))
+            if apply:
+                with db.connect(dbp) as c:
+                    events.set_excluded(c, e["id"], noise)
+        else:
+            out["left_held"] += 1
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    args = ap.parse_args()
+    reg = registry.load()
+
+    if not args.apply:
+        res = _remap(config.DB_PATH, reg, apply=False)
+    else:
+        def task(ctx):
+            return _remap(ctx.db_path or config.DB_PATH, reg, apply=True)
+        res = runner.run_task("jarvis_remap_held", task, module="system").metrics or {}
+
+    for eid, action, info in res.get("detail", []):
+        print(f"  {action:9} {eid}  {info}")
+    print(f"\nheld {res.get('held')} -> mapped {res.get('mapped')} · echoed "
+          f"{res.get('echoed')} · excluded {res.get('excluded')} · left held "
+          f"{res.get('left_held')}  {'(APPLIED)' if args.apply else '(dry-run)'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
