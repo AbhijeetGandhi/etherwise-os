@@ -170,6 +170,40 @@ class TitleHygieneTests(unittest.TestCase):
             self.assertNotIn("tomorrow", t)
             self.assertNotIn("(Aug 6)", t)
 
+    def test_context_counts_stripped(self):
+        self.assertEqual(
+            nudges.strip_context_counts(
+                "ManyChat/dashboard commitment due Fri sits atop 416 open "
+                "commitments —"),
+            "ManyChat/dashboard commitment due Fri")
+        self.assertEqual(
+            nudges.strip_context_counts("KB/POC commitment amid 25 open"),
+            "KB/POC commitment")
+        # a normal title is untouched
+        self.assertEqual(nudges.strip_context_counts("Ship the register"),
+                         "Ship the register")
+
+    def test_stale_commitment_is_not_carded(self):
+        from modules.chief_of_staff import rules
+        with tempfile.TemporaryDirectory() as d:
+            dbp = Path(d) / "t.db"
+            db.migrate(dbp)
+            with db.connect(dbp) as conn:
+                conn.execute(
+                    "INSERT INTO commitments (id, who, client_id, text, due,"
+                    " source_cite, dedup_key, state, review_state) VALUES"
+                    " (1,'us','adelye','Old promise','2026-08-07','f/1 @ 0',"
+                    " 'commitment:1','open','stale')")
+                conn.execute(
+                    "INSERT INTO commitments (id, who, client_id, text, due,"
+                    " source_cite, dedup_key, state) VALUES"
+                    " (2,'us','adelye','Live promise','2026-08-07','f/2 @ 0',"
+                    " 'commitment:2','open')")
+            cands = rules.rule_commitments_due(dbp, now=NOW)
+        keys = {c["dedup_key"] for c in cands}
+        self.assertIn("commitment:2", keys)        # live one cards
+        self.assertNotIn("commitment:1", keys)     # stale one does not
+
     def test_generators_have_no_count_in_title(self):
         from modules.chief_of_staff import rules
         with tempfile.TemporaryDirectory() as d:

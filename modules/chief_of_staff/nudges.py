@@ -42,8 +42,22 @@ _TRAIL_REL = re.compile(
     re.I)
 
 
+# Stored titles carry no CONTEXT-COUNTS either ("...sits atop 416 open
+# commitments", "...amid 25 open") — same render-time-only law as dates. The
+# count is computed at display; the stored card is the atomic ask alone.
+_CONTEXT_COUNT = re.compile(
+    r"\s*(?:[—,–-]\s*)?\b(?:sits?\s+)?(?:atop|amid|amidst|among|amongst|across|"
+    r"out\s+of|alongside)\s+\d+\s+[\w/&-]+(?:\s+[\w/&-]+){0,2}", re.I)
+
+
+def strip_context_counts(title: str) -> str:
+    t = _CONTEXT_COUNT.sub("", title or "").rstrip(" ,;—–-")
+    return t.strip() or (title or "").strip()
+
+
 def clean_card_title(title: str) -> str:
-    t = _PAREN_ISO.sub("", _PAREN_MON.sub("", title or ""))
+    t = strip_context_counts(title)
+    t = _PAREN_ISO.sub("", _PAREN_MON.sub("", t))
     for _ in range(2):                       # up to two trailing relative clauses
         t2 = _TRAIL_REL.sub("", t).rstrip(" ,;-–")
         if t2 == t:
@@ -135,9 +149,10 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
     overdue = _is_overdue(due, now)
     urgency = compute_urgency(kind, money_at_stake=money_at_stake, score=score,
                               refreshed_at=ts, now=now, overdue=overdue)
-    ih = intent_hash(client, intent or title)
+    title = strip_context_counts(title)      # narrative counts are render-time only
     if due:
-        title = clean_card_title(title)      # no relative-date strings when dated
+        title = clean_card_title(title)      # + no relative-date strings when dated
+    ih = intent_hash(client, intent or title)
     pj = json.dumps(payload) if payload is not None else None
     with db.connect(db_path) as conn:
         row = conn.execute(

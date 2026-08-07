@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Bounded commitment-backlog drain (Jarvis J1.5 follow-up).
+
+A commitment is STALE when it is old (created > --stale-weeks ago), not upcoming
+(no future due date), and has no recent activity (updated_at also old). Stale
+commitments leave the card + closure stream (rule_commitments_due skips them) and
+land on a "stale — confirm dead?" review list — reversible, never deleted.
+
+    PYTHONPATH=. python3 bin/cos-drain-commitments [--stale-weeks N]   # report
+    PYTHONPATH=. python3 bin/cos-drain-commitments --apply             # flag stale
+    PYTHONPATH=. python3 bin/cos-drain-commitments --confirm-dead      # stale->dropped
+    PYTHONPATH=. python3 bin/cos-drain-commitments --revive <id>       # unflag one
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db                                  # noqa: E402
+
+_STALE_WHERE = (
+    "state='open' AND who='us' AND COALESCE(review_state,'') != 'stale'"
+    " AND julianday('now') - julianday(created_at) > ?"
+    " AND (due IS NULL OR substr(due,1,10) < date('now'))"
+    " AND julianday('now') - julianday(COALESCE(updated_at, created_at)) > ?")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--stale-weeks", type=int, default=6)
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--confirm-dead", action="store_true")
+    ap.add_argument("--revive", type=int)
+    args = ap.parse_args()
+    days = args.stale_weeks * 7
+
+    with db.connect(config.DB_PATH) as conn:
+        if args.revive:
+            conn.execute("UPDATE commitments SET review_state=NULL,"
+                         " updated_at=datetime('now') WHERE id=?", (args.revive,))
+            print(f"revived commitment {args.revive} (review_state cleared)")
+            return 0
+        if args.confirm_dead:
+            cur = conn.execute("UPDATE commitments SET state='dropped',"
+                               " updated_at=datetime('now')"
+                               " WHERE review_state='stale' AND state='open'")
+            print(f"confirmed dead: {cur.rowcount} stale commitment(s) -> dropped")
+            return 0
+        cands = [dict(r) for r in conn.execute(
+            f"SELECT id, client_id, substr(text,1,60) t,"
+            f" CAST(julianday('now')-julianday(created_at) AS INT) age_d, due"
+            f" FROM commitments WHERE {_STALE_WHERE} ORDER BY age_d DESC",
+            (days, days))]
+        if args.apply:
+            conn.execute(f"UPDATE commitments SET review_state='stale',"
+                         f" updated_at=datetime('now') WHERE {_STALE_WHERE}",
+                         (days, days))
+
+    by_client: dict = {}
+    for c in cands:
+        by_client[c["client_id"] or "(unattributed)"] = \
+            by_client.get(c["client_id"] or "(unattributed)", 0) + 1
+    print(f"stale candidates (> {args.stale_weeks}w old, not upcoming, no recent "
+          f"activity): {len(cands)}")
+    for cl, n in sorted(by_client.items(), key=lambda x: -x[1]):
+        print(f"  {n:>4}  {cl}")
+    if not args.apply:
+        # write the review list for confirm-dead review
+        lines = ["# Stale commitments — confirm dead?", "",
+                 f"_{len(cands)} open 'us' commitments > {args.stale_weeks}w old, "
+                 "not upcoming, no recent activity. Flag with --apply; then "
+                 "--confirm-dead drops them, or --revive <id> restores one._", "",
+                 "| id | client | age (d) | text |", "|---|---|---|---|"]
+        lines += [f"| {c['id']} | {c['client_id'] or '—'} | {c['age_d']} |"
+                  f" {c['t']} |" for c in cands[:400]]
+        out = config.V3_ROOT / "reports" / "cos-stale-commitments.md"
+        out.parent.mkdir(exist_ok=True)
+        out.write_text("\n".join(lines) + "\n")
+        print(f"\n[dry-run] review list -> {out}; pass --apply to flag stale")
+    else:
+        print(f"\nflagged {len(cands)} stale (excluded from cards + closure; "
+              "--confirm-dead to drop, --revive <id> to restore)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

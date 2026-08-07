@@ -52,7 +52,9 @@ def main() -> int:
             "SELECT id, title, due, dedup_key, client, intent_hash FROM nudges"
             " WHERE state IN ('open','snoozed')")]
         for r in rows:
-            new_title = nudges.clean_card_title(r["title"]) if r["due"] else r["title"]
+            new_title = nudges.strip_context_counts(r["title"])
+            if r["due"]:
+                new_title = nudges.clean_card_title(new_title)
             client = r["client"] or _client(conn, r["dedup_key"] or "")
             ih = nudges.intent_hash(client, new_title)
             if (new_title != r["title"] or client != r["client"]

@@ -158,6 +158,7 @@ def rule_commitments_due(db_path, now=None) -> List[dict]:
         for r in conn.execute(
             "SELECT id, text, due, source_cite, client_id FROM commitments"
             " WHERE state='open' AND who='us' AND due IS NOT NULL"
+            " AND COALESCE(review_state,'') != 'stale'"     # stale -> not a card
             " AND substr(due,1,10) <= ? AND substr(due,1,10) >= ?",
             (horizon.strftime("%Y-%m-%d"), stale_floor.strftime("%Y-%m-%d"))):
             out.append({
