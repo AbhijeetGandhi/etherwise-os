@@ -148,11 +148,24 @@ INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately
 HOT_LEAD_THRESHOLD = 16
 LOOM_FLAG_THRESHOLD = 22
 # Founder INTENT, carried as config so the system respects it instead of reading
-# neglect into deliberate choice: applications are paused since 2026-06-30. While
-# set, the Today screen shows accumulated hot leads as a 'ready when you resume'
-# backlog (ranked by ICP/score), never as an act-now queue that nags every
-# morning. Set to None to resume — hot leads then re-enter the act-now queue.
-APPLICATIONS_PAUSED_SINCE = "2026-06-30"
+# neglect into deliberate choice. When set to a YYYY-MM-DD, the Today screen shows
+# accumulated hot leads as a 'ready when you resume' backlog (ranked by ICP/score),
+# never as an act-now queue that nags every morning. None = applications ACTIVE;
+# hot leads re-enter the act-now queue.
+#
+# RESUMED 2026-08-07 (set to None): Abhijeet answered board-memo-001 Q1 = YES,
+# resuming disciplined applications at 10/week — logged in business/STRATEGY.md
+# decision log ("2026-08-07 · Q1 = YES — B1 ACTIVE"). The prior pause since
+# 2026-06-30 is retired. This constant is a STATED INTENT: render code reconciles
+# it against the connects rail (_pause_contradiction in modules/cockpit/data.py)
+# so a stale value can never silently override observed applications — same law as
+# no-fabricated-zeros and render-time-only counts.
+APPLICATIONS_PAUSED_SINCE = None
+# Intent-reconciliation thresholds: while a pause IS set, if the connects rail
+# shows >= MIN_EVENTS 'applied' events after paused_since within WINDOW_DAYS, the
+# tile surfaces a contradiction instead of 'paused' and a WARN anomaly is raised.
+STALE_INTENT_WINDOW_DAYS = 14
+STALE_INTENT_MIN_EVENTS = 2
 TODAY_BACKLOG_TOPN = 8            # how many ready-when-resumed leads to preview
 TODAY_FRESH_LEAD_DAYS = 10       # a lead older than this has almost surely expired
 TODAY_QUEUE_TOPN = 12            # the act-now queue is ruthless; the rest -> Nudges

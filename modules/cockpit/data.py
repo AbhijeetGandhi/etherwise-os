@@ -96,6 +96,28 @@ def _flag_no_provenance(db_path, count: int, keys: list) -> None:
         pass
 
 
+def _flag_applied_anomaly(db_path, kind: str, detail: dict) -> None:
+    """Applied-tile reconciliation is loud, not silent: a config/feed value the
+    connects rail (the applied-truth source) contradicts raises a once-a-day WARN
+    anomaly of `kind` so the stale source surfaces as an incident, not just
+    quietly on a tile. Used for 'stale_intent' (paused config vs rail) and
+    'applied_feed_lag' (proposals feed vs rail)."""
+    try:
+        from core import db as _db
+        with _db.connect(db_path or config.DB_PATH) as conn:
+            dup = conn.execute(
+                "SELECT 1 FROM anomalies WHERE kind=? AND resolved_at IS NULL"
+                " AND substr(detected_at,1,10)=date('now') LIMIT 1",
+                (kind,)).fetchone()
+            if not dup:
+                conn.execute(
+                    "INSERT INTO anomalies (task_name, kind, detail_json, severity)"
+                    " VALUES ('cockpit_today', ?, ?, 'warn')",
+                    (kind, json.dumps(detail)))
+    except Exception:  # noqa: BLE001 — never let flagging break the page
+        pass
+
+
 # Canonical earnings definition — mirrors v2 reconcile_airtable.py (the
 # reconciled revenue parity set). amount>0 guards refunds/reversals.
 EARNING_TYPES = ("Hourly Earning", "Fixed Earning", "Bonus")
@@ -1182,6 +1204,24 @@ def _applications_paused(day: str):
     return (bool(since and since <= day), since)
 
 
+def _pause_contradiction(conn, day: str, paused_since: Optional[str]) -> int:
+    """Intent reconciliation: a STATED pause must never silently override the
+    OBSERVED rail. If config says applications are paused since `paused_since`
+    yet the connects rail recorded >= STALE_INTENT_MIN_EVENTS 'applied' events
+    AFTER it (within STALE_INTENT_WINDOW_DAYS), the intent is stale — return that
+    count so the caller surfaces a contradiction instead of asserting 'paused'.
+    Same law as no-fabricated-zeros / render-time-only counts. 0 = no conflict."""
+    if not paused_since:
+        return 0
+    cutoff = (date.fromisoformat(day)
+              - timedelta(days=config.STALE_INTENT_WINDOW_DAYS)).isoformat()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM connects_history WHERE kind='applied'"
+        " AND event_date > ? AND event_date >= ?",
+        (paused_since, cutoff)).fetchone()[0]
+    return n if n >= config.STALE_INTENT_MIN_EVENTS else 0
+
+
 def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     """The daily action screen: ONE ruthlessly ranked act-now queue, a paused-
     aware 'ready when you resume' lead backlog, the source-health line (so a
@@ -1194,8 +1234,17 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     from modules.chief_of_staff import nudges as _eng
     day = today or _ist_today()
     paused, paused_since = _applications_paused(day)
+    pause_conflict_n = 0
+    rail_applied_week = 0
     conn = _ro(db_path)
     try:
+        # intent reconciliation (no-silent-override law): a config pause the
+        # connects rail contradicts is NOT rendered as fact. Computed BEFORE the
+        # paused-aware backlog so both the tile and the backlog reflect observed
+        # reality rather than a possibly-stale founder-intent constant.
+        pause_conflict_n = _pause_contradiction(conn, day, paused_since)
+        if pause_conflict_n:
+            paused = False
         # items the founder has acted on: done/dismissed always hidden;
         # snoozed hidden until snooze_until <= day (B1b local nudge_state).
         suppressed = {r["item_key"] for r in conn.execute(
@@ -1285,6 +1334,11 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         applied_today = applied_between(day, day)
         applied_week = applied_between(week_lo, day)
         applied_last = applied_between(lw_lo, lw_hi)
+        # applied-truth rail (connects_history) over the same 7-day window — the
+        # honest cross-check on the proposals-sourced count (§ no fabricated zeros)
+        rail_applied_week = conn.execute(
+            "SELECT COUNT(*) FROM connects_history WHERE kind='applied'"
+            " AND event_date BETWEEN ? AND ?", (week_lo, day)).fetchone()[0]
 
         prop_marks = ",".join("?" * len(_TERMINAL_PROP))
         active_props = conn.execute(
@@ -1460,8 +1514,32 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     # Applied's zero explains itself: paused by intent, not idle. The connects
     # rail is the applied-truth source, so its freshness gates the number.
     applied_note = None
-    if paused:
+    applied_contradiction = False
+    if pause_conflict_n:
+        # Fix 2: a paused config the connects rail contradicts is not fact.
+        applied_note = (
+            f"config says applications paused since {paused_since}, but the rail"
+            f" recorded {pause_conflict_n} applications since then — intent may"
+            f" be stale")
+        applied_contradiction = True
+        _flag_applied_anomaly(db_path, "stale_intent",
+                              {"constant": "APPLICATIONS_PAUSED_SINCE",
+                               "paused_since": paused_since,
+                               "applied_since": pause_conflict_n})
+    elif paused:
         applied_note = f"paused by intent since {paused_since} — not idle"
+    elif applied_week == 0 and rail_applied_week > 0:
+        # no-fabricated-zeros: the proposals feed says 0, but the applied-truth
+        # rail recorded activity in the same window — never assert a zero the
+        # rail denies. Surface the rail count; the proposals sync is what's stale.
+        applied_note = (
+            f"proposals feed shows 0, but the connects rail recorded"
+            f" {rail_applied_week} applications in the last 7 days — the"
+            f" proposals sync is stale")
+        applied_contradiction = True
+        _flag_applied_anomaly(db_path, "applied_feed_lag",
+                              {"proposals_week": applied_week,
+                               "rail_week": rail_applied_week})
     elif applied_week == 0:
         applied_note = "no applications in the last 7 days"
     return {
@@ -1474,7 +1552,8 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         "metrics": {
             "applied": {"today": applied_today, "week": applied_week,
                         "last_week": applied_last, "paused": paused,
-                        "paused_since": paused_since, "note": applied_note},
+                        "paused_since": paused_since, "note": applied_note,
+                        "contradiction": applied_contradiction},
             "active": {"proposals": active_props, "interviews": interviews,
                        "contracts": active_contracts},
             "queue_len": len(queue), "follow_ups_due": follow_ups_due,

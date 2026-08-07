@@ -392,6 +392,79 @@ class TestTodayReader(unittest.TestCase):
         self.assertIn("paused", out["metrics"]["applied"]["note"])
         self.assertTrue(out["metrics"]["applied"]["paused"])
 
+    def test_stale_pause_contradicted_by_rail_is_not_rendered_as_paused(self):
+        # intent-reconciliation law: a stated intent (paused) must never silently
+        # override contradicting observed data. Config says paused since 06-01,
+        # but the connects rail recorded applications AFTER that date -> the tile
+        # surfaces a CONTRADICTION, never 'paused', and a WARN anomaly is raised.
+        with db.connect(self.db_path) as conn:
+            for i, dt in enumerate(["2026-06-09", "2026-06-12", "2026-06-14"]):
+                conn.execute(
+                    "INSERT INTO connects_history (id, event_date, kind, label,"
+                    " connects_delta) VALUES (?,?, 'applied','Applied to a job',-8)",
+                    (f"ap{i}", dt))
+        with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", "2026-06-01"):
+            out = data.today(self.db_path, today="2026-06-15")
+        tile = out["metrics"]["applied"]
+        self.assertFalse(tile["paused"])                 # not asserted as fact
+        self.assertTrue(tile["contradiction"])
+        self.assertNotIn("paused by intent", tile["note"] or "")
+        self.assertIn("intent may be stale", tile["note"])
+        self.assertIn("3", tile["note"])                 # N applications counted
+        # the backlog no longer frames itself as a paused 'ready-when-resume' pile
+        self.assertFalse(out["backlog"]["paused"])
+        with db.connect(self.db_path) as conn:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM anomalies WHERE kind='stale_intent'"
+                " AND severity='warn'").fetchone()[0]
+        self.assertGreaterEqual(n, 1)
+
+    def test_zero_applied_contradicted_by_rail_is_not_a_fabricated_zero(self):
+        # no-fabricated-zeros: with applications ACTIVE (not paused), the
+        # proposals feed can lag the applied-truth connects rail. The tile must
+        # NEVER assert 'no applications' when the rail recorded activity in the
+        # same window — surface the rail count + a WARN feed-lag anomaly instead.
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM proposals")        # proposals feed is stale
+            for i, dt in enumerate(["2026-06-10", "2026-06-13"]):
+                conn.execute(
+                    "INSERT INTO connects_history (id, event_date, kind, label,"
+                    " connects_delta) VALUES (?,?, 'applied','Applied to a job',-8)",
+                    (f"rz{i}", dt))
+        with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", None):
+            out = data.today(self.db_path, today="2026-06-15")
+        tile = out["metrics"]["applied"]
+        self.assertEqual(tile["week"], 0)                # proposals feed says 0
+        self.assertTrue(tile["contradiction"])           # but the rail disagrees
+        self.assertNotIn("no applications", tile["note"] or "")
+        self.assertIn("connects rail", tile["note"])
+        self.assertIn("2", tile["note"])                 # rail count surfaced
+        with db.connect(self.db_path) as conn:
+            n = conn.execute("SELECT COUNT(*) FROM anomalies WHERE"
+                             " kind='applied_feed_lag' AND severity='warn'"
+                             ).fetchone()[0]
+        self.assertGreaterEqual(n, 1)
+
+    def test_true_zero_holds_when_rail_agrees(self):
+        # the guard fires only on a CONTRADICTION: proposals 0 AND rail 0 is a
+        # true zero and still reads 'no applications in the last 7 days'.
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM proposals")
+        with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", None):
+            out = data.today(self.db_path, today="2026-06-15")
+        tile = out["metrics"]["applied"]
+        self.assertFalse(tile["contradiction"])
+        self.assertIn("no applications in the last 7 days", tile["note"])
+
+    def test_paused_holds_when_rail_is_quiet(self):
+        # the guard is a contradiction detector, not a pause killer: with a real
+        # pause and NO rail activity after it, 'paused' still renders as intent.
+        with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", "2026-06-01"):
+            out = data.today(self.db_path, today="2026-06-15")
+        self.assertTrue(out["metrics"]["applied"]["paused"])
+        self.assertFalse(out["metrics"]["applied"]["contradiction"])
+        self.assertIn("paused by intent", out["metrics"]["applied"]["note"])
+
     def test_source_health_line_is_present(self):
         out = data.today(self.db_path, today="2026-06-15")
         self.assertIn("headline", out["sources"])
