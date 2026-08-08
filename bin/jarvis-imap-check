@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Read-only dry-run of the IMAP rail against the live mailboxes — verify the
+transport works and see what the noise gate would keep vs drop, WITHOUT storing
+anything or advancing any cursor.
+
+Bounded to the last N days (default 3). Prints per-inbox counts + a few sample
+(state / author / subject) lines. NEVER prints message bodies, app passwords, or
+any credential. Missing app password => that inbox is reported skipped, not a crash.
+
+    PYTHONPATH=. python3 bin/jarvis-imap-check [--days N] [--inbox EMAIL] [--max N]
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config                                      # noqa: E402
+from modules.jarvis import imap_rail                         # noqa: E402
+
+
+def _check(inbox: str, days: int, max_items: int) -> None:
+    try:
+        events, cursor = imap_rail.collect(
+            inbox, None, max_items=max_items, first_fetch_days=days)
+    except imap_rail.InboxSkip as skip:
+        print(f"\n{inbox}: SKIPPED ({skip})")
+        return
+    except Exception as exc:                      # network/auth — report, never crash
+        print(f"\n{inbox}: ERROR {exc!r}")
+        return
+
+    by_state = Counter(e["state"] for e in events)
+    print(f"\n{inbox}: {len(events)} message(s) in last {days}d — "
+          f"held {by_state['held']} / excluded {by_state['excluded']} "
+          f"(would-be cursor {cursor})")
+    for e in events[:8]:
+        tag = e["state"].upper().ljust(8)
+        reason = f"  [{e['exclude_reason']}]" if e["state"] == "excluded" else ""
+        subj = (e["subject"] or "")[:52]
+        print(f"  {tag} {e['author']:<34.34} {subj}{reason}")
+    if len(events) > 8:
+        print(f"  ... and {len(events) - 8} more")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--days", type=int, default=config.JARVIS_IMAP_FIRST_FETCH_DAYS)
+    ap.add_argument("--inbox", default=None, help="one inbox; default = all configured")
+    ap.add_argument("--max", type=int, default=500)
+    args = ap.parse_args()
+
+    inboxes = [args.inbox] if args.inbox else list(config.JARVIS_IMAP_INBOXES)
+    print(f"IMAP dry-run (read-only, no store) — host {config.JARVIS_IMAP_HOST}, "
+          f"{len(inboxes)} inbox(es), last {args.days}d")
+    for inbox in inboxes:
+        _check(inbox, args.days, args.max)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

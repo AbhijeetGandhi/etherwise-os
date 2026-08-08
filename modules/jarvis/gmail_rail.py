@@ -5,14 +5,10 @@ message ids since the cursor, fetch HEADERS ONLY to classify against a noise
 blocklist, and pull the full body ONLY for messages that pass — cutting the
 prompt-injection surface (and the token bill) by not loading bulk/automated mail.
 
-Principle: the rail NEVER ingests our own automation output. Self-noise (bot
-digests, scan alerts, reports — see config.SELF_SENDERS/SELF_SUBJECT_PATTERNS) is
-excluded at the metadata stage before any body fetch, proposer call, or token
-spent. A new system email is one line in config, never a code change.
-
-Reuses the tested token + HTTP seams from modules.knowledge.email_poll; HTTP is
+The classify gate + event shape live in modules.jarvis.mail_pipeline, shared with
+the IMAP rail so their filtering can never diverge. This module is the Gmail-API
+TRANSPORT only: token, HTTP list/meta/full, and the internalDate cursor. HTTP is
 injectable (_list/_meta/_full) so all logic is covered without a live token.
-Produces normalized, un-stored event dicts — the sweep stores + maps them.
 """
 from __future__ import annotations
 
@@ -21,13 +17,17 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from core import config
-from modules.jarvis import events
+from modules.jarvis import mail_pipeline
 from modules.knowledge import email_poll as ep
 
 API = ep.API
 CURSOR = "jarvis_gmail_contact_epoch"     # distinct from the knowledge poller's cursor
 SOURCE = "email"
+
+# Re-exports: the classify gate is shared. bin/jarvis-reclassify-self-noise and
+# any other caller keep working against gmail_rail.* unchanged.
+self_noise_reason = mail_pipeline.self_noise_reason
+noise_reason = mail_pipeline.noise_reason
 
 
 def access_token(inbox: str | None = None) -> str:
@@ -35,77 +35,6 @@ def access_token(inbox: str | None = None) -> str:
     rail) — delegates to email_poll so every caller shares one resolver + refresh
     path. Extra inboxes pass their address; contact@ stays on the legacy file."""
     return ep.access_token(inbox)
-
-# ── noise blocklist (metadata-first gate) ────────────────────────────────────
-# Automated/bulk senders + subjects that are structurally NOT a client 1:1
-# message. Kept conservative: a false-exclude only means an item won't reach the
-# queue this sweep; a real client thread never matches these.
-_NOISE_SENDER_SUBSTR = (
-    "no-reply", "noreply", "no_reply", "donotreply", "do-not-reply",
-    "mailer-daemon", "postmaster", "bounce", "notifications@", "notification@",
-    "notify@", "newsletter", "digest@", "updates@", "mailer@", "alerts@",
-    "alert@", "automated", "auto-confirm", "receipts@", "billing@", "invoice@",
-    # marketing/outreach roles are not a client contact (2026-08-07)
-    "marketing@", "productmarketing@", "make-events@", "naukritalentcloud@",
-)
-_NOISE_SENDER_DOMAINS = (
-    "google.com", "accounts.google.com", "github.com", "linkedin.com",
-    "slack.com", "stripe.com", "mailchimp.com", "sendgrid.net", "substack.com",
-    "notion.so", "calendly.com", "atlassian.net", "intercom.io", "zoom.us",
-    "docusign.net", "quickbooks.com", "amazonses.com",
-    # SaaS product/newsletter blasts that leaked into 'held' (2026-08-07)
-    "neon.tech", "instantly.ai", "getaiperks.com", "smartlead-team.com",
-    "mail.airtable.com", "denave.com",
-    # dev-platform + recruitment blasts still landing in 'excluded' (2026-08-08).
-    # render.com covers dx@render.com (no-reply@render.com already caught by the
-    # no-reply substr); naukri.com covers all @naukri.com, not just naukritalentcloud@
-    "render.com", "naukri.com",
-)
-_NOISE_SUBJECT_SUBSTR = (
-    "unsubscribe", "your receipt", "payment received", "verify your email",
-    "sign-in", "sign in to", "security alert", "your invoice", "newsletter",
-    "weekly digest", "[automated]", "password reset", "confirm your",
-)
-
-
-def self_noise_reason(from_header: str, from_addr: str, subject: str) -> str | None:
-    """Our OWN automation output — excluded before any body fetch or token spend.
-    Matches our sending identities (address, @etherwise.io domain, or the bot
-    display name in the raw From) and our template subjects. Config-driven so a
-    new system email is one line in config, never a code change."""
-    frm = (from_header or "").lower()
-    a = (from_addr or "").lower()
-    dom = ep.sender_domain(from_header) or (a.rsplit("@", 1)[-1] if "@" in a else "")
-    for s in config.SELF_SENDERS:
-        if s == a or s in frm:
-            return f"self-noise:sender:{s}"
-    for o in config.OWNER_IDENTITIES:          # our own people are not clients
-        if o == a:
-            return f"self-noise:owner:{o}"
-    for d in config.SELF_SENDER_DOMAINS:
-        if dom == d or dom.endswith("." + d):
-            return f"self-noise:domain:{dom}"
-    subj = (subject or "").lower()
-    for p in config.SELF_SUBJECT_PATTERNS:
-        if p in subj:
-            return f"self-noise:subject:{p}"
-    return None
-
-
-def noise_reason(from_addr: str, subject: str) -> str | None:
-    a = (from_addr or "").lower()
-    dom = ep.sender_domain(from_addr)
-    for s in _NOISE_SENDER_SUBSTR:
-        if s in a:
-            return f"noise:sender:{s}"
-    for d in _NOISE_SENDER_DOMAINS:
-        if dom == d or dom.endswith("." + d):
-            return f"noise:domain:{dom}"
-    subj = (subject or "").lower()
-    for s in _NOISE_SUBJECT_SUBSTR:
-        if s in subj:
-            return f"noise:subject:{s}"
-    return None
 
 
 def permalink(msg_id: str) -> str:
@@ -140,38 +69,23 @@ def build_query(after_epoch=None) -> str:
     return q.strip()
 
 
-def _classify(msg_meta: dict, msg_id: str) -> dict:
-    """Header-level normalization + noise gate. Returns a partial event dict
-    (no body yet); `_pass` False => excluded."""
-    payload = msg_meta.get("payload") or {}
-    frm = ep._header(payload, "From")
-    subject = ep._header(payload, "Subject")
-    date_h = ep._header(payload, "Date")
-    internal = msg_meta.get("internalDate")
-    ts = date_h
+def _header_ts(payload: dict, internal) -> str:
+    """Occurred timestamp for classify: internalDate (ms) preferred, else Date:."""
+    ts = ep._header(payload, "Date")
     if internal:
         try:
             ts = datetime.fromtimestamp(int(internal) / 1000,
                                         timezone.utc).isoformat()
         except (ValueError, TypeError):
             pass
-    from email.utils import parseaddr
-    _, addr = parseaddr(frm)
-    # self-noise (our own automation) is checked FIRST — never fetched, never proposed
-    reason = self_noise_reason(frm, addr, subject) or noise_reason(addr or frm, subject)
-    return {
-        "id": events.canonical_id(SOURCE, msg_id),
-        "source": SOURCE, "native_id": msg_id, "ts": ts,
-        "author": addr or frm, "subject": subject,
-        "permalink": permalink(msg_id), "raw_ref": f"email/{msg_id}",
-        "_pass": reason is None, "_reason": reason, "_from": frm,
-    }
+    return ts
 
 
 def collect(token: str, cursor: str | None, *, max_items: int,
             _list=_list, _meta=_meta, _full=_full) -> tuple[list[dict], str | None]:
     """Return (normalized events, new_cursor). Events passing the noise gate carry
-    `state='held'` + body text; excluded ones carry `state='excluded'` + reason."""
+    `state='held'` + body text; excluded ones carry `state='excluded'` + reason.
+    Classification + body-only-on-pass are delegated to mail_pipeline.assemble."""
     q = build_query(cursor)
     out: list[dict] = []
     max_internal = int(cursor) if cursor else 0
@@ -183,20 +97,21 @@ def collect(token: str, cursor: str | None, *, max_items: int,
             if seen >= max_items:
                 break
             seen += 1
-            meta = _meta(token, ref["id"])
+            mid = ref["id"]
+            meta = _meta(token, mid)
             max_internal = max(max_internal, int(meta.get("internalDate") or 0))
-            ev = _classify(meta, ref["id"])
-            if not ev["_pass"]:
-                ev["state"] = "excluded"
-                ev["exclude_reason"] = ev["_reason"]
-                ev["text"] = None
-            else:
-                full = _full(token, ref["id"])
-                parsed = ep.parse_email(full)
-                ev["state"] = "held"
-                ev["text"] = parsed["text"]
-                ev["ts"] = ev["ts"] or parsed["occurred_dt"]
-            out.append(ev)
+            payload = meta.get("payload") or {}
+            frm = ep._header(payload, "From")
+            subject = ep._header(payload, "Subject")
+            ts = _header_ts(payload, meta.get("internalDate"))
+
+            def _body(mid=mid):
+                parsed = ep.parse_email(_full(token, mid))
+                return {"text": parsed["text"], "ts": parsed["occurred_dt"]}
+
+            out.append(mail_pipeline.assemble(
+                SOURCE, mid, frm, subject, ts, permalink(mid),
+                f"email/{mid}", _body))
         page_token = page.get("nextPageToken")
         if not page_token:
             break

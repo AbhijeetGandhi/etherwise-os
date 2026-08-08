@@ -257,6 +257,25 @@ JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
                                     # the rest stay 'held' for the next sweep
 JARVIS_LOOM_MAX_PROPOSALS = 25      # loom bridge: at most N Haiku residue-proposer
                                     # calls per run (deterministic passes are $0)
+# ── IMAP rail (2026-08-09) — the inboxes contact@'s OAuth app cannot reach ────
+# The OAuth client is registered Internal, so it can only ever authorize
+# etherwise.io accounts; the personal inboxes go over IMAP with per-account app
+# passwords instead (no expiry, no Google verification). SAME classify gate +
+# event shape as the Gmail API rail (mail_pipeline) — only the transport differs.
+# contact@ stays on OAuth (untouched); abhijeet.gandhi@optimizeis.com gets NO
+# IMAP rail (its Workspace disallows app passwords — covered later by the browser
+# rail) and so is deliberately absent from this list.
+JARVIS_IMAP_INBOXES = (
+    "abhijeetgandhi01@gmail.com",
+    "abhijeetgandhi02@gmail.com",
+)
+JARVIS_IMAP_HOST = "imap.gmail.com"
+JARVIS_IMAP_FIRST_FETCH_DAYS = 3    # cursor-less first fetch is bounded to N days
+# Per-account app passwords: { "<email>": "<app password>" }, chmod 600,
+# git-ignored, in CREDENTIALS_DIR (v2's .credentials). Read at runtime by
+# imap_rail; NEVER logged, echoed, or placed in a prompt. A missing entry means
+# that inbox is skipped with a clear reason, not a crash.
+GMAIL_APP_PASSWORDS_FILE = CREDENTIALS_DIR / "gmail-app-passwords.json"
 # ── EXTRACT stage (J2 §4.3 stage 3) — the READER, staging-only ───────────────
 # Per-CLIENT bundle (not per-event), so cost scales with active clients, not
 # mail volume. Hard per-run ceiling so a busy day can never run away; overflow
@@ -377,6 +396,26 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
      "why": "the client-centric sweep behind Today + the mapping queue; a stale"
             " sweep means new client mail is not being seen or routed"},
+    # Per-IMAP-inbox health (2026-08-09). The IMAP rails ride inside jarvis_sweep,
+    # so they SHARE its freshness (task_name=jarvis_sweep); each row exists only to
+    # surface a per-inbox DEGRADE — a bad app password / IMAP failure raises
+    # 'jarvis_imap_error_<stem>' on the latest sweep, so exactly the dead inbox
+    # shows amber while contact@ + the sibling inbox stay green. Not critical: a
+    # personal-inbox rail is supplementary signal, not a money/pipeline source.
+    {"key": "jarvis_imap_01", "label": "Jarvis IMAP (abhijeetgandhi01@gmail.com)",
+     "task_name": "jarvis_sweep", "max_age_hours": 16,
+     "degrade_kinds": ("jarvis_imap_error_abhijeetgandhi01_gmail.com",),
+     "critical": False, "backs": "today",
+     "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
+     "why": "read-only IMAP rail for the 01 inbox (card/finance + client mail the"
+            " OAuth app cannot reach); a dead rail means that inbox goes unseen"},
+    {"key": "jarvis_imap_02", "label": "Jarvis IMAP (abhijeetgandhi02@gmail.com)",
+     "task_name": "jarvis_sweep", "max_age_hours": 16,
+     "degrade_kinds": ("jarvis_imap_error_abhijeetgandhi02_gmail.com",),
+     "critical": False, "backs": "today",
+     "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
+     "why": "read-only IMAP rail for the 02 inbox; a dead rail means that inbox"
+            " goes unseen"},
     # Manually fed: statement imports have no scheduled run to age, but the DATA
     # still has an age — freshness_sql asks the ledger when it was last fed.
     {"key": "finance_ledger", "label": "Statement imports (bank/card/Wise)",

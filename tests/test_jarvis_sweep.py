@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from core import config, db, registry
-from modules.jarvis import events, gmail_rail, sweep
+from modules.jarvis import events, gmail_rail, imap_rail, mail_pipeline, sweep
 
 
 REG_YAML = """\
@@ -256,6 +256,91 @@ class SweepTests(unittest.TestCase):
                                   meta_fn=fg.meta, full_fn=fg.full, reg=self.reg)
         self.assertEqual(metrics["inserted"], 0)             # nothing new
         self.assertEqual(ctx.claude_calls, [])               # no re-proposing
+
+
+INBOX = "abhijeetgandhi01@gmail.com"
+INBOX_STEM = "abhijeetgandhi01_gmail.com"
+
+
+def _imap_event(native_stub, author, subject, body):
+    """An IMAP-rail event, built through the SAME assemble() the rail uses so the
+    shape (and the noise gate) matches production exactly."""
+    native = f"{INBOX_STEM}:{native_stub}"
+    return mail_pipeline.assemble(
+        "email", native, author, subject, "2026-08-05T10:00:00+00:00",
+        f"https://link/{native}", f"imap/{INBOX}/1", lambda: {"text": body})
+
+
+def _fake_imap(events_by_inbox, cursors=None, raises=None):
+    def collect(inbox, cursor, *, max_items, first_fetch_days=None):
+        if raises and inbox in raises:
+            raise raises[inbox]
+        return list(events_by_inbox.get(inbox, [])), (cursors or {}).get(inbox)
+    return collect
+
+
+class ImapSweepTests(SweepTests):
+    """The multi-rail sweep: Gmail API (contact@) + IMAP inboxes joined into one
+    union, per-inbox cursors, degrade-and-continue on inbox failure."""
+
+    def _run_multi(self, msgs, inboxes, imap_collect):
+        fg = FakeGmail(msgs)
+        ctx = FakeCtx(self.dbp)
+        metrics = sweep.run_sweep(
+            ctx, token_fn=lambda: "t", list_fn=fg.list, meta_fn=fg.meta,
+            full_fn=fg.full, reg=self.reg, imap_inboxes=inboxes,
+            imap_collect=imap_collect)
+        return metrics, ctx, fg
+
+    def test_imap_events_join_the_union_and_map(self):
+        ev = _imap_event("x1", "Chris <chris@adelye.com>", "Update", "hi")
+        metrics, ctx, _ = self._run_multi(
+            MSGS, (INBOX,),
+            _fake_imap({INBOX: [ev]}, cursors={INBOX: "100:5"}))
+        self.assertEqual(metrics["collected"], 5)         # 4 gmail + 1 imap
+        self.assertEqual(metrics["inserted"], 5)
+        self.assertTrue(metrics["reconciled"])
+        self.assertEqual(ctx.anomalies, [])
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state, client_id FROM events WHERE id=?",
+                             (f"evt:email:{INBOX_STEM}:x1",)).fetchone()
+        self.assertEqual((r["state"], r["client_id"]), ("mapped", "adelye"))
+
+    def test_imap_cursor_persisted_per_inbox(self):
+        ev = _imap_event("x1", "Chris <chris@adelye.com>", "Update", "hi")
+        self._run_multi(MSGS, (INBOX,),
+                        _fake_imap({INBOX: [ev]}, cursors={INBOX: "100:5"}))
+        with db.connect(self.dbp) as conn:
+            c = conn.execute("SELECT value FROM sync_cursors WHERE name=?",
+                             (f"jarvis_imap_{INBOX_STEM}_uid",)).fetchone()
+        self.assertEqual(c["value"], "100:5")
+
+    def test_missing_password_skips_not_crash(self):
+        collect = _fake_imap({}, raises={
+            INBOX: imap_rail.InboxSkip(f"no app password for {INBOX}")})
+        metrics, ctx, _ = self._run_multi(MSGS, (INBOX,), collect)
+        self.assertEqual(metrics["collected"], 4)         # gmail only; imap skipped
+        self.assertTrue(metrics["reconciled"])
+        self.assertEqual(ctx.anomalies, [])               # a skip is not an anomaly
+        self.assertIn(INBOX, str(metrics["imap_skipped"]))
+
+    def test_inbox_error_degrades_and_continues(self):
+        collect = _fake_imap({}, raises={INBOX: RuntimeError("auth failed")})
+        metrics, ctx, _ = self._run_multi(MSGS, (INBOX,), collect)
+        self.assertEqual(metrics["collected"], 4)         # gmail still processed
+        kinds = [a[0] for a in ctx.anomalies]
+        self.assertIn(f"jarvis_imap_error_{INBOX_STEM}", kinds)
+
+    def test_empty_skip_across_all_rails(self):
+        from core import runner
+        fg = FakeGmail({})
+        ctx = FakeCtx(self.dbp)
+        with self.assertRaises(runner.TaskSkip):
+            sweep.run_sweep(ctx, token_fn=lambda: "t", list_fn=fg.list,
+                            meta_fn=fg.meta, full_fn=fg.full, reg=self.reg,
+                            imap_inboxes=(INBOX,),
+                            imap_collect=_fake_imap({INBOX: []}))
+        self.assertEqual(ctx.claude_calls, [])
 
 
 if __name__ == "__main__":
