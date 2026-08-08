@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""EXTRACT stage (Jarvis J2 §4.3 stage 3): turn MAPPED events into candidate
+knowledge + action, SHADOW-FIRST (staging tables only — never live facts/cards).
+
+    PYTHONPATH=. python3 bin/jarvis-extract [--max-clients N]
+
+module='system': like the sweep, this makes ZERO external writes (local staging
++ metered Sonnet only), so it runs live. Promotion is a SEPARATE, human-gated
+step (bin/jarvis-extract-review --promote). NOT wired into the scheduled sweep.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, runner                          # noqa: E402
+from modules.jarvis import extract                        # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--max-clients", type=int,
+                    default=config.JARVIS_EXTRACT_MAX_CLIENTS,
+                    help="per-run ceiling on client bundles extracted")
+    args = ap.parse_args()
+
+    def task(ctx):
+        return extract.run_extract(ctx, max_clients=args.max_clients)
+
+    result = runner.run_task(extract.TASK_NAME, task, module="system")
+    print(json.dumps({"run_id": result.run_id, "status": result.status,
+                      "metrics": result.metrics}))
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

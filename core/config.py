@@ -43,6 +43,7 @@ MODELS = {
     "scoring":   "claude-sonnet-4-6",            # LOCKED (M1 design, 2026-06-12): Sonnet regardless of eval — revenue-engine quality over savings; eval is calibration-only
     "classify":  "claude-haiku-4-5-20251001",    # thread/commitment/note classification
     "drafting":  "claude-sonnet-4-6",            # proposals, follow-ups, briefs
+    "extract":   "claude-sonnet-4-6",            # Jarvis EXTRACT reader (§4.3 stage 3). Pins the CURRENT Sonnet; the "Sonnet 5" of architecture §5 has no verified id/pricing yet — swap this one line when it does (calendar item, ~Sept 1)
     "reasoning": "claude-opus-4-8",              # CoS sweeps (on fire), weekly retro
     "architect": "claude-fable-5",               # interactive sessions only; never scheduled
 }
@@ -256,6 +257,27 @@ JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
                                     # the rest stay 'held' for the next sweep
 JARVIS_LOOM_MAX_PROPOSALS = 25      # loom bridge: at most N Haiku residue-proposer
                                     # calls per run (deterministic passes are $0)
+# ── EXTRACT stage (J2 §4.3 stage 3) — the READER, staging-only ───────────────
+# Per-CLIENT bundle (not per-event), so cost scales with active clients, not
+# mail volume. Hard per-run ceiling so a busy day can never run away; overflow
+# stays unextracted for the next sweep (like the proposer's 'held').
+JARVIS_EXTRACT_MAX_CLIENTS = 8            # at most N client bundles extracted per run
+JARVIS_EXTRACT_MAX_EVENTS_PER_CLIENT = 12  # cap events bundled per client (cost)
+JARVIS_EXTRACT_TEXT_CAP = 4000           # chars of each event body sent to the reader
+JARVIS_EXTRACT_MAX_OUTPUT_TOKENS = 4000  # reader output ceiling
+# Founder-scope HARD RULE (architecture §4.4): a fact touching ANY of these is
+# founder-only — NEVER model discretion. Everything else is team scope. Matched
+# case-insensitively on word boundaries against fact_text. Add a term = one line.
+EXTRACT_FOUNDER_SCOPE_TERMS = (
+    "money", "price", "pricing", "priced", "cost", "costs", "budget",
+    "invoice", "invoices", "invoiced", "payment", "payments", "paid",
+    "salary", "salaries", "payroll", "wage", "wages", "compensation",
+    "rate", "rates", "retainer", "deposit", "refund", "discount",
+    "fee", "fees", "commission", "bonus", "equity", "revenue", "profit",
+    "contract value", "contract worth", "quote", "quoted", "billing",
+    "hr", "hiring", "hire", "hired", "offer letter", "raise", "severance",
+)
+
 # Self-noise: the rail NEVER ingests our OWN automation output (bot digests,
 # scan alerts, reports). Excluded at the metadata stage BEFORE any body fetch or
 # token is spent (reason 'self-noise'). Add a sender or subject here — one line —

@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Review — and, after review, promote — what the EXTRACT stage staged.
+
+    PYTHONPATH=. python3 bin/jarvis-extract-review            # readable diff
+    PYTHONPATH=. python3 bin/jarvis-extract-review --run-id N # one run only
+    PYTHONPATH=. python3 bin/jarvis-extract-review --promote  # apply to live
+
+The diff shows exactly what would land in the live KB: "would add N facts to
+client X, N commitments, N closures" with the citation on every line. --promote
+moves facts + commitments into the live tables (idempotent). Closures are shown
+but NOT promoted — wiring them into the live cross-source closure pass is a
+deferred, gated step (staging only tonight).
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db                               # noqa: E402
+from modules.jarvis import extract_staging as staging      # noqa: E402
+
+
+def _group(rows, key="client_id"):
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r[key], []).append(r)
+    return out
+
+
+def review(db_path, run_id=None) -> dict:
+    with db.connect(db_path) as conn:
+        facts = staging.pending_facts(conn, run_id)
+        comms = staging.pending_commitments(conn, run_id)
+        closs = staging.pending_closures(conn, run_id)
+        cost = staging.run_cost(conn, run_id) if run_id is not None else None
+
+    fc, cc, lc = _group(facts), _group(comms), _group(closs)
+    clients = sorted(set(fc) | set(cc) | set(lc))
+    print("EXTRACT REVIEW — staged, not yet promoted"
+          + (f" (run {run_id})" if run_id is not None else "") + "\n")
+    if not clients:
+        print("  nothing staged.\n")
+    for cid in clients:
+        print(f"Client: {cid}")
+        cfacts = fc.get(cid, [])
+        if cfacts:
+            print(f"  Facts ({len(cfacts)}):")
+            for f in cfacts:
+                tag = "demoted-commitment" if f["origin"] != "fact" else "fact"
+                print(f"    [{f['access_scope']}] ({f['confidence']}) "
+                      f"{f['fact_text']}   <{tag}>")
+                print(f"        cite: {f['citation']}")
+        ccomms = cc.get(cid, [])
+        if ccomms:
+            print(f"  Commitments ({len(ccomms)}):")
+            for c in ccomms:
+                due = f"due {c['due']}" if c["due"] else "no due (explicit ask)"
+                print(f"    [{c['who']}] {due} — {c['text']}")
+                print(f"        cite: {c['source_cite']}")
+        cclos = lc.get(cid, [])
+        if cclos:
+            print(f"  Closures ({len(cclos)}) — staged only, not promoted:")
+            for cl in cclos:
+                print(f"    ({cl['confidence']:.2f}) resolves: {cl['intent']}")
+                print(f"        cite: {cl['evidence']}")
+        print()
+
+    print(f"TOTALS: would add {len(facts)} facts, {len(comms)} commitments, "
+          f"{len(closs)} closures across {len(clients)} clients")
+    if cost is not None:
+        print(f"Measured cost (run {run_id}): ${cost:.4f}")
+    return {"facts": len(facts), "commitments": len(comms),
+            "closures": len(closs), "clients": len(clients)}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run-id", type=int, default=None)
+    ap.add_argument("--promote", action="store_true",
+                    help="apply staged facts + commitments to the live tables")
+    args = ap.parse_args()
+    dbp = config.DB_PATH
+
+    if args.promote:
+        summary = review(dbp, args.run_id)
+        if not (summary["facts"] or summary["commitments"]):
+            print("\nnothing to promote.")
+            return 0
+        res = staging.promote(dbp, run_id=args.run_id)
+        print(f"\nPROMOTED: {res['facts_promoted']} facts, "
+              f"{res['commitments_promoted']} commitments "
+              f"({res['commitments_skipped_existing']} already live, skipped). "
+              f"Closures left staged (deferred).")
+        return 0
+
+    review(dbp, args.run_id)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
