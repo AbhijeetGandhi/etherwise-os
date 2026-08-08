@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Finance payment-mail rail: read Wise/Stripe payment NOTIFICATIONS (read-only,
+IMAP, inbox 01) and emit PROVISIONAL payment events so a stale CSV import
+announces itself instead of rendering a confidently-wrong monthly total.
+
+READ-ONLY, NO SENDS. Never writes `transactions` (provisional rows live in their
+own table doctor/pnl/cash never read — no double-count). module='system': the
+provisional store is a LOCAL ledger op (same class as finance-stripe-sync), so it
+runs live; finance's EXTERNAL writes stay shadowed.
+
+    # default: read-only DRY-RUN — parse + attribute, print, store nothing
+    PYTHONPATH=. python3 bin/finance-payment-mail [--days N] [--max N]
+
+    # store provisional (idempotent) + reconcile against the ledger + surface staleness
+    PYTHONPATH=. python3 bin/finance-payment-mail --apply
+
+    # reconcile only (flip provisional->confirmed where the CSV twin has landed)
+    PYTHONPATH=. python3 bin/finance-payment-mail --reconcile
+
+    # the 60-day report: what the notifications produce + what's in email not the ledger
+    PYTHONPATH=. python3 bin/finance-payment-mail --report [--days 60]
+
+Never prints message bodies, app passwords, or any credential.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db, runner                          # noqa: E402
+from core import registry as reg_mod                         # noqa: E402
+from modules.finance import payment_mail_rail as rail        # noqa: E402
+
+REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-payment-mail.md"
+TASK_NAME = "finance_payment_mail"
+CURSOR = f"{TASK_NAME}_uid"
+
+
+def _reg():
+    try:
+        return reg_mod.load()
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _attributed(events, reg):
+    """(provisional dicts only) enriched with client_id for display — no store."""
+    out = []
+    for e in events:
+        if e.get("_unparsed"):
+            out.append(e)
+            continue
+        e = dict(e)
+        e["client_id"] = rail.attribute(e.get("payer"), reg)
+        out.append(e)
+    return out
+
+
+def dry_run(days: int, max_items: int) -> int:
+    reg = _reg()
+    inbox = config.PAYMENT_MAIL_INBOX
+    print(f"payment-mail DRY-RUN (read-only, no store) — {inbox}, last {days}d")
+    try:
+        events, cursor = rail.collect(inbox, None, max_items=max_items,
+                                      first_fetch_days=days)
+    except rail.InboxSkip as skip:
+        print(f"  SKIPPED ({skip}) — no app password configured")
+        return 0
+    except Exception as exc:                                 # noqa: BLE001
+        print(f"  ERROR {exc!r}")
+        return 1
+    events = _attributed(events, reg)
+    parsed = [e for e in events if not e.get("_unparsed")]
+    unparsed = [e for e in events if e.get("_unparsed")]
+    by_provider = Counter(e["provider"] for e in parsed)
+    print(f"  {len(parsed)} payment notification(s) parsed"
+          f" ({dict(by_provider)}), {len(unparsed)} unparseable"
+          f" (would-be cursor {cursor})")
+    for e in parsed:
+        cid = e.get("client_id") or "UNMAPPED"
+        amt = f"{e['currency']} {e['amount_minor'] / 100:.2f}"
+        print(f"  {e['provider']:<6} {cid:<16.16} {amt:>14}  {e.get('paid_date')}"
+              f"  <- {(e.get('payer') or '?')[:32]}")
+    for e in unparsed:
+        print(f"  {e['provider']:<6} UNPARSEABLE      {(e.get('subject') or '')[:48]}")
+    return 0
+
+
+def apply_run() -> int:
+    reg = _reg()
+
+    def _do(ctx) -> dict:
+        inbox = config.PAYMENT_MAIL_INBOX
+        with db.connect(config.DB_PATH) as conn:
+            cur = conn.execute("SELECT value FROM sync_cursors WHERE name=?",
+                               (CURSOR,)).fetchone()
+            cursor = cur["value"] if cur else None
+        try:
+            events, new_cursor = rail.collect(
+                inbox, cursor, max_items=config.PAYMENT_MAIL_MAX_ITEMS,
+                first_fetch_days=config.PAYMENT_MAIL_FIRST_FETCH_DAYS)
+        except rail.InboxSkip as skip:
+            raise runner.TaskSkip(str(skip))
+
+        inserted, quarantined = 0, 0
+        with db.connect(config.DB_PATH) as conn:
+            for e in events:
+                if e.get("_unparsed"):
+                    conn.execute(
+                        "INSERT INTO quarantine (source, reason, payload_json)"
+                        " VALUES ('payment-mail', ?, ?)",
+                        (f"unparseable {e['provider']} notification",
+                         json.dumps({k: e.get(k) for k in
+                                     ("provider", "native_id", "subject", "raw_ref")})))
+                    quarantined += 1
+                    continue
+                if rail.upsert_provisional(conn, e, reg=reg):
+                    inserted += 1
+            if new_cursor:
+                conn.execute(
+                    "INSERT INTO sync_cursors (name, value, updated_at) VALUES"
+                    " (?,?,datetime('now')) ON CONFLICT(name) DO UPDATE SET"
+                    " value=excluded.value, updated_at=datetime('now')",
+                    (CURSOR, new_cursor))
+            rec = rail.reconcile(conn)
+            stale = rail.staleness(conn)
+            unmapped = len(rail.mapping_queue(conn))
+
+        if rec["stale_unmatched"]:
+            ctx.anomaly("finance_payment_mail_unmatched", "warn",
+                        {"stale_unmatched": rec["stale_unmatched"]})
+        ctx.log(f"payment-mail: parsed {inserted} new, quarantined {quarantined},"
+                f" confirmed {rec['confirmed']}, unmapped {unmapped},"
+                f" ledger-stale={stale['stale']} ({stale['count']} ahead)")
+        return {"inserted": inserted, "quarantined": quarantined,
+                "confirmed": rec["confirmed"],
+                "unmatched": len(rec["unmatched"]),
+                "stale_unmatched": len(rec["stale_unmatched"]),
+                "unmapped": unmapped, "ledger_stale": stale["stale"],
+                "email_ahead": stale["count"]}
+
+    result = runner.run_task(TASK_NAME, _do, module="system")
+    print(json.dumps({"status": result.status, "metrics": result.metrics}))
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+def reconcile_only() -> int:
+    with db.connect(config.DB_PATH) as conn:
+        rec = rail.reconcile(conn)
+        stale = rail.staleness(conn)
+    print(json.dumps({"confirmed": rec["confirmed"],
+                      "unmatched": len(rec["unmatched"]),
+                      "stale_unmatched": rec["stale_unmatched"],
+                      "ledger_stale": stale["stale"],
+                      "most_recent": stale["most_recent"]}, default=str))
+    return 0
+
+
+def report(days: int) -> int:
+    """Read-only 60-day sweep -> markdown: what the notifications produce and
+    which payments are in email but missing from the ledger. Stores nothing."""
+    reg = _reg()
+    inbox = config.PAYMENT_MAIL_INBOX
+    try:
+        events, _ = rail.collect(inbox, None, max_items=config.PAYMENT_MAIL_MAX_ITEMS,
+                                 first_fetch_days=days)
+    except rail.InboxSkip as skip:
+        print(f"SKIPPED ({skip})")
+        return 0
+    events = _attributed(events, reg)
+    parsed = [e for e in events if not e.get("_unparsed")]
+    with db.connect(config.DB_PATH) as conn:
+        ledger_row = conn.execute(
+            "SELECT MAX(substr(creation_dt,1,10)) d FROM transactions"
+            " WHERE pnl_bucket IN ('revenue','refund')").fetchone()
+    ledger_newest = ledger_row["d"] if ledger_row else None
+    missing = [e for e in parsed
+               if e.get("paid_date") and (ledger_newest is None
+                                          or e["paid_date"] > ledger_newest)]
+    lines = [f"# Finance payment-mail — {days}-day report",
+             "", f"Inbox: {inbox} (read-only). Ledger newest income date:"
+             f" **{ledger_newest or 'none'}**.", "",
+             f"Parsed **{len(parsed)}** notifications; **{len(missing)}** are"
+             " ahead of the ledger (in email, not yet imported).", "",
+             "| provider | client | amount | paid | in ledger? |",
+             "|---|---|---|---|---|"]
+    for e in sorted(parsed, key=lambda x: x.get("paid_date") or ""):
+        ahead = "NO — awaiting import" if e in missing else "yes/older"
+        cid = e.get("client_id") or "UNMAPPED"
+        lines.append(f"| {e['provider']} | {cid} |"
+                     f" {e['currency']} {e['amount_minor'] / 100:.2f} |"
+                     f" {e.get('paid_date')} | {ahead} |")
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text("\n".join(lines) + "\n")
+    print(f"wrote {REPORT} ({len(parsed)} parsed, {len(missing)} ahead of ledger)")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true", help="store provisional + reconcile")
+    ap.add_argument("--reconcile", action="store_true", help="reconcile only, no fetch")
+    ap.add_argument("--report", action="store_true", help="write the N-day report")
+    ap.add_argument("--days", type=int, default=None)
+    ap.add_argument("--max", type=int, default=config.PAYMENT_MAIL_MAX_ITEMS)
+    args = ap.parse_args()
+    if args.apply:
+        return apply_run()
+    if args.reconcile:
+        return reconcile_only()
+    if args.report:
+        return report(args.days or config.PAYMENT_MAIL_FIRST_FETCH_DAYS)
+    return dry_run(args.days or config.PAYMENT_MAIL_FIRST_FETCH_DAYS, args.max)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

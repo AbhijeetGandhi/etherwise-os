@@ -247,6 +247,37 @@ RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a h
 # the Payments export is dropped alongside balance_history for real attribution.
 STRIPE_DEFAULT_CLIENT = "Optimize IS"
 
+# ── Finance payment-mail rail (2026-08-09) ───────────────────────────────────
+# Reads Wise/Stripe incoming-payment NOTIFICATIONS (read-only) from inbox 01 and
+# emits PROVISIONAL payment events so a stale CSV import announces itself instead
+# of rendering a confidently-wrong monthly total. Never writes `transactions`,
+# never sends. See modules/finance/payment_mail_rail.py.
+PAYMENT_MAIL_INBOX = "abhijeetgandhi01@gmail.com"
+# Sender allow-list per provider (bare domains or full addresses; matched on the
+# address, its domain, or a parent domain). Only these are parsed by this rail.
+PAYMENT_MAIL_SENDERS = {
+    "wise": ("wise.com", "transferwise.com"),
+    "stripe": ("stripe.com",),
+}
+PAYMENT_MAIL_FIRST_FETCH_DAYS = 60      # cold start window (the 60-day report needs it)
+PAYMENT_MAIL_MAX_ITEMS = 400            # per-inbox per-run bound
+PAYMENT_MAIL_RECONCILE_WINDOW_DAYS = 10  # unmatched-past-this -> surfaced loudly (weekly cadence + buffer)
+PAYMENT_MAIL_AMOUNT_TOLERANCE_MINOR = 100  # $1.00 — provider fee/rounding slack when matching a ledger twin
+# Billing entity (payer name on the notification) -> client_id (registry slug).
+# Learnable/known billing identities; unknown payer -> mapping queue, never a
+# guess. Keys are in payment_mail_rail._norm() space: lowercased, de-accented,
+# punctuation -> spaces, collapsed. So "Consulting Systems B.V." -> the key
+# "consulting systems b v"; "Beglaubigt.de" -> "beglaubigt de".
+PAYER_ALIASES = {
+    "consulting systems b v": "hermon",      # Hermon/Abel pays as Consulting Systems B.V.
+    "consulting systems": "hermon",          # suffix-stripped form
+    "adelye ltd": "adelye", "adelye": "adelye",
+    "horizons aba midco llc": "horizons-aba",
+    "horizons aba midco": "horizons-aba", "horizons aba": "horizons-aba",
+    "cmf publishing llc": "cmf-publishing", "cmf publishing": "cmf-publishing",
+    "beglaubigt": "beglaubigt", "beglaubigt de": "beglaubigt",
+}
+
 # ── Jarvis sweep (J1) — collect+map ceilings ─────────────────────────────────
 # The 3x/day sweep (11:00 / 19:00 / 00:00 IST) reads contact@ read-only, maps
 # each item to a client via the registry, and proposes the rest via Haiku. Hard
@@ -468,6 +499,20 @@ SOURCES = (
      "why": "the manual bank/card/Wise imports behind cash + operating expenses;"
             " an unfed ledger makes the P&L look complete when it is months"
             " behind"},
+
+    # Freshness is runs-based (did the rail RUN), NOT data-based: an inbox with no
+    # new Wise email is legitimately empty and must not read as 'down'. The
+    # email-ahead-of-ledger signal is the SEPARATE staleness() overlay in the
+    # cockpit. catch_up=False + STAGED plist until Abhijeet loads it (mirrors the
+    # jarvis-slack staging) — a catch_up=True label that isn't loaded flags loudly.
+    {"key": "finance_payment_mail", "label": "Payment-mail rail (Wise/Stripe email)",
+     "task_name": "finance_payment_mail", "max_age_hours": 26,
+     "degrade_kinds": ("finance_payment_mail_unmatched",),
+     "critical": False, "backs": "money",
+     "launchd_label": "io.etherwise.v3.finance-payment-mail", "catch_up": False,
+     "why": "reads Wise/Stripe payment NOTIFICATIONS read-only so a stale CSV"
+            " import announces itself; a dead rail means the ledger can silently"
+            " fall behind the money that actually arrived"},
 )
 
 # Catch-up shim (bin/catch-up, 2026-07-20). macOS skips StartCalendarInterval

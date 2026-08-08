@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.finance-payment-mail</string>
+  <!-- STAGED, NOT LOADED. Load only after a live dry-run calibrates the parser
+       CALIBRATION block against real Wise/Stripe emails in inbox 01. Framework
+       Python (June-14 TCC pattern); logs outside ~/Desktop. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>bin/finance-payment-mail</string>
+    <string>--apply</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string></dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/finance-payment-mail.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/finance-payment-mail.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- twice daily: 07:10 IST (after the 06:20 Stripe rail + 06:00 weekly Upwork
+       pull, so the ledger has just imported and reconcile confirms fresh
+       provisional rows) and 19:10 IST (catch afternoon payments before EOD) -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>10</integer></dict>
+  </array>
+</dict>
+</plist>

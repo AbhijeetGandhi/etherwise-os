@@ -1669,6 +1669,25 @@ def _money_source_health(db_path: Optional[Path]) -> Optional[dict]:
         return None
 
 
+def _money_provisional(db_path: Optional[Path]) -> Optional[dict]:
+    """The payment-mail rail's overlay: is the ledger BEHIND the email evidence,
+    and which reported payments are still unattributed. This is the caveat that
+    stops a GREEN-but-stale ledger from rendering a confidently-wrong monthly
+    total (the Adelye-looks-delinquent bug). Never raises — an overlay must not
+    be able to take down the panel it annotates; absent table -> None."""
+    try:
+        from modules.finance import payment_mail_rail as _rail
+        conn = _ro(db_path)
+        try:
+            stale = _rail.staleness(conn)
+            unmapped = _rail.mapping_queue(conn)
+        finally:
+            conn.close()
+        return {"staleness": stale, "unmapped_count": len(unmapped)}
+    except Exception:  # noqa: BLE001 — table may not exist yet / read-only guard
+        return None
+
+
 def money(db_path: Optional[Path] = None,
           today: Optional[str] = None) -> dict:
     """Money panel from the AUDITED M5 finance picture. GATED on finance-doctor:
@@ -1808,6 +1827,10 @@ def money(db_path: Optional[Path] = None,
         # doctor means the ledger is internally consistent; it says nothing
         # about whether anything has been ADDED lately.
         "source_health": _money_source_health(db_path),
+        # payment-mail overlay: 'ledger stale — N payments seen in email but not
+        # yet imported (most recent: <client>, <date>)'. A GREEN doctor means the
+        # ledger is internally consistent; this says whether it is also CURRENT.
+        "provisional": _money_provisional(db_path),
         # corrected feed: pnl_bucket + base-USD (kept keys type/profile/amount for the UI)
         "transactions": [{"creation_dt": r["creation_dt"], "type": r["pnl_bucket"],
                           "amount": usd(r["amount_base_minor"]), "currency": r["currency"],
