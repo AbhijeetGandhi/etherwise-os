@@ -26,6 +26,13 @@ Per-client schema (all fields optional except id + name):
     clickup       ClickUp space/folder ref               (str)
     billing       {rail, canonical}                      (dict)
     scope_notes   free text                              (str)
+    kind          "client" (default) | "prospect"        (str)
+    no_match      truthy => product/internal, never mapped (str/bool)
+
+`kind: prospect` marks an entry that is NOT a paying client (e.g. an expired
+proposal that nonetheless produced real calls). UNLIKE `no_match`, a prospect is
+fully indexed and matchable, so its calls attribute to it and the context is
+kept — but it is excluded from the client economics roster (`client_ids()`).
 """
 from __future__ import annotations
 
@@ -225,6 +232,7 @@ def _domain(addr: str) -> str:
 # ── the loaded registry ──────────────────────────────────────────────────────
 _LIST_FIELDS = ("aliases", "emails", "upwork_rooms", "fathom_names")
 _STR_FIELDS = ("name", "teams", "clickup", "scope_notes")
+_KINDS = ("client", "prospect")
 
 
 class Registry:
@@ -255,6 +263,10 @@ class Registry:
                     c[f] = []
                 elif not isinstance(v, list):
                     raise RegistryError(f"{cid}.{f} must be a list, got {v!r}")
+            kind = c.get("kind")
+            if kind is not None and kind not in _KINDS:
+                raise RegistryError(
+                    f"{cid}.kind must be one of {_KINDS}, got {kind!r}")
             self.by_id[cid] = c
 
             # no_match entries (products/internal) stay in the registry + the
@@ -312,8 +324,20 @@ class Registry:
         return list(self.by_id)
 
     def matchable_ids(self) -> list[str]:
-        """Client ids eligible for matching/assignment (excludes no_match)."""
+        """Client ids eligible for matching/assignment (excludes no_match).
+        Prospects ARE matchable — they hold their calls' context."""
         return [cid for cid, c in self.by_id.items() if not c.get("no_match")]
+
+    def kind(self, client_id: str) -> Optional[str]:
+        """'client' (default) or 'prospect'; None if the id is unknown."""
+        c = self.by_id.get(client_id)
+        return None if c is None else (c.get("kind") or "client")
+
+    def client_ids(self) -> list[str]:
+        """The economics roster: matchable ids that are real clients — excludes
+        both no_match products and prospects (unpaid, kept only for context)."""
+        return [cid for cid in self.matchable_ids()
+                if self.kind(cid) != "prospect"]
 
 
 # ── cached loader (mtime-invalidated; approval flow calls invalidate()) ──────

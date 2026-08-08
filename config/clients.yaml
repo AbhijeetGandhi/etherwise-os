@@ -36,9 +36,13 @@ clients:
   -
     id: alfredo-elias
     name: Alfredo Elias
+    emails:
+      - secatexas.com
+      - chloe@secatexas.com
     clickup: Alfredo Elias
     billing:
       canonical: Alfredo Elias
+    scope_notes: "SECA Texas — Upwork contract 40747534 (GHL Workflow + KPI Automation, ACTIVE)"
   -
     id: amine-hjiaj
     name: Amine Hjiaj
@@ -96,6 +100,14 @@ clients:
       - "Christoph Weingärtner"
     billing:
       canonical: Christoph Weingartner Unternehmensberatung
+  -
+    id: clara
+    name: Clara
+    kind: prospect
+    emails:
+      - tryclara.org
+      - david@tryclara.org
+    scope_notes: "PROSPECT — Upwork proposal 'AI Automation & Workflow Developer' EXPIRED, no payments. Kept (matchable) so its calls retain context; excluded from client economics. Contact: David Jeffries (david@tryclara.org)."
   -
     id: cmf-publishing
     name: CMF Publishing
@@ -466,8 +478,11 @@ clients:
     name: Sunil Paul
     aliases:
       - Tenni Theurer
+    emails:
+      - tenni.theurer@gmail.com
     billing:
       canonical: Sunil Paul
+    scope_notes: "Upwork contract name is Sunil Paul; the person who meets is Tenni Theurer (personal gmail, address-only)"
   -
     id: tanushant-sharma
     name: Tanushant Sharma
@@ -513,6 +528,19 @@ clients:
     name: Viraj Pangam
     billing:
       canonical: Viraj Pangam
+  -
+    id: visa-gate
+    name: Visa Gate GmbH
+    aliases:
+      - Visa Gate
+      - Visa-Gate
+    emails:
+      - visa-gate.com
+      - raphael.mahir@visa-gate.com
+      - martin.schisslbauer@gmail.com
+    billing:
+      canonical: Visa Gate GmbH
+    scope_notes: "Upwork contracts 40655756 (AI-powered purchasing Bot) + 40951616 (Postal forwarding service), both CLOSED. Contacts: Raphael Mahir (raphael.mahir@visa-gate.com), Martin Schisslbauer (martin.schisslbauer@gmail.com, personal gmail — address-only). NOTE: standalone client 'raphael-mahir' may be the same person — merge is Abhijeet's call."
   -
     id: vitaliy-kahanets
     name: Vitaliy Kahanets

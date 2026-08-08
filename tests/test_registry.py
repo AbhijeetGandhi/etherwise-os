@@ -130,6 +130,25 @@ class RegistryValidationTests(unittest.TestCase):
         self.assertNotIn("phonicflow", reg.matchable_ids())  # excluded from match
         self.assertIsNone(reg.match_name("PhonicFlow"))    # never maps an event
 
+    def test_prospect_is_matchable_but_not_a_client(self):
+        # A prospect (expired proposal with real calls) is UNLIKE no_match: it
+        # still maps events (so the call keeps its context), but it is excluded
+        # from the client economics roster.
+        text = (SAMPLE + "  -\n    id: clara\n    name: Clara\n"
+                "    kind: prospect\n    emails:\n      - tryclara.org\n")
+        reg = self._load(text)
+        self.assertIn("clara", reg.ids())
+        self.assertIn("clara", reg.matchable_ids())          # CAN hold a call
+        self.assertEqual(reg.match_email("david@tryclara.org"), "clara")
+        self.assertEqual(reg.kind("clara"), "prospect")
+        self.assertEqual(reg.kind("adelye"), "client")       # default
+        self.assertNotIn("clara", reg.client_ids())          # not in economics
+        self.assertIn("adelye", reg.client_ids())
+
+    def test_unknown_kind_rejected(self):
+        with self.assertRaises(registry.RegistryError):
+            self._load(SAMPLE + "  -\n    id: x\n    name: X\n    kind: lead\n")
+
     def test_cache_invalidation(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "clients.yaml"
