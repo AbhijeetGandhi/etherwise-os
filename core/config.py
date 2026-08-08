@@ -254,6 +254,8 @@ JARVIS_SWEEP_TIMES = ("11:00", "19:00", "00:00")   # IST (informational; see pli
 JARVIS_SWEEP_MAX_EVENTS = 60        # collect at most N new items per sweep
 JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
                                     # the rest stay 'held' for the next sweep
+JARVIS_LOOM_MAX_PROPOSALS = 25      # loom bridge: at most N Haiku residue-proposer
+                                    # calls per run (deterministic passes are $0)
 # Self-noise: the rail NEVER ingests our OWN automation output (bot digests,
 # scan alerts, reports). Excluded at the metadata stage BEFORE any body fetch or
 # token is spent (reason 'self-noise'). Add a sender or subject here — one line —
