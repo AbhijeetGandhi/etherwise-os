@@ -187,6 +187,34 @@ class ImapRailTests(unittest.TestCase):
         _collect(fake)
         self.assertIn(("logout",), fake.calls)
 
+    def test_connect_sets_a_bounded_timeout(self):
+        """Every IMAP network call MUST be bounded — a rail that can block forever
+        eventually hangs the whole sweep (a prior build wedged 24 min on a live
+        connect). The real _connect must pass a positive, finite socket timeout to
+        IMAP4_SSL; that timeout persists on the socket for every later SEARCH/FETCH.
+        No socket is opened here: a stub IMAP4_SSL records the kwargs and returns."""
+        seen = {}
+
+        class _StubSSL:
+            def __init__(self, host, timeout=None, **kw):
+                seen["host"] = host
+                seen["timeout"] = timeout
+
+            def login(self, inbox, password):
+                seen["logged_in"] = True
+
+        orig = imap_rail.imaplib.IMAP4_SSL
+        imap_rail.imaplib.IMAP4_SSL = _StubSSL
+        try:
+            imap_rail._connect("imap.example.com", INBOX, "secret")
+        finally:
+            imap_rail.imaplib.IMAP4_SSL = orig
+
+        self.assertTrue(seen.get("logged_in"))
+        self.assertIsNotNone(seen.get("timeout"), "IMAP4_SSL called without a timeout")
+        self.assertGreater(seen["timeout"], 0)
+        self.assertLess(seen["timeout"], 120)   # bounded, not an accidental huge value
+
 
 if __name__ == "__main__":
     unittest.main()

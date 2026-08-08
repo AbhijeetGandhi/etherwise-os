@@ -13,6 +13,12 @@ READ-ONLY BY CONSTRUCTION: the mailbox is opened with select(readonly=True) and
 every fetch uses BODY.PEEK (never sets \\Seen). The rail issues only SEARCH and
 FETCH — never STORE, EXPUNGE, APPEND, or COPY. A test asserts this against a fake
 IMAP server whose surface omits every mutating verb.
+
+BOUNDED BY CONSTRUCTION: every network call has a socket timeout
+(config.JARVIS_IMAP_TIMEOUT_SECONDS) and the fetch is bounded (max_items). A rail
+that can block forever eventually hangs the sweep, so the timeout is a hard rule,
+not a nicety. Live verification lives ONLY in bin/jarvis-imap-check (opt-in); this
+module's tests never open a real socket.
 """
 from __future__ import annotations
 
@@ -51,8 +57,12 @@ def app_password(inbox: str) -> Optional[str]:
 
 
 # ── transport (injectable) ────────────────────────────────────────────────────
-def _connect(host: str, inbox: str, password: str):
-    client = imaplib.IMAP4_SSL(host)
+def _connect(host: str, inbox: str, password: str,
+             timeout: float = config.JARVIS_IMAP_TIMEOUT_SECONDS):
+    # timeout bounds the connect AND every later SEARCH/FETCH: it is set on the
+    # socket at connect and persists on the SSL-wrapped socket for reads. Without
+    # it a stalled server hangs the whole sweep forever (this rail's cardinal sin).
+    client = imaplib.IMAP4_SSL(host, timeout=timeout)
     client.login(inbox, password)
     return client
 

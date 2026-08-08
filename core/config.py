@@ -271,6 +271,13 @@ JARVIS_IMAP_INBOXES = (
 )
 JARVIS_IMAP_HOST = "imap.gmail.com"
 JARVIS_IMAP_FIRST_FETCH_DAYS = 3    # cursor-less first fetch is bounded to N days
+# Socket timeout (seconds) on EVERY IMAP network call — connect AND each SEARCH /
+# FETCH, because the timeout set at connect persists on the (SSL-wrapped) socket
+# for subsequent reads. A rail that can block forever will eventually hang the
+# sweep (a prior build wedged 24 min at 0% CPU on a live connect), so this is a
+# hard requirement, not a nicety. Both the sweep rail and bin/jarvis-imap-check
+# inherit it via imap_rail._connect.
+JARVIS_IMAP_TIMEOUT_SECONDS = 20
 # Per-account app passwords: { "<email>": "<app password>" }, chmod 600,
 # git-ignored, in CREDENTIALS_DIR (v2's .credentials). Read at runtime by
 # imap_rail; NEVER logged, echoed, or placed in a prompt. A missing entry means
