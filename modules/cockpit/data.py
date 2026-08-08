@@ -134,6 +134,25 @@ def _rail_applied_between(conn, lo: str, hi: str) -> int:
         return 0
 
 
+def _rail_applied_windows(conn, day: str) -> dict:
+    """today / this-week / last-week applied counts from the connects rail —
+    the ONE shared applied-truth source both the Today tile and the Pipeline tab
+    render from. Two tabs, one helper, identical windows: they can never show
+    different applied numbers for the same day again (that divergence — Today's
+    proposals-sourced 0 vs Pipeline's rail-sourced 8 — was the whole bug family).
+    Windows match pipeline()'s: week = last 7 days incl. today; last_week = the 7
+    days before that."""
+    d0 = date.fromisoformat(day)
+    return {
+        "today": _rail_applied_between(conn, day, day),
+        "week": _rail_applied_between(
+            conn, (d0 - timedelta(days=6)).isoformat(), day),
+        "last_week": _rail_applied_between(
+            conn, (d0 - timedelta(days=13)).isoformat(),
+            (d0 - timedelta(days=7)).isoformat()),
+    }
+
+
 # Canonical earnings definition — mirrors v2 reconcile_airtable.py (the
 # reconciled revenue parity set). amount>0 guards refunds/reversals.
 EARNING_TYPES = ("Hourly Earning", "Fixed Earning", "Bonus")
@@ -837,15 +856,11 @@ def pipeline(db_path: Optional[Path] = None,
         except Exception:                        # pre-013 DB
             ch = {"n": 0, "since": None}
         if ch["n"]:
-            def applied_between(lo, hi):
-                return _rail_applied_between(conn, lo, hi)
             applied = {
                 "available": True, "since": ch["since"],
-                "today": applied_between(day, day),
-                "week": applied_between((d0 - timedelta(days=6)).isoformat(), day),
-                "last_week": applied_between(
-                    (d0 - timedelta(days=13)).isoformat(),
-                    (d0 - timedelta(days=7)).isoformat()),
+                # shared helper — the exact windows the Today tile renders, so
+                # the two tabs can never disagree on the applied count.
+                **_rail_applied_windows(conn, day),
                 "note": f"connects-history rail (daily scrape); history begins"
                         f" {ch['since']} — a 0 here is a true zero"}
             applied_weeks = week_counts(
@@ -1357,26 +1372,26 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             "accumulated": acc["hot"], "accumulated_since": acc_lo,
             "icp": acc["icp"], "icp_near": acc["near"]}
 
-        # string-compare the YYYY-MM-DD prefix — created_dt carries a
-        # "+0000" offset SQLite's date() can't parse (would return NULL).
+        # APPLIED = connects rail. The tile's today/week/last_week come from the
+        # ONE shared helper the Pipeline tab also reads, so the two surfaces can
+        # never show different applied numbers again (the proposals-sourced count
+        # rendered 0 while Pipeline's rail showed 8 — two tabs, two numbers).
         d0 = date.fromisoformat(day)
         week_lo = (d0 - timedelta(days=6)).isoformat()
-        lw_lo = (d0 - timedelta(days=13)).isoformat()
-        lw_hi = (d0 - timedelta(days=7)).isoformat()
-
-        def applied_between(lo, hi):
-            return conn.execute(
-                "SELECT COUNT(*) FROM proposals WHERE"
-                " substr(created_dt,1,10) BETWEEN ? AND ?",
-                (lo, hi)).fetchone()[0]
-
-        applied_today = applied_between(day, day)
-        applied_week = applied_between(week_lo, day)
-        applied_last = applied_between(lw_lo, lw_hi)
-        # applied-truth rail (connects_history) over the same 7-day window — the
-        # honest cross-check on the proposals-sourced count (§ no fabricated
-        # zeros). Same shared helper pipeline() reads, so the two never disagree.
-        rail_applied_week = _rail_applied_between(conn, week_lo, day)
+        rail = _rail_applied_windows(conn, day)
+        applied_today = rail["today"]
+        applied_week = rail["week"]
+        applied_last = rail["last_week"]
+        rail_applied_week = applied_week
+        # proposals-sourced week count — NOT rendered; used only to detect and
+        # explain the feed's blindness (it only sees client-answered submissions;
+        # the vendorProposals scope was declined, so submitted-no-reply
+        # applications are permanently invisible to it — a scope limit, not a
+        # broken sync).
+        proposals_week = conn.execute(
+            "SELECT COUNT(*) FROM proposals WHERE"
+            " substr(created_dt,1,10) BETWEEN ? AND ?",
+            (week_lo, day)).fetchone()[0]
 
         prop_marks = ",".join("?" * len(_TERMINAL_PROP))
         active_props = conn.execute(
@@ -1549,8 +1564,9 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
 
     # money() omits 'revenue' when finance-doctor is RED (gated) — tolerate that
     rev = money(db_path, today=day).get("revenue", {})
-    # Applied's zero explains itself: paused by intent, not idle. The connects
-    # rail is the applied-truth source, so its freshness gates the number.
+    # Applied's numbers ARE the connects rail (applied-truth). The note only
+    # explains them: paused by intent, a stale-intent contradiction, or why the
+    # proposals feed reads a different (lower) number than the tile shows.
     applied_note = None
     applied_contradiction = False
     if pause_conflict_n:
@@ -1566,19 +1582,24 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                                "applied_since": pause_conflict_n})
     elif paused:
         applied_note = f"paused by intent since {paused_since} — not idle"
-    elif applied_week == 0 and rail_applied_week > 0:
-        # no-fabricated-zeros: the proposals feed says 0, but the applied-truth
-        # rail recorded activity in the same window — never assert a zero the
-        # rail denies. Surface the rail count; the proposals sync is what's stale.
+    elif proposals_week == 0 and rail_applied_week > 0:
+        # no-fabricated-zeros + one-source law: the tile SHOWS the rail count
+        # (never the proposals 0), and the note explains why the proposals feed
+        # disagrees. This is NOT a broken sync to go hunting for: the proposals
+        # table only captures applications a client has replied to — the
+        # vendorProposals scope was declined, so submitted-but-unanswered
+        # applications are permanently invisible to it.
         applied_note = (
-            f"proposals feed shows 0, but the connects rail recorded"
-            f" {rail_applied_week} applications in the last 7 days — the"
-            f" proposals sync is stale")
+            f"showing the connects rail (authoritative): {rail_applied_week}"
+            f" applications in the last 7 days. The proposals feed reads 0 here"
+            f" because it only captures client-answered submissions — the"
+            f" vendorProposals scope was declined, so applied-but-no-reply is"
+            f" invisible to it. A permanent API limit, not a broken sync.")
         applied_contradiction = True
         _flag_applied_anomaly(db_path, "applied_feed_lag",
-                              {"proposals_week": applied_week,
+                              {"proposals_week": proposals_week,
                                "rail_week": rail_applied_week})
-    elif applied_week == 0:
+    elif rail_applied_week == 0:
         applied_note = "no applications in the last 7 days"
     return {
         "sources": sources,

@@ -366,11 +366,44 @@ class TestTodayReader(unittest.TestCase):
         self.assertEqual(rows["total"], fresh)
 
     def test_applied_counts_windows(self):
+        # the applied tile's today/week/last_week come from the connects rail —
+        # the SAME applied-truth source the Pipeline tab reads (APPLIED = rail),
+        # never the proposals table (which only sees client-answered submissions).
+        # Proposals cleared so the rail is the ONLY possible source of the counts.
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM proposals")
+            for i, dt in enumerate(["2026-06-15",   # today
+                                    "2026-06-12",   # this week
+                                    "2026-06-05"]):  # last week
+                conn.execute(
+                    "INSERT INTO connects_history (id, event_date, kind, label,"
+                    " connects_delta) VALUES (?,?, 'applied','Applied to a job',-8)",
+                    (f"aw{i}", dt))
         out = data.today(self.db_path, today="2026-06-15")
         a = out["metrics"]["applied"]
-        self.assertEqual(a["today"], 1)       # p1
-        self.assertGreaterEqual(a["week"], 2)  # p1 + p2 within 7d
-        self.assertEqual(a["last_week"], 1)   # p3
+        self.assertEqual(a["today"], 1)        # 06-15
+        self.assertEqual(a["week"], 2)         # 06-15 + 06-12 within 7d
+        self.assertEqual(a["last_week"], 1)    # 06-05
+
+    def test_applied_tile_and_pipeline_read_one_shared_source(self):
+        # the divergence root cause: two tabs, two numbers. Both the Today tile
+        # and the Pipeline tab MUST derive the applied count from one shared rail
+        # helper, so they can never show different numbers for the same window.
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM proposals")        # proposals feed blind
+            for i, dt in enumerate(["2026-06-10", "2026-06-12", "2026-06-14",
+                                    "2026-06-15"]):
+                conn.execute(
+                    "INSERT INTO connects_history (id, event_date, kind, label,"
+                    " connects_delta) VALUES (?,?, 'applied','Applied to a job',-8)",
+                    (f"sw{i}", dt))
+        with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", None):
+            tile = data.today(self.db_path, today="2026-06-15")["metrics"]["applied"]
+            pipe = data.pipeline(self.db_path, today="2026-06-15")["applied"]
+        self.assertEqual(tile["week"], 4)            # rail truth on both tabs
+        self.assertEqual(tile["week"], pipe["week"])  # and they AGREE
+        self.assertEqual(tile["today"], pipe["today"])
+        self.assertEqual(tile["last_week"], pipe["last_week"])
 
     def test_active_and_counts(self):
         out = data.today(self.db_path, today="2026-06-15")
@@ -438,13 +471,14 @@ class TestTodayReader(unittest.TestCase):
                 " AND severity='warn'").fetchone()[0]
         self.assertGreaterEqual(n, 1)
 
-    def test_zero_applied_contradicted_by_rail_is_not_a_fabricated_zero(self):
-        # no-fabricated-zeros: with applications ACTIVE (not paused), the
-        # proposals feed can lag the applied-truth connects rail. The tile must
-        # NEVER assert 'no applications' when the rail recorded activity in the
-        # same window — surface the rail count + a WARN feed-lag anomaly instead.
+    def test_applied_tile_shows_rail_count_when_proposals_feed_is_blind(self):
+        # no-fabricated-zeros + one-source law: with applications ACTIVE, the
+        # proposals feed reads 0 (it only sees client-answered submissions) while
+        # the applied-truth connects rail recorded N. The tile must SHOW N (the
+        # rail count Pipeline shows) — never a fabricated 0 — and explain the
+        # feed's blindness as a permanent API limit, not a broken sync to hunt.
         with db.connect(self.db_path) as conn:
-            conn.execute("DELETE FROM proposals")        # proposals feed is stale
+            conn.execute("DELETE FROM proposals")        # proposals feed blind
             for i, dt in enumerate(["2026-06-10", "2026-06-13"]):
                 conn.execute(
                     "INSERT INTO connects_history (id, event_date, kind, label,"
@@ -453,11 +487,14 @@ class TestTodayReader(unittest.TestCase):
         with mock.patch.object(config, "APPLICATIONS_PAUSED_SINCE", None):
             out = data.today(self.db_path, today="2026-06-15")
         tile = out["metrics"]["applied"]
-        self.assertEqual(tile["week"], 0)                # proposals feed says 0
-        self.assertTrue(tile["contradiction"])           # but the rail disagrees
+        self.assertEqual(tile["week"], 2)                # rail N, NOT a false 0
+        self.assertTrue(tile["contradiction"])           # proposals feed diverges
         self.assertNotIn("no applications", tile["note"] or "")
         self.assertIn("connects rail", tile["note"])
         self.assertIn("2", tile["note"])                 # rail count surfaced
+        # the note must NOT read as a fixable broken sync; it is a scope limit
+        self.assertNotIn("sync is stale", tile["note"])
+        self.assertIn("scope", tile["note"])             # vendorProposals declined
         with db.connect(self.db_path) as conn:
             n = conn.execute("SELECT COUNT(*) FROM anomalies WHERE"
                              " kind='applied_feed_lag' AND severity='warn'"
