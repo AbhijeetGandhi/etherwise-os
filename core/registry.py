@@ -19,7 +19,9 @@ Per-client schema (all fields optional except id + name):
     name          canonical display name                 (str)
     aliases       other names / people / legal entities  (list[str])
     emails        sender domains AND/OR full addresses    (list[str])
-    slack         {workspace, channels: [..]}            (dict)
+    slack         {workspace, url, team_id, channels: [..]} (dict)
+                  url/team_id drive the Slack browser rail; a team_id is unique
+                  across the registry (two clients cannot claim one workspace)
     teams         M365 tenant / team ref                 (str)
     upwork_rooms  Upwork room ids                        (list[str])
     fathom_names  title/participant match fragments      (list[str])
@@ -246,6 +248,7 @@ class Registry:
         self._email_to_id: dict[str, str] = {}
         self._alias_to_id: dict[str, str] = {}
         self._room_to_id: dict[str, str] = {}
+        self._slack_team_to_id: dict[str, str] = {}
         self._validate_and_index()
 
     def _validate_and_index(self) -> None:
@@ -297,6 +300,14 @@ class Registry:
                     raise RegistryError(
                         f"upwork room {r!r} claimed by both {owner!r} and {cid!r}")
                 self._room_to_id[r] = cid
+            # a Slack workspace (team id) belongs to exactly one client
+            team = (c.get("slack") or {}).get("team_id")
+            if team:
+                owner = self._slack_team_to_id.get(team)
+                if owner and owner != cid:
+                    raise RegistryError(
+                        f"slack team {team!r} claimed by both {owner!r} and {cid!r}")
+                self._slack_team_to_id[team] = cid
 
     # ── deterministic matchers (used by the map stage) ──────────────────────
     def match_email(self, from_addr: str) -> Optional[str]:
@@ -310,6 +321,27 @@ class Registry:
 
     def match_upwork_room(self, room: str) -> Optional[str]:
         return self._room_to_id.get((room or "").strip())
+
+    def match_slack_team(self, team_id: str) -> Optional[str]:
+        """A Slack team id maps to its client — the Slack rail's deterministic
+        spine (a client workspace IS the client, no proposer needed)."""
+        return self._slack_team_to_id.get((team_id or "").strip())
+
+    def slack_workspaces(self) -> list[dict]:
+        """Every matchable client that has a Slack workspace URL, as
+        {client_id, workspace, url, team_id}. The Slack browser rail drives one
+        loop iteration per entry; internal (non-client) workspaces never appear
+        here because they are not registry clients. Ordered by client id for a
+        stable, reproducible sweep order."""
+        out = []
+        for cid in self.matchable_ids():
+            slack = self.by_id[cid].get("slack") or {}
+            url = slack.get("url")
+            if not url:
+                continue
+            out.append({"client_id": cid, "workspace": slack.get("workspace"),
+                        "url": url, "team_id": slack.get("team_id")})
+        return sorted(out, key=lambda w: w["client_id"])
 
     def match_name(self, text: str) -> Optional[str]:
         return self._alias_to_id.get(norm(text))
@@ -372,6 +404,24 @@ def load(path: Optional[Path] = None, *, force: bool = False) -> Registry:
     with _lock:
         _cache[key] = (mtime, reg)
     return reg
+
+
+def loads_registry(text: str) -> Registry:
+    """Parse + validate a registry from an in-memory YAML string (no file, no
+    cache). Used by tests and any caller holding registry text directly."""
+    raw = text.encode("utf-8")
+    doc = loads(text)
+    if doc is None:
+        clients: list[dict] = []
+    elif isinstance(doc, dict) and "clients" in doc:
+        clients = doc.get("clients") or []
+    elif isinstance(doc, list):
+        clients = doc
+    else:
+        raise RegistryError("registry must be a mapping with a 'clients:' list")
+    if not isinstance(clients, list):
+        raise RegistryError("'clients' must be a list")
+    return Registry(clients, sha=hashlib.sha256(raw).hexdigest())
 
 
 def invalidate(path: Optional[Path] = None) -> None:

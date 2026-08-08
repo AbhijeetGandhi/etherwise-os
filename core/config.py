@@ -283,6 +283,26 @@ JARVIS_IMAP_TIMEOUT_SECONDS = 20
 # imap_rail; NEVER logged, echoed, or placed in a prompt. A missing entry means
 # that inbox is skipped with a clear reason, not a crash.
 GMAIL_APP_PASSWORDS_FILE = CREDENTIALS_DIR / "gmail-app-passwords.json"
+# ── Slack rail (J2 rail #1, 2026-08-09) — client workspaces via the browser ───
+# Slack's web client renders BLANK to screenshots but is fully readable via the
+# DOM/accessibility tree, so this rail extracts from the DOM only, never pixels.
+# API/bot install is NOT available for client workspaces (we are guests), so the
+# browser is the only path; it is READ-ONLY and NEVER sends a Slack message.
+# Registry-driven: one loop iteration per client with a slack.url (the internal
+# Etherwise workspace is not a client, so it never appears — v1 skips it). Browser
+# work is slow, so this runs 2x/day on its OWN launchd job, NOT the 3x/day sweep.
+JARVIS_SLACK_TIMES = ("11:00", "19:00")     # IST (informational; see plist)
+JARVIS_SLACK_SINCE_DAYS = 3                 # default --since window (recent only)
+JARVIS_SLACK_MAX_CONVERSATIONS = 40         # per workspace, freshest-first, bounded
+# Every network step (navigate + each DOM eval) is bounded so one wedged workspace
+# can never hang the whole rail; the browser layer polls up to this many seconds
+# for the SPA to paint before giving up on a conversation.
+JARVIS_SLACK_POLL_TIMEOUT_SECONDS = 40
+# Our own display names inside CLIENT workspaces: a message from one of these is
+# OURS -> tagged direction='outbound' (captured, never dropped) so the follow-up
+# logic can tell we already replied. Matched case-insensitively on the full name.
+# Slack's own is_me DOM cue wins when present; this is the name-based fallback.
+JARVIS_SLACK_SELF_AUTHORS = ("abhijeet gandhi", "abhijeet")
 # ── EXTRACT stage (J2 §4.3 stage 3) — the READER, staging-only ───────────────
 # Per-CLIENT bundle (not per-event), so cost scales with active clients, not
 # mail volume. Hard per-run ceiling so a busy day can never run away; overflow
@@ -423,6 +443,20 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
      "why": "read-only IMAP rail for the 02 inbox; a dead rail means that inbox"
             " goes unseen"},
+    # Slack rail (2026-08-09) — client workspaces over the browser, 2x/day on its
+    # OWN launchd job (browser work is slow, so it is NOT on the sweep). One SOURCE
+    # for the whole rail: a logged-out or signed-in-but-empty workspace raises a
+    # STATIC degrade kind (the team is in the anomaly detail), so exactly the same
+    # self-healing model as the connects rail. Not critical: client-context signal,
+    # not a money/pipeline source. Max gap is 19:00->11:00 = 16h, plus grace.
+    {"key": "jarvis_slack", "label": "Jarvis Slack rail (client workspaces)",
+     "task_name": "jarvis_slack", "max_age_hours": 20,
+     "degrade_kinds": ("jarvis_slack_empty_window", "jarvis_slack_logged_out"),
+     "critical": False, "backs": "today",
+     "launchd_label": "io.etherwise.v3.jarvis-slack", "catch_up": True,
+     "why": "reads client Slack workspaces (both sides of the thread) for the"
+            " follow-up logic; a stale/logged-out rail means client Slack goes"
+            " unseen and we cannot tell what we already replied to"},
     # Manually fed: statement imports have no scheduled run to age, but the DATA
     # still has an age — freshness_sql asks the ledger when it was last fed.
     {"key": "finance_ledger", "label": "Statement imports (bank/card/Wise)",

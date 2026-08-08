@@ -74,6 +74,7 @@ clients:
     clickup: beglaubigt.de
     slack:
       workspace: Beglaubigt.de
+      url: beglaubigt.slack.com
     billing:
       canonical: Beglaubigt
     emails:
@@ -122,6 +123,7 @@ clients:
       - Charles Michaels Firm
     slack:
       workspace: Charles Michaels Firm
+      url: cmfirm.slack.com
     billing:
       canonical: CMF Publishing
   -
@@ -359,6 +361,7 @@ clients:
       - optimizeis.com
     slack:
       workspace: Optimize Information Systems
+      url: numbersdriven.slack.com
     upwork_rooms:
       - room_3f05d369265d2bbf781699fa78bc0131
     billing:
@@ -560,6 +563,8 @@ clients:
     clickup: TCC
     slack:
       workspace: The Cradle Company
+      url: the-cradle-company.slack.com
+      team_id: T01FJJNP2F6
     billing:
       canonical: The Cradle Company
   -

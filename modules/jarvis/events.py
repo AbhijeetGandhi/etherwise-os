@@ -30,10 +30,11 @@ def store_event(conn: sqlite3.Connection, ev: dict, run_id: Optional[int]) -> st
     conn.execute(
         "INSERT INTO events (id, source, native_id, ts, author, subject,"
         " client_id, state, text, permalink, raw_ref, sweep_run_id,"
-        " exclude_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " exclude_reason, direction) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (eid, ev["source"], ev["native_id"], ev.get("ts"), ev.get("author"),
          ev.get("subject"), ev.get("client_id"), state, ev.get("text"),
-         ev.get("permalink"), ev.get("raw_ref"), run_id, ev.get("exclude_reason")))
+         ev.get("permalink"), ev.get("raw_ref"), run_id, ev.get("exclude_reason"),
+         ev.get("direction")))
     return "inserted"
 
 

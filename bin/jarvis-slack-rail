@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Jarvis Slack rail (J2 rail #1): read client Slack workspaces via the browser
+(DOM/accessibility tree ONLY — Slack renders blank to pixels), map each message to
+its workspace's client, and store normalized events. READ-ONLY on Slack; NEVER
+sends a message. Both sides of a thread are captured — our own messages are tagged
+direction='outbound' (not dropped) so the follow-up logic can tell we replied.
+
+    PYTHONPATH=. python3 bin/jarvis-slack-rail [--since DAYS] [--dry-run]
+
+module='system': like the sweep, this makes ZERO external writes (local events
+only), so it runs live. Browser work is slow, so it belongs on its OWN 2x/day
+launchd job (11:00 / 19:00 IST) — NOT the 3x/day sweep. --dry-run collects and
+reports per workspace WITHOUT storing (the ◆ selector-calibration front door).
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from modules.jarvis import slack_rail                       # noqa: E402
+
+
+if __name__ == "__main__":
+    raise SystemExit(slack_rail.main(sys.argv[1:]))
