@@ -129,6 +129,19 @@ class TestDbCheck(unittest.TestCase):
         checks = dc.check_db(db_path=self.tmp / "missing.db")
         self.assertEqual(checks[0].status, "FAIL")
 
+    def test_pending_migration_fails_loud(self):
+        path = self.tmp / "t.db"
+        db.migrate(path)
+        # simulate a committed-but-unapplied migration: drop the newest row
+        with db.connect(path) as conn:
+            latest = conn.execute("SELECT MAX(version) v FROM"
+                                  " schema_migrations").fetchone()["v"]
+            conn.execute("DELETE FROM schema_migrations WHERE version=?",
+                         (latest,))
+        checks = {c.name: c for c in dc.check_db(db_path=path)}
+        self.assertEqual(checks["migrations"].status, "FAIL")
+        self.assertIn(latest, checks["migrations"].detail)
+
 
 class TestCalendar(unittest.TestCase):
     def test_all_far_future_no_warns(self):

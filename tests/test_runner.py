@@ -316,5 +316,36 @@ class TestClaudeCall(RunnerTestCase):
         self.assertEqual(captured["db_path"], self.db_path)
 
 
+# ── startup migration guard ───────────────────────────────────────────────────
+class TestMigrationGuard(RunnerTestCase):
+    def _make_pending(self):
+        """Drop the newest schema_migrations row = a committed-but-unapplied
+        migration on this DB."""
+        with db.connect(self.db_path) as conn:
+            latest = conn.execute("SELECT MAX(version) v FROM"
+                                  " schema_migrations").fetchone()["v"]
+            conn.execute("DELETE FROM schema_migrations WHERE version=?",
+                         (latest,))
+        return latest
+
+    def test_pending_migration_fails_loud_before_running(self):
+        latest = self._make_pending()
+        ran = []
+        with self.assertRaises(runner.MigrationsPending):
+            self.run_one(lambda ctx: ran.append(1) or {})
+        self.assertEqual(ran, [])                       # task body never ran
+        row = self.run_rows()[-1]
+        self.assertEqual(row["status"], "failed")
+        self.assertIn(latest, row["error"])
+        anoms = self.anomaly_rows(kind="task_failure")
+        self.assertTrue(anoms)
+        self.assertIn(latest, anoms[-1]["detail_json"])
+
+    def test_clean_db_passes_guard(self):
+        # baseline: a fully-migrated DB runs the task normally
+        result = self.run_one(lambda ctx: {"ok": 1})
+        self.assertEqual(result.status, "completed")
+
+
 if __name__ == "__main__":
     unittest.main()

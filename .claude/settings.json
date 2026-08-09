@@ -1,4 +1,35 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT COUNT\\(*\\) FROM facts WHERE lower\\(fact_text\\) LIKE '%cradle company%' OR lower\\(fact_text\\) LIKE '%the cradle%';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT DISTINCT substr\\(citation,1,30\\) FROM facts WHERE lower\\(fact_text\\) LIKE '%cradle company%';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT COUNT\\(*\\) FROM facts WHERE lower\\(fact_text\\) LIKE '%diskover%';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, room_name, bucket, client_id FROM threads WHERE lower\\(room_name\\) LIKE '%amanda%' OR lower\\(room_name\\) LIKE '%diskover%';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, substr\\(COALESCE\\(title,job_title\\),1,50\\), profile, upwork_status, start_dt FROM contracts WHERE lower\\(COALESCE\\(title,job_title,''\\)\\) LIKE '%amanda%' OR lower\\(COALESCE\\(title,job_title,''\\)\\) LIKE '%diskover%';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, substr\\(job_title,1,50\\), status FROM proposals WHERE lower\\(COALESCE\\(job_title,''\\)\\) LIKE '%amanda%' OR lower\\(COALESCE\\(job_title,''\\)\\) LIKE '%diskover%';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT assignment_company, assignment_developer, COUNT\\(*\\), ROUND\\(SUM\\(amount_base_minor\\)/100.0\\) FROM transactions WHERE lower\\(COALESCE\\(assignment_company,''\\)\\) LIKE '%amanda%' OR lower\\(COALESCE\\(assignment_developer,''\\)\\) LIKE '%amanda%' OR lower\\(COALESCE\\(assignment_company,''\\)\\) LIKE '%diskover%' GROUP BY 1,2;\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, room_name, contract_id, proposal_id, client_id, room_type FROM threads WHERE id='room_b77ee451e7fd56cbb3a898b15effe2bf';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, substr\\(COALESCE\\(title,job_title\\),1,45\\) t, client_company, profile, upwork_status, thread_id FROM contracts WHERE id='44145310' OR job_id='44145310';\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT COUNT\\(*\\) contracts_total, SUM\\(thread_id IS NOT NULL\\) has_thread, SUM\\(t.room_name IS NOT NULL\\) has_roomname FROM contracts c LEFT JOIN threads t ON t.id=c.thread_id;\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT COUNT\\(*\\) proposals_total, SUM\\(thread_id IS NOT NULL\\) has_thread FROM proposals;\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT substr\\(c.job_title,1,30\\) job, t.room_name FROM contracts c JOIN threads t ON t.id=c.thread_id WHERE c.upwork_status='ACTIVE' LIMIT 10;\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, room_name, bucket, contract_id FROM threads WHERE lower\\(room_name\\) LIKE '%cradle%' OR lower\\(room_name\\) LIKE '%suti%' OR lower\\(room_name\\) LIKE '%kady%' OR lower\\(room_name\\) LIKE '%brandi%';\")",
+      "Bash(PYTHONPATH=. /usr/bin/python3 -c \"from core import config; print\\(config.SHADOW_MODE\\)\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT profile, COUNT\\(*\\) FROM contracts GROUP BY profile;\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT COALESCE\\(profile,'\\(null\\)'\\) p, COUNT\\(*\\) FROM proposals GROUP BY p;\")",
+      "Bash(chmod +x bin/upwork-backfill-client-names)",
+      "Bash(PYTHONPATH=. /usr/bin/python3 bin/upwork-backfill-client-names)",
+      "Bash(PYTHONPATH=. /usr/bin/python3 bin/upwork-backfill-client-names --commit)",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, substr\\(job_title,1,32\\) job, client_company, upwork_status, start_dt FROM contracts WHERE id IN \\('44145310','44099615'\\);\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT 'contracts' t, SUM\\(client_company IS NOT NULL AND client_company!=''\\) named, COUNT\\(*\\) total FROM contracts UNION ALL SELECT 'proposals', SUM\\(client_company IS NOT NULL AND client_company!=''\\), COUNT\\(*\\) FROM proposals;\")",
+      "Bash(PYTHONPATH=. /usr/bin/python3 -m unittest tests.test_m1b)",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT source, COUNT\\(*\\) n, ROUND\\(SUM\\(amount_base_minor\\)/100.0\\) usd FROM transactions WHERE pnl_bucket='revenue' AND canonical_key IS NOT NULL AND COALESCE\\(assignment_company,''\\)='' AND \\(source!='Wise' OR description NOT LIKE '%Received money from%'\\) GROUP BY source ORDER BY usd DESC;\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT source, substr\\(description,1,55\\) desc, assignment_company, ROUND\\(amount_base_minor/100.0\\) usd FROM transactions WHERE pnl_bucket='revenue' AND description LIKE '%Ai Automations sales outbound%' ORDER BY creation_dt DESC LIMIT 5;\")",
+      "Bash(sqlite3 -column var/etherwise.db \"SELECT id, job_title, client_company FROM contracts WHERE job_title LIKE 'Ai Automations sales outbound%';\")",
+      "Bash(sqlite3 var/etherwise.db ' *)",
+      "Bash(sqlite3 -column var/etherwise.db ' *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

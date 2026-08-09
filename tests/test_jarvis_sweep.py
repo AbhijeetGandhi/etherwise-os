@@ -343,5 +343,87 @@ class ImapSweepTests(SweepTests):
         self.assertEqual(ctx.claude_calls, [])
 
 
+class _MarkerCtx(FakeCtx):
+    """Proposer returns a confident client id ONLY when the subject carries the
+    marker; otherwise a null proposal (no client signal)."""
+    def claude(self, **kw):
+        import json as _j
+        self.claude_calls.append(kw)
+        subject = _j.loads(kw["user_content"])["email"]["subject"]
+        if "SIGNAL:adelye" in subject:
+            parsed = {"proposed_client_id": "adelye", "confidence": 0.7,
+                      "evidence": "explicit adelye signal"}
+        else:
+            parsed = {"proposed_client_id": None, "confidence": 0.0,
+                      "evidence": "no client match"}
+        return types.SimpleNamespace(parsed=parsed)
+
+
+class ImapLowBaseRateTests(SweepTests):
+    """The low-base-rate rule (personal inboxes 01/02): unmatched mail DEFAULTS to
+    excluded, never queued — only a positive client signal queues. contact@ keeps
+    its original behaviour (a null proposal still queues)."""
+
+    def _run_marker(self, gmail_msgs, imap_events):
+        fg = FakeGmail(gmail_msgs)
+        ctx = _MarkerCtx(self.dbp)
+        metrics = sweep.run_sweep(
+            ctx, token_fn=lambda: "t", list_fn=fg.list, meta_fn=fg.meta,
+            full_fn=fg.full, reg=self.reg, imap_inboxes=(INBOX,),
+            imap_collect=_fake_imap({INBOX: imap_events},
+                                    cursors={INBOX: "100:9"}))
+        return metrics, ctx
+
+    def _state(self, eid):
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state, client_id, exclude_reason FROM events"
+                             " WHERE id=?", (eid,)).fetchone()
+        return r
+
+    def test_personal_unmatched_excluded_not_queued(self):
+        # personal mail with no client signal -> proposer null -> EXCLUDED
+        p = _imap_event("noise1", "Buddy <buddy@randommail.com>",
+                        "Weekend plans", "wanna hang out?")
+        # a contact@ message with the SAME null proposal must still QUEUE
+        gmail = {"g1": ("Someone <someone@unknownco.io>", "Question",
+                        "can you help?", 5000)}
+        metrics, ctx = self._run_marker(gmail, [p])
+
+        pr = self._state(f"evt:email:{INBOX_STEM}:noise1")
+        self.assertEqual(pr["state"], "excluded")
+        self.assertEqual(pr["exclude_reason"],
+                         "imap-low-base-rate:no-client-signal")
+        self.assertEqual(metrics["imap_excluded_no_signal"], 1)
+
+        gr = self._state("evt:email:g1")            # contact@ null still queues
+        self.assertEqual(gr["state"], "queued")
+        self.assertIsNone(gr["client_id"])
+        self.assertTrue(metrics["reconciled"])
+
+    def test_personal_positive_signal_queues(self):
+        p = _imap_event("hit1", "Prospect <p@randommail.com>",
+                        "Re: SIGNAL:adelye course build",
+                        "the register automation is live")
+        metrics, ctx = self._run_marker({}, [p])
+        r = self._state(f"evt:email:{INBOX_STEM}:hit1")
+        self.assertEqual(r["state"], "queued")
+        with db.connect(self.dbp) as conn:
+            row = conn.execute("SELECT proposed_client_id, proposal_confidence"
+                               " FROM events WHERE id=?",
+                               (f"evt:email:{INBOX_STEM}:hit1",)).fetchone()
+        self.assertEqual(row["proposed_client_id"], "adelye")
+        self.assertEqual(metrics["imap_excluded_no_signal"], 0)
+        self.assertTrue(metrics["reconciled"])
+
+    def test_personal_deterministic_match_still_maps(self):
+        # a registry-domain sender in a personal inbox is a positive signal ->
+        # mapped without a proposer call (deterministic path is unchanged)
+        p = _imap_event("det1", "Chris <chris@adelye.com>", "Update", "hi")
+        metrics, ctx = self._run_marker({}, [p])
+        r = self._state(f"evt:email:{INBOX_STEM}:det1")
+        self.assertEqual((r["state"], r["client_id"]), ("mapped", "adelye"))
+        self.assertEqual(ctx.claude_calls, [])       # no LLM for a deterministic hit
+
+
 if __name__ == "__main__":
     unittest.main()
