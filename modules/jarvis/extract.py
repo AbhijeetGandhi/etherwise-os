@@ -50,58 +50,14 @@ def passes_mint_bar(*, client_id: Optional[str], who: str, due,
     return has_owner and has_due_or_ask
 
 
-# ── Noise gate: deterministic backstop to the system prompt's exclusion list ──
-# The first real batch (2026-08-09 review) showed the reader still emits filler
-# even when told not to: WHO was on a call, that a call happened, footer/marketing
-# boilerplate, and ephemeral calendar times. The prompt asks the model to skip
-# these; this code GUARANTEES it (a prompt alone drifts). STRUCTURAL patterns
-# only — never topic keywords — so a genuine requirement ("Zoom for registration,
-# live registration counts"), a contact/role, or a stack fact is never caught.
-# Validated line-by-line against the 23-fact batch: drops the 13 noise lines,
-# keeps all 10 signal lines (including "speaker prep calls" and "recorded webinar
-# page", which must survive while "recorded calls" must drop).
-_NOISE_PATTERNS = (
-    # 1. participant rosters — WHO attended, not what was said. Already held in
-    #    sources/events; as a "fact" it only dilutes a dossier.
-    ("participant_roster", re.compile(
-        r"\bparticipated in (?:a|an|the)\b"
-        r"|\betherwise[\w-]* (?:contact|participant)\b"
-        r"|\bparticipants?\b[^.]*\b(?:call|calls|meeting|meetings)\b"
-        r"|\b(?:call|calls|meeting|meetings)\b[^.]*\bparticipants?\b", re.I)),
-    # 2. "a call happened" meta-facts — a call's existence or count, never its
-    #    content. Knowledge comes from INSIDE a call, not a description of it.
-    ("meeting_meta", re.compile(
-        r"\b(?:call|calls|meeting|meetings)\b[^.]*"
-        r"\b(?:took place|occurred|happened)\b"
-        r"|\brecorded calls?\b"
-        r"|\bat least \w+ (?:recorded )?calls?\b", re.I)),
-    # 3. email-signature / marketing / legal-registration boilerplate — scraped
-    #    from a footer or disclaimer, never real project knowledge.
-    ("boilerplate", re.compile(
-        r"\bpositions? itself as\b"
-        r"|\bpioneer of\b"
-        r"|\bleading provider\b"
-        r"|\boffering \d+\+?\s+(?:services|products)\b"
-        r"|\bAmtsgericht\b|\bHRB\s*\d|\bUSt-?IdNr\b|\bVAT (?:ID|number)\b"
-        r"|\bregistration (?:court|number)\b", re.I)),
-    # 4. ephemeral calendar logistics — a meeting time/reschedule/invite. True
-    #    for a day, then permanently misleading.
-    ("calendar_logistics", re.compile(
-        r"\breschedul(?:e|ed|es|ing)\b"
-        r"|\b(?:meeting|call|invite)\b[^.]*\b(?:moved|pushed|shifted) to\b"
-        r"|\b\d{1,2}:\d{2}[^.]{0,25}"
-        r"\b(?:IST|UTC|GMT|EST|EDT|PST|PDT|BST|CET)\b", re.I)),
-)
-
-
-def noise_reason(text: str) -> Optional[str]:
-    """Return the noise-class name if this fact is filler that must be dropped
-    before staging, else None. Backstops the prompt's exclusion list."""
-    t = text or ""
-    for name, rx in _NOISE_PATTERNS:
-        if rx.search(t):
-            return name
-    return None
+# ── Noise gate ────────────────────────────────────────────────────────────────
+# The deterministic fact-noise gate now lives in modules.knowledge.kb (the shared
+# fact-quality protocol) so EVERY extractor — this J2 reader AND the knowledge/
+# loom extractor — applies the ONE identical filter, never a second copy. Born
+# here (commit d340f53); re-exported so `extract.noise_reason` / `_NOISE_PATTERNS`
+# callers and tests keep resolving unchanged.
+noise_reason = kb.noise_reason
+_NOISE_PATTERNS = kb._NOISE_PATTERNS
 
 
 SCHEMA = {

@@ -143,6 +143,60 @@ class TestExtract(KBCase):
                 "t", db_path=self.db_path)
         self.assertEqual([f["fact_text"] for f in out], ["good"])
 
+    def test_loom_citation_deep_links_the_recording(self):
+        # a loom source passes cite_ref = the share URL; facts click straight to
+        # the recording at the anchoring phrase (locator), not "loom/<id>".
+        facts = [{"category": "architecture", "scope": "client",
+                  "fact_text": "Built a cancellation automation in Make.com",
+                  "confidence": "CONFIRMED",
+                  "locator": "the cancellation flow fires a webhook"}]
+        vid = "ddd4b01c912c45e28cb16445ad3101f6"
+        url = f"https://www.loom.com/share/{vid}"
+        with mock.patch.object(extract.runner, "claude_call",
+                               return_value=self.gw_result(facts)):
+            out = extract.extract_facts(
+                {"source_ref": f"loom/{vid}", "client_id": "recHorizons",
+                 "cite_ref": url},
+                "transcript", db_path=self.db_path)
+        self.assertEqual(len(out), 1)
+        self.assertTrue(out[0]["citation"].startswith(url + " @ "))
+        self.assertIn("cancellation flow fires a webhook", out[0]["citation"])
+
+    def test_noise_gate_drops_filler_and_counts_it(self):
+        # the shared kb.noise_reason gate drops roster/meeting-meta/boilerplate/
+        # calendar filler even when the model cites it; real signal survives.
+        facts = [
+            {"category": "architecture", "scope": "client",
+             "fact_text": "Client runs a licensure board in Airtable",
+             "confidence": "CONFIRMED", "locator": "licensure board"},   # keep
+            {"category": "other", "scope": "client",
+             "fact_text": "Alexander and Abhijeet participated in the call",
+             "confidence": "CONFIRMED", "locator": "at 00:01"},          # roster
+            {"category": "other", "scope": "client",
+             "fact_text": "This is a recorded walkthrough; the meeting happened",
+             "confidence": "CONFIRMED", "locator": "recorded"},          # meta
+        ]
+        metrics = {}
+        with mock.patch.object(extract.runner, "claude_call",
+                               return_value=self.gw_result(facts)):
+            out = extract.extract_facts(
+                {"source_ref": "loom/x", "client_id": "recHorizons"},
+                "t", db_path=self.db_path, metrics=metrics)
+        self.assertEqual([f["fact_text"] for f in out],
+                         ["Client runs a licensure board in Airtable"])
+        self.assertEqual(metrics["dropped_noise"], 2)
+        self.assertGreater(metrics["cost_usd"], 0)
+
+    def test_model_key_is_honored(self):
+        facts = [{"category": "numbers", "fact_text": "ok",
+                  "confidence": "CONFIRMED", "locator": "00:01"}]
+        with mock.patch.object(extract.runner, "claude_call",
+                               return_value=self.gw_result(facts)) as m:
+            extract.extract_facts(
+                {"source_ref": "loom/x", "client_id": "c"}, "t",
+                db_path=self.db_path, model_key="classify")
+        self.assertEqual(m.call_args.kwargs["model_key"], "classify")
+
 
 # ── the guard: no uncited fact persists ──────────────────────────────────────
 class TestNoUncitedPersists(KBCase):

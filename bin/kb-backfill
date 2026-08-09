@@ -73,27 +73,71 @@ def phase_ingest(which):
     print(f"INGEST total: {total}")
 
 
-def phase_extract(which):
+def phase_extract(which, *, limit=None, attributed=False, model_key=None):
+    """Extract status='ingested' sources → cited facts. Resumable (a killed run
+    re-runs only the not-yet-extracted). Options:
+      --attributed   only sources with a client_id (facts that can land in a
+                     dossier); the loom run starts here (the 97 attributed).
+      --limit N      per-run ceiling on sources this invocation (bounds spend;
+                     re-run to drain the rest). Each process resets the gateway's
+                     per-run USD accumulator, so chunking keeps a big Haiku batch
+                     under PER_RUN_MAX_USD without a config change.
+      --model KEY    MODELS key for the reader (default the Sonnet 'drafting'
+                     tier; loom passes 'classify' = the Haiku pin)."""
     clause = "" if which == "all" else " AND source_type=?"
     args = [] if which == "all" else [which]
+    if attributed:
+        clause += " AND client_id IS NOT NULL"
+    order = " ORDER BY client_id, occurred_dt"       # deterministic + resumable
+    lim = f" LIMIT {int(limit)}" if limit else ""
     with db.connect(config.DB_PATH) as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT id, source_type, source_ref, client_id, raw_path FROM"
-            " sources WHERE status='ingested'" + clause, args)]
-    print(f"extracting {len(rows)} sources (status=ingested)…")
-    done = facts = 0
+            " sources WHERE status='ingested'" + clause + order + lim, args)]
+    if not rows:
+        print("EXTRACT: nothing to extract (0 sources status=ingested"
+              f"{' attributed' if attributed else ''}) — skip.")
+        return
+    mk = model_key or extract.EXTRACT_MODEL_KEY
+    # Loom walkthroughs are dense — a 4k output ceiling truncates the JSON on the
+    # richest ones. Give the reader the per-run token ceiling so a whole source
+    # isn't lost to truncation.
+    max_tokens = config.PER_RUN_MAX_OUTPUT_TOKENS
+    print(f"extracting {len(rows)} sources (status=ingested, model={mk})…")
+    metrics = {"cost_usd": 0.0, "dropped_noise": 0}
+    done = facts = failed = 0
+    per_client = {}
     for s in rows:
         payload = json.loads(Path(s["raw_path"]).read_text())
         parsed = ingest._PARSERS[s["source_type"]](payload)
-        out = extract.extract_facts(
-            {"source_ref": s["source_ref"], "client_id": s["client_id"]},
-            parsed["text"], db_path=config.DB_PATH)
+        try:
+            # cite_ref deep-links the artifact (loom → share URL) so facts click
+            # straight to the recording at the anchoring phrase.
+            out = extract.extract_facts(
+                {"source_ref": s["source_ref"], "client_id": s["client_id"],
+                 "cite_ref": parsed.get("url")},
+                parsed["text"], db_path=config.DB_PATH, model_key=mk,
+                max_tokens=max_tokens, metrics=metrics)
+        except Exception as exc:               # truncated JSON / transient / budget
+            failed += 1
+            # leave the source status='ingested' (index_facts never ran) so a
+            # re-run retries it — degrade-and-continue, never crash the batch.
+            print(f"  ! skip {s['source_ref']}: {type(exc).__name__}: {exc}"
+                  [:200])
+            continue
         res = index.index_facts(config.DB_PATH, s["id"], s["client_id"], out)
         done += 1
         facts += res["inserted"]
+        per_client[s["client_id"]] = per_client.get(s["client_id"], 0) \
+            + res["inserted"]
         if done % 25 == 0:
-            print(f"  …{done}/{len(rows)} sources, {facts} facts")
-    print(f"EXTRACT done: {done} sources, {facts} facts")
+            print(f"  …{done}/{len(rows)} sources, {facts} facts,"
+                  f" ${metrics['cost_usd']:.4f}")
+    print(f"EXTRACT done: {done} sources, {facts} facts"
+          f" ({metrics['dropped_noise']} dropped noise, {failed} skipped); "
+          f"${metrics['cost_usd']:.4f}")
+    for cid in sorted(per_client, key=lambda c: -per_client[c]):
+        print(f"    {cid or '(unattributed)'}: {per_client[cid]} facts")
 
 
 def phase_compile():
@@ -109,13 +153,27 @@ def phase_compile():
           proof_points.compile_proof_points(config.DB_PATH, now))
 
 
+def _flag(name, default=None):
+    """Tiny flag reader: --name VALUE (VALUE optional -> True)."""
+    if name not in sys.argv:
+        return default
+    i = sys.argv.index(name)
+    if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("--"):
+        return sys.argv[i + 1]
+    return True
+
+
 def main():
     phase = sys.argv[1] if len(sys.argv) > 1 else "ingest"
-    which = sys.argv[2] if len(sys.argv) > 2 else "all"
+    which = sys.argv[2] if len(sys.argv) > 2 and \
+        not sys.argv[2].startswith("--") else "all"
     if phase == "ingest":
         phase_ingest(which)
     elif phase == "extract":
-        phase_extract(which)
+        lim = _flag("--limit")
+        phase_extract(which, limit=int(lim) if lim else None,
+                      attributed=bool(_flag("--attributed", False)),
+                      model_key=_flag("--model"))
     elif phase == "compile":
         phase_compile()
     else:
