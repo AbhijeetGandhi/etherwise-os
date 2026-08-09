@@ -6,11 +6,16 @@ per-client vocabulary fingerprint -> high-conf provisional map / medium queue /
 low or unknown excluded. Deterministic registry name-matches still full-heal.
 
     PYTHONPATH=. python3 bin/jarvis-loom-classify [--limit N] [--max N]
-                                                  [--dry-run] [--reclassify-queued]
+        [--dry-run] [--reclassify-queued] [--heal-mapped]
+        [--source-type loom|fathom]
 
 --dry-run spends the LLM but writes nothing (measure kind distribution + cost).
 --reclassify-queued re-routes the existing queued Looms instead of scanning
-unmapped sources. Build the fingerprints first: bin/jarvis-loom-fingerprints.
+unmapped sources. --heal-mapped backfills the KB for events already mapped to a
+client whose source is still unattributed (runs the same heal the approval path
+does; idempotent, no LLM spend). --source-type generalises every mode to the
+Fathom residue (owner-only/internal calls the deterministic bridge skipped) --
+ONE classifier, not a third. Build the fingerprints first: jarvis-loom-fingerprints.
 """
 from __future__ import annotations
 
@@ -34,14 +39,22 @@ def main() -> int:
                     help="classify + report, write nothing to the ledger")
     ap.add_argument("--reclassify-queued", action="store_true",
                     help="re-route the already-queued Looms instead of scanning")
+    ap.add_argument("--heal-mapped", action="store_true",
+                    help="backfill: heal the KB for events already mapped to a "
+                         "client whose source is still unattributed (no LLM spend)")
+    ap.add_argument("--source-type", choices=("loom", "fathom"), default="loom",
+                    help="corpus to operate on (default loom)")
     args = ap.parse_args()
 
     def task(ctx):
+        if args.heal_mapped:
+            return loom_classifier.heal_mapped(ctx, source_type=args.source_type)
         if args.reclassify_queued:
             return loom_classifier.reclassify_queued(
                 ctx, max_calls=args.max_calls, dry_run=args.dry_run)
         return loom_classifier.classify_unmapped(
-            ctx, limit=args.limit, max_calls=args.max_calls, dry_run=args.dry_run)
+            ctx, source_type=args.source_type, limit=args.limit,
+            max_calls=args.max_calls, dry_run=args.dry_run)
 
     result = runner.run_task("jarvis_loom_classify", task, module="system")
     print(json.dumps({"status": result.status, "metrics": result.metrics}))
