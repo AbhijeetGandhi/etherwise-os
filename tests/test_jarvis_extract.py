@@ -253,6 +253,107 @@ class ExtractTests(unittest.TestCase):
                                           ).fetchone()["n"], 0)
             self.assertEqual(len(staging.pending_facts(conn)), 1)
 
+    # ── noise gate: the four classes the first live batch surfaced ────────────
+    # The reader's model can still emit filler ("who was on the call", a footer
+    # tagline, a reschedule); a deterministic post-filter drops it so it never
+    # reaches staging. Fixtures are the REAL fact_texts from the 2026-08-09 batch.
+    def test_noise_dropped_in_run(self):
+        pl = _mapped(self.dbp, "d1", "diskover-data", "body")
+        keep = ("Diskover Data is building a webinar workflow in Airtable, with a "
+                "goal to integrate Zoom for registration, lead flow, email "
+                "invitations, and live registration counts.")
+        facts = [
+            {"category": "architecture", "fact_text": keep,
+             "confidence": "CONFIRMED", "quote": "webinar workflow",
+             "event_ref": pl},
+            {"category": "people",
+             "fact_text": "Abhijeet Gandhi and Chloe participated in a call "
+                          "together.",
+             "confidence": "CONFIRMED", "quote": "participated", "event_ref": pl},
+            {"category": "timeline",
+             "fact_text": "At least six recorded calls took place between Tenni "
+                          "and Abhijeet.",
+             "confidence": "CONFIRMED", "quote": "recorded calls",
+             "event_ref": pl},
+            {"category": "overview",
+             "fact_text": "Beglaubigt.de positions itself as a pioneer of the "
+                          "digital notary in Europe, offering 50+ services.",
+             "confidence": "CONFIRMED", "quote": "pioneer", "event_ref": pl},
+            {"category": "timeline",
+             "fact_text": "A meeting was rescheduled to 6 Aug 2026, 1:30am-3:30am "
+                          "IST.",
+             "confidence": "CONFIRMED", "quote": "rescheduled", "event_ref": pl},
+        ]
+        resp = {"diskover-data": {"facts": facts, "commitments": [],
+                                  "closures": []}}
+        metrics, _ = self._run(resp)
+        with db.connect(self.dbp) as conn:
+            staged = staging.pending_facts(conn)
+        self.assertEqual(len(staged), 1)                 # only the requirement
+        self.assertTrue(staged[0]["fact_text"].startswith("Diskover Data"))
+        self.assertEqual(metrics["dropped_noise"], 4)    # the four noise classes
+        self.assertEqual(metrics["facts"], 1)
+
+    def test_system_prompt_carries_exclusion_list(self):
+        s = extract._SYSTEM.lower()
+        for cue in ("signature", "participant", "six months", "reschedul"):
+            self.assertIn(cue, s)
+
+
+class NoiseGateUnitTests(unittest.TestCase):
+    """extract.noise_reason() classifies each real noise line, and NEVER touches
+    a genuine fact (requirement, contact, role, stack)."""
+
+    # class -> real fact_texts from the 2026-08-09 first-batch review
+    DROP = {
+        "participant_roster": [
+            "Abhijeet Gandhi and Chloe participated in a call together.",
+            "Meeting participants included Abhijeet Gandhi and David Jeffries.",
+            "Abhijeet Gandhi is the Etherwise contact engaged with Hermon.",
+            "Abhijeet Gandhi is the Etherwise-side participant in all Vapi/Twilio "
+            "calls with The Medical Kitchen.",
+        ],
+        "meeting_meta": [
+            "A call focused on an Onboarding Process took place between Abel "
+            "Jansen and Abhijeet Gandhi.",
+            "At least six recorded calls took place between Tenni and Abhijeet.",
+        ],
+        "boilerplate": [
+            "Beglaubigt.de positions itself as a pioneer of the digital notary in "
+            "Europe, offering 50+ services and is the leading provider in Germany.",
+            "Beglaubigt.de is registered at Amtsgericht Munchen, HRB 292661.",
+        ],
+        "calendar_logistics": [
+            "A meeting was rescheduled to 6 Aug 2026, 1:30am-3:30am IST.",
+            "A second meeting was scheduled for 6 Aug 2026, 9:30pm-10:00pm IST.",
+        ],
+    }
+
+    # genuine signal — the reviewer praised these; they MUST survive the gate
+    KEEP = [
+        "Diskover Data is building a webinar workflow in Airtable, with a goal to "
+        "integrate Zoom for registration, lead flow, email invitations, and live "
+        "registration counts.",
+        "The on-demand recorded webinar page is to be gated behind email only.",
+        "Natasha requested a Customer Connect Webinar template in Airtable "
+        "containing 21 task items per webinar, including speaker prep calls.",
+        "Natasha Travis (mobile +1 704 996 8663) is a contact at Diskover Data "
+        "working on the webinar workflow in Airtable.",
+        "Abel Jansen (abel@hermon.io) is the client contact at Hermon.",
+        "Felix Adrian is a Founders Associate at beglaubigt.de, reachable at Work "
+        "+49 89 74534325 and Mobile +49 176 62054617.",
+        "The project involves Vapi and Twilio integrations for The Medical Kitchen.",
+    ]
+
+    def test_each_noise_class_dropped_with_reason(self):
+        for cls, texts in self.DROP.items():
+            for t in texts:
+                self.assertEqual(extract.noise_reason(t), cls, t)
+
+    def test_signal_never_dropped(self):
+        for t in self.KEEP:
+            self.assertIsNone(extract.noise_reason(t), t)
+
 
 if __name__ == "__main__":
     unittest.main()
