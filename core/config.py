@@ -288,6 +288,23 @@ JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
                                     # the rest stay 'held' for the next sweep
 JARVIS_LOOM_MAX_PROPOSALS = 25      # loom bridge: at most N Haiku residue-proposer
                                     # calls per run (deterministic passes are $0)
+# ── Loom KIND + domain-vocabulary classifier (2026-08-09, QUEUE-12) ──────────
+# Replaces name-matching on the residue (measured: only 3/426 transcripts name a
+# client). One Haiku call per Loom returns {kind, proposed_client_id, confidence,
+# evidence}; the model writes ONLY the events ledger (never sources/facts/dossier)
+# unless JARVIS_LOOM_HEAL_ON_HIGH is flipped on. Bands below route the result.
+JARVIS_LOOM_KIND_HIGH = 0.80        # confidence >= HIGH -> provisional auto-map
+JARVIS_LOOM_KIND_MED = 0.50         # MED <= confidence < HIGH -> queue w/ evidence;
+                                    # below MED (or unknown) -> exclude unattributable
+JARVIS_LOOM_CLASSIFY_MAX = 200      # per-run ceiling on Haiku classify calls
+JARVIS_LOOM_TRANSCRIPT_WORDS = 1500 # transcript truncated to first N words (signal
+                                    # is front-loaded; caps cost + injection surface)
+JARVIS_LOOM_HEAL_ON_HIGH = False    # SAFE DEFAULT: high-conf is a ledger-only
+                                    # provisional map, facts gated. Flip True to let
+                                    # a high-conf inference do the FULL dossier heal
+                                    # (reattribute facts + recompile) -- grants the
+                                    # model authority over the KB; Abhijeet's call.
+LOOM_FINGERPRINTS_PATH = V3_ROOT / "assets" / "loom-fingerprints.json"
 # ── IMAP rail (2026-08-09) — the inboxes contact@'s OAuth app cannot reach ────
 # The OAuth client is registered Internal, so it can only ever authorize
 # etherwise.io accounts; the personal inboxes go over IMAP with per-account app

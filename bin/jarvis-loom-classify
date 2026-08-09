@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Attribute unmapped Loom recordings by KIND + domain vocabulary (QUEUE-12 —
+replaces name-matching, which had no transcript signal). One Haiku call per Loom:
+non-client kinds are excluded (cleans the KB); client-work is attributed by the
+per-client vocabulary fingerprint -> high-conf provisional map / medium queue /
+low or unknown excluded. Deterministic registry name-matches still full-heal.
+
+    PYTHONPATH=. python3 bin/jarvis-loom-classify [--limit N] [--max N]
+                                                  [--dry-run] [--reclassify-queued]
+
+--dry-run spends the LLM but writes nothing (measure kind distribution + cost).
+--reclassify-queued re-routes the existing queued Looms instead of scanning
+unmapped sources. Build the fingerprints first: bin/jarvis-loom-fingerprints.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, runner                              # noqa: E402
+from modules.jarvis import loom_classifier                   # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--limit", type=int, default=200,
+                    help="max unmapped sources scanned this run (newest-first)")
+    ap.add_argument("--max", type=int, default=config.JARVIS_LOOM_CLASSIFY_MAX,
+                    dest="max_calls", help="per-run ceiling on Haiku classify calls")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="classify + report, write nothing to the ledger")
+    ap.add_argument("--reclassify-queued", action="store_true",
+                    help="re-route the already-queued Looms instead of scanning")
+    args = ap.parse_args()
+
+    def task(ctx):
+        if args.reclassify_queued:
+            return loom_classifier.reclassify_queued(
+                ctx, max_calls=args.max_calls, dry_run=args.dry_run)
+        return loom_classifier.classify_unmapped(
+            ctx, limit=args.limit, max_calls=args.max_calls, dry_run=args.dry_run)
+
+    result = runner.run_task("jarvis_loom_classify", task, module="system")
+    print(json.dumps({"status": result.status, "metrics": result.metrics}))
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,125 @@
+{
+  "_note": "Per-client domain-vocabulary fingerprints for the Loom KIND+vocab classifier (QUEUE-12). The classifier attributes an UNNAMED Loom to a client by matching this vocabulary, NOT the client name. Hand-seeded (source='seed') from the dossier overviews on 2026-08-09; refresh/extend with `PYTHONPATH=. python3 bin/jarvis-loom-fingerprints` (writes source='llm'). Reviewable + hand-editable; a client absent here is simply not vocab-attributable, which is safe.",
+  "clients": [
+    {
+      "client_id": "horizons-aba",
+      "name": "Horizons ABA",
+      "domain": "ABA (Applied Behavior Analysis) therapy practice operations",
+      "stack": ["Central Reach", "Google Docs", "Google Sheets", "Gmail", "Fingertrack"],
+      "terms": ["ABA therapy", "BCBA", "session cancellation", "session times", "addendum notes", "supervision", "EOB", "treatment plan", "payer", "technician check-in"],
+      "systems": ["Treatment Plan Reviewer", "Technician Check-In workflow", "session-cancellation automation", "payroll export", "Gmail labeling tool", "therapist scheduling UI"],
+      "people": ["Alexander Apfel", "Taylor"],
+      "source": "seed"
+    },
+    {
+      "client_id": "adelye",
+      "name": "Adelye",
+      "domain": "transport/driver compliance training and course administration",
+      "stack": ["GoCanvas", "Make", "email"],
+      "terms": ["digital register", "course registration", "certificates", "FORS", "CPC", "DFAT defect check", "attendance", "compliance"],
+      "systems": ["digital register automation", "certificate generation", "defect (DFAT) check automation"],
+      "people": ["Chris Cave"],
+      "source": "seed"
+    },
+    {
+      "client_id": "beglaubigt",
+      "name": "Beglaubigt",
+      "domain": "German notarisation / authority (Behoerde) document registration",
+      "stack": ["HubSpot", "Make", "n8n", "email"],
+      "terms": ["notarisation", "beglaubigt", "Behoerde", "authority registration", "provider invoices", "outreach pipeline", "B2B providers"],
+      "systems": ["automated email outreach pipeline", "provider invoicing", "Make-to-n8n migration"],
+      "people": ["Ioannis Pirigkos"],
+      "source": "seed"
+    },
+    {
+      "client_id": "endura",
+      "name": "Endura",
+      "domain": "email and SMS marketing follow-up automation",
+      "stack": ["Make", "email", "SMS"],
+      "terms": ["follow-up email automation", "email and SMS marketing", "campaign"],
+      "systems": ["follow-up email automation", "email/SMS marketing pipeline"],
+      "people": ["Andrew", "Sharon Chan"],
+      "source": "seed"
+    },
+    {
+      "client_id": "netfly",
+      "name": "NetFly",
+      "domain": "outbound sales call operations and dialer reporting",
+      "stack": ["GoHighLevel", "GHL", "Kixie", "Zapier", "Google Sheets", "webhooks"],
+      "terms": ["call outcome tagging", "dialer", "call transcription", "outcome column", "lead routing", "reporting"],
+      "systems": ["call-outcome tagging automation", "dialer reporting pipeline"],
+      "people": [],
+      "source": "seed"
+    },
+    {
+      "client_id": "the-cradle-company",
+      "name": "The Cradle Company",
+      "domain": "caregiver / nursing recruiting and candidate matching",
+      "stack": ["Airtable", "AI agent"],
+      "terms": ["caregiver recruiting", "candidate matching", "nursing background", "open roles", "recruiting agent"],
+      "systems": ["DAO recruiting agent", "Airtable candidate query + outreach agent"],
+      "people": [],
+      "source": "seed"
+    },
+    {
+      "client_id": "the-medical-kitchen",
+      "name": "The Medical Kitchen",
+      "domain": "outbound AI voice agent for bilingual medical intake",
+      "stack": ["Vapi", "Google Sheets", "voice AI"],
+      "terms": ["voice agent", "bilingual intake", "English/Spanish", "medical intake", "allergens", "food intolerance", "questionnaire"],
+      "systems": ["outbound AI voice intake agent", "Vapi calling pipeline"],
+      "people": [],
+      "source": "seed"
+    },
+    {
+      "client_id": "hipp-health",
+      "name": "HIPP Health",
+      "domain": "payroll-provider integration and employee ID mapping",
+      "stack": ["Fingercheck", "Paycom", "Epsom"],
+      "terms": ["payroll provider integration", "employee ID mapping", "HIP-ID mapping", "Fingercheck", "Paycom", "Epsom"],
+      "systems": ["HIP-to-Fingercheck automation", "Paycom payroll automation", "Epsom payroll integration"],
+      "people": ["Muneeza"],
+      "source": "seed"
+    },
+    {
+      "client_id": "college-life",
+      "name": "College Life",
+      "domain": "membership / community records bulk data operations",
+      "stack": ["Make"],
+      "terms": ["bulk scenario", "member records", "Former status", "membership filter", "record limit"],
+      "systems": ["bulk member-processing scenario", "membership status sync"],
+      "people": [],
+      "source": "seed"
+    },
+    {
+      "client_id": "hermon",
+      "name": "Hermon",
+      "domain": "UGC coaching operations and coach payroll",
+      "stack": ["Make", "Google Sheets"],
+      "terms": ["UGC coach", "coach salary", "active coach", "build-out credentials", "build-out session"],
+      "systems": ["coach salary automation", "build-out credentials workflow"],
+      "people": ["Yav"],
+      "source": "seed"
+    },
+    {
+      "client_id": "renutech-ltd",
+      "name": "Renutech Ltd",
+      "domain": "SEO keyword scraping by location",
+      "stack": ["scraper", "Google Sheets"],
+      "terms": ["SEO keyword data", "city/location bulk", "population-range cities", "scraper", "keyword generation"],
+      "systems": ["location-based SEO keyword scraper"],
+      "people": ["Stephen Whitehouse", "Arisha"],
+      "source": "seed"
+    },
+    {
+      "client_id": "hero-marketing-agency",
+      "name": "Hero Marketing Agency",
+      "domain": "marketing agency ads and conversion landing pages",
+      "stack": ["landing page", "ad platforms"],
+      "terms": ["ad campaigns", "conversion landing page", "Masterclass", "home service businesses", "design review"],
+      "systems": ["conversion-driven landing page", "ad campaign automation"],
+      "people": ["Joshua"],
+      "source": "seed"
+    }
+  ]
+}

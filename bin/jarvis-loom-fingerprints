@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Build/refresh the per-client domain-vocabulary fingerprints the Loom classifier
+attributes with. One Haiku pass per dossier -> a compact
+{domain, stack, terms, people, systems} record -> assets/loom-fingerprints.json.
+
+    PYTHONPATH=. python3 bin/jarvis-loom-fingerprints [--limit N] [--only ID,ID]
+                                                      [--dry-run] [--merge]
+
+By default OVERWRITES the asset with freshly-built records (llm), preserving any
+hand-seeded record for a client the build skips only when --merge is given. The
+asset is committed + reviewable; a client absent from it is simply not
+vocab-attributable (safe). Dossiers run to 1MB+ so only the first
+~FINGERPRINT_DOSSIER_WORDS words (the overview) are read.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, registry, runner                    # noqa: E402
+from modules.jarvis import loom_classifier                    # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--limit", type=int, default=100,
+                    help="max dossiers processed this run")
+    ap.add_argument("--only", default="",
+                    help="comma-separated client ids to (re)build; default = all")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="build + print, do not write the asset")
+    ap.add_argument("--merge", action="store_true",
+                    help="keep existing records for clients not rebuilt this run")
+    args = ap.parse_args()
+
+    reg = registry.load()
+    valid = set(reg.matchable_ids())
+    only = {x.strip() for x in args.only.split(",") if x.strip()}
+    dossier_dir = config.KNOWLEDGE_DIR / "dossiers"
+    out_path = Path(config.LOOM_FINGERPRINTS_PATH)
+
+    existing = {}
+    if args.merge:
+        try:
+            existing = {f["client_id"]: f
+                        for f in loom_classifier.load_fingerprints(out_path)}
+        except loom_classifier.FingerprintsMissing:
+            existing = {}
+
+    stems = []
+    for p in sorted(dossier_dir.glob("*.md")):
+        cid = p.stem
+        if cid not in valid:
+            continue
+        if only and cid not in only:
+            continue
+        stems.append((cid, p))
+    stems = stems[:args.limit]
+
+    def task(ctx):
+        built = dict(existing)
+        n_ok = n_skip = 0
+        for cid, p in stems:
+            name = reg.by_id[cid]["name"]
+            fp = loom_classifier.build_fingerprint(ctx, cid, name, p.read_text())
+            if fp is None:
+                n_skip += 1
+                continue
+            built[cid] = fp
+            n_ok += 1
+        records = sorted(built.values(), key=lambda f: f["client_id"])
+        if not args.dry_run:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(
+                {"_note": "Built by bin/jarvis-loom-fingerprints; reviewable + "
+                          "hand-editable. A client absent here is not "
+                          "vocab-attributable (safe).",
+                 "clients": records}, indent=2, ensure_ascii=False) + "\n")
+        return {"dossiers": len(stems), "built": n_ok, "skipped": n_skip,
+                "total_records": len(records), "dry_run": args.dry_run,
+                "path": str(out_path)}
+
+    result = runner.run_task("jarvis_loom_fingerprints", task, module="system")
+    print(json.dumps({"status": result.status, "metrics": result.metrics}))
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

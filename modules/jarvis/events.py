@@ -56,6 +56,22 @@ def set_excluded(conn: sqlite3.Connection, eid: str, reason: str) -> None:
                  " updated_at=datetime('now') WHERE id=?", (reason, eid))
 
 
+def set_auto_mapped(conn: sqlite3.Connection, eid: str, client_id: str,
+                    confidence: Optional[float], evidence: Optional[str],
+                    by: str) -> None:
+    """A PROVISIONAL, machine-made map (loom classifier high-confidence path).
+    Distinct from a deterministic heal: it writes ONLY the events ledger (state,
+    client_id, provenance) and NEVER touches sources/facts/dossiers, so a model
+    guess can never inject an uncited client-facing fact. `resolved_by` (e.g.
+    'loom_classifier:high') marks it as auto, not human, so it stays reversible
+    and distinguishable from a confirmed map."""
+    conn.execute(
+        "UPDATE events SET state='mapped', client_id=?, proposed_client_id=?,"
+        " proposal_confidence=?, proposal_evidence=?, resolved_by=?,"
+        " resolved_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
+        (client_id, client_id, confidence, evidence, by, eid))
+
+
 def held_for_run(conn: sqlite3.Connection, run_id: Optional[int]) -> list[sqlite3.Row]:
     """This run's events still awaiting a proposer call (state='held')."""
     return conn.execute(
