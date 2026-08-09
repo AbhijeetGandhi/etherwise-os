@@ -54,6 +54,13 @@ class ShadowViolation(Exception):
     """An external write was attempted while the module is in shadow mode."""
 
 
+class MigrationsPending(RuntimeError):
+    """A committed migration was never applied to this DB. Raised at task startup
+    so a rail fails LOUD with the pending list instead of throwing a confusing
+    'no such table' on its first scheduled run (payment-mail hit this: migration
+    023 was committed but the live DB stopped at 022)."""
+
+
 # Transient = worth retrying the whole idempotent task. Budget exceptions are
 # GatewayError but never transient; CreditRouteError already fell back in-gateway.
 _RETRYABLE = (gw.TransientAPIError, ConnectionError, TimeoutError)
@@ -238,6 +245,17 @@ def run_task(task_name: str, fn: Callable[[RunContext], Optional[dict]],
                          shadow=shadow, db_path=db_path)
         _log(task_name, f"run {run_id} started"
              f" ({'shadow' if shadow else 'LIVE'})")
+
+        # Startup guard: a committed migration that was never applied would let a
+        # rail throw a confusing 'no such table' mid-run. Fail loud, once, with
+        # the exact pending list + the apply command instead. Not retryable.
+        pending = db.pending_migrations(db_path)
+        if pending:
+            exc = MigrationsPending(
+                "pending migrations not applied: " + ", ".join(pending)
+                + " — run `PYTHONPATH=. python3 -m core.db`")
+            _fail(db_path, task_name, run_id, started, exc)
+            raise exc
 
         attempt = 0
         while True:

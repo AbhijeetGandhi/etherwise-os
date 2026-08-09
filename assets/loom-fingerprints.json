@@ -6,7 +6,7 @@
       "name": "Horizons ABA",
       "domain": "ABA (Applied Behavior Analysis) therapy practice operations",
       "stack": ["Central Reach", "Google Docs", "Google Sheets", "Gmail", "Fingertrack"],
-      "terms": ["ABA therapy", "BCBA", "session cancellation", "session times", "addendum notes", "supervision", "EOB", "treatment plan", "payer", "technician check-in"],
+      "terms": ["ABA therapy", "BCBA", "RBT", "BT", "registered behavior technician", "RBT course", "RBT training", "session cancellation", "session times", "addendum notes", "supervision", "EOB", "treatment plan", "payer", "technician check-in"],
       "systems": ["Treatment Plan Reviewer", "Technician Check-In workflow", "session-cancellation automation", "payroll export", "Gmail labeling tool", "therapist scheduling UI"],
       "people": ["Alexander Apfel", "Taylor"],
       "source": "seed"
@@ -14,9 +14,9 @@
     {
       "client_id": "adelye",
       "name": "Adelye",
-      "domain": "transport/driver compliance training and course administration",
+      "domain": "transport/driver compliance training and course administration (FORS / CPC / transport certification courses — NOT healthcare/ABA/RBT training)",
       "stack": ["GoCanvas", "Make", "email"],
-      "terms": ["digital register", "course registration", "certificates", "FORS", "CPC", "DFAT defect check", "attendance", "compliance"],
+      "terms": ["FORS", "CPC", "transport certification course", "driver compliance training", "digital register", "course registration", "certificates", "DFAT defect check", "attendance", "compliance"],
       "systems": ["digital register automation", "certificate generation", "defect (DFAT) check automation"],
       "people": ["Chris Cave"],
       "source": "seed"

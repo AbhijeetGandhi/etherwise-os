@@ -341,6 +341,18 @@ JARVIS_IMAP_TIMEOUT_SECONDS = 20
 # imap_rail; NEVER logged, echoed, or placed in a prompt. A missing entry means
 # that inbox is skipped with a clear reason, not a crash.
 GMAIL_APP_PASSWORDS_FILE = CREDENTIALS_DIR / "gmail-app-passwords.json"
+# Personal inboxes have a VERY LOW base rate of client mail (01 is card/finance
+# alerts + newsletters, 02 is largely personal), so UNMATCHED mail from them must
+# default to EXCLUDED, never queued — otherwise the mapping queue fills with
+# hundreds of non-client items and becomes unusable (it jumped to 94 in one live
+# sweep). Only a POSITIVE client signal queues one of these: a deterministic
+# registry match / domain echo, or a proposer attribution naming a registry client
+# at >= JARVIS_IMAP_QUEUE_MIN_CONFIDENCE. A null / low-confidence proposal on a
+# low-base-rate inbox is EXCLUDED (reason 'imap-low-base-rate:no-client-signal'),
+# not queued. contact@ (never in this set) keeps its original behaviour — a null
+# proposal there still queues for human triage, because its base rate is high.
+JARVIS_IMAP_LOW_BASE_RATE_INBOXES = JARVIS_IMAP_INBOXES
+JARVIS_IMAP_QUEUE_MIN_CONFIDENCE = 0.50   # positive-signal bar for a low-base-rate proposal
 # ── Slack rail (J2 rail #1, 2026-08-09) — client workspaces via the browser ───
 # Slack's web client renders BLANK to screenshots but is fully readable via the
 # DOM/accessibility tree, so this rail extracts from the DOM only, never pixels.

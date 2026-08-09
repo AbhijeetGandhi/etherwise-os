@@ -33,6 +33,17 @@ def applied_migrations(conn: sqlite3.Connection) -> set[str]:
     return {r["version"] for r in conn.execute("SELECT version FROM schema_migrations")}
 
 
+def pending_migrations(db_path: Path | None = None) -> list[str]:
+    """On-disk migration versions not yet recorded in schema_migrations, in
+    lexical (apply) order. A committed .sql that was never applied shows up here —
+    the signal the startup guard and the doctor use to fail loud BEFORE a rail
+    throws a confusing 'no such table' on its first scheduled run."""
+    on_disk = [f.stem for f in sorted(MIGRATIONS_DIR.glob("*.sql"))]
+    with connect(db_path) as conn:
+        done = applied_migrations(conn)
+    return [v for v in on_disk if v not in done]
+
+
 def migrate(db_path: Path | None = None) -> list[str]:
     """Apply pending .sql files in lexical order. Returns versions applied."""
     applied: list[str] = []

@@ -170,7 +170,14 @@ def check_db(db_path: Optional[Path] = None) -> list:
                             f"missing tables: {sorted(missing)}" if missing
                             else f"{len(_EXPECTED_TABLES)} ops tables present"))
         n = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-        checks.append(Check("PASS", "migrations", f"{n} applied"))
+    # A committed .sql that was never applied would let a rail throw a confusing
+    # 'no such table' on its first scheduled run (payment-mail hit this — 023 was
+    # committed, the live DB stopped at 022). Fail loud with the pending list.
+    pending = db.pending_migrations(db_path)
+    checks.append(Check("FAIL" if pending else "PASS", "migrations",
+                        f"{n} applied, {len(pending)} PENDING: {pending}"
+                        " — run PYTHONPATH=. python3 -m core.db" if pending
+                        else f"{n} applied, none pending"))
     return checks
 
 

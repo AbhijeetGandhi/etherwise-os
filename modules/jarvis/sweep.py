@@ -46,6 +46,10 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
         token, cursor, max_items=config.JARVIS_SWEEP_MAX_EVENTS,
         _list=list_fn, _meta=meta_fn, _full=full_fn)
 
+    # Personal inboxes (01/02) are low base rate — track their event ids so the
+    # MAP stage can default unmatched mail from them to EXCLUDED, never queued.
+    low_base_rate = set(config.JARVIS_IMAP_LOW_BASE_RATE_INBOXES)
+    low_base_rate_ids: set[str] = set()
     imap_new_cursors, imap_skipped = {}, []
     for ib in imap_inboxes:
         try:
@@ -63,6 +67,8 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             continue
         collected.extend(evs)
         imap_new_cursors[ib] = ncur
+        if ib in low_base_rate:
+            low_base_rate_ids.update(e["id"] for e in evs)
 
     if not collected:
         raise runner.TaskSkip("no new mail since cursor")
@@ -96,18 +102,33 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             still_held.append(ev)
 
     # 3b. PROPOSER (LLM, OUTSIDE the transaction) ──────────────────────────────
+    # contact@ (high base rate) gets the bounded proposer budget FIRST; the
+    # low-base-rate personal inboxes take whatever is left, so their volume can
+    # never starve contact@ of proposer calls.
+    still_held.sort(key=lambda ev: ev["id"] in low_base_rate_ids)
+    min_conf = config.JARVIS_IMAP_QUEUE_MIN_CONFIDENCE
     cand, valid = mapping.candidates(reg), set(reg.ids())
     proposals = []
     for ev in still_held[: config.JARVIS_SWEEP_MAX_PROPOSALS]:
-        proposals.append((ev["id"], mapping.propose(ctx, ev, cand, valid)))
+        proposals.append((ev["id"], ev["id"] in low_base_rate_ids,
+                          mapping.propose(ctx, ev, cand, valid)))
 
     with db.connect(dbp) as conn:
-        queued = 0
-        for eid, p in proposals:
+        queued = imap_excluded = 0
+        for eid, low, p in proposals:
             if p is None:
-                continue                          # stays held -> next sweep
-            events.set_queued(conn, eid, p["proposed_client_id"],
-                              p["confidence"], p["evidence"])
+                continue                          # proposer failed -> stays held
+            pid, conf = p["proposed_client_id"], p["confidence"]
+            # A low-base-rate inbox queues ONLY on a positive client signal (a
+            # proposer id naming a registry client at >= min_conf). No signal =>
+            # EXCLUDED, never queued (keeps the queue from filling with personal /
+            # finance-alert noise). contact@ keeps its original behaviour: even a
+            # null proposal queues for human triage.
+            if low and not (pid is not None and conf >= min_conf):
+                events.set_excluded(conn, eid, "imap-low-base-rate:no-client-signal")
+                imap_excluded += 1
+                continue
+            events.set_queued(conn, eid, pid, conf, p["evidence"])
             queued += 1
         counts = events.counts_by_state(conn, ctx.run_id)
 
@@ -119,12 +140,14 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
                     {"inserted": inserted, "counts": counts})
     ctx.log(f"sweep: collected {len(collected)} (new {inserted}) -> mapped "
             f"{counts['mapped']} queued {counts['queued']} held {counts['held']} "
-            f"excluded {counts['excluded']} | proposer {len(proposals)} | imap "
-            f"inboxes {len(imap_new_cursors)} skipped {len(imap_skipped)}")
+            f"excluded {counts['excluded']} (imap-no-signal {imap_excluded}) | "
+            f"proposer {len(proposals)} | imap inboxes {len(imap_new_cursors)} "
+            f"skipped {len(imap_skipped)}")
     return {"collected": len(collected), "inserted": inserted,
             "mapped": counts["mapped"], "queued": counts["queued"],
             "held": counts["held"], "excluded": counts["excluded"],
             "domain_echoed": echoed, "proposer_calls": len(proposals),
+            "imap_excluded_no_signal": imap_excluded,
             "imap_inboxes": len(imap_new_cursors), "imap_skipped": imap_skipped,
             "reconciled": reconciled}
 
