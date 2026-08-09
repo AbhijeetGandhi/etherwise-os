@@ -1,71 +1,119 @@
-# Finance payment-mail rail — build report (2026-08-09, night shift)
+# Finance payment-mail rail — build + LIVE CALIBRATION report
 
-## What was built
-A read-only rail that reads Wise/Stripe **payment notifications** from inbox 01
-and emits **PROVISIONAL** payment events, so a stale CSV import announces itself
-instead of rendering a confidently-wrong monthly total (the bug that made Adelye
-look delinquent on 2026-08-09 with August revenue shown as $550).
+**Updated:** 2026-08-09 (night shift) — mailbox bug fixed, parsers **live-calibrated
+against real inbox-01 email**, full suite GREEN. `--apply` + plist load still gated
+on Abhijeet (writes the live DB; needs migration 023 applied first).
 
-- `core/migrations/023_provisional_payments.sql` — a table DELIBERATELY separate
-  from `transactions`; doctor/pnl/cash never read it, so a provisional row cannot
-  enter the real ledger and cannot double-count.
-- `modules/finance/payment_mail_rail.py` — pure parsers (Wise + Stripe, regexes
-  isolated in ONE CALIBRATION block), registry-backed attribution, read-only IMAP
-  transport reusing `imap_rail`'s proven substrate, DAL + reconcile + staleness +
-  AR overdue math.
-- `bin/finance-payment-mail` — dry-run (default, read-only), `--apply`,
-  `--reconcile`, `--report`.
-- `core/config.py` — `PAYMENT_MAIL_*` constants, sender allow-list, `PAYER_ALIASES`
-  (billing entity → client slug), one `SOURCES` row (runs-based freshness).
-- `modules/cockpit/data.py` — `money()` gains a `provisional` overlay (staleness
-  banner + unmapped count); never raises, never changes the doctor gate.
-- `launchd/io.etherwise.v3.finance-payment-mail.plist` — **STAGED, NOT LOADED**.
+## What this rail is
+A read-only rail that reads Wise/Stripe **payment notifications** from inbox 01 and
+emits **PROVISIONAL** payment events into their own table (`provisional_payments`),
+so a stale CSV import announces itself instead of rendering a confidently-wrong
+monthly total (the bug that made Adelye look delinquent — Aug revenue shown $550
+while Adelye had paid Aug 7). Provisional rows NEVER enter `transactions`; the CSV
+import stays the only ledger writer. Same "stated vs observed" law as the
+applied-tile contradiction guard.
 
-## Verification (this session, on the Mac)
-- `tests/test_payment_mail_rail.py` — **26 tests GREEN**. Covers: Wise/Stripe
-  parse; sender classify; attribution (4 billing entities + suffix-strip +
-  unknown→None); provisional idempotency; reconcile match/flip; **the cardinal
-  guarantee — a provisional row NEVER enters `transactions`**; unmatched-past-10d
-  surfaced; staleness triggers when email is ahead of ledger and is silent when
-  caught up; confirmed rows drop out of staleness; mapping queue; AR overdue
-  (overdue with no email, NOT overdue when a provisional exists); read-only
-  transport assertion (fake IMAP omitting STORE/EXPUNGE/APPEND/COPY); InboxSkip.
-- **Full suite: 877 GREEN** (851 prior + 26). Migration 023 is additive; the
-  float-ban and no-double-count invariants hold.
+## The mailbox bug (root cause, fixed)
+`--days 3` returned **"0 payment notification(s) parsed, 0 unparseable"** even
+though Adelye's "just paid you" email arrived Aug 7. Cause: the rail selected
+`imap_rail.MAILBOX = "INBOX"`, but **Wise/Stripe notifications are archived, not in
+INBOX** — a read-only probe found the payment mail only under All Mail, none in
+INBOX. Fix:
+- Mailbox is now **per-rail**: `imap_rail._uidvalidity(client, mailbox)` takes the
+  mailbox; the jarvis client-mail rail keeps INBOX (unread client mail), the
+  payment rail reads `config.PAYMENT_MAIL_MAILBOX = '"[Gmail]/All Mail"'`.
+- The name is **quoted** — imaplib does not quote a mailbox itself, so the space in
+  `[Gmail]/All Mail` makes an unquoted SELECT/EXAMINE a `BAD Could not parse
+  command` (verified by inspecting `imaplib.IMAP4._command`).
 
-## The 60-day live report — PENDING one calibration run (read-only)
-The live 60-day scan needs the real inbox 01 over IMAP, which is not reachable
-from the headless build env; and the parser CALIBRATION block is built to the
-documented notification format but not yet calibrated against a real Wise/Stripe
-email. So the report GENERATOR is built and tested, but the live figures await
-one hands-on run on the Mac:
+## Live calibration — 3 things that could NOT be assumed (all found + fixed live)
+Read-only probe (EXAMINE + BODY.PEEK) against real inbox-01 mail:
+1. **Real Wise amount format** is `"You received 682.50 USD from <payer>"` —
+   amount-**then**-currency, and integers carry comma thousands (`"1,615 USD"`). The
+   documented `"USD 3,500.00"` form was wrong-order. Wise emails are **HTML-only**
+   (no text/plain), so the ~1 KB inline `<style>` CSS block leaked into the body
+   text; the Wise amount patterns are now **anchored to "received"** and a
+   payment-rail body cleaner strips `<style>/<script>/<head>` first.
+2. **Stripe is EUR, not USD, and German uses comma-decimal.** Real receipts:
+   English `"Amount paid €0.00"` and German `"Betrag 0,00 €"` / line items
+   `"349,00 €"`. The old parser defaulted currency to USD and would have read
+   German `349,00` as `34900.00`. Now: currency comes from the €/£/$/₹ symbol or ISO
+   code (never a default); `_to_minor` is locale-aware (US `3,500.00` AND German
+   `1.234,56` / `349,00`); the German subject `"Ihr Zahlungsbeleg [#…] von
+   <merchant>"` is parsed (merchant after "von").
+3. **Two live bugs the calibration run itself exposed:**
+   - Over All Mail the SEARCH was unfiltered (SINCE only) → a bounded fetch reached
+     only the mailbox's **oldest** mail (June 2) and never the recent payments.
+     Fixed: the IMAP SEARCH is now **filtered to the payment senders** (nested `OR
+     FROM` chain), so the candidate set is tens, not the whole mailbox.
+   - Currency read as **"QUE"** on one receipt: under `re.I`, `[A-Z]{3}` grabbed
+     "Que" from a trailing "**Que**stions?" and overrode the real `€`. Currency
+     codes are now case-sensitive (`(?-i:[A-Z]{3})`).
 
-```
-PYTHONPATH=. /usr/bin/python3 bin/finance-payment-mail            # dry-run: see what parses, calibrate the regexes
-PYTHONPATH=. /usr/bin/python3 bin/finance-payment-mail --report   # writes the 60-day table here
-PYTHONPATH=. /usr/bin/python3 bin/finance-payment-mail --apply    # store provisional + reconcile (module='system', local-only)
-```
+## Guardrail (learned the hard way — a 60-day fetch wedged twice at 0% CPU)
+Every `collect()` now has a **wall-clock cap** (`PAYMENT_MAIL_MAX_SECONDS = 90`):
+past the cap the loop stops and the cursor advances only over what was processed
+(oldest-first), so a slow mailbox **degrades** (partial, resumes next run) instead
+of hanging the sweep. `--max` bounds the fetch on every path (dry-run/apply/report).
+The subject-gate also means non-payment senders never trigger a body fetch.
 
-### What it is designed to surface (from tonight's manual finding)
-Once run, the report will list every parsed notification and flag the ones **ahead
-of the ledger** (in email, not yet imported). Tonight's hand-check that motivated
-the rail:
-- **Adelye — paid Aug 7** — real money, absent from the ledger only because the
-  Wise CSV was not imported. The rail will emit a provisional `adelye` row dated
-  2026-08-07 → staleness banner fires; AR stops flagging Adelye as overdue.
-- **Hermon** — last paid **Jul 15** (Consulting Systems B.V.) — genuinely overdue
-  (~24d on Aug 9), confirmed by the ABSENCE of any newer notification. AR flags it.
-- **Horizons** — last paid **Jul 3** — genuinely overdue (~36d). AR flags it.
+## LIVE 70-day dry-run (read-only, on the Mac — nothing stored)
+`bin/finance-payment-mail --days 70 --max 400` → **19 parsed (16 Wise + 3 Stripe),
+0 unparseable.** All 19 attributed to the right client; every Wise marketing /
+"Your money's been sent" / e-FIRC mail was **skipped, not quarantined**. Ledger
+newest income = 2026-08-05, so **1 payment is ahead of the ledger**:
 
-The distinction the rail encodes: a client with a provisional email payment is
-"paid, awaiting import" (not overdue); a client with neither email nor ledger is
-genuinely overdue. That is the "stated vs observed" law applied to money-in.
+| provider | client | amount | paid | in ledger? |
+|---|---|---|---|---|
+| wise | hermon | USD 2320.00 | 2026-06-02 | yes/older |
+| wise | horizons-aba | USD 2354.00 | 2026-06-05 | yes/older |
+| stripe | beglaubigt | EUR 0.00 | 2026-06-09 | yes/older |
+| wise | hermon | USD 2615.00 | 2026-06-10 | yes/older |
+| stripe | beglaubigt | EUR 0.00 | 2026-06-11 | yes/older |
+| wise | adelye | USD 877.50 | 2026-06-12 | yes/older |
+| wise | cmf-publishing | USD 2382.60 | 2026-06-15 | yes/older |
+| wise | horizons-aba | USD 2497.00 | 2026-06-19 | yes/older |
+| stripe | beglaubigt | EUR 0.00 | 2026-06-22 | yes/older |
+| wise | adelye | USD 812.50 | 2026-06-26 | yes/older |
+| wise | cmf-publishing | USD 1563.70 | 2026-06-30 | yes/older |
+| wise | hermon | USD 2820.75 | 2026-07-01 | yes/older |
+| wise | horizons-aba | USD 2406.80 | 2026-07-03 | yes/older |
+| wise | adelye | USD 1007.50 | 2026-07-12 | yes/older |
+| wise | hermon | USD 2975.00 | 2026-07-15 | yes/older |
+| wise | adelye | USD 1235.00 | 2026-07-24 | yes/older |
+| wise | cmf-publishing | USD 1615.00 | 2026-07-31 | yes/older |
+| wise | cmf-publishing | USD 1626.40 | 2026-07-31 | yes/older |
+| **wise** | **adelye** | **USD 682.50** | **2026-08-07** | **NO — awaiting import** |
 
-## Open for Abhijeet (all reversible; see BUILD_BRIEF ◆ block)
-1. The 4 spec defaults taken (AskUserQuestion didn't register): separate table;
-   staleness = banner+caveat (not hard-block); build both Wise+Stripe parsers;
-   reconcile window = 10d.
-2. **One live calibration** of the CALIBRATION regex block against a real Wise and
-   a real Stripe email in inbox 01, THEN load the staged plist.
-3. Stripe redundancy: Beglaubigt is already on the daily `finance_stripe` rail, so
-   Stripe email events will usually confirm-match fast — keep, or drop Stripe email?
+Notes:
+- **Adelye Aug-7 $682.50** is the flagship: real money, not yet in the ledger →
+  staleness banner fires, AR stops flagging Adelye overdue. (The ledger has since
+  caught up to Aug-5, so this is now the single stale row, not the whole month.)
+- **CMF twice on Jul-31** ($1,615.00 and $1,626.40) are **distinct payments**
+  (different amounts), correctly kept as two rows via Message-ID canonical keys.
+- The 3 Stripe rows are **€0.00** (fully-discounted Beglaubigt receipts) — parsed
+  correctly but not real money-in; Beglaubigt is also on the daily `finance_stripe`
+  rail (redundancy Q still open).
+
+The `--report` generator writes the same table to the workspace `reports/`
+(`parents[2]`, the convention shared by all finance report bins); this file is the
+tracked build report.
+
+## Tests
+`tests/test_payment_mail_rail.py` — **39 tests GREEN** (26 prior + 13 new): real
+Wise amount-then-currency + integer thousands; Wise outgoing "money's been sent" is
+NOT a payment; Stripe EUR (English + German comma-decimal + German subject + €0.00);
+currency never captured from a trailing word ("Que"); locale-aware `_to_minor`;
+allow-listed marketing is skipped not quarantined; payment-subject-but-no-amount is
+surfaced; mailbox is the configured quoted All Mail; sender-filtered OR-search; the
+wall-clock cap bounds the fetch. **Full suite: 917 GREEN.**
+
+## Open for Abhijeet (all reversible)
+1. **`--apply` + load the plist is still gated on you** — it writes the live DB.
+   Prereq: apply migration 023 (`PYTHONPATH=. /usr/bin/python3 -m core.db`), then
+   `bin/finance-payment-mail --apply`, then load
+   `launchd/io.etherwise.v3.finance-payment-mail.plist`.
+2. Stripe redundancy — Beglaubigt is already on the daily `finance_stripe` rail;
+   keep the Stripe-email cross-check or drop it?
+3. 4 spec defaults unchanged (separate table; staleness banner not hard-block; both
+   parsers; reconcile window 10d).

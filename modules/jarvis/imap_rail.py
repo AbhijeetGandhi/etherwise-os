@@ -67,8 +67,8 @@ def _connect(host: str, inbox: str, password: str,
     return client
 
 
-def _uidvalidity(client) -> int:
-    typ, data = client.status(MAILBOX, "(UIDVALIDITY)")
+def _uidvalidity(client, mailbox: str = MAILBOX) -> int:
+    typ, data = client.status(mailbox, "(UIDVALIDITY)")
     raw = data[0].decode() if data and isinstance(data[0], bytes) else str(
         data[0] if data else "")
     m = re.search(r"UIDVALIDITY\s+(\d+)", raw)

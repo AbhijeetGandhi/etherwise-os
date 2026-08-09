@@ -67,6 +67,96 @@ class ParseStripe(unittest.TestCase):
         self.assertEqual(p["canonical_key"], "stripe-email:s1")
 
 
+# ── REAL observed formats (calibrated live against inbox 01, 2026-08-09) ───────
+# Wise incoming payments are HTML-only; the amount reads "You received <amt> <CUR>
+# from <payer>", amount-then-currency, and can be an integer with comma thousands.
+WISE_REAL_SUBJECT = "Adelye Ltd just paid you"
+WISE_REAL_BODY = "Hi Abhijeet You received 682.50 USD from Adelye Ltd. Amount received: 682.50 USD"
+WISE_REAL_INT_SUBJECT = "CMF Publishing just paid you"
+WISE_REAL_INT_BODY = "You received 1,615 USD from CMF Publishing. Amount received: 1,615 USD"
+# Wise OUTGOING transfer — NOT an incoming payment; its body carries fee amounts.
+WISE_SENT_SUBJECT = "Your money's been sent (#2282075707)"
+WISE_SENT_BODY = "The rate was 1 USD = 95.5862 INR, and our fee was 32.76 USD."
+# Stripe receipts (Beglaubigt.de) are EUR. English + German (comma-decimal).
+STRIPE_EN_SUBJECT = "Your receipt from Beglaubigt.de #2064-5383"
+STRIPE_EN_BODY = "Receipt from Beglaubigt.de Total €989.35 Amount paid €989.35"
+STRIPE_DE_SUBJECT = "Ihr Zahlungsbeleg [#1587-5799] von Beglaubigt.de"
+STRIPE_DE_BODY = ("Zahlungsbeleg von Beglaubigt.de\nBetrag\n349,00 €\n\n"
+                  "- Holding-Paket: Standard × 1 : 349,00 €\n- Betrag : 349,00 €")
+
+
+class ParseRealFormats(unittest.TestCase):
+    def test_wise_amount_then_currency(self):
+        p = rail.parse_wise(WISE_REAL_SUBJECT, WISE_REAL_BODY, native_id="r1",
+                            email_date="2026-08-07T18:07:53+00:00")
+        self.assertEqual(p["amount_minor"], 68250)           # 682.50 USD
+        self.assertEqual(p["currency"], "USD")
+        self.assertEqual(p["payer"], "Adelye Ltd")
+        self.assertEqual(p["paid_date"], "2026-08-07")
+
+    def test_wise_integer_with_comma_thousands(self):
+        p = rail.parse_wise(WISE_REAL_INT_SUBJECT, WISE_REAL_INT_BODY, native_id="r2")
+        self.assertEqual(p["amount_minor"], 161500)          # 1,615 USD -> $1,615.00
+        self.assertEqual(p["currency"], "USD")
+        self.assertEqual(p["payer"], "CMF Publishing")
+
+    def test_wise_outgoing_transfer_is_not_a_payment(self):
+        self.assertIsNone(rail.parse_wise(WISE_SENT_SUBJECT, WISE_SENT_BODY, native_id="r3"))
+
+    def test_stripe_english_is_eur_not_usd(self):
+        p = rail.parse_stripe(STRIPE_EN_SUBJECT, STRIPE_EN_BODY, native_id="r4")
+        self.assertEqual(p["currency"], "EUR")
+        self.assertEqual(p["amount_minor"], 98935)           # EUR 989.35
+        self.assertEqual(p["payer"], "Beglaubigt.de")
+
+    def test_stripe_german_subject_and_comma_decimal(self):
+        p = rail.parse_stripe(STRIPE_DE_SUBJECT, STRIPE_DE_BODY, native_id="r5")
+        self.assertEqual(p["payer"], "Beglaubigt.de")        # from "... von Beglaubigt.de"
+        self.assertEqual(p["currency"], "EUR")
+        self.assertEqual(p["amount_minor"], 34900)           # 349,00 -> EUR 349.00, NOT 34900.00
+
+    def test_stripe_currency_not_captured_from_trailing_word(self):
+        # LIVE body ends "... Amount paid €0.00 Questions? Visit ...": the currency
+        # must be the € symbol, never "Que" from "Questions" (re.I + [A-Z]{3} bug).
+        body = "Total €0.00 Amount paid €0.00 Questions? Visit our support site"
+        p = rail.parse_stripe("Your receipt from Beglaubigt.de #9", body, native_id="q1")
+        self.assertEqual(p["currency"], "EUR")
+        self.assertEqual(p["amount_minor"], 0)
+
+    def test_german_zero_receipt_parses_as_zero(self):
+        body = "Zahlungsbeleg von Beglaubigt.de\nBetrag\n0,00 €"
+        p = rail.parse_stripe("Ihr Zahlungsbeleg [#9] von Beglaubigt.de", body, native_id="r6")
+        self.assertEqual(p["amount_minor"], 0)
+        self.assertEqual(p["currency"], "EUR")
+
+
+class LocaleAmount(unittest.TestCase):
+    def test_us_and_german_number_formats(self):
+        self.assertEqual(rail._to_minor("3,500.00"), 350000)   # US: comma thousands, dot decimal
+        self.assertEqual(rail._to_minor("1,615"), 161500)      # US integer thousands
+        self.assertEqual(rail._to_minor("682.50"), 68250)      # plain dot decimal
+        self.assertEqual(rail._to_minor("349,00"), 34900)      # German comma decimal
+        self.assertEqual(rail._to_minor("1.234,56"), 123456)   # German dot thousands, comma decimal
+        self.assertEqual(rail._to_minor("0,00"), 0)
+
+
+class SenderSearch(unittest.TestCase):
+    def test_or_chain_covers_every_provider_domain(self):
+        # All Mail is huge; the IMAP SEARCH MUST filter to payment senders or a
+        # bounded fetch only ever reaches the mailbox's oldest mail (the live bug:
+        # an unfiltered SINCE search never reached the recent Wise payments).
+        terms = rail._sender_or_terms(
+            {"wise": ("wise.com", "transferwise.com"), "stripe": ("stripe.com",)})
+        self.assertEqual(terms.count("FROM"), 3)             # one FROM per domain
+        for d in ("wise.com", "transferwise.com", "stripe.com"):
+            self.assertIn(d, terms)
+        self.assertEqual(terms.count("OR"), 2)               # N-1 ORs = valid nested chain
+
+    def test_single_domain_needs_no_or(self):
+        terms = rail._sender_or_terms({"wise": ("wise.com",)})
+        self.assertEqual(terms, ["FROM", "wise.com"])
+
+
 class SenderClassify(unittest.TestCase):
     def test_provider_for_allowlist(self):
         self.assertEqual(rail.provider_for("noreply@wise.com"), "wise")
@@ -236,12 +326,16 @@ class FakeIMAP:
     def __init__(self, messages):
         self.messages = messages            # {uid: {"headers": bytes, "body": bytes}}
         self.selected_readonly = None
+        self.selected_mailbox = None
+        self.status_mailbox = None
 
     def select(self, mailbox, readonly=False):
         self.selected_readonly = readonly
+        self.selected_mailbox = mailbox
         return ("OK", [b"1"])
 
     def status(self, mailbox, spec):
+        self.status_mailbox = mailbox
         return ("OK", [b"INBOX (UIDVALIDITY 42)"])
 
     def uid(self, command, *args):
@@ -283,15 +377,62 @@ class Transport(unittest.TestCase):
         self.assertEqual(parsed[0]["amount_minor"], 350000)
         self.assertTrue(cursor.startswith("42:"))
 
-    def test_allowlisted_but_unparseable_becomes_unparsed_not_dropped(self):
+    def test_payment_subject_but_no_amount_becomes_unparsed_not_dropped(self):
+        # a real payment SUBJECT whose body carries no extractable amount must be
+        # surfaced (quarantined), never silently dropped
         msgs = {1: self._msg("Wise <noreply@wise.com>",
-                             "Your monthly statement", "no payment here", "m9")}
+                             "Adelye Ltd just paid you", "the amount is missing", "m9")}
         fake = FakeIMAP(msgs)
         events, _ = rail.collect(
             "abhijeetgandhi01@gmail.com", None, max_items=50, first_fetch_days=60,
             conn_factory=lambda *a, **k: fake, pw_fn=lambda inbox: "app-pw")
         self.assertEqual(len(events), 1)
         self.assertTrue(events[0]["_unparsed"])
+
+    def test_allowlisted_marketing_is_skipped_not_quarantined(self):
+        # Wise sends heaps of marketing/statement mail from allow-listed domains;
+        # a non-payment SUBJECT must be skipped entirely (not quarantined as noise)
+        msgs = {
+            1: self._msg("Wise Business <noreply@info.wise.com>",
+                         "Superpower your account with Xero, FreeAgent and more",
+                         "marketing body", "mk1"),
+            2: self._msg("Wise <noreply@wise.com>",
+                         "Your money's been sent (#2282075707)",
+                         "The rate was 1 USD = 95.5862 INR, our fee was 32.76 USD.", "mk2"),
+        }
+        fake = FakeIMAP(msgs)
+        events, _ = rail.collect(
+            "abhijeetgandhi01@gmail.com", None, max_items=50, first_fetch_days=60,
+            conn_factory=lambda *a, **k: fake, pw_fn=lambda inbox: "app-pw")
+        self.assertEqual(events, [])          # nothing parsed, nothing quarantined
+
+    def test_selects_the_configured_all_mail_mailbox_quoted(self):
+        # payer notifications are ARCHIVED, not in INBOX; the payment rail must
+        # select All Mail, and the space-bearing name must be quoted (imaplib
+        # does not quote it — an unquoted SELECT is a BAD parse error)
+        fake = FakeIMAP({})
+        rail.collect("abhijeetgandhi01@gmail.com", None, max_items=1,
+                     first_fetch_days=60, conn_factory=lambda *a, **k: fake,
+                     pw_fn=lambda inbox: "app-pw")
+        self.assertEqual(fake.selected_mailbox, config.PAYMENT_MAIL_MAILBOX)
+        self.assertEqual(fake.status_mailbox, config.PAYMENT_MAIL_MAILBOX)
+        self.assertEqual(config.PAYMENT_MAIL_MAILBOX, '"[Gmail]/All Mail"')
+
+    def test_wall_clock_cap_bounds_the_fetch(self):
+        # a slow mailbox must DEGRADE, not hang: once the wall-clock cap is passed
+        # the loop stops instead of pulling every remaining message
+        msgs = {i: self._msg("Wise <noreply@wise.com>",
+                             f"Client{i} Ltd just paid you",
+                             "You received 100.00 USD", f"m{i}") for i in range(1, 6)}
+        fake = FakeIMAP(msgs)
+        # clock jumps past the 5s cap on the 3rd read -> at most 2 processed
+        ticks = iter([0, 1, 2, 99, 99, 99, 99, 99, 99])
+        events, _ = rail.collect(
+            "abhijeetgandhi01@gmail.com", None, max_items=50, first_fetch_days=60,
+            max_seconds=5, clock=lambda: next(ticks),
+            conn_factory=lambda *a, **k: fake, pw_fn=lambda inbox: "app-pw")
+        parsed = [e for e in events if not e.get("_unparsed")]
+        self.assertLess(len(parsed), 5)       # degraded, did not process all 5
 
     def test_missing_app_password_is_inbox_skip(self):
         with self.assertRaises(rail.InboxSkip):

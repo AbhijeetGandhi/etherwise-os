@@ -66,7 +66,8 @@ def dry_run(days: int, max_items: int) -> int:
     print(f"payment-mail DRY-RUN (read-only, no store) — {inbox}, last {days}d")
     try:
         events, cursor = rail.collect(inbox, None, max_items=max_items,
-                                      first_fetch_days=days)
+                                      first_fetch_days=days,
+                                      max_seconds=config.PAYMENT_MAIL_MAX_SECONDS)
     except rail.InboxSkip as skip:
         print(f"  SKIPPED ({skip}) — no app password configured")
         return 0
@@ -102,7 +103,8 @@ def apply_run() -> int:
         try:
             events, new_cursor = rail.collect(
                 inbox, cursor, max_items=config.PAYMENT_MAIL_MAX_ITEMS,
-                first_fetch_days=config.PAYMENT_MAIL_FIRST_FETCH_DAYS)
+                first_fetch_days=config.PAYMENT_MAIL_FIRST_FETCH_DAYS,
+                max_seconds=config.PAYMENT_MAIL_MAX_SECONDS)
         except rail.InboxSkip as skip:
             raise runner.TaskSkip(str(skip))
 
@@ -160,14 +162,15 @@ def reconcile_only() -> int:
     return 0
 
 
-def report(days: int) -> int:
-    """Read-only 60-day sweep -> markdown: what the notifications produce and
+def report(days: int, max_items: int) -> int:
+    """Read-only N-day sweep -> markdown: what the notifications produce and
     which payments are in email but missing from the ledger. Stores nothing."""
     reg = _reg()
     inbox = config.PAYMENT_MAIL_INBOX
     try:
-        events, _ = rail.collect(inbox, None, max_items=config.PAYMENT_MAIL_MAX_ITEMS,
-                                 first_fetch_days=days)
+        events, _ = rail.collect(inbox, None, max_items=max_items,
+                                 first_fetch_days=days,
+                                 max_seconds=config.PAYMENT_MAIL_MAX_SECONDS)
     except rail.InboxSkip as skip:
         print(f"SKIPPED ({skip})")
         return 0
@@ -213,7 +216,7 @@ def main() -> int:
     if args.reconcile:
         return reconcile_only()
     if args.report:
-        return report(args.days or config.PAYMENT_MAIL_FIRST_FETCH_DAYS)
+        return report(args.days or config.PAYMENT_MAIL_FIRST_FETCH_DAYS, args.max)
     return dry_run(args.days or config.PAYMENT_MAIL_FIRST_FETCH_DAYS, args.max)
 
 

@@ -253,6 +253,12 @@ STRIPE_DEFAULT_CLIENT = "Optimize IS"
 # of rendering a confidently-wrong monthly total. Never writes `transactions`,
 # never sends. See modules/finance/payment_mail_rail.py.
 PAYMENT_MAIL_INBOX = "abhijeetgandhi01@gmail.com"
+# Wise/Stripe payment notifications are ARCHIVED, not left in INBOX, so this rail
+# reads All Mail (INBOX returns zero payment mail — the bug this rail was silently
+# hitting). The name MUST stay quoted: imaplib does not quote a mailbox itself, so
+# the space in "[Gmail]/All Mail" would make SELECT/EXAMINE a BAD parse error. The
+# jarvis client-mail rail keeps its own INBOX (unread client mail); this is per-rail.
+PAYMENT_MAIL_MAILBOX = '"[Gmail]/All Mail"'
 # Sender allow-list per provider (bare domains or full addresses; matched on the
 # address, its domain, or a parent domain). Only these are parsed by this rail.
 PAYMENT_MAIL_SENDERS = {
@@ -261,6 +267,10 @@ PAYMENT_MAIL_SENDERS = {
 }
 PAYMENT_MAIL_FIRST_FETCH_DAYS = 60      # cold start window (the 60-day report needs it)
 PAYMENT_MAIL_MAX_ITEMS = 400            # per-inbox per-run bound
+PAYMENT_MAIL_MAX_SECONDS = 90           # wall-clock cap per collect: a slow All Mail
+                                        # mailbox DEGRADES (partial, cursor advances)
+                                        # instead of hanging the run (a 60-day fetch
+                                        # wedged twice at 0% CPU before this guard)
 PAYMENT_MAIL_RECONCILE_WINDOW_DAYS = 10  # unmatched-past-this -> surfaced loudly (weekly cadence + buffer)
 PAYMENT_MAIL_AMOUNT_TOLERANCE_MINOR = 100  # $1.00 — provider fee/rounding slack when matching a ledger twin
 # Billing entity (payer name on the notification) -> client_id (registry slug).

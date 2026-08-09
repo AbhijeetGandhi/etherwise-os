@@ -24,9 +24,11 @@ network; the transport is the only injectable side.
 """
 from __future__ import annotations
 
+import html as _html
 import re
+import time
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from email.utils import parseaddr
 from typing import Callable, Optional
@@ -44,49 +46,71 @@ from modules.jarvis import imap_rail
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Wise incoming-payment subjects. Group 'payer' = who paid. Order matters (first
-# match wins); keep the documented "<Payer> just paid you" first.
+# match wins). LIVE-OBSERVED (inbox 01): "<Payer> just paid you" (Adelye/CMF). The
+# outgoing "Your money's been sent (#...)" is DELIBERATELY not here — it is money
+# Abhijeet SENT (its body carries fee amounts that would misread as income).
 WISE_SUBJECT_PATTERNS = (
     re.compile(r"^(?P<payer>.+?)\s+just paid you\b", re.I),
     re.compile(r"^(?P<payer>.+?)\s+just sent you\b", re.I),
     re.compile(r"^(?P<payer>.+?)\s+sent you money\b", re.I),
     re.compile(r"^You(?:'ve| have) (?:been paid|received)\b", re.I),  # no payer in subject
 )
-# Amount + currency anywhere in the body. Supports 'USD 3,500.00', '3,500.00 USD',
-# '$3,500.00'. Group 'cur' optional (defaults USD), 'amt' is the number.
-_MONEY = r"(?P<amt>\d[\d,]*(?:\.\d{1,2})?)"
-_CUR3 = r"(?P<cur>[A-Z]{3})"
+# Amount + currency. 'amt' is the number (US "3,500.00"/"1,615" OR German
+# "349,00"/"1.234,56" — _to_minor disambiguates); 'cur' a 3-letter code, 'sym' a
+# symbol. LIVE Wise reads "You received 682.50 USD from <payer>" (amount-then-CUR,
+# and integers with comma thousands like "1,615 USD"), so the amount is ANCHORED to
+# "received" first — the Wise HTML is huge and unanchored scanning risks CSS noise.
+_MONEY = r"(?P<amt>\d[\d.,]*\d|\d)"   # digit-bounded: a trailing sentence period is NOT swallowed
+# case-sensitive even under re.I: a real ISO code is uppercase. Without (?-i:...)
+# a re.I amount pattern grabs "Que" from a trailing "Questions?" as the currency.
+_CUR3 = r"(?P<cur>(?-i:[A-Z]{3}))"
+_SYM = r"(?P<sym>[$£€₹])"
 WISE_AMOUNT_PATTERNS = (
-    re.compile(rf"{_CUR3}\s*{_MONEY}"),
+    re.compile(rf"received[:\s]+{_MONEY}\s*{_CUR3}", re.I),   # "You received 682.50 USD"
+    re.compile(rf"received[:\s]+{_CUR3}\s*{_MONEY}", re.I),   # documented "received USD 3,500.00"
+    re.compile(rf"{_CUR3}\s*{_MONEY}"),                       # generic fallbacks
     re.compile(rf"{_MONEY}\s*{_CUR3}"),
-    re.compile(rf"[$£€]\s*{_MONEY}"),
+    re.compile(rf"{_SYM}\s*{_MONEY}"),
 )
-# A payer named in the Wise BODY ("received a payment from <name>") when the
-# subject form carried none. The terminator deliberately does NOT include a bare
-# period, so a company name with internal dots ("Consulting Systems B.V.") is not
-# truncated at "B."; it stops at " of "/" on "/comma/newline/end.
-WISE_BODY_PAYER = re.compile(
-    r"(?:payment|money)\s+from\s+(?P<payer>[A-Za-z0-9&.'\- ]{2,60}?)"
-    r"\s*(?:\s+of\b|\s+on\b|,|\n|$)", re.I)
+# A payer named in the Wise BODY when the subject carried none. LIVE form is
+# "You received 682.50 USD from <payer>"; the documented form is "a payment from
+# <name>". The terminator excludes a bare period so "Consulting Systems B.V." is
+# not truncated at "B."; it stops at " of "/" on "/comma/newline/end.
+_PAYER = r"(?P<payer>[A-Za-z0-9&.'\- ]{2,60}?)\s*(?:\s+of\b|\s+on\b|,|\n|$)"
+WISE_BODY_PAYER = (
+    re.compile(rf"received\s+[\d.,]+\s*[A-Z]{{3}}\s+from\s+{_PAYER}", re.I),
+    re.compile(rf"(?:payment|money)\s+from\s+{_PAYER}", re.I),
+)
 
-# Stripe receipt/notification (Beglaubigt.de). 'Receipt from <merchant>' names the
-# business; 'Amount paid <amt>' carries the money.
+# Stripe receipt/notification (Beglaubigt.de). LIVE: English "Your receipt from
+# <merchant> #..." AND German "Ihr Zahlungsbeleg [#...] von <merchant>". The
+# merchant is the payer.
 STRIPE_SUBJECT_PATTERNS = (
     re.compile(r"Receipt from\s+(?P<payer>.+?)(?:\s*[\[#(]|$)", re.I),
+    re.compile(r"Zahlungsbeleg\b.*?\bvon\s+(?P<payer>.+?)(?:\s*[\[#(]|$)", re.I),
     re.compile(r"Your\s+(?P<payer>.+?)\s+receipt\b", re.I),
     re.compile(r"(?P<payer>.+?)\s+payment (?:received|confirmation)\b", re.I),
 )
+# LIVE Stripe amounts are EUR: English "Amount paid €989.35"; German "Betrag\n
+# 349,00 €" (label, then comma-decimal amount, symbol after). Currency comes from
+# the symbol/code, never a default (the old default-USD misread every EUR receipt).
 STRIPE_AMOUNT_PATTERNS = (
-    re.compile(rf"Amount paid\s*[:\-]?\s*[$£€]?\s*{_MONEY}\s*{_CUR3}?", re.I),
-    re.compile(rf"[$£€]\s*{_MONEY}"),
+    re.compile(rf"Amount paid\s*[:\-]?\s*{_SYM}?\s*{_MONEY}\s*{_CUR3}?", re.I),
+    re.compile(rf"Betrag\s*[:\s]*{_MONEY}\s*{_SYM}", re.I),   # German
+    re.compile(rf"{_SYM}\s*{_MONEY}"),
+    re.compile(rf"{_MONEY}\s*{_SYM}"),
     re.compile(rf"{_CUR3}\s*{_MONEY}"),
 )
-STRIPE_BODY_MERCHANT = re.compile(r"Receipt from\s+(?P<payer>[^\n<]{2,60})", re.I)
+STRIPE_BODY_MERCHANT = (
+    re.compile(r"Receipt from\s+(?P<payer>[^\n<#]{2,60})", re.I),
+    re.compile(r"Zahlungsbeleg\s+von\s+(?P<payer>[^\n<#]{2,60})", re.I),
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # end CALIBRATION BLOCK
 # ══════════════════════════════════════════════════════════════════════════════
 
-SYMBOL_CUR = {"$": "USD", "£": "GBP", "€": "EUR"}
+SYMBOL_CUR = {"$": "USD", "£": "GBP", "€": "EUR", "₹": "INR"}
 
 
 class InboxSkip(Exception):
@@ -130,10 +154,43 @@ def attribute(payer: Optional[str], reg=None) -> Optional[str]:
 
 # ── pure parsers ──────────────────────────────────────────────────────────────
 def _to_minor(amt: str) -> Optional[int]:
+    """Amount string -> integer minor units, tolerant of BOTH number locales the
+    providers actually emit: US/UK "3,500.00" / "1,615" (comma thousands, dot
+    decimal) AND German "349,00" / "1.234,56" (dot thousands, comma decimal). The
+    decimal separator is the RIGHTMOST of '.'/','; a lone comma is a decimal only
+    when exactly two digits trail it (so "1,615" stays 1615, "349,00" is 349.00)."""
+    s = (amt or "").strip()
+    if not s:
+        return None
+    has_dot, has_comma = "." in s, "," in s
+    if has_dot and has_comma:
+        if s.rfind(",") > s.rfind("."):                  # German: dot thousands, comma decimal
+            s = s.replace(".", "").replace(",", ".")
+        else:                                            # US: comma thousands, dot decimal
+            s = s.replace(",", "")
+    elif has_comma:
+        parts = s.split(",")
+        if len(parts) == 2 and len(parts[1]) == 2:       # "349,00" -> decimal
+            s = s.replace(",", ".")
+        else:                                            # "1,615" / "1,234,567" -> thousands
+            s = s.replace(",", "")
     try:
-        return money.to_minor(amt.replace(",", ""))
+        return money.to_minor(s)
     except Exception:                                    # noqa: BLE001 — bad number
         return None
+
+
+def _currency_of(m) -> str:
+    """The currency for an amount match: a named 3-letter code wins, else the
+    symbol (named 'sym' group or any symbol inside the match), else USD."""
+    cur = m.groupdict().get("cur")
+    if cur:
+        return cur.upper()
+    sym = m.groupdict().get("sym")
+    if not sym:
+        found = re.search(r"[$£€₹]", m.group(0))
+        sym = found.group(0) if found else None
+    return SYMBOL_CUR.get(sym, "USD")
 
 
 def _find_amount(body: str, patterns) -> tuple[Optional[int], Optional[str]]:
@@ -144,10 +201,7 @@ def _find_amount(body: str, patterns) -> tuple[Optional[int], Optional[str]]:
         minor = _to_minor(m.group("amt"))
         if minor is None:
             continue
-        cur = m.groupdict().get("cur")
-        if not cur:                                      # symbol form ($/£/€) -> map the leading symbol
-            cur = SYMBOL_CUR.get(m.group(0)[0], "USD")
-        return minor, cur.upper()
+        return minor, _currency_of(m)
     return None, None
 
 
@@ -155,49 +209,66 @@ def _date_only(iso: Optional[str]) -> Optional[str]:
     return iso[:10] if iso else None
 
 
+# Wise subjects are anchored at the start (payer leads), Stripe subjects are found
+# anywhere ("Your receipt from ...", "Ihr Zahlungsbeleg ... von ..."). The subject
+# match ALSO gates whether an allow-listed sender is even a payment: a Wise
+# marketing/statement mail matches nothing, so it is skipped, never quarantined.
+_SUBJECT = {
+    "wise": (WISE_SUBJECT_PATTERNS, False),      # (patterns, use_search)
+    "stripe": (STRIPE_SUBJECT_PATTERNS, True),
+}
+_BODY_PAYER = {"wise": WISE_BODY_PAYER, "stripe": STRIPE_BODY_MERCHANT}
+_AMOUNT = {"wise": WISE_AMOUNT_PATTERNS, "stripe": STRIPE_AMOUNT_PATTERNS}
+
+
+def _subject_payer(provider: str, subject: str) -> tuple[bool, Optional[str]]:
+    """(subject-is-a-payment, payer-from-subject-or-None) for a provider."""
+    patterns, use_search = _SUBJECT.get(provider, ((), True))
+    for pat in patterns:
+        m = (pat.search if use_search else pat.match)(subject or "")
+        if m:
+            return True, (m.groupdict().get("payer") or "").strip() or None
+    return False, None
+
+
+def payment_subject_matched(provider: str, subject: str) -> bool:
+    """Does the subject look like a payment (vs marketing/statement) for the
+    provider? The gate that keeps allow-listed non-payment mail out of quarantine."""
+    return _subject_payer(provider, subject)[0]
+
+
+def _first_payer(body: str, patterns) -> Optional[str]:
+    for pat in patterns:
+        bm = pat.search(body or "")
+        if bm:
+            return bm.group("payer").strip() or None
+    return None
+
+
+def _parse(provider: str, subject: str, body: str, *, native_id: str,
+           email_date: Optional[str]) -> Optional[dict]:
+    matched, payer = _subject_payer(provider, subject)
+    if not matched:                                      # not a payment subject
+        return None
+    if not payer:
+        payer = _first_payer(body, _BODY_PAYER[provider])
+    minor, cur = _find_amount(body, _AMOUNT[provider])
+    if minor is None:                                    # payment subject, no amount
+        return None
+    return _provisional(provider, payer, minor, cur, native_id, email_date)
+
+
 def parse_wise(subject: str, body: str, *, native_id: str,
                email_date: Optional[str] = None) -> Optional[dict]:
     """A Wise incoming-payment notification -> provisional dict, or None if it is
-    not a payment (no amount found). Payer from the subject, else the body."""
-    payer = None
-    subject_matched = False
-    for pat in WISE_SUBJECT_PATTERNS:
-        m = pat.match(subject or "")
-        if m:
-            subject_matched = True
-            payer = (m.groupdict().get("payer") or "").strip() or None
-            break
-    if not subject_matched:
-        return None
-    if not payer:
-        bm = WISE_BODY_PAYER.search(body or "")
-        payer = bm.group("payer").strip() if bm else None
-    minor, cur = _find_amount(body, WISE_AMOUNT_PATTERNS)
-    if minor is None:
-        return None
-    return _provisional("wise", payer, minor, cur, native_id, email_date)
+    not a payment (not a payment subject, or no amount). Payer from subject else body."""
+    return _parse("wise", subject, body, native_id=native_id, email_date=email_date)
 
 
 def parse_stripe(subject: str, body: str, *, native_id: str,
                  email_date: Optional[str] = None) -> Optional[dict]:
     """A Stripe receipt/notification -> provisional dict, or None."""
-    payer = None
-    subject_matched = False
-    for pat in STRIPE_SUBJECT_PATTERNS:
-        m = pat.search(subject or "")
-        if m:
-            subject_matched = True
-            payer = (m.groupdict().get("payer") or "").strip() or None
-            break
-    if not subject_matched:
-        return None
-    if not payer:
-        bm = STRIPE_BODY_MERCHANT.search(body or "")
-        payer = bm.group("payer").strip() if bm else None
-    minor, cur = _find_amount(body, STRIPE_AMOUNT_PATTERNS)
-    if minor is None:
-        return None
-    return _provisional("stripe", payer, minor, cur, native_id, email_date)
+    return _parse("stripe", subject, body, native_id=native_id, email_date=email_date)
 
 
 def _provisional(provider: str, payer: Optional[str], minor: int, cur: Optional[str],
@@ -238,50 +309,132 @@ def parse(provider: str, subject: str, body: str, *, native_id: str,
     return fn(subject, body, native_id=native_id, email_date=email_date) if fn else None
 
 
+# ── body extraction (payment-rail local: Wise notifications are HTML-only) ────
+def _html_to_text(html: str) -> str:
+    """HTML -> text, stripping <style>/<script>/<head> CONTENT first. imap_rail's
+    generic _message_text only strips TAGS, so a Wise notification's ~1KB inline
+    CSS block leaks into the body as text and can poison an unanchored amount
+    regex. This is why the Wise amount patterns are anchored to 'received' — but a
+    clean body is still cheaper and safer to scan."""
+    t = re.sub(r"(?is)<(style|script|head)[^>]*>.*?</\1>", " ", html or "")
+    t = re.sub(r"(?s)<[^>]+>", " ", t)
+    t = _html.unescape(t)
+    t = t.replace("​", " ").replace("‌", " ")   # zero-width space / non-joiner
+    return re.sub(r"[ \t ]+", " ", t)
+
+
+def _body_text(msg) -> str:
+    """text/plain preferred (Stripe carries clean plain text), else cleaned HTML
+    (Wise is HTML-only)."""
+    if msg.is_multipart():
+        plains, htmls = [], []
+        for part in msg.walk():
+            if part.get_content_disposition() == "attachment":
+                continue
+            ctype = part.get_content_type()
+            if ctype == "text/plain":
+                plains.append(imap_rail._decode_part(part))
+            elif ctype == "text/html":
+                htmls.append(imap_rail._decode_part(part))
+        text = "\n".join(p for p in plains if p and p.strip())
+        if text.strip():
+            return text
+        return _html_to_text("\n".join(htmls))
+    body = imap_rail._decode_part(msg)
+    if msg.get_content_type() == "text/html":
+        return _html_to_text(body)
+    return body
+
+
+# ── sender-filtered UID search (All Mail is huge — filter at the IMAP level) ──
+def _sender_or_terms(senders: dict) -> list[str]:
+    """IMAP SEARCH criteria matching mail FROM any payment-provider domain, as a
+    nested OR chain: [a] -> FROM a; [a,b,c] -> OR FROM a OR FROM b FROM c. Without
+    this, a bounded fetch over All Mail only ever reaches the mailbox's OLDEST
+    mail and never the recent payments (the live bug this rail hit)."""
+    domains = [d for needles in senders.values() for d in needles]
+    terms = ["FROM", domains[-1]]
+    for d in reversed(domains[:-1]):
+        terms = ["OR", "FROM", d] + terms
+    return terms
+
+
+def _search(client, last_uid: Optional[int], first_fetch_days: Optional[int],
+            now: Optional[datetime], senders: dict) -> list[int]:
+    """UID list of payment-sender mail to consider. Same cursor/cold-start shape as
+    imap_rail._search, but ANDed with the sender filter so the candidate set stays
+    small (tens, not the whole mailbox)."""
+    orterms = _sender_or_terms(senders)
+    if last_uid is not None:
+        crit = ["UID", f"{last_uid + 1}:*"] + orterms
+    elif first_fetch_days:
+        since = (now or datetime.now(timezone.utc)) - timedelta(days=first_fetch_days)
+        crit = ["SINCE", since.strftime("%d-%b-%Y")] + orterms
+    else:
+        crit = orterms
+    typ, data = client.uid("SEARCH", None, *crit)
+    raw = data[0] if data else b""
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    return [int(x) for x in raw.split()] if raw else []
+
+
 # ── transport (read-only IMAP, reuses imap_rail's proven substrate) ───────────
 def collect(inbox: str, cursor: Optional[str], *, max_items: int,
             host: Optional[str] = None, first_fetch_days: Optional[int] = None,
             conn_factory: Optional[Callable] = None,
             pw_fn: Optional[Callable] = None,
-            now: Optional[datetime] = None) -> tuple[list[dict], Optional[str]]:
+            now: Optional[datetime] = None,
+            max_seconds: Optional[float] = None,
+            clock: Callable[[], float] = time.monotonic) -> tuple[list[dict], Optional[str]]:
     """Return (provisional-or-unparsed dicts, new_cursor) for one inbox. Header
-    PEEK -> provider_for; only an allow-listed sender triggers the body PEEK +
-    parse. An allow-listed sender that fails to parse yields an `_unparsed` dict
-    (surfaced/quarantined by the caller — never silently dropped). Read-only;
-    per-inbox UIDVALIDITY-guarded cursor. Raises InboxSkip when no app password."""
+    PEEK -> provider_for; an allow-listed sender whose SUBJECT is a payment (not
+    marketing/statement) triggers the body PEEK + parse. A payment subject that
+    fails to parse yields an `_unparsed` dict (surfaced/quarantined by the caller
+    — never silently dropped); an allow-listed non-payment subject is skipped
+    entirely. Read-only; per-inbox UIDVALIDITY-guarded cursor; reads All Mail
+    (PAYMENT_MAIL_MAILBOX), where payer notifications are archived. WALL-CLOCK
+    CAPPED: past `max_seconds` the loop stops and the cursor advances only over
+    what was processed (oldest-first), so a slow mailbox degrades, never hangs.
+    Raises InboxSkip when no app password."""
     pw_fn = pw_fn or imap_rail.app_password
     conn_factory = conn_factory or imap_rail._connect
     pw = pw_fn(inbox)
     if not pw:
         raise InboxSkip(f"no app password for {inbox}")
     host = host or config.JARVIS_IMAP_HOST
+    mailbox = config.PAYMENT_MAIL_MAILBOX
     client = conn_factory(host, inbox, pw)
     try:
-        client.select(imap_rail.MAILBOX, readonly=True)
-        validity = imap_rail._uidvalidity(client)
+        client.select(mailbox, readonly=True)
+        validity = imap_rail._uidvalidity(client, mailbox)
         prev_validity, last_uid = imap_rail._parse_cursor(cursor)
         if last_uid is not None and prev_validity != validity:
             last_uid = None                              # mailbox recreated -> re-fetch by date
-        uids = imap_rail._search(client, last_uid, first_fetch_days, now)
+        uids = _search(client, last_uid, first_fetch_days, now,
+                       config.PAYMENT_MAIL_SENDERS)
         if last_uid is not None:
             uids = [u for u in uids if u > last_uid]
-        uids = sorted(set(uids))[:max_items]
+        uids = sorted(set(uids))[:max_items]             # oldest-first, bounded
 
         out: list[dict] = []
         max_uid = last_uid or 0
+        start = clock()
         for uid in uids:
+            if max_seconds is not None and (clock() - start) > max_seconds:
+                break                                    # degrade: cursor holds at last processed uid
             hdr = imap_rail._fetch_headers(client, uid)
             _, addr = parseaddr(hdr.get("From", ""))
             provider = provider_for(addr)
-            if provider:
-                # coerce to str: a raw 8-bit (non-RFC2047) header can come back
-                # as an email.header.Header, which the regex parsers reject
-                subject = str(hdr.get("Subject", "") or "")
+            # coerce to str: a raw 8-bit (non-RFC2047) header can come back as an
+            # email.header.Header, which the regex parsers reject
+            subject = str(hdr.get("Subject", "") or "")
+            if provider and payment_subject_matched(provider, subject):
                 msgid = imap_rail._strip_msgid(str(
                     hdr.get("Message-ID") or hdr.get("Message-Id") or ""))
                 native_id = msgid or f"uid:{uid}"
                 email_date = imap_rail._to_iso(imap_rail._parse_date(hdr.get("Date", "")))
-                body = imap_rail._message_text(imap_rail._fetch_body(client, uid))
+                body = _body_text(imap_rail._fetch_body(client, uid))
                 p = parse(provider, subject, body, native_id=native_id,
                           email_date=email_date)
                 if p:
@@ -292,6 +445,7 @@ def collect(inbox: str, cursor: Optional[str], *, max_items: int,
                     out.append({"_unparsed": True, "provider": provider,
                                 "native_id": native_id, "subject": subject,
                                 "raw_ref": f"imap/{inbox}/{uid}"})
+            # allow-listed sender, non-payment subject -> skip (no body, no quarantine)
             max_uid = max(max_uid, uid)
         new_cursor = f"{validity}:{max_uid}" if max_uid else cursor
         return out, new_cursor
