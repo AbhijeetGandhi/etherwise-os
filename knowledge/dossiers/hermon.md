@@ -1,11 +1,19 @@
 # Hermon — Dossier
 
-_Compiled 2026-08-10 00:57 IST · 55 client facts (55 trusted) from 5 sources._
+_Compiled 2026-08-09T20:55:53.829389+00:00 · 78 client facts (78 trusted) from 9 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
+## Overview
+
+- A prior automation called 'TFP' (Final Protocol) exists at Millionaire Commerce and was used for a team event; the new salary automation is modeled similarly. [CONFIRMED · fathom/132274218 @ 00:00:59]
+- Millionaire Commerce (MC) wants to stop displaying all salaries on a shared 'personal dashboard' page and instead send each team member their own salary breakdown privately via Slack message and email. [CONFIRMED · fathom/132274218 @ 00:00:12]
+- The initial rollout of the salary notification automation is scoped to coaches only (guidance coaches and regular coaches); sales reps may be included later. [CONFIRMED · fathom/132274218 @ 00:05:06]
+- The salary data for each coach record includes: base salary, bonus, list of connected students, and mid-program appointments within the relevant timeframe. [CONFIRMED · fathom/132274218 @ 00:02:24]
+
 ## The numbers
 
+- Millionaire Commerce pays the agency based on all tickets logged in the agency's system, making ticket tracking critical for this client. [CONFIRMED · fathom/132274218 @ "for MC, it's very important that we keep track of it because they pay us based on all the tickets that we have in our system"]
 - UGC coach salary rate used in the automation is $500 per active coach. [CONFIRMED · fathom/117348729 @ [00:00:01] Abhijeet Gandhi: the $500 salaries for the UGC coach]
 - Work ticket ID is 1516 [CONFIRMED · https://www.loom.com/share/fd5f93b27f924ea98c615f5b9396c728 @ 0:00:05 'ticket that I was working on, which is a 1516']
 
@@ -14,16 +22,21 @@ _Compiled 2026-08-10 00:57 IST · 55 client facts (55 trusted) from 5 sources._
 - A person named Yav is responsible for preparing and filling in the build-out credentials sheet before build-out sessions can proceed. [CONFIRMED · fathom/114123845 @ I need Yav to prepare this doc before we can even start]
 - Abhijeet Gandhi (Abhi) is the agency-side contact managing the build-out handoff, working with a colleague named Yogita who also has access to the shared credentials sheet. [CONFIRMED · fathom/114123845 @ 00:04:55 – Yogita, yeah / 00:13:37 – Yogita has been, you know, going through those]
 - Abhijeet Gandhi and Abel Jansen are the two participants on this call. Abhijeet appears to be the technical implementer; Abel is the client-side or account-side contact. [CONFIRMED · fathom/117348729 @ [00:00:00] - [00:00:01]]
+- Call participants are Abhijeet Gandhi and Yogita Soma. [CONFIRMED · fathom/135495377 @ 00:00:03]
 - Gino is a contact at Millionaire Commerce who Abel needs to verify the $500 UGC coach salary automation logic with. [CONFIRMED · fathom/117348729 @ [00:00:40] Abel Jansen: I'll check with Gino from Marina Commerce to see if this is the correct way to do it.]
+- Gino is the person at Millionaire Commerce who runs the salary script and manages salary approvals; he works from a 'management > salary' view in their system. [CONFIRMED · fathom/132274218 @ 00:04:37]
 - Ivan Jurovic is a member of the Millionaire Commerce client team who raised a ticket about not being able to see a lead (Simon) in the follow-up closer view. [CONFIRMED · fathom/117348729 @ [00:13:51] Abel Jansen: this is Ivan Jurovic]
 - Jaap is a team member assigned to handle the installment reminder interface for ZTH, as he has better context on what the client wants to see. [CONFIRMED · fathom/117348729 @ [00:09:37] Abel Jansen: Jaap understands, I think understands a little bit better on what the client actually wants to see in the interface itself. So what I think we should do is create a separate ticket...assign that ticket to Jaap.]
 - The build-out being onboarded is for clients named Sam and Riaz. [CONFIRMED · fathom/114123845 @ we're going to do the build out for Sam and Riaz]
+- Yogita is a team member (likely a developer/implementer) at the agency whose current ticket workload determines task prioritization. [CONFIRMED · fathom/132274218 @ 00:06:18]
 - Yogita is a team member on the agency side working on payment-related interfaces and tickets for this client. [CONFIRMED · fathom/117348729 @ [00:04:00] Abhijeet Gandhi: Yogita dropped a message about this one.]
 
 ## Architecture & systems
 
+- A formula field is planned to calculate net payment after platform charges/commissions (e.g. installment of $2000 nets ~$1950 after fees), so all commissions are deducted and the final value is shown. [CONFIRMED · fathom/135495377 @ 00:19:37 – 'installment was $2000... net $1950 based after... Platform charges' / 00:20:03 – 'we can calculate formula field, which that all the commissions will show the final value']
 - A one-off API call error occurred when fetching payment information via webhook — the server returned an error for a specific record but has not recurred before or after. The ticket was closed as a one-off issue. [CONFIRMED · fathom/117348729 @ [00:10:56] Abhijeet Gandhi: for this particular record...whenever we receive through a waybook, there was a server error, but then it hasn't happened anything like that in the past or in the future.]
 - A payment overview interface was built (by Yogita) showing all payments. There is ambiguity about whether it should show only failed payments or all payments; this is pending clarification from the client. [CONFIRMED · fathom/117348729 @ [00:06:20] Abel Jansen: Okay, but this is showing all payments, right? [00:06:23] Abhijeet Gandhi: Yeah, she told me, like, do we want to just show the failed ones or no?]
+- An alternative approach discussed was using two text fields ('installment dates' and 'installment values') with line-by-line entries keyed by installment number, rather than separate columns per installment. [CONFIRMED · fathom/135495377 @ 00:17:03 – 'two columns, installment dates and installment values, and when we record the we just identify that this installment 1, 2, whatever is']
 - An automation exists that copies the 'next touchpoint' date from the appointment level to the lead level. It may have broken due to a field change, causing follow-up closer views to not reflect the correct next touchpoint date. [CONFIRMED · fathom/117348729 @ [00:12:38] Abel Jansen: I created an automation that when the next touchpoint is filled on the appointment, it fills the next touchpoint on the lead level. But maybe we changed fields, and therefore, it's probably not working.]
 - An automation was updated to calculate UGC coach salaries: a script checks how many active coaches are under a given guidance coach and multiplies $500 by that active coach count to derive the guidance coach's salary figure. [CONFIRMED · fathom/117348729 @ [00:00:15] Abhijeet Gandhi: we just added another script at the bottom, which just check guidance coaches, how many active coaches are there for that guidance coach, and then adds the $500 multiplied by whatever the active count is of the coaches for that guidance coach.]
 - An end-of-day report already exists for DM setters. The client now wants an additional end-of-day report interface for phone setters, tracking metrics: dials, connected calls, answers, DQ (disqualifications), calls, and bookings (referred to as 'poop' colloquially). [CONFIRMED · fathom/117348729 @ [00:17:38] Abel Jansen: We do have an end-of-day report for DM setters. But now he wants to have an interface for phone setters as well, which is dials, mate, calls, answers, DQ, call, poop, and everything.]
@@ -44,8 +57,10 @@ _Compiled 2026-08-10 00:57 IST · 55 client facts (55 trusted) from 5 sources._
 - The client wants a to-do/task management system (similar to Asana) embedded in their marketing interface, where each to-do is linked to a specific content piece or post on the marketing calendar (Instagram pushes). [CONFIRMED · fathom/117348729 @ [00:01:27] Abel Jansen: what he would like is just some kind of to-do system like Asana, but then everything should be connected to a creative]
 - The follow-up closers table is linked to the leads table, and the follow-up closer view is filtered by the 'next touchpoint' field from leads, not from appointments. [CONFIRMED · fathom/117348729 @ [00:12:08] Abhijeet Gandhi: the follow-up closers table is linked with the leads table...the next point is coming up from the leads table, but then when they go to their own, it's coming from the appointments]
 - The milestone tracking interface displays a coach filter, a milestone selector, and shows both individual milestone completion data and calculated averages. [CONFIRMED · https://www.loom.com/share/7fe44364cd5047409273d1a7d28e6293 @ 'if you come in the milestones, copy on the milestones, you can see it. You can see that here is the coach' and 'And then, you know, for which milestone you're looking for']
+- The new salary notification flow will be triggered from the salary record in the salary table (not the team table), with a new 'send email/send notification' checkbox as the trigger for Slack message and email delivery. [CONFIRMED · fathom/132274218 @ 00:04:51]
 - The system stores progress records for coaches with associated milestone achievements and days taken per record. [CONFIRMED · https://www.loom.com/share/7fe44364cd5047409273d1a7d28e6293 @ 'for this manager, there are two store like, uh, progress. And then if actually I go to this. Statusprogress, you can see those both the milestones are achieved and then the days taken is like zero on one and then ten on one']
 - The system tracks coach progress through milestones and calculates the average time (in days) it takes for each coach to complete each milestone. [CONFIRMED · https://www.loom.com/share/7fe44364cd5047409273d1a7d28e6293 @ 'you can see that here is the coach' and 'average days taken is like zero on one and then ten on one and that's why the average shows here is five']
+- The team is designing a payment installment tracking structure in Airtable: up to 3–4 installments maximum, with 6 fixed columns (installment date + installment value × 3) rather than dynamic columns. [CONFIRMED · fathom/135495377 @ 00:16:00 – 'Maximum 3 pocket. So 3 columns.' / 00:16:05 – 'Date and value. 6 columns.']
 - The template base selected for Sam and Riaz's build-out is the UGC base (referred to as UGCMA), chosen because it is the most recently updated base. [CONFIRMED · fathom/114123845 @ finding the irritable base, which best suits their needs, which is in this case going to be UGC… we did a lot of work lately, so this is the most updated base]
 - The to-do system for marketing is conceptually similar to the support ticket system already built for the client, but linked to marketing content instead. [CONFIRMED · fathom/117348729 @ [00:03:21] Abel Jansen: it's similar to the support tickets isn't that we have, but then connected to a marketing content]
 - Webhook from e-signature platform triggers automation to download signed documents and update contract status in the system [CONFIRMED · https://www.loom.com/share/d15aedbd1f2a428aa2c7f0a40499f389 @ 'we have a web group configured from e-signals...whenever the contact is signed, you can see we have a script that basically downloads the signed document']
@@ -53,11 +68,16 @@ _Compiled 2026-08-10 00:57 IST · 55 client facts (55 trusted) from 5 sources._
 
 ## Stack & tools
 
+- A webhook ('also hook') is used inside Make as a trigger for the automation. [CONFIRMED · fathom/135495377 @ 00:04:45 – 'it's also hook']
+- An AI field will be set up to generate a fully readable salary breakdown from the salary data, which is then used as the content for both the Slack message and email. [CONFIRMED · fathom/132274218 @ 00:03:00]
+- Claude (AI) is used as a coding/scripting assistant; the team uses a Claude Chrome extension to generate prompts and scripts, with Claude acting as a mediator/advisor on what steps to take. [CONFIRMED · fathom/135495377 @ 00:22:21 – 'you had to the script with Claude' / 00:23:31 – 'I always Cloud Code to me, and it me what you should do']
 - Client uses Airtable scripts for salary calculations [CONFIRMED · https://www.loom.com/share/fd5f93b27f924ea98c615f5b9396c728 @ 0:00:00 'updating the Airtable script to, while calculating the salary']
 - Client uses an e-signature platform (e-signals) integrated with their contract management system [CONFIRMED · https://www.loom.com/share/d15aedbd1f2a428aa2c7f0a40499f389 @ 'web group set up for the e-signature', 'e-signals of platform']
 - The agency is transitioning client communications from WhatsApp to Slack. Clients already have Slack channels set up; the agency plans to use these Slack channels for ticket updates and notifications. [CONFIRMED · fathom/117348729 @ [00:14:30] Abel Jansen: I think we have to switch over from WhatsApp to Slack, if I'm honest]
 - The agency uses a ticketing system with a 'Notify Client' button and 'Add Client' functionality to send resolution notes to the client team. Notifications are currently sent via WhatsApp but are being migrated to Slack. [CONFIRMED · fathom/117348729 @ [00:14:40] Abel Jansen: if you hit Notify Client...And then fill in the resolution notes...this message will be visible to the whole team of Millionaire Commerce]
 - The agency's automation build-out stack for this client includes Airtable (as the core database/base), Typeform, Calendly, Slack, and a form tool called Fillout for the onboarding form. [CONFIRMED · fathom/114123845 @ we set the onboarding form in fill out… connect Typeform, can connect Cannadly… change these actual Slack channel IDs]
+- The team is using Make (formerly Integromat) for automation, with Airtable also referenced as part of the workflow. [CONFIRMED · fathom/135495377 @ 00:03:50 – 'I don't think in make or editable... it's make or editable']
+- The team references ActiveCampaign as another platform being used or monitored in the automation stack. [CONFIRMED · fathom/135495377 @ 00:21:38 – 'I was watching the active campaign']
 
 ## Timeline
 
@@ -66,6 +86,8 @@ _Compiled 2026-08-10 00:57 IST · 55 client facts (55 trusted) from 5 sources._
 ## Commitments
 
 - Abel committed to asking Omar (client contact) about the installment reminder setup during a scheduled call the same day. [CONFIRMED · fathom/117348729 @ [00:08:27] Abel Jansen: Ik heb straks een call met Omar, dat vraagt Omar. (translation: I have a call with Omar soon, I'll ask Omar that.)]
+- Abel instructed Abhijeet to create a ticket for this task in their system, noting that Millionaire Commerce pays the agency based on tracked tickets. [CONFIRMED · fathom/132274218 @ 00:05:45]
+- Abhijeet committed to building the salary notification automation and showing Abel an example coach breakdown output for review before sending to Gino; target is same day or next day depending on Yogita's workload. [CONFIRMED · fathom/132274218 @ 00:05:17]
 - Hermon agreed to send Abhijeet an NDA to ensure confidentiality of client data shared with Abhijeet's team in India. [CONFIRMED · fathom/114123845 @ I can send you over an NDA, just to make sure that the information is confidential]
 - Testing of salary script is pending completion of UGC data population and clash flow data [CONFIRMED · https://www.loom.com/share/fd5f93b27f924ea98c615f5b9396c728 @ 0:02:35 'once we have the data, because most of the UGC data is still empty, so once we have that data, like the clash flow and stuff, then I think we should be able to, to get it done, uhm, or, or test it out']
 - The build-out walkthrough call was paused and rescheduled for the following day (Thursday) at 3 PM IST / 10:30 CET, pending Yav completing the credentials sheet. [CONFIRMED · fathom/114123845 @ if we can go over it tomorrow or Friday… 3pm IST… that's like 10.30 CET. Yeah, that's fine]
@@ -73,11 +95,15 @@ _Compiled 2026-08-10 00:57 IST · 55 client facts (55 trusted) from 5 sources._
 
 ## Other
 
+- A phone number is supposed to be captured and passed through the automation but is missing from the logs — no phone number was found in Make logs during testing. [CONFIRMED · fathom/135495377 @ 00:07:15 – 'Before I checked logs, there is no sign of phone number. There is no phone number.']
+- A script needs to be run manually and tested; the team planned to run the script once and observe the error output. [CONFIRMED · fathom/135495377 @ 00:07:30 – 'So now, we need to run a script manually']
 - Abhijeet confirmed his team members sign NDAs and data-confidentiality contracts before accessing client information. [CONFIRMED · fathom/114123845 @ We do sign an NDA and a contract, you know, of all the data confidentiality and everything]
 - Abhijeet does not currently have Airtable workspace access under his own email and will need it added to proceed with build-outs. [CONFIRMED · fathom/114123845 @ I'm not sure if you have workspace access with your email… No, I don't have the workspace access]
 - Airtable script now deducts fines from salary calculations [CONFIRMED · https://www.loom.com/share/fd5f93b27f924ea98c615f5b9396c728 @ 0:00:13 'updating the Airtable script to, while calculating the salary to make sure the fines are also deducted']
 - Matthew previously set up the original milestone tracking interface being discussed. [CONFIRMED · https://www.loom.com/share/7fe44364cd5047409273d1a7d28e6293 @ 'here we have these original ones where, you know, the one that Matthew set up']
 - Script has not been tested due to dependency on data in other tables; UGC data is currently empty [CONFIRMED · https://www.loom.com/share/fd5f93b27f924ea98c615f5b9396c728 @ 0:02:10 'I wasn't really able to test because the script depends on a lot of the other, uh, data in, in, in the other tables. And, uh, and that's why, you know, I wasn't really able to test it out']
+- The automation involves a 'new call booked' trigger/event (call booking cancels flow referenced). [CONFIRMED · fathom/135495377 @ 00:04:15 – 'The new called book cancels']
+- The team identified a permission denied error when trying to access calendar data via the API, suggesting the API token is expired or the API user lacks the required calendar permissions. [CONFIRMED · fathom/135495377 @ 00:08:36 – 'Permission denied?' / 00:09:06 – 'can you ask client to give us the right permissions or whatever API... make sure that API token is not removed or expired']
 - This client (Sam and Riaz) handles financials in euros; the Settings table currency was set to euros during the build-out session. [CONFIRMED · fathom/114123845 @ I know this client is handling everything in euros, so then this would be euros]
 
 ## Sources
@@ -87,3 +113,7 @@ _Compiled 2026-08-10 00:57 IST · 55 client facts (55 trusted) from 5 sources._
 - `loom/d15aedbd1f2a428aa2c7f0a40499f389` · 2026-01-26 · loom · Automating Contract Sending and E-Signature Management
 - `fathom/117348729` · 2026-01-27 · fathom · abhi <> abel
 - `loom/7fe44364cd5047409273d1a7d28e6293` · 2026-03-11 · loom · Analyzing Coach Milestone Progress and Average Completion Time ⏱️
+- `fathom/132274218` · 2026-03-24 · fathom · Impromptu Google Meet Meeting
+- `fathom/135495377` · 2026-04-06 · fathom · Impromptu Google Meet Meeting
+- `loom/c4f71924a29049aa8c6e73a85223a92b` · 2026-04-17 · loom · Scaling Airtable Bases with Automations and Interfaces 😀
+- `loom/a5213092f80f4b7f81898a57336b11b2` · 2026-06-03 · loom · Reviewing Payroll Notes View and Sorting

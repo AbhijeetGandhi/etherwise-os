@@ -1,6 +1,6 @@
 # The Cradle Company — Dossier
 
-_Compiled 2026-08-10 00:57 IST · 95 client facts (92 trusted) from 7 sources._
+_Compiled 2026-08-09T20:55:53.429019+00:00 · 95 client facts (92 trusted) from 9 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -126,3 +126,5 @@ _Compiled 2026-08-10 00:57 IST · 95 client facts (92 trusted) from 7 sources._
 - `fathom/164154706` · 2026-07-15 · fathom · Impromptu Zoom Meeting
 - `fathom/165666643` · 2026-07-21 · fathom · Impromptu Zoom Meeting
 - `fathom/168107325` · 2026-07-28 · fathom · Impromptu Zoom Meeting
+- `loom/dee6bad9e0544cc881c85d0f5df93dec` · 2026-08-07 · loom · Fetching Indeed Applications and Sourcing Doulas
+- `loom/0e29ef7121f2473c87d55b4e4630b1be` · 2026-08-08 · loom · Indeed Application Fetching + Doulamatach Data Extraction

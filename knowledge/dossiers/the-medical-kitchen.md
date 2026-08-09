@@ -1,6 +1,6 @@
 # The Medical Kitchen — Dossier
 
-_Compiled 2026-08-10 00:57 IST · 97 client facts (97 trusted) from 7 sources._
+_Compiled 2026-08-09T20:57:55.136945+00:00 · 97 client facts (97 trusted) from 9 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -133,4 +133,6 @@ _Compiled 2026-08-10 00:57 IST · 97 client facts (97 trusted) from 7 sources._
 - `fathom/54008291` · 2025-03-26 · fathom · Vapi update call
 - `fathom/54266987` · 2025-03-27 · fathom · Vapi update call
 - `fathom/54673795` · 2025-03-31 · fathom · Vapi/Twilio
+- `loom/8c74d99ef08d464c982306d974f88e77` · 2025-10-30 · loom · Demonstrating Call Transfer Functionality with Voice Agent
 - `loom/98bd2aaf40e34274805ac84e265ef5ef` · 2026-03-24 · loom · 4. Intake E2E
+- `loom/f476c8ce299740e8bd1893cd70b51717` · 2026-06-29 · loom · No Answer and 30 Day Follow Ups

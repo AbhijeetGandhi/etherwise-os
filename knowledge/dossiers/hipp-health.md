@@ -1,6 +1,6 @@
 # Hipp Health — Dossier
 
-_Compiled 2026-08-10 00:57 IST · 52 client facts (52 trusted) from 6 sources._
+_Compiled 2026-08-09T20:58:40.113339+00:00 · 52 client facts (52 trusted) from 10 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -81,6 +81,10 @@ _Compiled 2026-08-10 00:57 IST · 52 client facts (52 trusted) from 6 sources._
 
 - `fathom/81784668` · 2025-08-20 · fathom · Paycom Demo
 - `fathom/85347019` · 2025-09-05 · fathom · Muneeza <> Abhi
+- `loom/9fff2de542f5477080cafe943a930bbe` · 2025-09-27 · loom · Clarifying Export Requirements for EMPION Automation
+- `loom/db056f8a9a044e14b4b3b5b8b7b462ac` · 2025-09-29 · loom · Update on Payroll Automation Features
+- `loom/e6bc87ec64c84e48a7b2300cac8279d5` · 2025-10-17 · loom · Understanding Hip2Pay Automation and Setup Instructions 🚀
+- `loom/c799bbcc840746fea0cbcc977dc3a341` · 2025-10-17 · loom · Clarifying the Hip2Pay Integration and Automation Setup
 - `loom/3fcdc370ca6a49fa977e0456aaeb6627` · 2025-11-19 · loom · API Demo for HIPP: Patient and Clinician Management 🚀
 - `loom/4a803cfb19c845ab91038d498941190d` · 2025-12-03 · loom · Adding Patient and Caregiver to Hipp
 - `loom/9c707a38f3f74c05b2f3ea35f16ea384` · 2025-12-03 · loom · Adding Clinician to Hipp

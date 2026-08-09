@@ -1,6 +1,6 @@
 # Endura Solutions — Dossier
 
-_Compiled 2026-08-09 05:15 IST · 90 client facts (90 trusted) from 12 sources · 78 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-10 03:27 IST · 90 client facts (90 trusted) from 13 sources · 84 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -132,3 +132,4 @@ _Compiled 2026-08-09 05:15 IST · 90 client facts (90 trusted) from 12 sources �
 - `fathom/56527447` · 2025-04-10 · fathom · Automation Daily Meeting
 - `fathom/56778897` · 2025-04-11 · fathom · Automation Daily Meeting
 - `fathom/57309940` · 2025-04-15 · fathom · Abhi
+- `loom/5ba41563b7e04bf6822915816b7ef361` · 2026-06-30 · loom · SMS Reply Automation and Manual Follow-Up
