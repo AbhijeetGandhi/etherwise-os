@@ -1,0 +1,97 @@
+{
+  "_note": "Live-calibrated by Cowork with Abhijeet present, 2026-08-10, against The Cradle Company workspace (T01FJJNP2F6, channel C0BJSH3PJ5Q). Verified end-to-end: real messages parsed with sender, timestamp, permalink and text. Slack renders BLANK to screenshots — DOM/accessibility extraction only, never pixels. All four client team ids captured 2026-08-10 03:2x IST.",
+  "message_container": "[data-qa=\"message_container\"]",
+  "sender_name": "[data-qa=\"message_sender_name\"]",
+  "timestamp_el": "a.c-timestamp",
+  "timestamp_attr": "data-ts",
+  "permalink_attr": "href",
+  "message_text": "[data-qa=\"message-text\"]",
+  "sidebar_row": "[data-qa=\"virtual-list-item\"], .p-channel_sidebar__channel",
+  "sidebar_item": "[data-qa=\"channel_sidebar_name_button\"]",
+  "_selector_roles": "sidebar_row = the CONTAINER queried with querySelectorAll; it is the node whose own `id` attribute carries the conversation id. sidebar_item = a CHILD of that row holding the display name (falls back to the row itself). Do not swap these — the rail reads the id off sidebar_row.",
+  "conversation_id_pattern": "\\b([CDG][A-Z0-9]{8,})\\b",
+  "notes": {
+    "render_delay_ms": 11000,
+    "sidebar_enumeration": "Prefer [data-qa=\"virtual-list-item\"] and read the conversation id off the element's id attribute — [role=\"treeitem\"] carries the label but not always the id. NEVER dump raw element attributes: they can contain session data and the extraction layer will refuse the whole payload.",
+    "sidebar_click_unreliable": "Clicking a sidebar row does NOT navigate reliably. Extract the conversation id and navigate directly to https://app.slack.com/client/<TEAM_ID>/<CONV_ID>.",
+    "date_divider_artifact": "Sidebar enumeration also returns rows whose id equals the CURRENTLY OPEN conversation with labels like 'Tuesday August 4th' — these are message date dividers in the main pane, not conversations. Dedupe by id and drop labels matching /^(Yesterday|Today|(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day )/.",
+    "virtual_list": "The sidebar is virtualised — only rendered rows are in the DOM. Collapsed sections (esp. Direct messages) hide conversations. What is enumerated is a floor, not the complete set.",
+    "permalink_format": "https://<workspace>.slack.com/archives/<CONV_ID>/p<ts-without-dot>",
+    "direction": "sender_name == 'Abhijeet Gandhi' (or an OWNER_IDENTITY) => outbound; otherwise inbound. Capture BOTH — a rail that only sees inbound cannot tell we already replied.",
+    "ts_format": "Unix seconds with microseconds, e.g. 1786138304.396519",
+    "signin_detection": "After navigation, if location.href matches /signin|get-started|\\/ssb\\// the session is dead — FAIL LOUD with 'log into <workspace> in Chrome', never return 0 silently."
+  },
+  "workspaces": {
+    "the-cradle-company": {
+      "team_id": "T01FJJNP2F6",
+      "url": "the-cradle-company.slack.com",
+      "display_name": "The Cradle Company",
+      "conversations": {
+        "etherwise-tcc-build": "C0BJSH3PJ5Q",
+        "etherwise-tcc-admin": "C0BLP7BBZPB",
+        "dm:Brandi Jordan": "D0BJB6SCEQP",
+        "dm:Natasha": "D0BJLA6HMU3",
+        "dm:Kady Laloo": "D0BJW90PQE8",
+        "dm:Suthi": "D0BJUF1348H",
+        "dm:Jan": "D0BJW90LFQC",
+        "dm:Sherlaine": "D0BJSHCA5EW"
+      }
+    },
+    "optimize-is": {
+      "team_id": "T02GE1YGADR",
+      "url": "numbersdriven.slack.com",
+      "display_name": "Optimize Information Systems",
+      "conversations": {
+        "fullco-ask": "C05G1P5LSMV",
+        "devpod-rollup": "C0A8WKSS2NR",
+        "fullco-general": "C02GE1YH3CK",
+        "fullco-water-cooler": "C06TEFFJU81",
+        "fullco-wins": "C06SM8P2B1D",
+        "int-drinkcabu-com": "C09PEGEDFPG",
+        "int-evolvexteriors-com": "C08M2NWMAPQ",
+        "resourcing-abhijeet-gandhi": "C0B7MLU317D",
+        "group:Adnan Ahmed, Reza Rahnema": "C0BNXTPKCSG",
+        "dm:Noemi Fleming": "D0BKB4M6K46",
+        "dm:Adnan Ahmed": "D0BDTDT6B7T",
+        "dm:Reza Rahnema": "D0BK0QFLUR4",
+        "dm:Laith Ajjan": "D0B9E8KP933"
+      }
+    },
+    "beglaubigt": {
+      "team_id": "T03C8NJ9C1Z",
+      "url": "beglaubigt.slack.com",
+      "display_name": "Beglaubigt.de",
+      "conversations": {
+        "03-beglaubigt-team": "C03C8NJBDM1",
+        "04-incorporations": "C0961295EHJ",
+        "14-crm-newsletter": "C0BE3Q45Q9G",
+        "abhi-samar-jacky-ioannis": "C0BD0S6JWGM",
+        "group:Alejandro Landgraf, Danish Azam (a)": "C0BLDJWHP09",
+        "group:Alejandro Landgraf, Danish Azam (b)": "C0BMNKADXH8",
+        "group:Alejandro Landgraf, Alexandros Ch": "C0BNHG602HE",
+        "group:Ioannis P., Thomas Charlier": "C0BL91MC1KP",
+        "group:Felix Adrian, Ioannis P.": "C0B6LP2JFC3",
+        "group:Alejandro Landgraf, Felix Adrian": "C0BLW24CRBL",
+        "group:Ioannis P., Jackson Ly": "C0B31GA0S7K",
+        "dm:Felix Adrian": "D0B36TYP5BR",
+        "dm:Jackson Ly": "D0B26KQQ5QV",
+        "dm:Ioannis P.": "D0AUZ27FW4U"
+      }
+    },
+    "cmf-publishing": {
+      "team_id": "TAFGSQHK6",
+      "url": "cmfirm.slack.com",
+      "display_name": "Charles Michaels Firm",
+      "conversations": {
+        "dev": "C09B7R3TV42"
+      },
+      "note": "Small workspace — one channel plus Slackbot. DM section was collapsed at enumeration time; re-enumerate with sections expanded if coverage looks thin."
+    },
+    "_internal_etherwise": {
+      "team_id": null,
+      "url": "etherwise-solutions.slack.com",
+      "conversations": {},
+      "note": "skipped in v1 per Abhijeet"
+    }
+  }
+}

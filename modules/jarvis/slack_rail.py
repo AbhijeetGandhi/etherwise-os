@@ -62,17 +62,50 @@ class WorkspaceLoggedOut(Exception):
 # live calibration is edit-here-only. Each probe returns a strict JSON contract
 # (documented at each constant); the parse layer depends on the CONTRACT, not the
 # selectors, so calibrating selectors never touches tested code.
-SELECTORS = {
-    # sidebar conversation rows (channels + DMs we are a member of)
+_SELECTOR_DEFAULTS = {
+    # sidebar conversation rows (channels + DMs we are a member of). The
+    # virtual-list item carries the conversation id on its own `id` attribute;
+    # `sidebar_row`/`sidebar_item` remain as fallbacks for older layouts.
     "sidebar_item": '[data-qa="channel_sidebar_name_button"]',
-    "sidebar_row": '.p-channel_sidebar__channel',
+    "sidebar_row": '[data-qa="virtual-list-item"], .p-channel_sidebar__channel',
     # a conversation's rendered message rows + their parts
     "message": '[data-qa="message_container"]',
     "message_sender": '[data-qa="message_sender_name"]',
     "message_text": '[data-qa="message-text"]',
+    "timestamp_el": "a.c-timestamp",
+    "timestamp_attr": "data-ts",
     # signed-in marker (present only in the real client, not the sign-in page)
     "client_marker": '.p-client_container, [data-qa="workspace-list"]',
 }
+
+# The live calibration lives in assets/slack-selectors.json so it can be
+# re-pointed from a browser session without a code change. Keys absent from the
+# file fall back to the defaults above, so a partial calibration cannot break
+# the rail. Contract-shaped keys only — unknown keys are ignored.
+SELECTORS_PATH = config.V3_ROOT / "assets" / "slack-selectors.json"
+
+
+def load_selectors(path=None) -> dict:
+    """Merge the on-disk calibration over the defaults. Never raises: a missing
+    or malformed file degrades to the defaults (and says so) rather than taking
+    the whole rail down at 3am."""
+    sel = dict(_SELECTOR_DEFAULTS)
+    p = Path(path or SELECTORS_PATH)
+    try:
+        raw = json.loads(p.read_text())
+    except FileNotFoundError:
+        return sel
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"slack_rail: calibration unreadable ({exc}); using defaults")
+        return sel
+    for k in _SELECTOR_DEFAULTS:
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip():
+            sel[k] = v
+    return sel
+
+
+SELECTORS = load_selectors()
 
 # CONVERSATIONS PROBE — contract:
 #   {url, signed_in:bool, ready:bool, team_id:str|null,
@@ -84,25 +117,51 @@ _EXTRACT_CONVERSATIONS_JS = """
   var href = location.href;
   var signedIn = /app\\.slack\\.com\\/client\\//.test(href)
       && !/\\/(signin|sso|workspace-signin)/.test(href);
+  // A page that has not loaded yet (chrome-error://, about:blank, mid-redirect)
+  // is NOT signed in either — but it is also NOT a verdict. Only a real Slack
+  // sign-in page may short-circuit the poll; everything else keeps polling.
+  // (Without this, a slow first paint was reported as "logged out" in <1s.)
+  var signinPage = /slack\\.com\\/(signin|get-started|workspace-signin|sso)/.test(href);
   var team = (href.match(/\\/client\\/(T[A-Z0-9]+)/) || [])[1] || null;
   var rows = [].slice.call(document.querySelectorAll(S.sidebar_row));
+  var CID = /\\b([CDG][A-Z0-9]{8,})\\b/;
   var convs = rows.map(function(r){
     var btn = r.querySelector(S.sidebar_item) || r;
+    // Calibrated 2026-08-10: the virtual-list row carries the conversation id on
+    // its own id attribute. Href and the legacy data-qa hook stay as fallbacks.
     var link = r.querySelector('a[href*="/client/"]') || btn;
     var href2 = link.getAttribute && link.getAttribute('href') || '';
-    var id = (href2.match(/\\/(C[A-Z0-9]+|D[A-Z0-9]+|G[A-Z0-9]+)/) || [])[1]
+    var id = ((r.id||'').match(CID) || [])[1]
+             || (href2.match(CID) || [])[1]
              || r.getAttribute('data-qa-channel-sidebar-channel-id') || '';
     var kind = /^D/.test(id) ? 'dm' : 'channel';
     // last activity: Slack tags the row with a sortable ts on recency-ordered
     // sections; fall back to a data attribute. (calibration point)
     var ts = r.getAttribute('data-ts')
              || r.getAttribute('data-qa-last-activity-ts') || '';
-    return {id:id, name:(btn.textContent||'').trim(), kind:kind,
-            last_activity_ts: ts};
+    var name = ((btn.textContent||'').split('\\n')[0] || '').trim();
+    return {id:id, name:name, kind:kind, last_activity_ts: ts};
   }).filter(function(c){ return c.id; });
+  // The open conversation's date dividers ("Tuesday August 4th") surface as rows
+  // sharing the open conversation's id. Dedupe by id, first (real sidebar) wins.
+  var openConv = (href.match(/\\/(C[A-Z0-9]+|D[A-Z0-9]+|G[A-Z0-9]+)/) || [])[1] || '';
+  var DATEISH = /^(Today|Yesterday|(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day\\b)/;
+  var seen = {};
+  convs = convs.filter(function(c){
+    if (seen[c.id]) return false;
+    if (c.id === openConv && DATEISH.test(c.name)) return false;
+    seen[c.id] = 1; return true;
+  });
   return JSON.stringify({
     url: href, signed_in: signedIn,
-    ready: signedIn ? !!document.querySelector(S.client_marker) : true,
+    // "Ready" for THIS probe means the sidebar has painted, not merely that the
+    // client shell exists. The shell appears in ~1s; the virtualised sidebar
+    // takes ~9-11s (measured live 2026-08-10). Returning on the shell gave
+    // conversations_seen=0 for every workspace. A genuinely empty workspace
+    // costs the full poll timeout and then degrades — the right trade.
+    ready: signedIn ? (!!document.querySelector(S.client_marker)
+                       && convs.length > 0) : signinPage,
+    signin_page: signinPage,
     team_id: team, conversations: convs});
 })()
 """
@@ -118,11 +177,20 @@ _EXTRACT_MESSAGES_JS = """
   var href = location.href;
   var signedIn = /app\\.slack\\.com\\/client\\//.test(href)
       && !/\\/(signin|sso|workspace-signin)/.test(href);
+  // A page that has not loaded yet (chrome-error://, about:blank, mid-redirect)
+  // is NOT signed in either — but it is also NOT a verdict. Only a real Slack
+  // sign-in page may short-circuit the poll; everything else keeps polling.
+  // (Without this, a slow first paint was reported as "logged out" in <1s.)
+  var signinPage = /slack\\.com\\/(signin|get-started|workspace-signin|sso)/.test(href);
   var team = (href.match(/\\/client\\/(T[A-Z0-9]+)/) || [])[1] || null;
   var conv = (href.match(/\\/(C[A-Z0-9]+|D[A-Z0-9]+|G[A-Z0-9]+)/) || [])[1] || '';
   var nodes = [].slice.call(document.querySelectorAll(S.message));
   var msgs = nodes.map(function(n){
-    var ts = n.getAttribute('data-ts')
+    // Calibrated 2026-08-10: the authoritative ts is on the child permalink
+    // anchor (a.c-timestamp[data-ts]); the container attribute is a fallback.
+    var tsEl = S.timestamp_el ? n.querySelector(S.timestamp_el) : null;
+    var ts = (tsEl && tsEl.getAttribute(S.timestamp_attr || 'data-ts'))
+             || n.getAttribute('data-ts')
              || (n.id||'').replace(/[^0-9.]/g,'');
     var sender = n.querySelector(S.message_sender);
     var body = n.querySelector(S.message_text);
@@ -135,7 +203,8 @@ _EXTRACT_MESSAGES_JS = """
   }).filter(function(m){ return m.ts; });
   return JSON.stringify({
     url: href, signed_in: signedIn,
-    ready: signedIn ? !!document.querySelector(S.message) : true,
+    ready: signedIn ? !!document.querySelector(S.message) : signinPage,
+    signin_page: signinPage,
     team_id: team, conversation_id: conv, messages: msgs});
 })()
 """
@@ -197,15 +266,30 @@ def parse_message(m: dict, ws: dict, *, team_id: Optional[str], conv_id: str,
 
 
 # ── transport-agnostic collect (scripted in tests, live Chrome in prod) ───────
+class WrongPageLoaded(Exception):
+    """The tab was still showing a DIFFERENT workspace/conversation when the poll
+    gave up. Raised instead of returning the stale payload, because the stale
+    payload looks perfectly valid — it is simply another client's data."""
+
+
 def _extract(eval_fn: Callable[[str], str], js: str, sleep: Callable[[float], None],
-             timeout: float) -> dict:
-    """Re-eval the DOM probe until it reports `ready` or the poll times out — a
-    heavy SPA paints asynchronously, and a bounded poll is the whole point (a rail
-    that can block forever eventually hangs the run). Returns the last payload."""
+             timeout: float, accept: Optional[Callable[[dict], bool]] = None) -> dict:
+    """Re-eval the DOM probe until it reports `ready` AND `accept` recognises the
+    page, or the poll times out — a heavy SPA paints asynchronously, and a bounded
+    poll is the whole point (a rail that can block forever eventually hangs the
+    run). Returns the last payload.
+
+    `accept` exists because "ready" alone is a trap: navigating from workspace A
+    to workspace B leaves A's fully-painted DOM in the tab for a second or two,
+    and A answers `ready:true` immediately. Verified live 2026-08-10 — all four
+    workspaces returned Beglaubigt's 14 conversations. The identity check is what
+    makes the poll mean "the page I asked for", not "a page"."""
     waited, last = 0.0, {}
     while True:
         last = json.loads(eval_fn(js))
-        if last.get("ready") or waited >= timeout:
+        if last.get("ready") and (accept is None or accept(last)):
+            return last
+        if waited >= timeout:
             return last
         sleep(POLL_EVERY_SECONDS)
         waited += POLL_EVERY_SECONDS
@@ -215,9 +299,18 @@ def _workspace_url(ws: dict) -> str:
     return f"https://{ws['url']}/"
 
 
-def _conversation_url(ws: dict, conv_id: str) -> str:
-    # the archives path redirects into the app and loads that conversation,
-    # so we never need the team id to navigate — only to key the event.
+def _conversation_url(ws: dict, conv_id: str, team_id: Optional[str] = None) -> str:
+    """Deep link to a conversation INSIDE the app.
+
+    Measured live 2026-08-10: `https://<ws>.slack.com/archives/<CONV>` does NOT
+    redirect into the client — it parks on a "Redirecting…" shell indefinitely
+    (39s+ observed, never resolved), so every conversation opened that way read
+    back zero messages. The team-scoped client URL loads directly. The archives
+    form is still the right PERMALINK to store; it is only useless for driving
+    a browser. Falls back to archives when the registry has no team id."""
+    team = team_id or ws.get("team_id")
+    if team:
+        return f"https://app.slack.com/client/{team}/{conv_id}"
     return f"https://{ws['url']}/archives/{conv_id}"
 
 
@@ -227,7 +320,8 @@ def collect_workspace(ws: dict, cursor: Optional[str], *, since_days: float,
                       navigate: Callable[[str], None],
                       sleep: Optional[Callable[[float], None]] = None,
                       self_authors=(),
-                      poll_timeout: Optional[float] = None) -> tuple:
+                      poll_timeout: Optional[float] = None,
+                      conv_poll_timeout: Optional[float] = None) -> tuple:
     """Collect one workspace's recent messages. Returns (events, new_cursor, stats).
     Raises WorkspaceLoggedOut if the workspace is not showing the signed-in client.
 
@@ -237,21 +331,58 @@ def collect_workspace(ws: dict, cursor: Optional[str], *, since_days: float,
     sleep = sleep or time.sleep
     timeout = poll_timeout if poll_timeout is not None \
         else config.JARVIS_SLACK_POLL_TIMEOUT_SECONDS
+    # Opening a conversation is paid once PER CONVERSATION, so it gets its own,
+    # much shorter ceiling (see config for why 40s here was a 40-minute sweep).
+    conv_timeout = conv_poll_timeout if conv_poll_timeout is not None \
+        else getattr(config, "JARVIS_SLACK_CONV_POLL_TIMEOUT_SECONDS", timeout)
+
+    expected_team = ws.get("team_id")
+
+    def _is_this_workspace(p: dict) -> bool:
+        # Only enforceable when the registry knows the team id. All four client
+        # workspaces carry one as of 2026-08-10; a workspace added without one
+        # degrades to the old (unverified) behaviour rather than failing.
+        return not expected_team or p.get("team_id") == expected_team
 
     navigate(_workspace_url(ws))
-    conv_payload = _extract(eval_fn, _conversations_js(), sleep, timeout)
+    conv_payload = _extract(eval_fn, _conversations_js(), sleep, timeout,
+                            accept=_is_this_workspace)
     if not conv_payload.get("signed_in"):
+        # Distinguish "you are logged out" from "the page never loaded" — they
+        # need different human actions and conflating them sent us hunting a
+        # session problem that did not exist.
+        landed = str(conv_payload.get("url") or "")[:120]
+        if conv_payload.get("signin_page"):
+            raise WorkspaceLoggedOut(
+                f"Slack workspace '{ws.get('workspace') or ws['client_id']}' is not"
+                f" signed in — log into {ws['url']} in Chrome (the rail is read-only"
+                " and cannot sign in for you).")
         raise WorkspaceLoggedOut(
-            f"Slack workspace '{ws.get('workspace') or ws['client_id']}' is not"
-            f" signed in — log into {ws['url']} in Chrome (the rail is read-only"
-            " and cannot sign in for you).")
+            f"Slack workspace '{ws.get('workspace') or ws['client_id']}' never"
+            f" reached the signed-in client within {timeout:.0f}s; the tab ended at"
+            f" {landed!r}. This is a LOAD failure, not necessarily a logged-out"
+            " session — check Chrome is running and the tab can reach Slack.")
+
+    if not _is_this_workspace(conv_payload):
+        # Refuse the stale page. Returning it would file THIS client's events
+        # under THAT client — a data-integrity fault that is invisible after the
+        # fact, so it must be a hard stop for this workspace, never a warning.
+        raise WrongPageLoaded(
+            f"Slack workspace '{ws.get('workspace') or ws['client_id']}': tab still"
+            f" showed team {conv_payload.get('team_id')!r} after {timeout:.0f}s,"
+            f" expected {expected_team!r}. Refusing to attribute another"
+            " workspace's messages to this client.")
 
     team_id = conv_payload.get("team_id") or ws.get("team_id")
     convs = conv_payload.get("conversations") or []
     stats = {"signed_in": True, "conversations_seen": len(convs),
-             "conversations_scanned": 0, "messages": 0, "skipped": 0}
+             "conversations_scanned": 0, "messages": 0, "skipped": 0,
+             "no_activity_ts": 0}
 
-    # freshest-first, then bound: a truncation keeps the newest, never a slice
+    # freshest-first, then bound: a truncation keeps the newest, never a slice.
+    # Slack's virtual-list sidebar rows carry NO activity timestamp (verified
+    # live 2026-08-10), so in practice every row sorts equal and sidebar order
+    # is preserved — which is roughly section order, not recency.
     ordered = sorted(convs, key=lambda c: float(c.get("last_activity_ts") or 0),
                      reverse=True)[:max_conversations]
 
@@ -272,10 +403,26 @@ def collect_workspace(ws: dict, cursor: Optional[str], *, since_days: float,
     out: list[dict] = []
     max_ts = cur or 0.0
     for c in ordered:
-        if not _keep(c.get("last_activity_ts")):
-            continue                     # no new activity -> don't even open it
-        navigate(_conversation_url(ws, c["id"]))
-        msg_payload = _extract(eval_fn, _messages_js(), sleep, timeout)
+        raw_ts = c.get("last_activity_ts")
+        if not str(raw_ts or "").strip():
+            # UNKNOWN activity, not "no activity". Slack does not expose a ts on
+            # sidebar rows, so skipping here would skip everything, forever. Open
+            # it and let the per-message window do the filtering — the cost is a
+            # navigation, the cost of the alternative is silent total data loss.
+            stats["no_activity_ts"] += 1
+        elif not _keep(raw_ts):
+            continue                     # known-stale -> don't even open it
+        navigate(_conversation_url(ws, c["id"], team_id))
+        msg_payload = _extract(
+            eval_fn, _messages_js(), sleep, conv_timeout,
+            accept=lambda p, _cid=c["id"]: p.get("conversation_id") == _cid)
+        # Same staleness trap one level down: the previous conversation's
+        # messages are still painted while the next one loads. Skip rather than
+        # mis-file — one missed conversation is recoverable, wrong provenance
+        # on a stored fact is not.
+        if msg_payload.get("conversation_id") != c["id"]:
+            stats["stale_conversation"] = stats.get("stale_conversation", 0) + 1
+            continue
         stats["conversations_scanned"] += 1
         for m in msg_payload.get("messages") or []:
             ts = m.get("ts")
@@ -364,6 +511,7 @@ def run_rail(ctx, *, reg=None, eval_fn=None, navigate=None, sleep=None,
 
     all_events: list[dict] = []
     logged_out: list[str] = []
+    wrong_page: list[str] = []
     empty: list[str] = []
     per_ws: dict = {}
     new_cursors: dict = {}
@@ -384,6 +532,16 @@ def run_rail(ctx, *, reg=None, eval_fn=None, navigate=None, sleep=None,
                              "url": w["url"],
                              "instruction": f"log into {w['url']} in Chrome"})
                 ctx.log(f"slack {label}: LOGGED OUT — {lo}")
+                continue
+            except WrongPageLoaded as wp:
+                # Data-integrity guard, not a transient blip: the tab never left
+                # the previous workspace. CRITICAL because the failure mode it
+                # prevents (one client's messages filed under another) is silent.
+                wrong_page.append(label)
+                ctx.anomaly("jarvis_slack_wrong_page", "critical",
+                            {"workspace": label, "client_id": w["client_id"],
+                             "expected_team": w.get("team_id"), "error": str(wp)})
+                ctx.log(f"slack {label}: WRONG PAGE — {wp}")
                 continue
             except Exception as exc:                     # transient/layout: degrade
                 ctx.anomaly("jarvis_slack_error", "warning",
@@ -424,6 +582,7 @@ def run_rail(ctx, *, reg=None, eval_fn=None, navigate=None, sleep=None,
             f"empty {len(empty)}"
             + (" | DRY-RUN (nothing stored)" if dry_run else ""))
     return {"workspaces": len(workspaces), "collected": len(all_events),
+            "wrong_page": wrong_page,
             "stored": stored, "logged_out": logged_out, "empty": empty,
             "per_workspace": per_ws}
 

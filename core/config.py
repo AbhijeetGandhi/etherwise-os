@@ -378,7 +378,19 @@ JARVIS_SLACK_MAX_CONVERSATIONS = 40         # per workspace, freshest-first, bou
 # Every network step (navigate + each DOM eval) is bounded so one wedged workspace
 # can never hang the whole rail; the browser layer polls up to this many seconds
 # for the SPA to paint before giving up on a conversation.
+# Measured live 2026-08-10: the Slack client shell paints in ~1s but the
+# virtualised sidebar needs ~9-11s, and a conversation's messages hydrate a few
+# seconds after that. The poll now waits for real content (rows / message rows),
+# so this ceiling is what a genuinely empty or wedged workspace costs before it
+# degrades — keep it comfortably above the observed hydration time.
 JARVIS_SLACK_POLL_TIMEOUT_SECONDS = 40
+# Per-CONVERSATION poll. Shorter than the workspace poll because it is paid once
+# PER CONVERSATION — 40s here turned a 4-workspace sweep into a 40-minute grind.
+# But measured live 2026-08-10: message rows hydrate at ~11s, and 12s produced
+# 0 messages on 38 of 38 conversations (scanned fine, just read too early). 22s
+# is that measurement plus headroom; a conversation that paints fast still exits
+# early, so only genuinely empty conversations pay the ceiling.
+JARVIS_SLACK_CONV_POLL_TIMEOUT_SECONDS = 22
 # Our own display names inside CLIENT workspaces: a message from one of these is
 # OURS -> tagged direction='outbound' (captured, never dropped) so the follow-up
 # logic can tell we already replied. Matched case-insensitively on the full name.

@@ -53,8 +53,15 @@ def _msg(ts, author, text, is_me=False, member_id="U9"):
 
 
 def _conv_payload(convs, signed_in=True, ready=True, team_id="T01FJJNP2F6",
-                  url="https://app.slack.com/client/T01FJJNP2F6"):
+                  url="https://app.slack.com/client/T01FJJNP2F6",
+                  signin_page=None):
+    # signin_page mirrors the DOM probe: True only on a REAL Slack sign-in page.
+    # A not-signed-in payload that is not a sign-in page means the page never
+    # loaded, which is a different fault with a different remedy.
+    if signin_page is None:
+        signin_page = not signed_in
     return {"url": url, "signed_in": signed_in, "ready": ready,
+            "signin_page": signin_page,
             "team_id": team_id, "conversations": list(convs)}
 
 
@@ -152,10 +159,10 @@ class CollectTests(unittest.TestCase):
         chrome = FakeChrome(_conv_payload(convs), msgs)
         evs, _cur, stats = _collect(chrome, max_conversations=40, since_days=999)
         # only the 40 freshest conversations were opened, never a random slice
-        opened = [u for u in chrome.navigations if "/archives/" in u]
+        opened = [u for u in chrome.navigations if "/client/" in u]
         self.assertEqual(len(opened), 40)
-        self.assertIn("/archives/C0", opened[0])     # freshest first
-        self.assertTrue(all("/archives/C4" not in u  # C40..C49 dropped
+        self.assertIn("/C0", opened[0])              # freshest first
+        self.assertTrue(all("/C4" not in u           # C40..C49 dropped
                             for u in opened if u.endswith(("C40", "C49"))))
         self.assertEqual(stats["conversations_scanned"], 40)
 
@@ -205,16 +212,99 @@ class CollectTests(unittest.TestCase):
                             {"C1": _msgs_payload("C1", [_msg(_ts(5), "J", "x")])})
         evs, _cur, stats = _collect(chrome, cursor=_ts(2), since_days=10)
         self.assertEqual(evs, [])
-        self.assertEqual([u for u in chrome.navigations if "/archives/" in u], [])
+        self.assertEqual([u for u in chrome.navigations if "/client/" in u], [])
         self.assertEqual(stats["conversations_scanned"], 0)
 
     def test_logged_out_workspace_fails_loud_with_login_instruction(self):
-        chrome = FakeChrome(_conv_payload([], signed_in=False), {})
+        chrome = FakeChrome(
+            _conv_payload([], signed_in=False, signin_page=True,
+                          url="https://the-cradle-company.slack.com/signin"), {})
         with self.assertRaises(slack_rail.WorkspaceLoggedOut) as cm:
             _collect(chrome)
         self.assertIn("The Cradle Company", str(cm.exception))
         self.assertIn("log into", str(cm.exception).lower())
         self.assertIn("Chrome", str(cm.exception))
+
+    def test_page_that_never_loads_is_reported_as_a_load_failure_not_a_logout(self):
+        # Regression, 2026-08-10: an unloaded tab (chrome-error://) reports
+        # signed_in=False, and the rail called all four workspaces "logged out"
+        # in under a second while Chrome was demonstrably signed in. A load
+        # failure and a dead session need different human actions, so the
+        # message must not send Abhijeet hunting a session problem.
+        chrome = FakeChrome(
+            _conv_payload([], signed_in=False, signin_page=False,
+                          url="chrome-error://chromewebdata/"), {})
+        with self.assertRaises(slack_rail.WorkspaceLoggedOut) as cm:
+            _collect(chrome)
+        msg = str(cm.exception)
+        self.assertIn("The Cradle Company", msg)
+        self.assertIn("LOAD failure", msg)
+        self.assertIn("chrome-error", msg)
+        self.assertNotIn("log into", msg.lower())
+
+    def test_conversation_without_an_activity_ts_is_still_opened(self):
+        # Regression, 2026-08-10: Slack's virtual-list sidebar rows carry NO
+        # activity timestamp, so treating a missing ts as "no new activity"
+        # skipped every conversation in every workspace — silent total data
+        # loss. Unknown must mean "open it and let the --since window decide".
+        conv = _conv("C1", "proj", "channel", last_days_ago=5)
+        conv["last_activity_ts"] = ""                     # what Slack actually returns
+        chrome = FakeChrome(_conv_payload([conv]),
+                            {"C1": _msgs_payload("C1", [_msg(_ts(1), "J", "hi")])})
+        evs, _cur, stats = _collect(chrome, since_days=10)
+        self.assertEqual([e["text"] for e in evs], ["hi"])
+        self.assertEqual(stats["conversations_scanned"], 1)
+        self.assertEqual(stats["no_activity_ts"], 1)
+
+    def test_conversations_are_opened_via_the_team_scoped_client_url(self):
+        # Regression, 2026-08-10 (live): the rail navigated to
+        # https://<ws>.slack.com/archives/<CONV>, whose docstring claimed it
+        # redirects into the client. It does not — it parks on a "Redirecting…"
+        # shell (39s+ observed, never resolved), so every conversation read back
+        # zero messages. The team-scoped client URL loads in ~6s.
+        self.assertEqual(
+            slack_rail._conversation_url(WS, "C123", "T01FJJNP2F6"),
+            "https://app.slack.com/client/T01FJJNP2F6/C123")
+        # no team id in the registry -> archives is the only thing left to try
+        self.assertEqual(
+            slack_rail._conversation_url({"url": "x.slack.com"}, "C123"),
+            "https://x.slack.com/archives/C123")
+        # the PERMALINK is unaffected — archives is still the shareable form
+        self.assertTrue(slack_rail.permalink(WS["url"], "C123", "1.2")
+                        .startswith("https://the-cradle-company.slack.com/archives/"))
+
+    def test_stale_workspace_page_is_refused_not_attributed(self):
+        # Regression, 2026-08-10 (live): navigating A -> B leaves A's fully
+        # painted DOM in the tab, and A answers ready:true instantly. The rail
+        # accepted it, so ALL FOUR workspaces returned Beglaubigt's 14
+        # conversations and one client's messages were about to be filed under
+        # another. 'ready' must mean "the page I asked for", not "a page".
+        other = _conv_payload([_conv("C9", "someone-elses", "channel", 1)],
+                              team_id="T_OTHER_WORKSPACE")
+        chrome = FakeChrome(other, {})
+        with self.assertRaises(slack_rail.WrongPageLoaded) as cm:
+            _collect(chrome)                       # ws under test is T01FJJNP2F6
+        msg = str(cm.exception)
+        self.assertIn("T_OTHER_WORKSPACE", msg)
+        self.assertIn("T01FJJNP2F6", msg)
+        self.assertIn("Refusing", msg)
+
+    def test_stale_conversation_page_is_skipped_not_misfiled(self):
+        # Same trap one level down: the previous conversation is still painted
+        # while the next loads. Skipping loses one conversation (recoverable);
+        # accepting it writes the wrong permalink onto real messages (not).
+        convs = [_conv("C1", "first", "channel", 1), _conv("C2", "second", "channel", 1)]
+        for c in convs:
+            c["last_activity_ts"] = ""
+        chrome = FakeChrome(
+            _conv_payload(convs),
+            # both navigations answer with C1's DOM
+            {"C1": _msgs_payload("C1", [_msg(_ts(1), "J", "from one")]),
+             "C2": _msgs_payload("C1", [_msg(_ts(1), "J", "from one")])})
+        evs, _cur, stats = _collect(chrome, since_days=10)
+        self.assertEqual([e["text"] for e in evs], ["from one"])
+        self.assertEqual(stats["stale_conversation"], 1)
+        self.assertTrue(all("/C1/" in e["permalink"] for e in evs))
 
     def test_signed_in_but_empty_workspace_reports_zero_not_a_crash(self):
         chrome = FakeChrome(_conv_payload([]), {})
@@ -263,17 +353,30 @@ class RunRailTests(unittest.TestCase):
 
     def _browser_for(self, per_ws):
         """per_ws: {workspace_subdomain: (conv_payload, msgs_by_conv)}. Returns
-        an (eval_fn, navigate) pair that routes to whichever workspace's scripted
-        Chrome matches the subdomain last navigated to."""
+        an (eval_fn, navigate) pair routing to whichever workspace's scripted
+        Chrome was last navigated to.
+
+        Two URL shapes must route, because the rail uses both: the workspace
+        root (<sub>.slack.com) and the team-scoped conversation deep link
+        (app.slack.com/client/<TEAM>/<CONV>), which contains no subdomain at
+        all. Team ids are read off each fixture's own conversations payload, so
+        the harness cannot drift from the fixtures."""
         browsers = {sub: FakeChrome(cp, mp) for sub, (cp, mp) in per_ws.items()}
+        team_of = {sub: (cp.get("team_id") or "") for sub, (cp, _mp) in per_ws.items()}
         state = {"chrome": None}
 
         def navigate(url):
             for sub, chrome in browsers.items():
-                if sub in url:
+                team = team_of.get(sub)
+                if sub in url or (team and f"/client/{team}/" in url):
                     state["chrome"] = chrome
                     chrome.navigate(url)
                     return
+            # A deep link whose team matches nothing stays in the workspace we
+            # are already inside — same as a real in-app route change.
+            if "/client/" in url and state["chrome"] is not None:
+                state["chrome"].navigate(url)
+                return
 
         def eval_fn(js):
             return state["chrome"].eval(js)

@@ -75,6 +75,7 @@ clients:
     slack:
       workspace: Beglaubigt.de
       url: beglaubigt.slack.com
+      team_id: T03C8NJ9C1Z
     billing:
       canonical: Beglaubigt
     emails:
@@ -124,6 +125,7 @@ clients:
     slack:
       workspace: Charles Michaels Firm
       url: cmfirm.slack.com
+      team_id: TAFGSQHK6
     billing:
       canonical: CMF Publishing
   -
@@ -362,6 +364,7 @@ clients:
     slack:
       workspace: Optimize Information Systems
       url: numbersdriven.slack.com
+      team_id: T02GE1YGADR
     upwork_rooms:
       - room_3f05d369265d2bbf781699fa78bc0131
     billing:
