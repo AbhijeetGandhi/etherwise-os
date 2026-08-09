@@ -22,7 +22,17 @@ from core.claude_gateway import ClaudeBudgetExceeded
 from modules.knowledge import (fathom_poll, email_poll, ingest, extract, index,
                                clients, crm, dossier, proof_points)
 
-DAILY_SOURCE_TYPES = ("fathom", "email")   # Loom backlog excluded from the drip
+# INGEST scans these inbox dirs each run (dedup by content hash makes an already-
+# ingested drop a no-op). Loom is INGESTED so a freshly-fetched recording becomes a
+# searchable `sources` row immediately — no silent ingest-level backlog (the fetcher
+# also ingests as it goes; this is the belt-and-suspenders re-scan).
+DAILY_INGEST_TYPES = ("fathom", "email", "loom")
+# EXTRACT stays fathom+email only. A new loom has NO client_id until the gated
+# classify->heal chain (jarvis-loom-classify) attributes it, so auto-extracting it
+# in the drip would either do nothing or mint UNATTRIBUTED noise facts. Loom
+# extraction remains the deliberate, attributed-only step:
+#   bin/kb-backfill extract loom --attributed --model classify --limit N
+DAILY_SOURCE_TYPES = ("fathom", "email")   # extract set (loom via the gated chain)
 TASK_NAME = "kb_daily"
 
 
@@ -49,7 +59,7 @@ def _poll_email(ctx) -> dict:
 def _ingest_inbox(db_path) -> dict:
     cmap = clients.load_client_map(db_path)
     counts = {"ingested": 0, "duplicate": 0}
-    for stype in DAILY_SOURCE_TYPES:
+    for stype in DAILY_INGEST_TYPES:
         d = config.KNOWLEDGE_INBOX / stype
         if not d.exists():
             continue

@@ -315,6 +315,17 @@ JARVIS_LOOM_HEAL_ON_HIGH = False    # SAFE DEFAULT: high-conf is a ledger-only
                                     # (reattribute facts + recompile) -- grants the
                                     # model authority over the KB; Abhijeet's call.
 LOOM_FINGERPRINTS_PATH = V3_ROOT / "assets" / "loom-fingerprints.json"
+# ── Loom FETCH rail (2026-08-10) — pull NEW recordings from loom.com ──────────
+# The manual index export (assets/loom-video-index.json) froze 2026-04-08; with no
+# fetcher the corpus stalled four months. This rail fetches the live GraphQL index
+# (Abhijeet's logged-in session, via the scanner's Chrome substrate) and pulls
+# transcripts for ids not already in `sources`. Read-only on Loom; local writes
+# only. See modules/knowledge/loom_fetch.py. Session loss FAILS LOUD, never a 0.
+LOOM_INDEX_LIMIT = 700               # my_videos(limit:) — comfortably over the ~591
+LOOM_FETCH_MAX_PER_RUN = 50          # transcripts fetched per run (bound; --limit)
+LOOM_FETCH_POLL_TIMEOUT_SECONDS = 40 # per in-Chrome async fetch (index/share HTML)
+LOOM_TRANSCRIPT_HTTP_TIMEOUT_SECONDS = 30  # per Python urllib GET of a signed CDN
+                                     # transcript URL (public — no session/CORS)
 # ── IMAP rail (2026-08-09) — the inboxes contact@'s OAuth app cannot reach ────
 # The OAuth client is registered Internal, so it can only ever authorize
 # etherwise.io accounts; the personal inboxes go over IMAP with per-account app
@@ -552,6 +563,20 @@ SOURCES = (
      "why": "reads Wise/Stripe payment NOTIFICATIONS read-only so a stale CSV"
             " import announces itself; a dead rail means the ledger can silently"
             " fall behind the money that actually arrived"},
+    # Loom FETCH rail (2026-08-10) — weekly pull of new recordings from loom.com.
+    # The whole POINT of registering it: a stalled fetcher (the exact four-month
+    # freeze this rail fixes) surfaces as STALE in the brief instead of a silently
+    # frozen KB. Weekly cadence => 8d deadline (7 + grace). A logged-out session is
+    # a degrade signal between runs (its critical anomaly also fails the run). Not
+    # critical (KB freshness, not money/pipeline); catch_up-safe (idempotent read).
+    {"key": "loom_fetch", "label": "Loom fetch rail (new recordings)",
+     "task_name": "loom_fetch", "max_age_hours": 192,   # 8d = weekly + grace
+     "degrade_kinds": ("loom_fetch_logged_out",),
+     "critical": False, "backs": "today",
+     "launchd_label": "io.etherwise.v3.kb-loom-fetch", "catch_up": True,
+     "why": "pulls new Loom walkthroughs (the richest 'what we deliver' evidence)"
+            " into the KB; a stalled fetcher froze the corpus four months and must"
+            " announce itself instead of silently going stale"},
 )
 
 # Catch-up shim (bin/catch-up, 2026-07-20). macOS skips StartCalendarInterval

@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Loom fetch rail: pull NEW recordings from loom.com into the KB.
+
+The manual index export (assets/loom-video-index.json) froze 2026-04-08; with no
+fetcher the Loom corpus stalled four months. This fetches the live GraphQL index
+(Abhijeet's logged-in loom.com session, via the scanner's Chrome substrate),
+diffs it against `sources`, and pulls transcripts for the new ids -> inbox ->
+`sources`. READ-ONLY on Loom; local writes only. Session loss FAILS LOUD ("log
+into loom.com in Chrome") — never a silent 0.
+
+    PYTHONPATH=. python3 bin/kb-loom-fetch                  # incremental (default)
+    PYTHONPATH=. python3 bin/kb-loom-fetch --dry-run        # fetch + report, no writes
+    PYTHONPATH=. python3 bin/kb-loom-fetch --limit 20       # bound transcripts this run
+    PYTHONPATH=. python3 bin/kb-loom-fetch --full           # retry no-transcript ids too
+
+Needs Chrome running with loom.com logged in (headless CC cannot reach Chrome).
+Then attribute + extract the new looms via the gated chain (printed on success).
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from modules.knowledge import loom_fetch                     # noqa: E402
+
+
+if __name__ == "__main__":
+    raise SystemExit(loom_fetch.main(sys.argv[1:]))
