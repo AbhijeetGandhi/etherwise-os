@@ -197,6 +197,59 @@ class FathomHealTests(unittest.TestCase):
         self.assertIn("Make automation", md.read_text())
 
 
+class LoomHealTests(unittest.TestCase):
+    """Human approval of a QUEUED Loom must heal the KB the same as Fathom does
+    (source + facts reattributed, dossier recompiled). Approval is human-
+    authoritative, so healing here crosses no model-authority hard line."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dbp = Path(self.tmp.name) / "t.db"
+        db.migrate(self.dbp)
+        self.reg = Path(self.tmp.name) / "clients.yaml"
+        self.reg.write_text(TEMP_REG)
+        self.dossiers = Path(self.tmp.name) / "dossiers"
+        # an unmapped Loom source + a NULL-client fact for it
+        with db.connect(self.dbp) as conn:
+            cur = conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, content_type, density, title, occurred_dt, raw_path,"
+                " status) VALUES ('loom','loom/L1','hL1',NULL,'unknown',0.5,"
+                " 'Walkthrough of the cancellation flow','2026-07-01','/x',"
+                " 'ingested')")
+            sid = cur.lastrowid
+            conn.execute(
+                "INSERT INTO facts (source_id, client_id, category, fact_text,"
+                " citation, confidence, scope) VALUES (?,NULL,'overview',"
+                " 'The client uses Make automation.','loom/L1 @ 0','CONFIRMED',"
+                " 'client')", (sid,))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_assign_loom_heals_dossier(self):
+        # a queued Loom carries no author (one-way recording) -> nothing to learn,
+        # but the assign must still heal source + facts + dossier.
+        _seed_event(self.dbp, "evt:loom:L1", "loom", None, raw_ref="loom/L1")
+        res = approve.resolve(self.dbp, "evt:loom:L1", "assign",
+                              client_id="diskover-data", do_git=False,
+                              registry_path=self.reg, dossier_dir=self.dossiers,
+                              now_iso="2026-08-06T00:00:00")
+        self.assertTrue(res["ok"])
+        self.assertIsNotNone(res["heal"])
+        self.assertEqual(res["heal"]["facts_reattributed"], 1)
+        self.assertEqual(res["heal"]["dossier"], "compiled")
+        with db.connect(self.dbp) as conn:
+            s = conn.execute("SELECT client_id FROM sources WHERE source_ref=?",
+                             ("loom/L1",)).fetchone()
+            f = conn.execute("SELECT client_id FROM facts").fetchone()
+        self.assertEqual(s["client_id"], "diskover-data")
+        self.assertEqual(f["client_id"], "diskover-data")
+        md = (self.dossiers / "diskover-data.md")
+        self.assertTrue(md.exists())
+        self.assertIn("Make automation", md.read_text())
+
+
 class BridgeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

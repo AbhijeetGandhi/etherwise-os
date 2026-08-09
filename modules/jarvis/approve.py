@@ -4,7 +4,8 @@ Abhijeet's approval in the cockpit is what edits clients.yaml, via an audited gi
 commit (author 'cockpit-approval', message carries the event evidence). The agent
 has no other write path (architecture §4.1, immutable-policy pattern). On assign
 the flow LEARNS the identifying pattern (sender domain / participant) so the same
-sender auto-maps next sweep, maps the event, and — for Fathom — heals the dossier.
+sender auto-maps next sweep, maps the event, and — for a recording (Fathom call
+or Loom walkthrough) — heals the dossier (source + facts reattributed, recompiled).
 """
 from __future__ import annotations
 
@@ -137,8 +138,12 @@ def resolve(db_path, event_id: str, action: str, *, client_id: Optional[str] = N
     with db.connect(db_path) as conn:
         events.resolve(conn, event_id, client_id, by)
 
+    # A human-approved recording (Fathom call OR Loom walkthrough) heals the KB:
+    # reattribute the source + its facts and recompile the dossier. Approval is
+    # human-authoritative, so this crosses no model-authority hard line -- and it
+    # goes through the SAME shared heal_source both bridges already reuse.
     heal = None
-    if ev["source"] == "fathom":
+    if ev["source"] in ("fathom", "loom") and ev["raw_ref"]:
         heal = fathom_bridge.heal_source(
             db_path, ev["raw_ref"], client_id, reg.by_id[client_id]["name"],
             now_iso=now_iso, dossier_dir=dossier_dir)
