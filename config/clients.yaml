@@ -122,6 +122,13 @@ clients:
       - michaelxavierga
       - cmf publishing llc
       - Charles Michaels Firm
+      # 2026-08-10: he signs calendar mail as the formal "Michael", which matched
+      # nothing and pushed a resolvable row into the mapping queue.
+      - Michael Gandia
+      - Michael Gandia (CMF Publishing LLC)
+    emails:
+      # personal address — a FULL address, so it claims him and not gmail.com
+      - mikegandia@gmail.com
     slack:
       workspace: Charles Michaels Firm
       url: cmfirm.slack.com

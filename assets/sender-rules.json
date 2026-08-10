@@ -1,0 +1,77 @@
+{
+  "_note": "Non-client sender rules. Abhijeet, 2026-08-10: 'a lot of the crude records you can tell yourself... those are promotional letters and things like that. You should be able to sort them out yourself.' Anything matched here is auto-excluded and NEVER reaches the mapping queue. Structural rules come first because they generalise; the named lists only catch what structure misses.",
+
+  "_precedence": "learned-mappings.json > registry client domains > structural > categories > ask",
+
+  "bulk_subdomains": [
+    "mailers", "marketing", "updates", "news", "newsletter", "info", "em1",
+    "em", "e", "custcomm", "digital", "notifications", "notify", "mailer",
+    "campaigns", "email", "reply", "go", "click", "track", "promo"
+  ],
+  "_bulk_subdomains_note": "A first label used purely to send bulk mail. 'mailers.hdfcbank.bank.in', 'digital.axisbankmail.bank.in', 'custcomm.icici.bank.in', 'marketing.goindigo.in', 'updates.easemytrip.com', 'em1.cloudflare.com', 'info.clickup.com' are all this shape. A real client writes from their bare domain.",
+
+  "noreply_locals": [
+    "noreply", "no-reply", "donotreply", "do-not-reply", "notifications",
+    "notification", "mailer-daemon", "bounce", "postmaster", "news",
+    "newsletter", "marketing", "support", "hello", "team", "updates"
+  ],
+  "_noreply_locals_note": "Existing convention already records these as noise:sender:<local>. Kept so this classifier agrees with what is already in the table rather than inventing a second vocabulary.",
+
+  "tld_suffixes": {
+    ".bank.in": "bank",
+    ".edu.in": "education",
+    ".ac.in": "education",
+    ".gov.in": "government"
+  },
+
+  "categories": {
+    "bank": {
+      "reason": "noise:sender:bank",
+      "domains": ["hdfcbank.bank.in", "axisbankmail.bank.in", "icici.bank.in",
+                  "idfcfirst.bank.in", "hdfcbank.com", "axisbank.com",
+                  "icicibank.com", "idfcfirstbank.com", "sbi.co.in",
+                  "kotak.com", "yesbank.in"]
+    },
+    "investment": {
+      "reason": "noise:sender:investment-promo",
+      "domains": ["hdfcfund.com", "axismf.com", "icicipruamc.com",
+                  "sbimf.com", "nipponindiamf.com", "zerodha.com",
+                  "groww.in", "camsonline.com", "kfintech.com"],
+      "_note": "Abhijeet named hdfcfund.com and axismf.com explicitly as bank/AMC promotional mail."
+    },
+    "saas_vendor": {
+      "reason": "noise:sender:vendor",
+      "domains": ["atlassian.com", "e.atlassian.com", "clickup.com",
+                  "mail.clickup.com", "info.clickup.com", "cloudflare.com",
+                  "em1.cloudflare.com", "twilio.com", "team.twilio.com",
+                  "supabase.com", "parallels.com", "m.parallels.com",
+                  "github.com", "notion.so", "slack.com", "airtable.com",
+                  "make.com", "zapier.com", "openai.com", "anthropic.com",
+                  "google.com", "microsoft.com", "apple.com", "vercel.com",
+                  "stripe.com", "loom.com", "fathom.video"],
+      "_note": "Tools Etherwise USES. Not clients, and not promotional either — a distinct reason so spend/vendor analysis can find them later."
+    },
+    "travel": {
+      "reason": "noise:sender:promotional",
+      "domains": ["goindigo.in", "marketing.goindigo.in", "easemytrip.com",
+                  "updates.easemytrip.com", "makemytrip.com", "cleartrip.com",
+                  "airindia.com", "booking.com", "agoda.com", "irctc.co.in"]
+    },
+    "ecommerce": {
+      "reason": "noise:sender:promotional",
+      "domains": ["amazon.com", "amazon.in", "flipkart.com", "myntra.com",
+                  "swiggy.in", "zomato.com", "motorola-mail.com",
+                  "motorola.com", "apple.com"]
+    },
+    "personal_interest": {
+      "reason": "noise:sender:personal-interest",
+      "domains": ["chessbase.com", "chess.com", "lichess.org",
+                  "spotify.com", "netflix.com", "youtube.com"],
+      "_note": "Abhijeet: 'chessbase is the chess, like, you know, player'. Personal hobby mail, not business."
+    },
+    "education": {
+      "reason": "noise:sender:education",
+      "domains": ["aegis.edu.in", "snjb.org", "coursera.org", "udemy.com"]
+    }
+  }
+}

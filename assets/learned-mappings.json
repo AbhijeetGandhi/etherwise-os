@@ -1,0 +1,45 @@
+{
+  "_note": "THE NEVER-ASK-TWICE STORE. Abhijeet, 2026-08-10: 'if you have sometimes question about some specific ones, you can always ask me, and then I give you the mapping for that, then you should in future never ask me for that same mapping again.'",
+
+  "_contract": "Every time Abhijeet resolves an ambiguous sender, it is written here IMMEDIATELY — before the answer is used. This file is consulted FIRST, ahead of every other rule, so a question he has already answered can never reach him again. If a sender is in here, the queue never sees it.",
+
+  "_format": {
+    "<sender domain or full address, lowercase>": {
+      "verdict": "<client_id | EXCLUDE>",
+      "reason": "free text, or an exclude_reason for EXCLUDE verdicts",
+      "learned_on": "YYYY-MM-DD",
+      "learned_from": "abhijeet | inferred"
+    }
+  },
+
+  "mappings": {
+    "chessbase.com": {
+      "verdict": "EXCLUDE",
+      "reason": "noise:sender:personal-interest",
+      "note": "chess software/newsletter — Abhijeet's hobby, not a client",
+      "learned_on": "2026-08-10",
+      "learned_from": "abhijeet"
+    },
+    "hdfcfund.com": {
+      "verdict": "EXCLUDE",
+      "reason": "noise:sender:investment-promo",
+      "note": "HDFC mutual fund promotional mail",
+      "learned_on": "2026-08-10",
+      "learned_from": "abhijeet"
+    },
+    "axismf.com": {
+      "verdict": "EXCLUDE",
+      "reason": "noise:sender:investment-promo",
+      "note": "Axis mutual fund promotional mail",
+      "learned_on": "2026-08-10",
+      "learned_from": "abhijeet"
+    },
+    "beglaubigt.de": {
+      "verdict": "beglaubigt",
+      "reason": "client; pays via Upwork, not Stripe",
+      "note": "Stripe payments from Beglaubigt in Jun 2026 were PLATFORM TESTING, not revenue — Abhijeet 2026-08-10. Do not treat those as income.",
+      "learned_on": "2026-08-10",
+      "learned_from": "abhijeet"
+    }
+  }
+}

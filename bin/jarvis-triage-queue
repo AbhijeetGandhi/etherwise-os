@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Clear the obvious noise out of the mapping queue, and show only real questions.
+
+    PYTHONPATH=. python3 bin/jarvis-triage-queue --dry-run
+    PYTHONPATH=. python3 bin/jarvis-triage-queue --apply
+
+Every auto-exclusion records the RULE that produced it, so a wrong call can be
+found and reversed by rule rather than one row at a time. Whatever is left is the
+short list genuinely worth Abhijeet's attention — and once he answers one, it
+goes into learned-mappings.json and never appears again.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import re
+from collections import Counter, defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db, registry                      # noqa: E402
+from modules.jarvis import sender_rules as SR              # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    args = ap.parse_args()
+
+    reg = registry.load()
+    rules, learned = SR.load_rules(), SR.load_learned()
+
+    with db.connect(config.DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, source, author, subject, proposed_client_id,"
+            "       substr(text,1,400) AS head FROM events WHERE state='queued'")]
+
+        excl, ask, mapped = [], [], []
+        by_rule = Counter()
+        for r in rows:
+            if not (r["author"] or "").strip():
+                # no sender at all: loom/fathom rows the content classifier owns,
+                # not this one. Left alone rather than guessed at.
+                ask.append((r, {"verdict": SR.ASK, "rule": "no-sender",
+                                "reason": "no sender — content rules own this"}))
+                continue
+            # the display name is often the only thing that identifies a
+            # client writing from a personal address
+            m = re.search(r"From:\s*([^<\n]{2,60})<", r.get("head") or "")
+            name = m.group(1).strip() if m else None
+            v = SR.classify(r["author"], reg=reg, rules=rules, learned=learned,
+                            display_name=name)
+            by_rule[v["rule"]] += 1
+            if v["verdict"] == SR.EXCLUDE:
+                excl.append((r, v))
+            elif v["verdict"] == SR.ASK:
+                ask.append((r, v))
+            else:
+                mapped.append((r, v))
+
+        print(f"queued events: {len(rows)}")
+        print(f"  auto-exclude : {len(excl)}")
+        print(f"  auto-map     : {len(mapped)}")
+        print(f"  still ASK    : {len(ask)}")
+        print("\n=== rules that fired ===")
+        for k, n in by_rule.most_common():
+            print(f"   {k:28} {n}")
+
+        if excl:
+            print("\n=== auto-excluded ===")
+            for r, v in excl:
+                print(f"   {SR.domain_of(r['author']):32} {v['reason']:34}"
+                      f" {(r['subject'] or '')[:40]}")
+        if mapped:
+            print("\n=== auto-mapped to a client ===")
+            for r, v in mapped:
+                print(f"   {SR.domain_of(r['author']):32} -> {v['verdict']}")
+
+        real_asks = [(r, v) for r, v in ask if v["rule"] != "no-sender"]
+        print(f"\n=== NEEDS ABHIJEET ({len(real_asks)}) ===")
+        grouped = defaultdict(list)
+        for r, v in real_asks:
+            grouped[SR.domain_of(r["author"])].append((r, v))
+        for dom, items in sorted(grouped.items(), key=lambda x: -len(x[1])):
+            r, v = items[0]
+            print(f"   {dom:32} x{len(items):<3} {v['reason']}")
+            print(f"      e.g. {(r['subject'] or '')[:70]}")
+        skipped = len(ask) - len(real_asks)
+        if skipped:
+            print(f"\n   ({skipped} queued rows have no sender — loom/fathom,"
+                  f" owned by the content classifier, untouched here)")
+
+        if not args.apply:
+            print("\nDRY RUN — nothing written. Re-run with --apply.")
+            return 0
+
+        for r, v in excl:
+            conn.execute(
+                "UPDATE events SET state='excluded', exclude_reason=?,"
+                " resolved_by=?, resolved_at=datetime('now') WHERE id=?",
+                (v["reason"], f"sender_rules:{v['rule']}", r["id"]))
+        for r, v in mapped:
+            conn.execute(
+                "UPDATE events SET state='mapped', client_id=?, resolved_by=?,"
+                " resolved_at=datetime('now') WHERE id=?",
+                (v["verdict"], f"sender_rules:{v['rule']}", r["id"]))
+        conn.commit()
+        print(f"\nAPPLIED — {len(excl)} excluded, {len(mapped)} mapped,"
+              f" {len(real_asks)} left for Abhijeet")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
