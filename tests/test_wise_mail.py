@@ -85,9 +85,9 @@ class LedgerTests(unittest.TestCase):
         self.conn.execute(
             "CREATE TABLE transactions (canonical_key TEXT PRIMARY KEY,"
             " dedup_key TEXT, wise_id TEXT, source TEXT, category TEXT,"
-            " pnl_bucket TEXT, amount_minor INTEGER, currency TEXT, fx_rate TEXT,"
-            " description TEXT, creation_dt TEXT, pnl_month TEXT,"
-            " first_seen_at TEXT, updated_at TEXT)")
+            " pnl_bucket TEXT, amount_minor INTEGER, amount_base_minor INTEGER,"
+            " currency TEXT, fx_rate TEXT, description TEXT, creation_dt TEXT,"
+            " pnl_month TEXT, first_seen_at TEXT, updated_at TEXT)")
 
     def test_keys_match_the_csv_namespace_exactly(self):
         rows = wise_mail.ledger_rows(
@@ -137,6 +137,157 @@ class LedgerTests(unittest.TestCase):
         months = {r[0] for r in self.conn.execute(
             "SELECT pnl_month FROM transactions")}
         self.assertEqual(months, {"2026-07"})
+
+
+# Real arrival email (amounts and reference kept verbatim).
+ARRIVAL = ("CMF Publishing just paid you",
+           "This notification is for the business account of Etherwise .\n"
+           "You received 1,626.40 USD from CMF Publishing.\n"
+           "The money will be automatically converted to INR and deposited into\n"
+           "your verified INR bank account ending with 0234 by the next business day.\n"
+           "Payment details\nFrom:\nCMF Publishing\nAmount received:\n"
+           "1,626.40 USD\nReference:\nINV-2627-037\nTransfer Number:\nThanks,")
+
+
+class ArrivalTests(unittest.TestCase):
+    def test_parses_payer_amount_and_reference(self):
+        a = wise_mail.parse_arrival(*ARRIVAL)
+        self.assertEqual(a["payer"], "CMF Publishing")
+        self.assertEqual(a["amount_minor"], 162640)
+        self.assertEqual(a["currency"], "USD")
+        self.assertEqual(a["reference"], "INV-2627-037")
+
+    def test_reference_key_still_includes_date_and_amount(self):
+        a = wise_mail.parse_arrival(*ARRIVAL)
+        self.assertEqual(wise_mail.income_key(a, "2026-07-31"),
+                         "wise:MAILREF-inv-2627-037-2026-07-31-162640")
+
+    def test_a_REPEATED_reference_does_not_collide(self):
+        # The live ledger proves Wise's reference is free text that repeats:
+        # 23 distinct payments carry "Malave", 4 carry "SENDER". Keying on the
+        # reference alone made payments 2..N look like duplicates of payment 1,
+        # which DROPS revenue. Two real Malave payments must key differently.
+        a1 = dict(payer="X", amount_minor=31500, currency="USD",
+                  reference="Malave", incomplete=False)
+        a2 = dict(payer="X", amount_minor=91830, currency="USD",
+                  reference="Malave", incomplete=False)
+        self.assertNotEqual(wise_mail.income_key(a1, "2026-01-16"),
+                            wise_mail.income_key(a2, "2025-12-22"))
+
+    def test_key_falls_back_when_wise_prints_no_reference(self):
+        # 63 historical rows carried no reference; they still need a stable key
+        a = dict(payer="Horizons ABA MIdCo LLC", amount_minor=240680,
+                 currency="USD", reference=None, incomplete=False)
+        self.assertEqual(wise_mail.income_key(a, "2026-07-03"),
+                         "wise:MAILPAY-horizons-aba-midco-llc-2026-07-03-240680")
+
+    def test_settlement_email_is_not_an_arrival(self):
+        self.assertIsNone(wise_mail.parse_arrival(*REAL_1))
+
+    def test_description_matches_the_csv_phrasing(self):
+        # downstream attribution reads descriptions; mail rows must be
+        # indistinguishable from CSV rows or client mapping silently changes
+        r = wise_mail.income_row(wise_mail.parse_arrival(*ARRIVAL),
+                                 paid_date="2026-07-31")
+        self.assertEqual(r["description"],
+                         "Received money from CMF Publishing with reference INV-2627-037")
+        self.assertEqual(r["pnl_bucket"], "revenue")
+        self.assertEqual(r["amount_minor"], 162640)     # income is POSITIVE
+
+
+class IncomeCommitTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute(
+            "CREATE TABLE transactions (canonical_key TEXT PRIMARY KEY,"
+            " dedup_key TEXT, wise_id TEXT, source TEXT, category TEXT,"
+            " pnl_bucket TEXT, amount_minor INTEGER, amount_base_minor INTEGER,"
+            " currency TEXT, fx_rate TEXT, description TEXT, creation_dt TEXT,"
+            " pnl_month TEXT, first_seen_at TEXT, updated_at TEXT)")
+        self.a = wise_mail.parse_arrival(*ARRIVAL)
+
+    def _csv_row(self, desc, minor=162640, dt="2026-07-31"):
+        self.conn.execute(
+            "INSERT INTO transactions (canonical_key, source, category,"
+            " amount_minor, currency, description, creation_dt)"
+            " VALUES ('wise:TRANSFER-2282113339','Wise','income',?,'USD',?,?)",
+            (minor, desc, dt))
+
+    def test_writes_income_when_the_ledger_has_none(self):
+        out = wise_mail.commit_income(self.conn, [(self.a, "2026-07-31")])
+        self.assertEqual(out["inserted"], 1)
+        row = self.conn.execute(
+            "SELECT source, category, amount_minor, pnl_month FROM transactions"
+        ).fetchone()
+        self.assertEqual(row, ("Wise-mail", "income", 162640, "2026-07"))
+
+    def test_usd_rows_carry_amount_base_minor(self):
+        # payment_mail_rail._ledger_twin requires amount_base_minor IS NOT NULL.
+        # Without it the payment reconciles against nothing and the AR view keeps
+        # claiming the client never paid — which is exactly what happened.
+        wise_mail.commit_income(self.conn, [(self.a, "2026-07-31")])
+        self.assertEqual(self.conn.execute(
+            "SELECT amount_base_minor FROM transactions").fetchone()[0], 162640)
+
+    def test_non_usd_leaves_base_null_rather_than_inventing_a_rate(self):
+        a = dict(self.a, currency="AUD")
+        wise_mail.commit_income(self.conn, [(a, "2026-07-31")])
+        self.assertIsNone(self.conn.execute(
+            "SELECT amount_base_minor FROM transactions").fetchone()[0])
+
+    def test_refuses_when_the_csv_already_has_it_BY_REFERENCE(self):
+        # the CSV keys income by a transfer id we cannot see, so reference
+        # matching is the only thing standing between us and double revenue
+        self._csv_row("Received money from CMF Publishing LLC with reference "
+                      "INV-2627-037")
+        out = wise_mail.commit_income(self.conn, [(self.a, "2026-07-31")])
+        self.assertEqual(out["inserted"], 0)
+        self.assertEqual(out["already_present"], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM transactions").fetchone()[0], 1)
+
+    def test_refuses_when_the_csv_has_it_with_NO_reference(self):
+        self._csv_row("Received money from CMF Publishing")
+        a = dict(self.a, reference=None)
+        out = wise_mail.commit_income(self.conn, [(a, "2026-07-31")])
+        self.assertEqual(out["inserted"], 0)
+
+    def test_a_different_payment_same_day_is_NOT_a_duplicate(self):
+        # CMF really did send two payments on 2026-07-31 (1,615.00 and 1,626.40)
+        self._csv_row("Received money from CMF Publishing LLC with reference "
+                      "INV-2627-042", minor=161500)
+        out = wise_mail.commit_income(self.conn, [(self.a, "2026-07-31")])
+        self.assertEqual(out["inserted"], 1)          # the 1,626.40 is genuinely new
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM transactions").fetchone()[0], 2)
+
+    def test_a_repeated_reference_on_a_NEW_payment_is_still_written(self):
+        # regression for the under-count: an older payment sharing the free-text
+        # reference must NOT make this one look already-present
+        self._csv_row("Received money from Someone with reference Malave",
+                      minor=31500, dt="2026-01-16")
+        a = dict(payer="Someone", amount_minor=91830, currency="USD",
+                 reference="Malave", incomplete=False)
+        out = wise_mail.commit_income(self.conn, [(a, "2026-06-22")])
+        self.assertEqual(out["inserted"], 1)
+
+    def test_reference_match_tolerates_a_few_days_of_date_drift(self):
+        self._csv_row("Received money from CMF Publishing LLC with reference "
+                      "INV-2627-037", dt="2026-08-02")
+        out = wise_mail.commit_income(self.conn, [(self.a, "2026-07-31")])
+        self.assertEqual(out["inserted"], 0)     # same payment, dated 2 days on
+
+    def test_commit_income_is_idempotent(self):
+        first = wise_mail.commit_income(self.conn, [(self.a, "2026-07-31")])
+        second = wise_mail.commit_income(self.conn, [(self.a, "2026-07-31")])
+        self.assertEqual((first["inserted"], second["inserted"]), (1, 0))
+
+    def test_incomplete_arrival_is_skipped_not_written(self):
+        out = wise_mail.commit_income(
+            self.conn, [({"payer": "X", "incomplete": True}, "2026-07-31")])
+        self.assertEqual(out["inserted"], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM transactions").fetchone()[0], 0)
 
 
 if __name__ == "__main__":

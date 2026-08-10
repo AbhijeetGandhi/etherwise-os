@@ -43,15 +43,21 @@ def main() -> int:
         sys.exit(f"no app password on file for {inbox}")
 
     client = imap_rail._connect(config.JARVIS_IMAP_HOST, inbox, pw)
-    parsed, incomplete, rows_by_tid = [], [], {}
+    parsed, incomplete, rows_by_tid, arrivals = [], [], {}, []
     try:
         client.select(config.PAYMENT_MAIL_MAILBOX, readonly=True)
         since = (datetime.now() - timedelta(days=args.days)).strftime("%d-%b-%Y")
         # multi-word SEARCH terms MUST be quoted or Gmail answers BAD
-        typ, data = client.uid("SEARCH", None, "FROM", "wise.com",
-                               "SUBJECT", '"been sent"', "SINCE", since)
-        uids = data[0].split() if typ == "OK" and data and data[0] else []
-        print(f"settlement emails in last {args.days}d: {len(uids)}")
+        # One pass over ALL Wise mail: an arrival and a settlement are the two
+        # halves of the same payment and there is no reason to walk the mailbox
+        # twice for them.
+        uids = []
+        for dom in ("wise.com", "transferwise.com"):
+            typ, data = client.uid("SEARCH", None, "FROM", dom, "SINCE", since)
+            if typ == "OK" and data and data[0]:
+                uids += data[0].split()
+        uids = sorted(set(uids), key=lambda u: int(u))
+        print(f"wise emails in last {args.days}d: {len(uids)}")
 
         for uid in uids:
             typ, d = client.uid("FETCH", uid, "(BODY.PEEK[])")
@@ -59,18 +65,27 @@ def main() -> int:
                 continue
             msg = email.message_from_bytes(d[0][1])
             subj = str(make_header(decode_header(msg.get("Subject", ""))))
-            s = wise_mail.parse_settlement(subj, pmr._body_text(msg))
-            if not s:
-                continue
-            if s.get("incomplete"):
-                incomplete.append((s["transfer_id"], s.get("have")))
-                continue
+            body = pmr._body_text(msg)
             try:
                 paid = parsedate_to_datetime(msg.get("Date")).strftime("%Y-%m-%d")
             except Exception:
                 paid = None
-            parsed.append(s)
-            rows_by_tid[s["transfer_id"]] = wise_mail.ledger_rows(s, paid_date=paid)
+
+            s = wise_mail.parse_settlement(subj, body)
+            if s:
+                if s.get("incomplete"):
+                    incomplete.append((s["transfer_id"], s.get("have")))
+                else:
+                    parsed.append(s)
+                    rows_by_tid[s["transfer_id"]] = wise_mail.ledger_rows(
+                        s, paid_date=paid)
+                continue
+
+            a = wise_mail.parse_arrival(subj, body)
+            if a and not a.get("incomplete"):
+                arrivals.append((a, paid))
+            elif a:
+                incomplete.append((a.get("payer"), "arrival-unparsed"))
     finally:
         try:
             client.logout()
@@ -79,6 +94,7 @@ def main() -> int:
 
     all_rows = [r for rows in rows_by_tid.values() for r in rows]
     print(f"parsed {len(parsed)} settlements -> {len(all_rows)} ledger rows")
+    print(f"parsed {len(arrivals)} arrivals (income)")
     if incomplete:
         print(f"!! {len(incomplete)} settlement emails did not fully parse "
               f"(Wise template change?): {incomplete[:5]}")
@@ -89,7 +105,7 @@ def main() -> int:
                 1 for r in all_rows
                 if conn.execute("SELECT 1 FROM transactions WHERE canonical_key=?",
                                 (r["canonical_key"],)).fetchone())
-            print(f"DRY RUN — would insert {len(all_rows) - present}, "
+            print(f"DRY RUN settlement — would insert {len(all_rows) - present}, "
                   f"{present} already in the ledger")
             for r in all_rows:
                 if not conn.execute(
@@ -98,11 +114,22 @@ def main() -> int:
                     print(f"   + {r['creation_dt']} {r['canonical_key']:34}"
                           f" {r['amount_minor'] / 100:>10,.2f} {r['currency']}"
                           f"  {r['category']}")
+            new_inc = [(a, p) for a, p in arrivals
+                       if not wise_mail.existing_income(conn, a, p)]
+            print(f"DRY RUN income — would insert {len(new_inc)}, "
+                  f"{len(arrivals) - len(new_inc)} already in the ledger")
+            for a, p in new_inc:
+                print(f"   + {p} {wise_mail.income_key(a, p):38}"
+                      f" {a['amount_minor'] / 100:>10,.2f} {a['currency']}"
+                      f"  {a['payer'][:24]}")
         else:
             out = wise_mail.commit(conn, all_rows)
+            inc = wise_mail.commit_income(conn, arrivals)
             conn.commit()
-            print(f"inserted {out['inserted']}, already present "
+            print(f"settlement: inserted {out['inserted']}, already present "
                   f"{out['already_present']}")
+            print(f"income:     inserted {inc['inserted']}, already present "
+                  f"{inc['already_present']}")
 
         gap = wise_mail.income_gap(conn)
         print(f"\nINCOME GAP — revenue email cannot key, still missing from the "
