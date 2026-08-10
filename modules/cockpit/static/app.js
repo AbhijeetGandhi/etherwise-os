@@ -2449,9 +2449,15 @@ RENDERERS.Mapping = async (view) => {
       if (!selEl.value) { alert("Pick a client first."); return; }
       qResolve(it.event_id, "assign", selEl.value);
     };
+    // "Internal" is its own action, not Ignore-with-a-note: an internal team
+    // call is our own work, kept findable under one canonical reason.
+    const internal = el("button", "action", "Internal call");
+    internal.title = "Etherwise internal — excluded from client dossiers,"
+      + " but recorded as internal:team-call rather than discarded";
+    internal.onclick = () => qResolve(it.event_id, "internal");
     const ignore = el("button", "action", "Ignore");
     ignore.onclick = () => qResolve(it.event_id, "ignore", null, "not a client");
-    actions.append(selEl, assign, ignore);
+    actions.append(selEl, assign, internal, ignore);
     if (it.permalink) {
       const a = el("a", "action", "Open");
       a.href = it.permalink; a.target = "_blank"; a.rel = "noopener";

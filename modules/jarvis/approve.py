@@ -17,6 +17,12 @@ from typing import Optional
 from core import config, db, registry
 from modules.jarvis import events, fathom_bridge
 
+# Canonical exclude_reason for "this was an internal Etherwise call/thread".
+# Matches the existing `internal:owner-only` convention so the vocabulary stays
+# one family, and the Hindi-call rule (`kind='internal'`) lands in the same
+# bucket rather than inventing a parallel one.
+INTERNAL_REASON = "internal:team-call"
+
 _FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com",
              "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com",
              "aol.com", "live.com", "msn.com"}
@@ -106,7 +112,8 @@ def resolve(db_path, event_id: str, action: str, *, client_id: Optional[str] = N
             do_git: bool = True, registry_path: Optional[Path] = None,
             root: Optional[Path] = None, dossier_dir: Optional[Path] = None,
             now_iso: Optional[str] = None) -> dict:
-    """action = assign(client_id) | create_alias(client_id) | ignore(reason)."""
+    """action = assign(client_id) | create_alias(client_id) | ignore(reason)
+    | internal."""
     now_iso = now_iso or datetime.now(timezone.utc).isoformat()
     with db.connect(db_path) as conn:
         ev = conn.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
@@ -114,10 +121,18 @@ def resolve(db_path, event_id: str, action: str, *, client_id: Optional[str] = N
             return {"error": "unknown event", "event_id": event_id}
         ev = dict(ev)
 
-    if action == "ignore":
+    if action in ("ignore", "internal"):
+        # 'internal' is deliberately its own action rather than ignore-with-text.
+        # An internal team call is NOT junk — it is our own work, and it may be
+        # worth mining later for agency capability/proof-points. Keeping it
+        # under one canonical reason means those can be found again; free-text
+        # would drift into a dozen spellings and be unrecoverable.
+        excl_reason = (INTERNAL_REASON if action == "internal"
+                       else (reason or "not a client"))
         with db.connect(db_path) as conn:
-            events.ignore(conn, event_id, reason or "not a client", by)
-        return {"ok": True, "action": "ignore", "event_id": event_id}
+            events.ignore(conn, event_id, excl_reason, by)
+        return {"ok": True, "action": action, "event_id": event_id,
+                "exclude_reason": excl_reason}
 
     if action not in ("assign", "create_alias"):
         return {"error": f"unknown action {action!r}"}

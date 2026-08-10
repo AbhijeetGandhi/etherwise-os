@@ -142,6 +142,45 @@ class ResolveTests(unittest.TestCase):
                              ("evt:email:e2",)).fetchone()
         self.assertEqual((r["state"], r["exclude_reason"]), ("excluded", "newsletter"))
 
+    def test_internal_uses_one_canonical_reason(self):
+        # Abhijeet asked for an "internal call" button. It is its own action,
+        # not ignore-with-typed-text, so the reason cannot drift into a dozen
+        # spellings — internal calls stay findable if we later want to mine
+        # them for agency knowledge rather than treat them as junk.
+        _seed_event(self.dbp, "evt:fathom:i1", "fathom", "abhijeet@etherwise.io")
+        res = approve.resolve(self.dbp, "evt:fathom:i1", "internal")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["exclude_reason"], approve.INTERNAL_REASON)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state, exclude_reason, resolved_by FROM"
+                             " events WHERE id=?", ("evt:fathom:i1",)).fetchone()
+        self.assertEqual(r["state"], "excluded")
+        self.assertEqual(r["exclude_reason"], "internal:team-call")
+        self.assertEqual(r["resolved_by"], "cockpit-approval")
+
+    def test_internal_ignores_any_reason_passed_in(self):
+        # the canonical reason is enforced server-side, not supplied by the UI
+        _seed_event(self.dbp, "evt:fathom:i2", "fathom", "jay@etherwise.io")
+        approve.resolve(self.dbp, "evt:fathom:i2", "internal",
+                        reason="whatever the caller felt like typing")
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT exclude_reason FROM events WHERE id=?",
+                             ("evt:fathom:i2",)).fetchone()
+        self.assertEqual(r["exclude_reason"], approve.INTERNAL_REASON)
+
+    def test_internal_does_NOT_touch_the_registry(self):
+        # excluding must never write clients.yaml or make a git commit
+        _seed_event(self.dbp, "evt:fathom:i3", "fathom", "yogita@etherwise.io")
+        res = approve.resolve(self.dbp, "evt:fathom:i3", "internal")
+        self.assertNotIn("registry", res)
+
+    def test_cockpit_accepts_internal_as_an_action(self):
+        from modules.cockpit import actions as cockpit_actions
+        self.assertIn("internal", cockpit_actions._QUEUE_ACTIONS)
+        res = cockpit_actions.queue_resolve(self.dbp, {"action": "bogus",
+                                                       "event_id": "x"})
+        self.assertIn("internal", res["error"])   # listed in the error too
+
     def test_unknown_client_rejected(self):
         _seed_event(self.dbp, "evt:email:e3", "email", "a@b.com")
         res = approve.resolve(self.dbp, "evt:email:e3", "assign",
