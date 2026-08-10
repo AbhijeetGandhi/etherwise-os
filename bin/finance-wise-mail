@@ -25,18 +25,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import config, db                                  # noqa: E402
+from core import config, db, runner                          # noqa: E402
 from modules.finance import payment_mail_rail as pmr         # noqa: E402
 from modules.finance import wise_mail                        # noqa: E402
 from modules.jarvis import imap_rail                         # noqa: E402
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=75)
-    ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
+def _collect_and_commit(ctx, args) -> dict:
+    """The whole run, under the runner so it lands a `runs` row.
 
+    That row is not bookkeeping: config.SOURCES reads run recency to decide
+    whether a source is stale, and with the CSV export retired this rail is the
+    ONLY thing keeping Wise money current. A rail that dies silently would leave
+    the books frozen with nothing to say so.
+    """
     inbox = config.PAYMENT_MAIL_INBOX
     pw = imap_rail.app_password(inbox)
     if not pw:
@@ -99,6 +101,7 @@ def main() -> int:
         print(f"!! {len(incomplete)} settlement emails did not fully parse "
               f"(Wise template change?): {incomplete[:5]}")
 
+    gap = {"count": 0, "total_minor": 0, "rows": []}
     with db.connect(config.DB_PATH) as conn:
         if args.dry_run:
             present = sum(
@@ -138,7 +141,39 @@ def main() -> int:
         for payer, cid, minor, cur, dt in gap["rows"]:
             print(f"   ! {dt}  {str(payer)[:26]:26} {(minor or 0) / 100:>10,.2f}"
                   f" {cur}  -> {cid}")
-    return 0
+
+    if incomplete:
+        # A Wise template change is the one failure that would silently freeze
+        # the books now that the CSV is retired. It must alarm, not just print.
+        ctx.anomaly("wise_mail_unparsed", "critical",
+                    {"count": len(incomplete), "sample": incomplete[:5],
+                     "note": "Wise email template may have changed — the ledger"
+                             " stops updating until the parser is re-pointed"})
+    if not parsed and not arrivals:
+        # Zero Wise mail in a 21-day window is not normal for this business;
+        # it means notifications were turned off, filtered, or the search broke.
+        ctx.anomaly("wise_mail_empty_window", "warn",
+                    {"days": args.days, "note": "no Wise emails found at all"})
+
+    return {"emails": len(uids), "settlements": len(parsed),
+            "arrivals": len(arrivals), "incomplete": len(incomplete),
+            "settlement_rows": len(all_rows),
+            "income_gap_count": gap["count"],
+            "income_gap_minor": gap["total_minor"],
+            "dry_run": bool(args.dry_run)}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--days", type=int, default=75)
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+    # module='finance' but this rail makes ZERO external writes (local ledger
+    # only, read-only IMAP), so the shadow gate has nothing to suppress.
+    result = runner.run_task(
+        "finance_wise_mail", lambda ctx: _collect_and_commit(ctx, args),
+        module="system")
+    return 0 if result.status in ("completed", "skipped_empty") else 1
 
 
 if __name__ == "__main__":

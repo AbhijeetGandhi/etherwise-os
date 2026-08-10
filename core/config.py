@@ -482,6 +482,19 @@ SOURCES = (
     # ── money-backing sources (2026-07-20) ───────────────────────────────────
     # A dead sync silently staling the Money tab is the same failure class as
     # the dead connects rail, so the Money numbers get the same guarantee.
+    # Wise mail is the SOLE source of Wise money since the manual CSV export was
+    # retired (2026-08-10, Abhijeet's call). That removes the human cross-check
+    # that used to catch a broken importer, so this rail carries the whole
+    # burden: if it stops, the books freeze and nothing else would notice.
+    # 30h deadline = daily 06:00 + grace for a missed wake.
+    {"key": "wise_mail", "label": "Wise mail -> ledger (income + fee)",
+     "task_name": "finance_wise_mail", "max_age_hours": 30,
+     "degrade_kinds": ("wise_mail_empty_window",), "critical": True,
+     "backs": "money",
+     "launchd_label": "io.etherwise.v3.finance-wise-mail", "catch_up": True,
+     "why": "the only source of Wise revenue and fees now that the CSV export"
+            " is retired; stale means the P&L silently stops at the last email"
+            " it managed to read"},
     {"key": "upwork_sync", "label": "Upwork sync",
      "task_name": "upwork_sync", "max_age_hours": 3,     # hourly at :45
      "degrade_kinds": (), "critical": True, "backs": "money",
