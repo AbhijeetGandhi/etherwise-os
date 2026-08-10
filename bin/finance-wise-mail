@@ -95,8 +95,13 @@ def _collect_and_commit(ctx, args) -> dict:
             pass
 
     all_rows = [r for rows in rows_by_tid.values() for r in rows]
+    raw_arrivals = len(arrivals)
+    arrivals = wise_mail.dedupe_arrivals(arrivals)
     print(f"parsed {len(parsed)} settlements -> {len(all_rows)} ledger rows")
-    print(f"parsed {len(arrivals)} arrivals (income)")
+    print(f"parsed {raw_arrivals} arrival emails -> {len(arrivals)} distinct"
+          f" payments" + (f"  ({raw_arrivals - len(arrivals)} duplicate"
+                          f" notifications collapsed)"
+                          if raw_arrivals != len(arrivals) else ""))
     if incomplete:
         print(f"!! {len(incomplete)} settlement emails did not fully parse "
               f"(Wise template change?): {incomplete[:5]}")

@@ -67,11 +67,33 @@ FEE_PATTERN = re.compile(
 # description ("Received money from CMF Publishing LLC with reference
 # INV-2627-037"). So the reference is the natural key shared by both sources,
 # and matching on it is what stops a mail row and a CSV row both counting.
-ARRIVAL_SUBJECT = re.compile(r"^(?P<payer>.+?)\s+just paid you\b", re.I)
+ARRIVAL_SUBJECT = re.compile(
+    # Wise sends TWO different emails for the SAME payment (observed live
+    # 2026-08-10 on the Consulting Systems B.V. pair): "X just paid you" and
+    # "Money received from X". Both must parse — and the duplicate must then be
+    # collapsed by dedupe_arrivals, or the payment counts twice.
+    r"^(?:(?P<payer>.+?)\s+just paid you\b|Money received from\s+(?P<payer2>.+?)\s*$)",
+    re.I)
 ARRIVAL_AMOUNT = re.compile(
+    # payer runs to END OF LINE, not to the first period: "Consulting Systems
+    # B.V." was being truncated to "Consulting Systems B", which changed both
+    # the stored description and the fallback key.
     r"You received\s+(?P<amt>\d[\d,]*\.?\d*)\s*(?P<cur>[A-Z]{3})\s+from\s+"
-    r"(?P<payer>[^.\n]{2,60})", re.I)
+    r"(?P<payer>[^\n]{2,80})", re.I)
 ARRIVAL_REFERENCE = re.compile(r"Reference:\s*\n?\s*(?P<ref>[A-Za-z0-9][\w\-/]{2,40})")
+
+
+def _clean_payer(raw: str) -> str:
+    """Trim a payer name without eating an abbreviation's dots.
+
+    "Consulting Systems B.V." must survive intact; only a sentence-ending period
+    (one preceded by a letter pair, i.e. not part of "B.V.") is dropped.
+    """
+    p = (raw or "").strip()
+    p = re.sub(r"\s+", " ", p)
+    if p.endswith(".") and not re.search(r"\b[A-Z]\.[A-Z]\.$", p):
+        p = p[:-1]
+    return p.strip()
 
 
 def parse_arrival(subject: str, body: str) -> Optional[dict]:
@@ -80,7 +102,10 @@ def parse_arrival(subject: str, body: str) -> Optional[dict]:
     ma = ARRIVAL_AMOUNT.search(body or "")
     if not (ms or ma):
         return None
-    payer = (ma.group("payer") if ma else ms.group("payer")).strip(" .")
+    if ma:
+        payer = _clean_payer(ma.group("payer"))
+    else:
+        payer = _clean_payer(ms.group("payer") or ms.group("payer2") or "")
     if not ma:
         return {"payer": payer, "incomplete": True}
     mr = ARRIVAL_REFERENCE.search(body or "")
@@ -91,6 +116,34 @@ def parse_arrival(subject: str, body: str) -> Optional[dict]:
         "currency": ma.group("cur").upper(),
         "reference": mr.group("ref") if mr else None,
     }
+
+
+def dedupe_arrivals(arrivals: list) -> list:
+    """Collapse the two notifications Wise sends for one payment.
+
+    `arrivals` is [(arrival, paid_date)]. Identity is (date, amount, currency)
+    — deliberately NOT the reference or the payer string, because those are
+    exactly what differ between the two shapes: one said "Consulting Systems BV"
+    and the other "Consulting Systems B.V.". Relying on the reference matching
+    was luck; if the second shape ever omits it the keys diverge and the payment
+    is counted twice.
+
+    Two genuinely distinct payments from one payer on one day are only merged if
+    they are also for the identical amount — the same assumption income_key
+    already rests on. CMF's two payments on 2026-07-31 differ in amount and so
+    survive as two.
+
+    The copy carrying a reference wins, since it produces the better key.
+    """
+    best = {}
+    for a, paid in arrivals:
+        if a.get("incomplete"):
+            continue
+        k = (paid, a["amount_minor"], a["currency"])
+        cur = best.get(k)
+        if cur is None or (not cur[0].get("reference") and a.get("reference")):
+            best[k] = (a, paid)
+    return list(best.values())
 
 
 def _minor(d: Decimal) -> int:

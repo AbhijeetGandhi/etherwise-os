@@ -195,6 +195,56 @@ class ArrivalTests(unittest.TestCase):
         self.assertEqual(r["amount_minor"], 162640)     # income is POSITIVE
 
 
+# The SECOND shape Wise sends for the same payment (live, 2026-08-10).
+ARRIVAL_ALT = ("Money received from Consulting Systems B.V.",
+               "You received 3,046.39 USD from Consulting Systems B.V.\n"
+               "Reference:\n11477447-2800599882\n")
+ARRIVAL_MAIN = ("Consulting Systems BV just paid you",
+                "You received 3,046.39 USD from Consulting Systems BV.\n"
+                "Reference:\n11477447-2800599882\n")
+
+
+class DuplicateNotificationTests(unittest.TestCase):
+    def test_the_second_shape_parses_at_all(self):
+        a = wise_mail.parse_arrival(*ARRIVAL_ALT)
+        self.assertIsNotNone(a)
+        self.assertEqual(a["amount_minor"], 304639)
+
+    def test_payer_is_not_truncated_at_an_abbreviation_dot(self):
+        # "Consulting Systems B.V." was being cut to "Consulting Systems B"
+        self.assertEqual(wise_mail.parse_arrival(*ARRIVAL_ALT)["payer"],
+                         "Consulting Systems B.V.")
+
+    def test_trailing_sentence_period_is_still_trimmed(self):
+        self.assertEqual(wise_mail.parse_arrival(*ARRIVAL_MAIN)["payer"],
+                         "Consulting Systems BV")
+
+    def test_the_two_shapes_collapse_to_ONE_payment(self):
+        pair = [(wise_mail.parse_arrival(*ARRIVAL_MAIN), "2026-08-10"),
+                (wise_mail.parse_arrival(*ARRIVAL_ALT), "2026-08-10")]
+        self.assertEqual(len(wise_mail.dedupe_arrivals(pair)), 1)
+
+    def test_collapse_does_not_depend_on_the_reference_matching(self):
+        # the real risk: if the second shape omits the reference the keys
+        # diverge and the payment counts twice. Identity is date+amount.
+        alt = dict(wise_mail.parse_arrival(*ARRIVAL_ALT), reference=None)
+        pair = [(wise_mail.parse_arrival(*ARRIVAL_MAIN), "2026-08-10"),
+                (alt, "2026-08-10")]
+        kept = wise_mail.dedupe_arrivals(pair)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0][0]["reference"], "11477447-2800599882",
+                         "the copy WITH a reference must win")
+
+    def test_two_real_payments_the_same_day_are_NOT_collapsed(self):
+        # CMF genuinely sent 1,615.00 and 1,626.40 on 2026-07-31
+        a1 = dict(payer="CMF", amount_minor=161500, currency="USD",
+                  reference="INV-042", incomplete=False)
+        a2 = dict(payer="CMF", amount_minor=162640, currency="USD",
+                  reference="INV-037", incomplete=False)
+        self.assertEqual(
+            len(wise_mail.dedupe_arrivals([(a1, "2026-07-31"), (a2, "2026-07-31")])), 2)
+
+
 class IncomeCommitTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
