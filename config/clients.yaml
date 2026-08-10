@@ -354,6 +354,8 @@ clients:
     clickup: Netfly
     billing:
       canonical: NETFLY
+    emails:
+      - netflydigital.com
   -
     id: optimize-is
     name: Optimize IS
