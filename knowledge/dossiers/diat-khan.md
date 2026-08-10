@@ -1,6 +1,6 @@
 # Diat Khan — Dossier
 
-_Compiled 2026-08-09T20:30:38.608503+00:00 · 15 client facts (15 trusted) from 1 sources._
+_Compiled 2026-08-10T08:14:28.066602+00:00 · 15 client facts (15 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -39,4 +39,6 @@ _Compiled 2026-08-09T20:30:38.608503+00:00 · 15 client facts (15 trusted) from 
 
 ## Sources
 
+- `loom/8e61dd6b687148b380c055aa87e23850` · 2025-12-02 · loom · Meeting Link Issues and Required Changes 🔗
+- `loom/a23a5a7ea3404606bee1dfcfc7eda1eb` · 2026-04-08 · loom · How to Add Email Recipients Easily ✉️
 - `fathom/141917008` · 2026-04-28 · fathom · Impromptu Google Meet Meeting

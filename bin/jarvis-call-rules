@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Apply Abhijeet's Hindi/Yogita call rules to the Fathom corpus.
+
+    PYTHONPATH=. python3 bin/jarvis-call-rules --dry-run          # show the diff
+    PYTHONPATH=. python3 bin/jarvis-call-rules --cutoff 0.05 --dry-run
+    PYTHONPATH=. python3 bin/jarvis-call-rules --apply
+
+This MOVES KNOWLEDGE between dossiers and, for the Hindi rule, REMOVES facts from
+client dossiers that currently hold them. So:
+  - --dry-run is the default; --apply is required to write;
+  - every change records the prior client_id in `reclass_log` so it is reversible
+    (`--revert` puts every touched source back);
+  - the run prints a sensitivity table first, because the cutoff is a judgement
+    call and the counts should be visible before anyone commits to one.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import sys
+from collections import Counter, defaultdict
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from core import config, db                                   # noqa: E402
+from modules.jarvis import call_language_rules as rules       # noqa: E402
+
+DDL = """
+CREATE TABLE IF NOT EXISTS reclass_log (
+  source_ref   TEXT PRIMARY KEY,
+  prior_client TEXT,
+  new_client   TEXT,
+  rule         TEXT,
+  hindi_ratio  REAL,
+  evidence     TEXT,
+  applied_at   TEXT
+)"""
+
+
+def load(conn):
+    out = []
+    for r in conn.execute(
+            "SELECT id, source_ref, raw_path, client_id FROM sources"
+            " WHERE source_type='fathom'"):
+        p = pathlib.Path(str(r["raw_path"] or ""))
+        if not p.exists():
+            continue
+        try:
+            out.append((dict(r), json.loads(p.read_text())))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def sensitivity(corpus):
+    print("=== cutoff sensitivity (how many calls the Hindi rule would catch) ===")
+    print("  cutoff | hindi-only (-> internal) | of which already have a client")
+    for cut in (0.005, 0.01, 0.02, 0.05, 0.10):
+        n = strip = 0
+        for src, payload in corpus:
+            v = rules.classify(payload, cutoff=cut)
+            if v["rule"] == "hindi":
+                n += 1
+                if src["client_id"]:
+                    strip += 1
+        print(f"   {cut:>5.1%} | {n:>24} | {strip:>29}")
+    print()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cutoff", type=float, default=rules.HINDI_CUTOFF)
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--revert", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", default=True)
+    args = ap.parse_args()
+
+    with db.connect(config.DB_PATH) as conn:
+        conn.execute(DDL)
+
+        if args.revert:
+            n = 0
+            for r in conn.execute("SELECT source_ref, prior_client FROM reclass_log"):
+                conn.execute("UPDATE sources SET client_id=? WHERE source_ref=?",
+                             (r["prior_client"], r["source_ref"]))
+                n += 1
+            conn.execute("DELETE FROM reclass_log")
+            conn.commit()
+            print(f"reverted {n} sources to their prior client_id")
+            return 0
+
+        corpus = load(conn)
+        print(f"fathom calls with a readable transcript: {len(corpus)}\n")
+        sensitivity(corpus)
+
+        moves, by_rule = [], Counter()
+        churn = defaultdict(lambda: [0, 0])       # client -> [gained, lost]
+        for src, payload in corpus:
+            v = rules.classify(payload, cutoff=args.cutoff)
+            if not v["rule"]:
+                continue
+            prior, new = src["client_id"] or None, v["client_id"]
+            if prior == new:
+                by_rule[v["rule"] + " (no change)"] += 1
+                continue
+            by_rule[v["rule"]] += 1
+            moves.append((src, prior, new, v))
+            if prior:
+                churn[prior][1] += 1
+            if new:
+                churn[new][0] += 1
+
+        print("=== what the rules would change ===")
+        for k, n in by_rule.most_common():
+            print(f"   {k:22} {n}")
+        print("\n=== per-client effect (gained / lost) ===")
+        for cid, (g, l) in sorted(churn.items(), key=lambda x: -(x[1][0] + x[1][1])):
+            print(f"   {cid:16} +{g:<4} -{l}")
+
+        strips = [(s, p, v) for s, p, n, v in moves if p and not n]
+        if strips:
+            print(f"\n=== {len(strips)} calls would LOSE an existing client "
+                  f"(Hindi rule) — these remove facts from live dossiers ===")
+            for s, p, v in strips[:15]:
+                print(f"   {p:16} {v['hindi_ratio']:>6.1%}  {s['source_ref']}")
+
+        if not args.apply:
+            print("\nDRY RUN — nothing written. Re-run with --apply to commit.")
+            return 0
+
+        for src, prior, new, v in moves:
+            conn.execute(
+                "INSERT INTO reclass_log (source_ref, prior_client, new_client,"
+                " rule, hindi_ratio, evidence, applied_at) VALUES"
+                " (?,?,?,?,?,?,datetime('now'))"
+                " ON CONFLICT(source_ref) DO UPDATE SET new_client=excluded.new_client",
+                (src["source_ref"], prior, new, v["rule"], v["hindi_ratio"],
+                 v["evidence"]))
+            conn.execute("UPDATE sources SET client_id=? WHERE source_ref=?",
+                         (new, src["source_ref"]))
+            # Facts follow their source, or the dossier and the source disagree.
+            # facts joins on source_id (the integer), NOT source_ref — using the
+            # ref here silently updates zero rows and leaves the dossiers wrong.
+            conn.execute("UPDATE facts SET client_id=? WHERE source_id=?",
+                         (new, src["id"]))
+        conn.commit()
+        print(f"\nAPPLIED — {len(moves)} sources reattributed, logged in"
+              f" reclass_log (revert with --revert)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

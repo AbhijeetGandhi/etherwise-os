@@ -1,6 +1,6 @@
 # Etherwise — Proof Points & Capabilities
 
-_Compiled 2026-08-10 03:27 IST · 960 agency + 567 cross-client facts (1511 trusted)._
+_Compiled 2026-08-10 16:05 IST · 960 agency + 567 cross-client facts (1511 trusted)._
 
 > Agency-level knowledge extracted from client calls but NOT specific to one client. Cited; use CONFIRMED / CROSS-VERIFIED for outreach.
 
