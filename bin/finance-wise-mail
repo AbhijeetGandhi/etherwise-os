@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Pull Wise settlement emails ("Your money's been sent") into the ledger.
+
+Read-only on the mailbox (select readonly + BODY.PEEK); the only writes are
+`transactions` rows whose canonical keys are IDENTICAL to the ones the Wise CSV
+importer would produce, so this can never double-count against a CSV import.
+
+    PYTHONPATH=. python3 bin/finance-wise-mail --dry-run      # report, write nothing
+    PYTHONPATH=. python3 bin/finance-wise-mail --days 90      # widen the window
+    PYTHONPATH=. python3 bin/finance-wise-mail
+
+Always prints the INCOME GAP at the end: the revenue that email cannot key and
+the ledger is therefore still missing. Fees being current is not the books being
+current, and the difference must never be silent.
+"""
+from __future__ import annotations
+
+import argparse
+import email
+import sys
+from datetime import datetime, timedelta
+from email.header import decode_header, make_header
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db                                  # noqa: E402
+from modules.finance import payment_mail_rail as pmr         # noqa: E402
+from modules.finance import wise_mail                        # noqa: E402
+from modules.jarvis import imap_rail                         # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--days", type=int, default=75)
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    inbox = config.PAYMENT_MAIL_INBOX
+    pw = imap_rail.app_password(inbox)
+    if not pw:
+        sys.exit(f"no app password on file for {inbox}")
+
+    client = imap_rail._connect(config.JARVIS_IMAP_HOST, inbox, pw)
+    parsed, incomplete, rows_by_tid = [], [], {}
+    try:
+        client.select(config.PAYMENT_MAIL_MAILBOX, readonly=True)
+        since = (datetime.now() - timedelta(days=args.days)).strftime("%d-%b-%Y")
+        # multi-word SEARCH terms MUST be quoted or Gmail answers BAD
+        typ, data = client.uid("SEARCH", None, "FROM", "wise.com",
+                               "SUBJECT", '"been sent"', "SINCE", since)
+        uids = data[0].split() if typ == "OK" and data and data[0] else []
+        print(f"settlement emails in last {args.days}d: {len(uids)}")
+
+        for uid in uids:
+            typ, d = client.uid("FETCH", uid, "(BODY.PEEK[])")
+            if typ != "OK" or not d or not d[0]:
+                continue
+            msg = email.message_from_bytes(d[0][1])
+            subj = str(make_header(decode_header(msg.get("Subject", ""))))
+            s = wise_mail.parse_settlement(subj, pmr._body_text(msg))
+            if not s:
+                continue
+            if s.get("incomplete"):
+                incomplete.append((s["transfer_id"], s.get("have")))
+                continue
+            try:
+                paid = parsedate_to_datetime(msg.get("Date")).strftime("%Y-%m-%d")
+            except Exception:
+                paid = None
+            parsed.append(s)
+            rows_by_tid[s["transfer_id"]] = wise_mail.ledger_rows(s, paid_date=paid)
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+    all_rows = [r for rows in rows_by_tid.values() for r in rows]
+    print(f"parsed {len(parsed)} settlements -> {len(all_rows)} ledger rows")
+    if incomplete:
+        print(f"!! {len(incomplete)} settlement emails did not fully parse "
+              f"(Wise template change?): {incomplete[:5]}")
+
+    with db.connect(config.DB_PATH) as conn:
+        if args.dry_run:
+            present = sum(
+                1 for r in all_rows
+                if conn.execute("SELECT 1 FROM transactions WHERE canonical_key=?",
+                                (r["canonical_key"],)).fetchone())
+            print(f"DRY RUN — would insert {len(all_rows) - present}, "
+                  f"{present} already in the ledger")
+            for r in all_rows:
+                if not conn.execute(
+                        "SELECT 1 FROM transactions WHERE canonical_key=?",
+                        (r["canonical_key"],)).fetchone():
+                    print(f"   + {r['creation_dt']} {r['canonical_key']:34}"
+                          f" {r['amount_minor'] / 100:>10,.2f} {r['currency']}"
+                          f"  {r['category']}")
+        else:
+            out = wise_mail.commit(conn, all_rows)
+            conn.commit()
+            print(f"inserted {out['inserted']}, already present "
+                  f"{out['already_present']}")
+
+        gap = wise_mail.income_gap(conn)
+        print(f"\nINCOME GAP — revenue email cannot key, still missing from the "
+              f"ledger: {gap['count']} payment(s), "
+              f"{gap['total_minor'] / 100:,.2f}")
+        for payer, cid, minor, cur, dt in gap["rows"]:
+            print(f"   ! {dt}  {str(payer)[:26]:26} {(minor or 0) / 100:>10,.2f}"
+                  f" {cur}  -> {cid}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

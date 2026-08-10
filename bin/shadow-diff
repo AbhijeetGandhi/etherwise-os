@@ -17,7 +17,7 @@ import argparse
 import json
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -41,8 +41,19 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--date",
                    default=datetime.now(config.TZ).strftime("%Y-%m-%d"))
+    p.add_argument("--yesterday", action="store_true",
+                   help="the just-completed scan-day. The work window is"
+                        " 12PM-4AM IST (it spans midnight), so at the 05:00 run"
+                        " the COMPLETE prior day is IST-yesterday. This replaces"
+                        " the bin/shadow-diff-daily bash wrapper: launchd could"
+                        " not exec it (/bin/bash lacks the Full Disk Access that"
+                        " the pinned Python binary has), so the job failed with"
+                        " 'Operation not permitted' / exit 126 for months while"
+                        " running fine by hand.")
     args = p.parse_args()
     day = args.date
+    if args.yesterday:
+        day = (datetime.now(config.TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
 
     marks = ",".join("?" * len(FEEDS))
     v3 = {r["id"]: r for r in rows(

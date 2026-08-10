@@ -4,10 +4,23 @@
 <dict>
   <key>Label</key><string>io.etherwise.v3.shadow-diff</string>
   <!-- June-14 TCC pattern: framework Python via the wrapper, logs outside ~/Desktop -->
+  <!-- Interpreter FIRST. launchd cannot exec a script that lives on the Desktop
+       directly (TCC: "Operation not permitted" — it failed silently this way for
+       months, exit 126, while running fine by hand). Every working v3 job passes
+       the script as an ARGUMENT to an interpreter outside the protected path;
+       this one was the exception. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3/bin/shadow-diff-daily</string>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>bin/shadow-diff</string>
+    <string>--yesterday</string>
   </array>
+  <key>WorkingDirectory</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+    <key>PATH</key><string>/usr/bin:/bin</string>
+  </dict>
   <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/shadow-diff.log</string>
   <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/shadow-diff.log</string>
   <key>RunAtLoad</key><false/>
