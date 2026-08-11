@@ -71,6 +71,45 @@ def intent_hash(client: Optional[str], intent: str) -> str:
     return hashlib.sha1(key.encode()).hexdigest()[:10]
 
 
+def ts_key(ts) -> str:
+    """Comparable form of a timestamp that may arrive in any of this codebase's
+    three shapes: '2026-07-29T14:00:00Z' (Upwork), '2026-07-29 22:54:11'
+    (SQLite datetime('now')), '2026-07-29T14:00:00+05:30' (IST writers).
+
+    Comparing those as raw strings is subtly wrong rather than obviously wrong:
+    'T' (0x54) sorts ABOVE ' ' (0x20), so any same-day 'T' timestamp looks newer
+    than any same-day ' ' timestamp. That is not hypothetical — it put Adam
+    Goldsmith back on Today because his last message and Abhijeet's Done landed
+    on the same date in different formats."""
+    s = str(ts or "").strip().replace("T", " ")
+    return s[:19]
+
+
+_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def followup_key(client_id: Optional[str], room_name: Optional[str],
+                 thread_id: str) -> str:
+    """Identity of a 'you owe this person a reply' card: THE COUNTERPARTY, not
+    the room.
+
+    Upwork opens a new room per job, so one person can hold several. Keying on
+    the room meant Rocky Choy was two cards and Dhanya Sangolli two more:
+    Abhijeet marked one done, the twin stayed, and it read as 'Done is broken'.
+    Worse, each room carried its own action history, so a reply he had already
+    dealt with on the newer room kept resurfacing via the older one.
+
+    One person = one card. The card names every thread it covers, so nothing is
+    hidden — only the duplicate row is. Falls back to the thread id when there
+    is no usable name, which is a card that behaves exactly as before rather
+    than a silent merge of unrelated people under an empty slug."""
+    if client_id:
+        return f"followup:c:{client_id}"
+    base = (room_name or "").split(",")[0].strip()
+    slug = _SLUG.sub("-", base.lower()).strip("-")
+    return f"followup:p:{slug}" if slug else f"followup:{thread_id}"
+
+
 # ── time helpers (IST throughout) ─────────────────────────────────────────────
 
 def _now(now: Optional[datetime] = None) -> datetime:
@@ -203,7 +242,7 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
                     "SELECT id, updated_at FROM nudges WHERE dedup_key=? AND"
                     " state IN ('done','dismissed') ORDER BY id DESC LIMIT 1",
                     (dedup_key,)).fetchone()
-                if actioned and str(ev)[:19] <= str(actioned["updated_at"])[:19]:
+                if actioned and ts_key(ev) <= ts_key(actioned["updated_at"]):
                     return {"id": actioned["id"], "op": "suppressed-unchanged",
                             "urgency": 0.0}
         cur = conn.execute(

@@ -1,16 +1,28 @@
-"""Client roster for classification + CRM matching + thread linkage. The clients
-table (Airtable mirror) is empty until M1b lands, so the roster is defined here.
-Each entry's `identifiers` drive Fathom classification (participant emails/names,
-title), CRM revenue matching (txn description/company), AND Upwork thread→client
-linkage (counterparty org/user/room-name). Include domain forms AND any accented
-/legal-name variants seen in the data.
+"""Client roster for classification + CRM matching + thread linkage.
+
+THE ROSTER IS THE REGISTRY. `config/clients.yaml` (core/registry.py) is the
+identity spine; this module is a thin adapter that exposes it in the shape the
+knowledge module wants: {client_id, name, identifiers}. Identifiers drive Fathom
+classification (participant emails/names, title), CRM revenue matching (txn
+description/company), AND Upwork thread->client linkage (counterparty org/user/
+room-name).
+
+History worth keeping: this file used to return a hardcoded four-client
+PILOT_CLIENTS list dating from before the registry existed. Nothing said so at
+the call sites, so three separate features quietly operated on 4 of 72 clients —
+`kb-backfill compile` skipped 18 of 22 dossiers, `link_threads` left 136 of 138
+threads unattributed, and the email-poll domain gate admitted four domains. The
+visible symptom (2026-08-12) was Brandi Jordan surfacing on Today as a cold
+Upwork follow-up when The Cradle Company is an active project. A roster that
+silently excludes most of the business is worse than no roster: every consumer
+returns a confident, wrong, non-empty answer.
 """
 from __future__ import annotations
 
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from core import db
+from core import db, registry
 
 # a roster identifier is a company DOMAIN if it looks like one (dot, no spaces).
 # Personal domains (gmail.com etc.) are intentionally never roster identifiers,
@@ -20,73 +32,137 @@ _DOMAIN = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
 # Abhijeet's Upwork user id — the "our side" of every thread (never a counterparty).
 _OWNER_USER_ID = "1647672547786633216"
 
-PILOT_CLIENTS: List[dict] = [
-    {"client_id": "horizons-aba", "name": "Horizons ABA",
-     "identifiers": ["horizonsaba.com", "horizons aba", "horizons"]},
-    {"client_id": "adelye", "name": "Adelye",
-     # Adélye appears accented in CRM (assignment_company "Adélye")
-     "identifiers": ["adelye.com", "adélye", "adelye"]},
-    {"client_id": "endura", "name": "Endura Solutions",
-     "identifiers": ["endurasolutions.com.au", "endura solutions", "endura"]},
-    {"client_id": "netfly", "name": "NETFLY",
-     # message-heavy, no Fathom calls — linkage-validation pilot
-     "identifiers": ["netfly", "haleema", "umair"]},
-]
+# A bare identifier may only be matched as a SUBSTRING when it is distinctive:
+# multi-word, or long. "TCC", "endura", "Vitaliy" inside a sentence is a
+# coincidence, not evidence; "the cradle company" is evidence.
+_SUBSTR_MIN_LEN = 12
 
 
 def load_client_map(db_path=None) -> List[dict]:
-    """Return the active client roster (pilot roster until the clients mirror
-    is populated at M1b)."""
-    return PILOT_CLIENTS
+    """The active roster, from the registry. Excludes `no_match` entries
+    (products/internal) exactly as the registry's own matchers do; prospects are
+    INCLUDED because they hold their calls' context."""
+    reg = registry.load()
+    out: List[dict] = []
+    for cid in reg.matchable_ids():
+        c = reg.by_id[cid]
+        idents: List[str] = [c["name"], *c.get("aliases", []),
+                             *c.get("fathom_names", []), *c.get("emails", [])]
+        seen, uniq = set(), []
+        for i in idents:
+            k = registry.norm(i)
+            if k and k not in seen:
+                seen.add(k)
+                uniq.append(i)
+        out.append({"client_id": cid, "name": c["name"], "identifiers": uniq,
+                    "kind": reg.kind(cid),
+                    "upwork_rooms": list(c.get("upwork_rooms", []))})
+    return out
 
 
 def domain_map(client_map: List[dict]) -> Dict[str, str]:
     """{company_domain: client_id} from roster identifiers — the sender-domain
-    gate for email pulling. Clients with no company-domain identifier (e.g. a
-    personal-email client) simply won't match; add their domain to the roster."""
+    gate for email pulling. Full addresses (they contain '@') never become a
+    domain claim, so `chloe@secatexas.com` gates that one mailbox, not the org.
+    Clients with no company-domain identifier simply won't match."""
     out: Dict[str, str] = {}
     for c in client_map:
         for ident in c.get("identifiers", []):
             d = ident.lower().strip()
             if _DOMAIN.match(d):
-                out[d] = c["client_id"]
+                out.setdefault(d, c["client_id"])
     return out
 
 
 def _match(hay: str, client_map: List[dict]):
-    hay = (hay or "").lower()
+    """Substring match, kept for callers that only have one blob of text.
+
+    Only DISTINCTIVE identifiers are eligible (see _SUBSTR_MIN_LEN). With a
+    4-client roster naive substring matching was survivable; against 70+ it
+    turns every short alias into a false positive, and a WRONG attribution is
+    worse than none — it files a client's material under someone else."""
+    hay = registry.norm(hay)
+    if not hay:
+        return None, None
     for c in client_map:
         for ident in c.get("identifiers", []):
-            if ident.lower() in hay:
+            k = registry.norm(ident)
+            if not k or _DOMAIN.match(k):
+                continue
+            if (" " in k or len(k) >= _SUBSTR_MIN_LEN) and k in hay:
                 return c["client_id"], c["name"]
     return None, None
 
 
-def link_threads(db_path, client_map: List[dict]) -> dict:
+def match_counterparty(fields: List[Optional[str]],
+                       client_map: List[dict]) -> tuple:
+    """Resolve a client from DISCRETE counterparty fields, strongest first.
+
+    1. exact name/alias on a whole field (or a comma-separated part of one) —
+       an Upwork room is literally titled "Brandi Jordan" / "Dhanya Sangolli,
+       Dhanya S", so the parts are the identity, not the punctuation;
+    2. distinctive substring anywhere in the joined text.
+
+    Returns (client_id, name) or (None, None). Exact-on-a-field beats substring
+    so a long topic line can never outvote the counterparty's actual name."""
+    parts: List[str] = []
+    for f in fields:
+        if not f:
+            continue
+        parts.append(f)
+        parts.extend(p.strip() for p in f.split(",") if p.strip())
+    exact: Dict[str, str] = {}
+    for c in client_map:
+        for ident in c.get("identifiers", []):
+            exact.setdefault(registry.norm(ident), c["client_id"])
+    names = {c["client_id"]: c["name"] for c in client_map}
+    for p in parts:
+        cid = exact.get(registry.norm(p))
+        if cid:
+            return cid, names[cid]
+    return _match(" ".join(parts), client_map)
+
+
+def link_threads(db_path, client_map: Optional[List[dict]] = None) -> dict:
     """Set threads.client_id by matching each thread's COUNTERPARTY (non-owner
-    sender org/user names) + room_name/topic against the roster identifiers.
-    Idempotent; returns {linked, by_client}. Lets message-heavy clients with no
-    Fathom calls still get their Upwork signal."""
-    linked = 0
+    sender org/user names) + room_name/topic against the roster.
+
+    Precedence: a registry `upwork_rooms` claim (deterministic, hand-approved)
+    always wins; only then do we fall back to name matching. Idempotent, and it
+    never overwrites an existing non-null client_id with a guess — a linkage
+    that was approved once is not re-litigated by a fuzzy match later.
+
+    Returns {linked, by_client, unmatched} — `unmatched` is the honest tail:
+    threads we could not attribute, which is the mapping queue's input, not a
+    number to hide."""
+    client_map = client_map if client_map is not None else load_client_map(db_path)
+    reg = registry.load()
+    linked, unmatched = 0, 0
     by_client: dict = {}
     with db.connect(db_path) as conn:
         threads = [dict(r) for r in conn.execute(
-            "SELECT id, room_name, topic FROM threads")]
+            "SELECT id, room_name, topic, client_id FROM threads")]
         for t in threads:
-            parties = conn.execute(
-                "SELECT GROUP_CONCAT(DISTINCT sender_org_name) o,"
-                " GROUP_CONCAT(DISTINCT sender_user_name) u FROM messages"
-                " WHERE thread_id=? AND sender_user_id != ?",
-                (t["id"], _OWNER_USER_ID)).fetchone()
-            hay = " ".join(filter(None, [
-                t.get("room_name"), t.get("topic"),
-                parties["o"] if parties else None,
-                parties["u"] if parties else None]))
-            cid, _ = _match(hay, client_map)
+            if t.get("client_id"):
+                by_client[t["client_id"]] = by_client.get(t["client_id"], 0) + 1
+                continue
+            cid = reg.match_upwork_room(t["id"])
             if not cid:
+                parties = conn.execute(
+                    "SELECT GROUP_CONCAT(DISTINCT sender_org_name) o,"
+                    " GROUP_CONCAT(DISTINCT sender_user_name) u FROM messages"
+                    " WHERE thread_id=? AND sender_user_id != ?",
+                    (t["id"], _OWNER_USER_ID)).fetchone()
+                cid, _ = match_counterparty(
+                    [t.get("room_name"),
+                     parties["o"] if parties else None,
+                     parties["u"] if parties else None,
+                     t.get("topic")], client_map)
+            if not cid:
+                unmatched += 1
                 continue
             conn.execute("UPDATE threads SET client_id=? WHERE id=?",
                          (cid, t["id"]))
             linked += 1
             by_client[cid] = by_client.get(cid, 0) + 1
-    return {"linked": linked, "by_client": by_client}
+    return {"linked": linked, "by_client": by_client, "unmatched": unmatched}

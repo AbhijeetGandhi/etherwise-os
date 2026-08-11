@@ -12,10 +12,20 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from core import config, db
+from core import config, db, registry
+from modules.chief_of_staff import nudges
 
 # scored_jobs states that are still actionable (not parked/declined/applied)
 _ACTIONABLE_JOB = ("Scored", "Drafted")
+
+
+def _registry():
+    """The registry is advisory here: a malformed clients.yaml must degrade the
+    card's LABEL, never stop the sweep from surfacing the work."""
+    try:
+        return registry.load()
+    except Exception:
+        return None
 
 
 def _now(now: Optional[datetime]) -> datetime:
@@ -30,35 +40,66 @@ def _iso(dt: datetime) -> str:
 
 def rule_owed_replies(db_path, now=None) -> List[dict]:
     """A pending draft + the thread sat idle >= COS_FOLLOWUP_IDLE_DAYS -> nudge
-    'follow up (draft ready)'. Mirrors the cockpit Today follow-up source."""
+    'follow up (draft ready)'. Mirrors the cockpit Today follow-up source.
+
+    ONE CARD PER PERSON, not per room (see nudges.followup_key). The card is
+    labelled with the registry client when the thread is attributed, so an
+    active client never reads as a cold Upwork lead — the Brandi Jordan / Cradle
+    Company symptom Abhijeet caught on 2026-08-12."""
     cutoff = (_now(now) - timedelta(days=config.COS_FOLLOWUP_IDLE_DAYS))
-    out = []
+    groups: dict = {}
     with db.connect(db_path) as conn:
         for r in conn.execute(
             "SELECT d.thread_id, t.topic, t.room_name, t.latest_message_dt,"
+            " t.client_id,"
             " CAST(julianday(?) - julianday(substr(t.latest_message_dt,1,10))"
             "   AS INT) AS idle_days"
             " FROM drafts d JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status='pending'"
-            " AND substr(t.latest_message_dt,1,10) <= ?",
+            " AND substr(t.latest_message_dt,1,10) <= ?"
+            " ORDER BY t.latest_message_dt DESC",
                 (_iso(_now(now)), cutoff.strftime("%Y-%m-%d"))):
-            topic = r["topic"] or r["room_name"] or r["thread_id"]
-            out.append({
-                "source": "sales", "dept": "sales", "kind": "owed_reply",
-                "title": f"Follow up: {topic}", "client": r["room_name"],
-                "action": "Draft is ready — review + send in Upwork.",
-                "due": None, "dedup_key": f"followup:{r['thread_id']}",
-                # thread_id in the payload so the Today assembler can dedup this
-                # nudge against its follow-up card (the "follow-up x2" root cause)
-                # evidence_ts = the last message on the thread. nudges.add() uses
-                # it to decide whether a card the founder already marked done has
-                # any REASON to come back: if nothing has been said since they
-                # actioned it, it stays gone. Without this the card refired every
-                # sweep and 'Done' was meaningless (Rocky Choy accumulated 10
-                # rows, Mustafa 11, before this was caught on 2026-08-12).
-                "payload": {"idle_days": r["idle_days"],
-                            "thread_id": r["thread_id"],
-                            "evidence_ts": r["latest_message_dt"]}})
+            key = nudges.followup_key(r["client_id"], r["room_name"],
+                                      r["thread_id"])
+            g = groups.setdefault(key, {"rows": [], "client_id": r["client_id"]})
+            g["rows"].append(dict(r))
+
+    reg = _registry()
+    out = []
+    for key, g in groups.items():
+        rows = g["rows"]                       # newest thread first (ORDER BY)
+        head = rows[0]
+        # the label: registry name for an attributed thread, else the room's
+        # counterparty name. Never the raw room id.
+        label = None
+        if g["client_id"] and reg:
+            label = reg.canonical(g["client_id"])
+        label = label or (head["room_name"] or "").split(",")[0].strip() \
+            or head["thread_id"]
+        topic = head["topic"] or head["room_name"] or head["thread_id"]
+        title = f"Follow up: {topic}" if len(rows) == 1 \
+            else f"Follow up: {label} — {len(rows)} open threads"
+        out.append({
+            "source": "sales", "dept": "sales", "kind": "owed_reply",
+            "title": title, "client": label,
+            "action": "Draft is ready — review + send in Upwork.",
+            "due": None, "dedup_key": key,
+            # thread_id(s) in the payload so the Today assembler can dedup this
+            # nudge against its follow-up card (the "follow-up x2" root cause).
+            # evidence_ts = the LATEST message across every thread in the group.
+            # write_nudge uses it to decide whether a card the founder already
+            # marked done has any REASON to come back: if nothing has been said
+            # since they actioned it, it stays gone. Without this the card
+            # refired every sweep and 'Done' was meaningless (Rocky Choy
+            # accumulated 10 rows, Mustafa 11, before this was caught
+            # 2026-08-12). Grouping matters here too: acting on the newer of a
+            # person's two rooms now settles both.
+            "payload": {"idle_days": min(r["idle_days"] for r in rows),
+                        "thread_id": head["thread_id"],
+                        "thread_ids": [r["thread_id"] for r in rows],
+                        "client_id": g["client_id"],
+                        "evidence_ts": max(r["latest_message_dt"]
+                                           for r in rows)}})
     return out
 
 
@@ -189,14 +230,24 @@ def rule_system(db_path, now=None) -> List[dict]:
     out = []
     with db.connect(db_path) as conn:
         fail_lo = (nowdt - timedelta(hours=config.COS_SYSTEM_FAIL_WINDOW_H))
+        # A failure a later run of the same task has already recovered from is
+        # HISTORY, not an action. upwork_scan runs hourly; three transient
+        # osascript timeouts put three "Job failed" cards on Today (plus two
+        # Opus escalations about them) while the scan had been green for hours.
+        # A card you cannot act on teaches you to ignore the board.
         for r in conn.execute(
-            "SELECT id, task_name, started_at FROM runs WHERE status='failed'"
-            " AND started_at >= ?", (_iso(fail_lo),)):
+            "SELECT f.id, f.task_name, f.started_at FROM runs f"
+            " WHERE f.status='failed' AND f.started_at >= ?"
+            " AND NOT EXISTS (SELECT 1 FROM runs ok WHERE ok.task_name=f.task_name"
+            "   AND ok.status='completed' AND ok.started_at > f.started_at)",
+                (_iso(fail_lo),)):
             out.append({
                 "source": "system", "dept": "system", "kind": "system",
                 "title": f"Job failed: {r['task_name']}",
                 "action": "Check the run log; re-run or fix.",
-                "due": None, "dedup_key": f"system:run:{r['id']}"})
+                "due": None, "dedup_key": f"system:run:{r['id']}",
+                "payload": {"task": r["task_name"],
+                            "failed_at": r["started_at"]}})
         ist_date = nowdt.strftime("%Y-%m-%d")
         spent = conn.execute(
             "SELECT COALESCE(SUM(total_cost_usd),0) s FROM claude_usage"

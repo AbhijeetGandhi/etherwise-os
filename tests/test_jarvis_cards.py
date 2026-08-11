@@ -40,16 +40,41 @@ class CardIdentityTests(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_followup_and_owed_reply_collapse_to_one_card(self):
-        # the M4 sweep ALSO produces an owed_reply nudge for the same thread
+        # the M4 sweep ALSO produces an owed_reply nudge for the same thread.
+        # Both sides key on the COUNTERPARTY (nudges.followup_key) — asking the
+        # engine for the key rather than hardcoding 'followup:<room>' is what
+        # keeps this test honest if the identity rule changes again.
+        key = eng.followup_key(None, "AI Voice Coach", "rX")
         eng.write_nudge(self.dbp, source="sales", dept="sales", kind="owed_reply",
-                        title="Follow up: AI Voice Coach", dedup_key="followup:rX",
+                        title="Follow up: AI Voice Coach", dedup_key=key,
                         payload={"idle_days": 2, "thread_id": "rX"}, now=NOW)
         out = data.today(self.dbp, today="2026-06-15")
         for_thread = [q for q in out["queue"]
-                      if q.get("item_key", "").endswith("rX")]
+                      if q.get("item_key", "").endswith(key.split(":", 1)[1])]
         self.assertEqual(len(for_thread), 1)                 # ONE card, not ×2
         self.assertEqual(for_thread[0]["kind"], "followup")   # the actionable one
         self.assertEqual(for_thread[0]["detail"]["age_days"], 2)   # honest age
+
+    def test_two_rooms_one_person_render_as_one_card(self):
+        # Rocky Choy held two Upwork rooms; each rendered its own card, so
+        # 'Done' on one left the other and the board looked broken
+        with db.connect(self.dbp) as conn:
+            conn.execute(
+                "INSERT INTO threads (id, room_name, topic, bucket, tier,"
+                " latest_message_dt) VALUES ('rX2','AI Voice Coach','Second"
+                " job','followup','WARM','2026-06-12T09:00:00+00:00')")
+            conn.execute(
+                "INSERT INTO drafts (thread_id, draft_kind, tier, body,"
+                " word_count, sent_status) VALUES ('rX2','followup','WARM',"
+                "'Reply',2,'pending')")
+        out = data.today(self.dbp, today="2026-06-15")
+        cards = [f for f in out["follow_ups"]
+                 if f["item_key"] == eng.followup_key(None, "AI Voice Coach", "rX")]
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(sorted(cards[0]["thread_ids"]), ["rX", "rX2"])
+        # both rooms remain reachable — collapsed, not hidden
+        q = [c for c in out["queue"] if c.get("item_key") == cards[0]["item_key"]]
+        self.assertEqual(len(q[0]["detail"]["thread_urls"]), 2)
 
     def test_no_provenance_client_card_hidden_and_flagged(self):
         # a client-facing nudge with NO evidence link (no commitment row -> no

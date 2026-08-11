@@ -81,6 +81,25 @@ class TestDedup(CoSCase):
         self.assertEqual(len(self.rows(
             "SELECT * FROM nudges WHERE state='open'")), 1)
 
+    def test_same_day_done_beats_an_older_message_across_ts_formats(self):
+        # timestamps reach this comparison in three shapes. 'T' (0x54) sorts
+        # ABOVE ' ' (0x20), so a naive string compare made ANY same-day
+        # Upwork message look newer than the founder's SQLite-stamped Done —
+        # which put Adam Goldsmith straight back on the board.
+        self.assertEqual(nudges.ts_key("2026-07-29T14:00:00Z"),
+                         nudges.ts_key("2026-07-29 14:00:00"))
+        self.assertLess(nudges.ts_key("2026-07-29T14:00:00Z"),
+                        nudges.ts_key("2026-07-29 22:54:11"))
+        a = self.nudge(payload={"thread_id": "t1",
+                                "evidence_ts": "2026-07-29T14:00:00Z"})
+        with db.connect(self.db_path) as conn:      # Done, later the same day
+            conn.execute("UPDATE nudges SET state='done',"
+                         " updated_at='2026-07-29 22:54:11' WHERE id=?",
+                         (a["id"],))
+        b = self.nudge(payload={"thread_id": "t1",
+                                "evidence_ts": "2026-07-29T14:00:00Z"})
+        self.assertEqual(b["op"], "suppressed-unchanged")
+
     def test_owed_reply_rule_publishes_evidence_ts(self):
         # the suppression is only as good as the evidence the rule supplies —
         # if rules.py stops sending evidence_ts the bug silently returns
@@ -238,8 +257,52 @@ class TestRules(CoSCase):
         self.seed_owed()
         c = rules.rule_owed_replies(self.db_path, dt(d=22))   # 4d idle >= 1
         self.assertEqual(len(c), 1)
-        self.assertEqual(c[0]["dedup_key"], "followup:t1")
+        self.assertEqual(c[0]["dedup_key"], "followup:p:acme-chat")
         self.assertEqual(c[0]["kind"], "owed_reply")
+
+    def test_one_person_two_rooms_is_one_card(self):
+        # Upwork opens a room per job. Rocky Choy held two and Dhanya Sangolli
+        # two more, so 'Done' on one left its twin behind and read as a bug.
+        with db.connect(self.db_path) as conn:
+            for i, ts in enumerate(("2026-06-18T10:00:00Z",
+                                    "2026-06-19T10:00:00Z")):
+                conn.execute("INSERT INTO threads (id, room_name,"
+                             " latest_message_dt) VALUES (?,'Rocky Choy',?)",
+                             (f"room_r{i}", ts))
+                conn.execute("INSERT INTO drafts (thread_id, draft_kind, body,"
+                             " sent_status) VALUES (?,'followup','ping',"
+                             "'pending')", (f"room_r{i}",))
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0]["dedup_key"], "followup:p:rocky-choy")
+        # both rooms are named, and the newest message is the evidence — so
+        # acting on the person settles both threads at once
+        self.assertEqual(sorted(c[0]["payload"]["thread_ids"]),
+                         ["room_r0", "room_r1"])
+        self.assertEqual(c[0]["payload"]["evidence_ts"], "2026-06-19T10:00:00Z")
+
+    def test_attributed_thread_is_keyed_and_labelled_by_client(self):
+        # Brandi Jordan is The Cradle Company, an active client — an attributed
+        # thread must never render as an anonymous cold Upwork room
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name, client_id,"
+                         " latest_message_dt) VALUES ('room_b','Brandi Jordan',"
+                         "'the-cradle-company','2026-06-18T10:00:00Z')")
+            conn.execute("INSERT INTO drafts (thread_id, draft_kind, body,"
+                         " sent_status) VALUES ('room_b','followup','p',"
+                         "'pending')")
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))
+        self.assertEqual(c[0]["dedup_key"], "followup:c:the-cradle-company")
+        self.assertEqual(c[0]["payload"]["client_id"], "the-cradle-company")
+        self.assertNotEqual(c[0]["client"], "Brandi Jordan")
+
+    def test_followup_key_falls_back_to_thread_not_a_blank_slug(self):
+        # a nameless room must keep its own identity; merging unrelated people
+        # under an empty slug would hide real work
+        self.assertEqual(nudges.followup_key(None, "", "room_x"),
+                         "followup:room_x")
+        self.assertEqual(nudges.followup_key(None, None, "room_x"),
+                         "followup:room_x")
 
     def test_owed_reply_silent_when_fresh(self):
         with db.connect(self.db_path) as conn:
@@ -299,6 +362,19 @@ class TestRules(CoSCase):
         keys = {x["dedup_key"] for x in c}
         self.assertIn("system:run:1", keys)
         self.assertTrue(any(k.startswith("system:spend:") for k in keys))
+
+    def test_failure_a_later_run_recovered_from_is_not_a_card(self):
+        # upwork_scan runs hourly; three transient timeouts put three "Job
+        # failed" cards on Today while the scan had been green for hours. A
+        # card you cannot act on teaches you to ignore the board.
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO runs (task_name,started_at,status) VALUES"
+                         " ('upwork_scan','2026-06-22T09:00:00','failed'),"
+                         " ('upwork_scan','2026-06-22T10:00:00','completed'),"
+                         " ('cos_sweep','2026-06-22T11:00:00','failed')")
+        keys = {x["dedup_key"] for x in rules.rule_system(self.db_path, dt(hh=12))}
+        self.assertNotIn("system:run:1", keys)   # healed by the 10:00 run
+        self.assertIn("system:run:3", keys)      # still broken -> still a card
 
 
 # ── sweep: empty-skip + Opus-on-change ───────────────────────────────────────
@@ -361,6 +437,90 @@ class TestSweep(CoSCase):
         self.assertEqual(out["correlations"], 1)
         row = self.rows("SELECT * FROM nudges WHERE dedup_key='escalate_client:acme'")
         self.assertEqual(row[0]["source"], "sweep")
+
+    def _corr(self, key, covers, title="Escalate"):
+        return {"kind": "escalate_client", "dept": "sales", "title": title,
+                "action": "look", "dedup_key": key, "rationale": "r",
+                "covers": covers}
+
+    def test_same_situation_under_a_new_name_refreshes_not_multiplies(self):
+        # Aug 6-11: one delivery crunch arrived as escalate_commitment:554,
+        # escalate_client:554-546, escalate_workstream:aug10-crunch,
+        # escalate_capacity:aug8-10 and escalate_workstream:aug8-10-capacity.
+        # Five keys, one problem, none reconciled -> "manychat is in there
+        # like 10 times". Identity must come from WHAT it is about.
+        self.seed_one_candidate()
+        covers = ["hotlead_no_loom:j1"]
+        s1 = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_capacity:aug8-10", covers)],
+            "priorities": [], "narrative": "x"})
+        sweep.run_sweep(self._ctx(), _opus=s1, now=dt(hh=12))
+        s2 = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_workstream:aug8-10-capacity", covers,
+                       "Same crunch, new name")],
+            "priorities": [], "narrative": "x"})
+        with db.connect(self.db_path) as conn:      # force a material change
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j2','L2',23,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        out = sweep.run_sweep(self._ctx(), _opus=s2, now=dt(hh=14))
+        self.assertEqual(out["escalations_merged"], 1)
+        esc = self.rows("SELECT * FROM nudges WHERE source='sweep'"
+                        " AND state IN ('open','snoozed')")
+        self.assertEqual(len(esc), 1)               # one card, not two
+        self.assertEqual(esc[0]["dedup_key"], "escalate_capacity:aug8-10")
+        self.assertEqual(esc[0]["title"], "Same crunch, new name")  # refreshed
+
+    def test_distinct_situations_stay_distinct(self):
+        # containment, not similarity: merging two real issues would bury one
+        self.seed_one_candidate()
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j2','L2',23,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        spy = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_client:a", ["hotlead_no_loom:j1"], "A"),
+            self._corr("escalate_client:b", ["hotlead_no_loom:j2"], "B")],
+            "priorities": [], "narrative": "x"})
+        out = sweep.run_sweep(self._ctx(), _opus=spy, now=dt())
+        self.assertEqual(out["escalations_merged"], 0)
+        self.assertEqual(len(self.rows(
+            "SELECT * FROM nudges WHERE source='sweep'")), 2)
+
+    def test_escalation_retires_when_what_it_covers_is_gone(self):
+        # an escalation is a claim ABOUT other cards; once they are gone it is
+        # history. Unreconciled escalations were the ones living for weeks.
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_client:acme", ["hotlead_no_loom:j1"])],
+            "priorities": [], "narrative": "x"})
+        sweep.run_sweep(self._ctx(), _opus=spy, now=dt(hh=12))
+        with db.connect(self.db_path) as conn:      # the covered card is acted on
+            conn.execute("UPDATE scored_jobs SET clickup_task_id='c1' WHERE id='j1'")
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j2','L2',23,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        spy2 = mock.Mock(return_value={"correlations": [], "priorities": [],
+                                       "narrative": "x"})
+        out = sweep.run_sweep(self._ctx(), _opus=spy2, now=dt(hh=14))
+        self.assertEqual(out["escalations_reconciled"], 1)
+        self.assertEqual(self.rows(
+            "SELECT state FROM nudges WHERE dedup_key='escalate_client:acme'"
+            )[0]["state"], "decayed")
+
+    def test_covers_that_name_nothing_real_are_dropped(self):
+        # a hallucinated key in covers would hide nothing today but could
+        # silently suppress a genuine card later
+        self.seed_one_candidate()
+        spy = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_client:acme",
+                       ["hotlead_no_loom:j1", "commitment:99999"])],
+            "priorities": [], "narrative": "x"})
+        sweep.run_sweep(self._ctx(), _opus=spy, now=dt())
+        pl = json.loads(self.rows(
+            "SELECT payload_json p FROM nudges WHERE"
+            " dedup_key='escalate_client:acme'")[0]["p"])
+        self.assertEqual(pl["covers"], ["hotlead_no_loom:j1"])
 
     def test_vanished_condition_clears(self):
         self.seed_one_candidate()

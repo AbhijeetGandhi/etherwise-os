@@ -41,6 +41,57 @@ TASK_NAME = "cos_sweep"
 RULE_KINDS = ("owed_reply", "hotlead_no_loom", "won_no_outcome", "lost_pattern",
               "stale_dossier", "commitment_due", "system")
 
+def escalation_covers(conn) -> dict:
+    """{dedup_key -> set(covered dedup_keys)} for every ACTIVE escalation.
+
+    An escalation is anything the SWEEP wrote (source='sweep'), not anything
+    whose kind happens to start with 'escalate'. `kind` is a free-text field
+    Opus fills in, so matching on it let a correlation named
+    'recruiting_pipeline_link:522-568' escape both the cluster filter and this
+    reconciliation and sit on the board indefinitely. Provenance is ours;
+    vocabulary is the model's."""
+    out: dict = {}
+    for r in conn.execute(
+        "SELECT dedup_key, payload_json FROM nudges WHERE state IN"
+        " ('open','snoozed') AND source='sweep'"):
+        try:
+            pl = json.loads(r["payload_json"] or "{}")
+        except Exception:
+            pl = {}
+        out[r["dedup_key"]] = set(pl.get("covers") or [])
+    return out
+
+
+def _same_situation(new: set, existing: set) -> bool:
+    """Two escalations are the same situation when one's constituents contain
+    the other's. Jaccard would call {A,B} and {B,C} similar; containment will
+    not, and a wrongly-merged escalation buries an issue the founder never saw.
+    Empty covers never merges — an escalation that claims nothing gets its own
+    card and its own scrutiny."""
+    if not new or not existing:
+        return False
+    return new <= existing or existing <= new
+
+
+def collapse_target(cand: dict, covers_by_key: dict) -> Optional[str]:
+    """The dedup_key an incoming escalation should REFRESH instead of minting.
+
+    Opus is asked for stable keys, but it is a language model looking at a
+    changing queue: on 2026-08-06..11 the same delivery crunch arrived as
+    'escalate_commitment:554', 'escalate_client:554-546',
+    'escalate_workstream:aug10-crunch', 'escalate_capacity:aug8-10' and
+    'escalate_workstream:aug8-10-capacity'. Five keys, one problem, and because
+    escalations are not reconciled against rules they simply accumulated —
+    Abhijeet's "manychat is in there like 10 times". Identity has to be derived
+    from WHAT the escalation is about, not from what it called itself."""
+    key, new = cand.get("dedup_key"), set(cand.get("covers") or [])
+    if key in covers_by_key:
+        return key                                  # same key: ordinary refresh
+    for existing, ex_covers in covers_by_key.items():
+        if _same_situation(new, ex_covers):
+            return existing
+    return None
+
 OPUS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -56,8 +107,15 @@ OPUS_SCHEMA = {
                     "dedup_key": {"type": "string"},
                     "due": {"type": ["string", "null"]},
                     "rationale": {"type": "string"},
+                    # the dedup_keys of the EXISTING cards this escalation is
+                    # about. Without it every sweep was free to invent a new key
+                    # for the same situation and nothing could tell that
+                    # 'escalate_capacity:aug8-10' and
+                    # 'escalate_workstream:aug8-10-capacity' were one issue.
+                    "covers": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["kind", "dept", "title", "action", "dedup_key", "rationale"],
+                "required": ["kind", "dept", "title", "action", "dedup_key",
+                             "rationale", "covers"],
                 "additionalProperties": False,
             },
         },
@@ -76,7 +134,14 @@ OPUS_SYSTEM = (
     "facts -> a NEW nudge (e.g. a client gone quiet + an overdue commitment -> "
     "'escalate_client'). Emit at most 3, and ONLY when the multi-signal pattern "
     "is real; [] is the right answer when nothing correlates. Use a stable "
-    "dedup_key like 'escalate_client:<client_id>'.\n"
+    "dedup_key like 'escalate_client:<client_id>' — derive it from the CLIENT or "
+    "ENTITY involved, never from today's date or a phrase, so the same situation "
+    "produces the same key on the next sweep.\n"
+    "   'covers' MUST list the dedup_keys of the existing queue items this "
+    "escalation is about. An escalation REPLACES the cards it covers on the "
+    "board, so covering the wrong card hides real work: list only the items your "
+    "rationale actually depends on, and [] if you are escalating something the "
+    "queue does not already contain.\n"
     "2. priorities: order the dedup_keys you would put in front of Abhijeet "
     "first (most consequential first).\n"
     "3. narrative: 2-4 sentences, direct, no fluff — the situational picture for "
@@ -257,24 +322,49 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
 
     # 5. material change -> Opus correlate + prioritize + narrate
     opus = _opus(db_path, active, _context(db_path, now))
-    new_corr = 0
+    new_corr, merged = 0, 0
+    live_now = {n["dedup_key"] for n in active} | live_keys
+    with db.connect(db_path) as conn:
+        covers_by_key = escalation_covers(conn)
     for c in (opus.get("correlations") or [])[:3]:
         # cluster/count correlations are render-time groupings, never stored
         # cards (J1.5) — an atomic per-client / per-commitment escalation is kept
         if _is_cluster_card(c.get("kind", ""), c.get("title", "")):
             continue
+        # only cover cards that EXIST. A hallucinated key in covers would hide
+        # nothing today but could silently suppress a real card later.
+        covers = [k for k in (c.get("covers") or []) if k in live_now]
+        c = {**c, "covers": covers}
+        target = collapse_target(c, covers_by_key)
+        key = target or c["dedup_key"]
+        if target and target != c["dedup_key"]:
+            merged += 1
         try:
             nudges.write_nudge(
                 db_path, now=now, source="sweep", dept=c.get("dept", "sales"),
                 kind=c.get("kind", "escalate_client"), title=c["title"],
-                action=c.get("action"), due=c.get("due"),
-                dedup_key=c["dedup_key"],
-                payload={"rationale": c.get("rationale")})
+                action=c.get("action"), due=c.get("due"), dedup_key=key,
+                payload={"rationale": c.get("rationale"), "covers": covers})
+            covers_by_key[key] = set(covers)
             new_corr += 1
         except Exception:
             continue
+    # 5b. reconcile escalations against reality. An escalation is a claim ABOUT
+    # other cards; once every card it covers is gone the claim is history, and a
+    # stale escalation is the most misleading kind of card because it reads as
+    # the most urgent. Escalations covering nothing are left to their own TTL.
+    reconciled = 0
+    with db.connect(db_path) as conn:
+        active_keys = {r["dedup_key"] for r in conn.execute(
+            "SELECT dedup_key FROM nudges WHERE state IN ('open','snoozed')")}
+        dead = [k for k, cov in escalation_covers(conn).items()
+                if cov and not (cov & active_keys)]
+    for k in dead:
+        nudges.clear(db_path, k, now=now)
+        reconciled += 1
     metrics = {"candidates": len(candidates), "active": len(active),
                "cleared": len(stale), "correlations": new_corr,
+               "escalations_merged": merged, "escalations_reconciled": reconciled,
                "closure": closure_stats,
                "priorities": opus.get("priorities", []),
                "narrative": opus.get("narrative", "")}

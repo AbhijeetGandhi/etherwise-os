@@ -66,6 +66,41 @@ def _card_key(item_key: str, client=None) -> str:
     return f"card:{ik}"
 
 
+def _is_actioned(key: str, suppressed: set, actioned_at: dict,
+                 evidence_ts=None) -> bool:
+    """Has the founder dealt with this card, and has nothing happened since?
+
+    The cockpit's Done button writes ONLY to nudge_state, and until 2026-08-12
+    nudge_state was consulted for the follow-up list but NOT for the nudge
+    queue. So marking a nudge done wrote a row nothing ever read: the card came
+    straight back, which is exactly what Abhijeet reported ("I marked it done
+    yesterday and the day before but it still shows up"). Every card the queue
+    renders now passes through here, under both key forms the UI can send.
+
+    A Done is not permanent — it means "handled". Newer evidence (the client
+    actually replied) revives the card; the clock alone does not."""
+    hit = next((k for k in (key, f"nudge:{key}") if k in suppressed), None)
+    if hit is None:
+        return False
+    from modules.chief_of_staff import nudges as eng
+    was = actioned_at.get(hit)
+    if was and evidence_ts and eng.ts_key(evidence_ts) > eng.ts_key(was):
+        return False                     # they said something new -> it's live
+    return True
+
+
+def _client_label(client_id) -> Optional[str]:
+    """Registry display name for an attributed thread. Read-only and forgiving:
+    a registry that fails to load must cost a nicer label, never the card."""
+    if not client_id:
+        return None
+    try:
+        from core import registry
+        return registry.load().canonical(client_id)
+    except Exception:
+        return None
+
+
 def _card_provenance(entry: dict):
     d = entry.get("detail") or {}
     return (entry.get("thread_url") or d.get("thread_url") or d.get("source")
@@ -1301,32 +1336,64 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             paused = False
         # items the founder has acted on: done/dismissed always hidden;
         # snoozed hidden until snooze_until <= day (B1b local nudge_state).
-        suppressed = {r["item_key"] for r in conn.execute(
-            "SELECT item_key FROM nudge_state WHERE state IN"
+        #
+        # actioned_at keeps WHEN, because a Done is not permanent: it means "I
+        # have dealt with this", and it is undone by the other side saying
+        # something new. Snoozes carry no timestamp here — a snooze is an
+        # explicit "not until <date>" and evidence must not cut it short.
+        suppressed, actioned_at = set(), {}
+        for r in conn.execute(
+            "SELECT item_key, state, updated_at FROM nudge_state WHERE state IN"
             " ('done','dismissed') OR (state='snoozed' AND"
-            " COALESCE(snooze_until,'') > ?)", (day,))}
+            " COALESCE(snooze_until,'') > ?)", (day,)):
+            suppressed.add(r["item_key"])
+            if r["state"] in ("done", "dismissed"):
+                actioned_at[r["item_key"]] = str(r["updated_at"] or "")
 
-        # follow-ups = pending drafts + thread context; owed before followup
-        follow_ups = [{
-            "thread_id": r["thread_id"],
-            "topic": r["topic"] or r["room_name"],
-            "client": r["room_name"],           # who the thread is with
-            "tier": r["tier"], "bucket": r["bucket"],
-            "draft": r["body"], "word_count": r["word_count"],
-            # real thread age (days) so the queue reads honestly — the old UI
-            # showed word_count as "Nw" which was misread as weeks (redline 2)
-            "age_days": r["age_days"],
-            "thread_url": ROOM_URL.format(tid=r["thread_id"]),
-        } for r in conn.execute(
+        # follow-ups = pending drafts + thread context; owed before followup.
+        # ONE ROW PER COUNTERPARTY (nudges.followup_key): Upwork opens a room per
+        # job, so Rocky Choy and Dhanya Sangolli each held two rows that had to be
+        # dismissed separately — which is what "I marked it done and it's still
+        # there" actually was. The extra threads ride along in thread_ids so the
+        # card can name them; nothing is dropped, only the duplicate row is.
+        follow_ups = []
+        _fu_index: dict = {}
+        for r in conn.execute(
             "SELECT d.thread_id, d.body, d.word_count, d.tier,"
-            " t.bucket, t.topic, t.room_name,"
+            " t.bucket, t.topic, t.room_name, t.client_id, t.latest_message_dt,"
             " CAST(julianday(?) - julianday(substr(t.latest_message_dt,1,10))"
             "   AS INT) AS age_days"
             " FROM drafts d JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status = 'pending'"
             " ORDER BY CASE t.bucket WHEN 'owed' THEN 0 WHEN 'unmatched-owed'"
-            " THEN 1 ELSE 2 END, d.generated_at DESC", (day,))
-            if f"followup:{r['thread_id']}" not in suppressed]
+            " THEN 1 ELSE 2 END, d.generated_at DESC", (day,)):
+            key = _eng.followup_key(r["client_id"], r["room_name"],
+                                    r["thread_id"])
+            if _is_actioned(key, suppressed, actioned_at,
+                            r["latest_message_dt"]):
+                continue
+            if key in _fu_index:                       # same person, second room
+                prev = follow_ups[_fu_index[key]]
+                prev["thread_ids"].append(r["thread_id"])
+                prev["age_days"] = min(prev["age_days"], r["age_days"])
+                continue
+            _fu_index[key] = len(follow_ups)
+            follow_ups.append({
+                "thread_id": r["thread_id"], "thread_ids": [r["thread_id"]],
+                "item_key": key,
+                "topic": r["topic"] or r["room_name"],
+                # who the thread is with: the REGISTRY client when the thread is
+                # attributed, else the room's counterparty. An active client
+                # rendered under a bare Upwork name reads as a cold lead — the
+                # Brandi Jordan / Cradle Company confusion.
+                "client": _client_label(r["client_id"]) or r["room_name"],
+                "client_id": r["client_id"],
+                "tier": r["tier"], "bucket": r["bucket"],
+                "draft": r["body"], "word_count": r["word_count"],
+                # real thread age (days) so the queue reads honestly — the old UI
+                # showed word_count as "Nw" which was misread as weeks (redline 2)
+                "age_days": r["age_days"],
+                "thread_url": ROOM_URL.format(tid=r["thread_id"])})
 
         # ── Ready-when-you-resume backlog (paused-aware) ──────────────────────
         # Applications are deliberately paused, so accumulated hot leads are a
@@ -1428,7 +1495,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         tconn.close()
 
     queue = []
-    fu_threads = {f["thread_id"] for f in follow_ups}
+    fu_keys = {f["item_key"] for f in follow_ups}
     for f in follow_ups:
         owed = f["bucket"] in ("owed", "unmatched-owed")
         urg = _eng.compute_urgency(
@@ -1442,10 +1509,15 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             "title": f["topic"], "client": f.get("client"),
             "tier": f["tier"], "bucket": f["bucket"],
             "age_days": f["age_days"], "draft": f["draft"],
-            "thread_url": f["thread_url"], "item_key": f"followup:{f['thread_id']}",
+            "thread_url": f["thread_url"], "item_key": f["item_key"],
+            "threads": len(f["thread_ids"]),
             "detail": {"kind": "Follow-up (draft ready)", "client": f.get("client"),
                        "age_days": f["age_days"], "tier": f["tier"],
-                       "thread_url": f["thread_url"], "draft": f["draft"]}})
+                       "thread_url": f["thread_url"], "draft": f["draft"],
+                       # every room this one card stands for, so collapsing two
+                       # of a person's threads never hides the second one
+                       "thread_urls": [ROOM_URL.format(tid=t)
+                                       for t in f["thread_ids"]]}})
     # actionable M4 nudges — everything except the paused hot-lead stream, and
     # minus any owed_reply whose thread is already a follow-up row above.
     # First build the CLOSURE overlay (J1.5): a card whose cross-source closure
@@ -1460,25 +1532,44 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                 "state": cs, "source": n.get("closure_source"),
                 "confidence": n.get("closure_confidence"),
                 "evidence": n.get("closure_evidence")}
+    # SUPERSEDED CARDS: an escalation is a claim about other cards, so the cards
+    # it covers must not also be listed. Three "Job failed: upwork_scan" rows
+    # sitting beside an escalation that says "upwork_scan failed 3x" is the same
+    # fact four times, and it is what made the board feel like noise.
+    superseded: set = set()
+    for n in active_n:
+        try:
+            _pl = json.loads(n.get("payload_json") or "{}")
+        except (TypeError, ValueError):
+            _pl = {}
+        superseded |= {k for k in (_pl.get("covers") or [])
+                       if k != n["dedup_key"]}
     for n in active_n:
         if n["kind"] == "hotlead_no_loom":
             continue                        # that IS the paused backlog
         dk = n["dedup_key"] or ""
+        if dk in superseded:
+            continue                        # rolled up into an escalation
         try:
             pl = json.loads(n.get("payload_json") or "{}")
         except (TypeError, ValueError):
             pl = {}
-        # dedup an owed_reply against its follow-up card by THREAD (the dedup_key
-        # carries the thread even when the payload does not) — the ×2 root cause
-        _tid = dk.split(":", 1)[1] if dk.startswith("followup:") else pl.get("thread_id")
-        if n["kind"] == "owed_reply" and _tid in fu_threads:
+        # the founder's own Done/Dismiss/Snooze, which lives in nudge_state and
+        # was never applied to this list before (see _is_actioned)
+        if _is_actioned(dk, suppressed, actioned_at, pl.get("evidence_ts")):
+            continue
+        # dedup an owed_reply against its follow-up card — both are keyed on the
+        # COUNTERPARTY now, so the keys compare directly (the ×2 root cause)
+        if n["kind"] == "owed_reply" and dk in fu_keys:
             continue                        # already shown with its draft
         # derive the client + detail for the clickable card
         client, detail = None, {"kind": n["kind"].replace("_", " ")}
         if dk.startswith("followup:"):
-            client = room_client.get(dk.split(":", 1)[1])
-            detail.update({"client": client, "thread_url":
-                           ROOM_URL.format(tid=dk.split(":", 1)[1]),
+            tid = (pl.get("thread_ids") or [pl.get("thread_id")])[0]
+            client = (_client_label(pl.get("client_id"))
+                      or room_client.get(tid or "") or None)
+            detail.update({"client": client,
+                           "thread_url": ROOM_URL.format(tid=tid) if tid else None,
                            "idle_days": pl.get("idle_days")})
         elif dk.startswith("commitment:"):
             ci = commit_info.get(dk.split(":", 1)[1]) or {}

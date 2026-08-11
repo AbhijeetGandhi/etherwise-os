@@ -586,9 +586,12 @@ clients:
     name: The Cradle Company
     aliases:
       - TCC
+      - Brandi Jordan
     fathom_names:
       - the cradle company
       - cradle company
+    upwork_rooms:
+      - room_a4e3c628cf0fabad0c5c2b60d88e1745
     clickup: TCC
     slack:
       workspace: The Cradle Company

@@ -240,6 +240,12 @@ STATE_FOR = {"done": "done", "snooze": "snoozed", "dismiss": "dismissed"}
 DEFAULT_SNOOZE_DAYS = 3
 
 
+def _engine_key(item_key: str) -> str:
+    """The nudges.dedup_key behind a cockpit item_key. Follow-up cards and their
+    owed_reply nudges already share a key; the nudge surface just prefixes it."""
+    return item_key[6:] if item_key.startswith("nudge:") else item_key
+
+
 def apply_nudge(db_path: Optional[Path], item_key: str, action: str,
                 snooze_days: Optional[int] = None, note: Optional[str] = None,
                 today: Optional[str] = None) -> dict:
@@ -264,6 +270,19 @@ def apply_nudge(db_path: Optional[Path], item_key: str, action: str,
             " snooze_until=excluded.snooze_until, note=excluded.note,"
             " updated_at=datetime('now')",
             (item_key, state, snooze_until, note))
+    # WRITE THROUGH TO THE ENGINE. nudge_state is a cockpit-local overlay; the
+    # nudges table is what the morning brief, top_n and the sweep read. Until
+    # 2026-08-12 'Done' wrote only the overlay, so a card the founder had closed
+    # stayed open everywhere except the one list that happened to consult it —
+    # and the sweep, seeing it open, kept refreshing it. Same decision, one
+    # place. Silent no-op when the key is a follow-up with no nudge row yet.
+    engine = _engine_key(item_key)
+    try:
+        from modules.chief_of_staff import nudges as _n
+        _n.set_state(db_path, state=state, dedup_key=engine,
+                     snooze_until=snooze_until, note=note)
+    except Exception:
+        pass                       # the founder's action is recorded regardless
     return {"ok": True, "item_key": item_key, "state": state,
             "snooze_until": snooze_until}
 

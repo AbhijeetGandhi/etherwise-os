@@ -1035,10 +1035,23 @@ class TestNudgeActions(unittest.TestCase):
                              " WHERE item_key=?", (key,)).fetchone()
         return dict(r) if r else None
 
+    def key_for(self, thread_id, today="2026-06-15"):
+        """The item_key the UI would actually send for this thread's card.
+
+        Cards are keyed on the COUNTERPARTY, not the room, so a person with two
+        Upwork rooms is one card. Reading the key off the rendered card instead
+        of hardcoding it means these tests assert the round trip the cockpit
+        really performs — hardcoding 'followup:<room>' is what let the key
+        change slip past them."""
+        for f in data.today(self.db_path, today=today)["follow_ups"]:
+            if thread_id in f["thread_ids"]:
+                return f["item_key"]
+        raise AssertionError(f"no follow-up card covers {thread_id}")
+
     def test_done_persists_and_hides_followup(self):
-        actions.nudge(self.db_path, {"item_key": "followup:rA",
-                                     "action": "done"})
-        self.assertEqual(self.state("followup:rA")["state"], "done")
+        k = self.key_for("rA")
+        actions.nudge(self.db_path, {"item_key": k, "action": "done"})
+        self.assertEqual(self.state(k)["state"], "done")
         # re-read today: rA gone, rB still there (persists across "restart")
         out = data.today(self.db_path, today="2026-06-15")
         ids = [f["thread_id"] for f in out["follow_ups"]]
@@ -1046,17 +1059,16 @@ class TestNudgeActions(unittest.TestCase):
         self.assertIn("rB", ids)
 
     def test_dismiss_hides(self):
-        actions.nudge(self.db_path, {"item_key": "followup:rB",
+        actions.nudge(self.db_path, {"item_key": self.key_for("rB"),
                                      "action": "dismiss"})
         out = data.today(self.db_path, today="2026-06-15")
         self.assertNotIn("rB", [f["thread_id"] for f in out["follow_ups"]])
 
     def test_snooze_hides_until_date_then_returns(self):
-        actions.nudge(self.db_path, {"item_key": "followup:rA",
-                                     "action": "snooze", "snooze_days": 3},
-                      today="2026-06-15")
-        self.assertEqual(self.state("followup:rA")["snooze_until"],
-                         "2026-06-18")
+        k = self.key_for("rA")
+        actions.nudge(self.db_path, {"item_key": k, "action": "snooze",
+                                     "snooze_days": 3}, today="2026-06-15")
+        self.assertEqual(self.state(k)["snooze_until"], "2026-06-18")
         # still snoozed on the 17th
         self.assertNotIn("rA", [f["thread_id"] for f in
                                 data.today(self.db_path,
@@ -1070,9 +1082,55 @@ class TestNudgeActions(unittest.TestCase):
         with self.assertRaises(ValueError):
             actions.nudge(self.db_path, {"item_key": "x", "action": "send"})
 
+    def test_done_on_a_nudge_card_actually_hides_it(self):
+        # THE bug behind "I marked it done yesterday and the day before but it
+        # still shows up": the Done button writes nudge_state, and the nudge
+        # QUEUE never read nudge_state — only the follow-up list did. The row
+        # was written and nothing ever looked at it.
+        from modules.chief_of_staff import nudges as eng
+        eng.write_nudge(self.db_path, source="knowledge", dept="knowledge",
+                        kind="stale_dossier", title="Unprocessed sources: acme",
+                        dedup_key="stale_dossier:acme", client="acme")
+        key = "nudge:stale_dossier:acme"
+        self.assertIn(key, [q.get("item_key") for q in
+                            data.today(self.db_path, today="2026-06-15")["queue"]])
+        actions.nudge(self.db_path, {"item_key": key, "action": "done"})
+        self.assertNotIn(key, [q.get("item_key") for q in
+                               data.today(self.db_path, today="2026-06-15")["queue"]])
+
+    def test_a_new_client_message_revives_a_done_followup(self):
+        # 'Done' means handled, not silenced forever — if the client replies
+        # after the fact the card must come back, or the tab hides real work
+        k = self.key_for("rA")
+        actions.nudge(self.db_path, {"item_key": k, "action": "done"})
+        self.assertNotIn(k, [f["item_key"] for f in
+                             data.today(self.db_path, today="2026-06-15")["follow_ups"]])
+        with db.connect(self.db_path) as conn:      # ...then they reply
+            conn.execute("UPDATE threads SET latest_message_dt="
+                         "'2099-01-01T09:00:00+00:00' WHERE id='rA'")
+        self.assertIn(k, [f["item_key"] for f in
+                          data.today(self.db_path, today="2026-06-15")["follow_ups"]])
+
+    def test_done_writes_through_to_the_engine(self):
+        # the morning brief and the sweep read the NUDGES table, not the
+        # cockpit's nudge_state overlay. A Done that only wrote the overlay left
+        # the card open everywhere else — and the sweep kept refreshing it.
+        from modules.chief_of_staff import nudges as eng
+        eng.write_nudge(self.db_path, source="knowledge", dept="knowledge",
+                        kind="stale_dossier", title="Unprocessed: acme",
+                        dedup_key="stale_dossier:acme", client="acme")
+        actions.nudge(self.db_path, {"item_key": "nudge:stale_dossier:acme",
+                                     "action": "done"})
+        with db.connect(self.db_path) as conn:
+            st = conn.execute("SELECT state FROM nudges WHERE"
+                              " dedup_key='stale_dossier:acme'").fetchone()
+        self.assertEqual(st["state"], "done")
+        self.assertEqual(eng.top_n(self.db_path, 10), [])
+
     def test_done_count_drops_followups_due(self):
         before = data.today(self.db_path, today="2026-06-15")["metrics"]["follow_ups_due"]
-        actions.nudge(self.db_path, {"item_key": "followup:rA", "action": "done"})
+        actions.nudge(self.db_path, {"item_key": self.key_for("rA"),
+                                     "action": "done"})
         after = data.today(self.db_path, today="2026-06-15")["metrics"]["follow_ups_due"]
         self.assertEqual(after, before - 1)
 
