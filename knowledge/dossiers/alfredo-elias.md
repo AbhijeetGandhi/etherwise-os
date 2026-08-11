@@ -1,6 +1,6 @@
 # Alfredo Elias — Dossier
 
-_Compiled 2026-08-08T22:30:36.788788+00:00 · 15 client facts (15 trusted) from 1 sources._
+_Compiled 2026-08-10 17:56:25.909618+00:00 · 20 client facts (20 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -37,6 +37,15 @@ _Compiled 2026-08-08T22:30:36.788788+00:00 · 15 client facts (15 trusted) from 
 - Abhijeet committed to setting up a task notification feature that fires whenever a task is created in GHL, sending a notification to the client's Google Calendar or Gmail. [CONFIRMED · fathom/85765696 @ 00:11:06 - 'we can set up that notification of, whenever a task is added, it would go to your Google Calendar or Gmail']
 - Two features were noted by Abhijeet to build: (1) new lead tag on upload-only leads, and (2) appointment/task notifications. [CONFIRMED · fathom/85765696 @ 00:11:35 - 'So the new lead tag is there and then notification for the appointments.']
 
+## Other
+
+- Clicking a contact found via reference field search displays the conversations tab and option to view associated opportunities [CONFIRMED · https://www.loom.com/share/02d7e143d1cc48758f0386c25d866c12 @ 1:45-2:30]
+- Reference field cannot be searched directly in the opportunity tab; users must search via the contacts tab instead [CONFIRMED · https://www.loom.com/share/02d7e143d1cc48758f0386c25d866c12 @ 0:15-0:35]
+- Reference field is stored in additional data and is not visible by default in the contacts view [CONFIRMED · https://www.loom.com/share/02d7e143d1cc48758f0386c25d866c12 @ 3:40-3:55]
+- Reference field is uploaded in the contacts system [CONFIRMED · https://www.loom.com/share/02d7e143d1cc48758f0386c25d866c12 @ 0:00-0:15]
+- Users can enable the reference column visibility in contacts to search and filter by reference numbers [CONFIRMED · https://www.loom.com/share/02d7e143d1cc48758f0386c25d866c12 @ 2:50-3:10]
+
 ## Sources
 
 - `fathom/85765696` · 2025-09-08 · fathom · Abhi <> chloe
+- `loom/02d7e143d1cc48758f0386c25d866c12` · 2025-09-29 · loom · Searching and Utilizing Reference Fields in Contacts 📊

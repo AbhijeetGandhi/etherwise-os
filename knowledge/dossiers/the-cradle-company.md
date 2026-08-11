@@ -1,6 +1,6 @@
 # The Cradle Company — Dossier
 
-_Compiled 2026-08-10T08:08:42.904867+00:00 · 135 client facts (132 trusted) from 10 sources · 1 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-10 17:56:25.909618+00:00 · 139 client facts (136 trusted) from 10 sources · 1 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -8,6 +8,9 @@ _Compiled 2026-08-10T08:08:42.904867+00:00 · 135 client facts (132 trusted) fro
 
 - A workflow was built to fetch applicant data from Indeed and import it into Airtable with AI scoring [CONFIRMED · https://www.loom.com/share/dee6bad9e0544cc881c85d0f5df93dec @ So, right now I am at the candidate speech where I can see all the data of multiple different applications]
 - A workflow was built to source doulas from Doula Match based on zip code, doula type, and date [CONFIRMED · https://www.loom.com/share/dee6bad9e0544cc881c85d0f5df93dec @ as Doolamatch, and here there are three fields, the zip code of the region from where you need to find the Doola, the type of the Doola you need, and the date]
+- Data from Doula Match has started appearing in the system [CONFIRMED · https://www.loom.com/share/dcd4bf4e8fa643158c43e6b7283379fc @ So finally data from doula match has started appearing]
+- Data received from Doula Match is being saved in the system [CONFIRMED · https://www.loom.com/share/dcd4bf4e8fa643158c43e6b7283379fc @ all the data we received from doula match is saved properly here]
+- Doula Match leads are scored using the same methodology as 'ended' leads [CONFIRMED · https://www.loom.com/share/dcd4bf4e8fa643158c43e6b7283379fc @ This lead will be scored the same way we did for ended]
 - The Cradle Company is exploring automation for caregiver recruiting, including a DAO recruiting agent to help match caregivers to clients. [CONFIRMED · fathom/161458467 @ So let's talk about the DAO recruiting agent, because I think in your loom, you said you'd start there with that one.]
 - The Cradle Company wants an AI agent integrated with their Airtable database that can query candidates by criteria (e.g., nursing background in San Diego) and automatically message them about open opportunities when staff are off. [CONFIRMED · fathom/164154706 @ "give me the list of, you know, people who have a nursing background in San Diego and their contact information and message them to tell them about this opportunity"]
 - The Cradle Company wants an AI agent that can scan job boards, score candidates against requirements, and deliver a ranked report (e.g., 50 candidates) to recruiters each Monday morning. [CONFIRMED · fathom/164154706 @ "could an AI agent, for example, scan through…who's a good lead, who's not? And then bring that as a report to the actual recruiter on, like, Monday morning"]
@@ -21,6 +24,7 @@ _Compiled 2026-08-10T08:08:42.904867+00:00 · 135 client facts (132 trusted) fro
 
 ## The numbers
 
+- A Doula Match lead received a score of 10 [CONFIRMED · https://www.loom.com/share/dcd4bf4e8fa643158c43e6b7283379fc @ it looks like a really good doula as it got the score of 10]
 - A sourced doula received an AI score of 10 on a 1-10 scale, classified as 'really good'. [CONFIRMED · https://www.loom.com/share/dee6bad9e0544cc881c85d0f5df93dec @ 0:03:35 - 'it got the score of 10. And all the data we received from doula match is saved properly here']
 - Example lead score from DoolaMatch search was 10 out of 10 (described as 'really good' with 'best' quality). [CONFIRMED · https://www.loom.com/share/0e29ef7121f2473c87d55b4e4630b1be @ 03:45 'we got a really good dooline in the first search itself where the lead score is 10 and the quality is best']
 - Example lead score from Indeed application was 8 out of 10. [CONFIRMED · https://www.loom.com/share/0e29ef7121f2473c87d55b4e4630b1be @ 01:00 'lead has been scored and it is got 8 points on the scale of 1 to 10']
