@@ -180,6 +180,32 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
             if actioned:
                 return {"id": actioned["id"], "op": "suppressed-actioned",
                         "urgency": 0.0}
+        else:
+            # RECURRING kinds (owed_reply): 'Done' must stick too — but only
+            # until something actually CHANGES. The comment above used to say
+            # recurring kinds "intentionally refire"; in practice that meant a
+            # thread the founder had already dealt with reappeared on the very
+            # next sweep, forever. Measured 2026-08-12: Rocky Choy had 10 rows
+            # for one dedup_key, Mustafa 11, Dhanya 6 — the founder had marked
+            # the same card done repeatedly and it kept coming back, which is
+            # what made the whole Today tab untrustworthy.
+            #
+            # A follow-up should return when the CLIENT SAYS SOMETHING, not when
+            # the clock ticks. `evidence_ts` (the thread's latest message) is
+            # compared against when the card was actioned: newer evidence -> the
+            # card is genuinely live again; nothing new -> stay gone.
+            #
+            # No evidence_ts supplied => old behaviour (refire), so other
+            # recurring kinds are unaffected.
+            ev = (payload or {}).get("evidence_ts")
+            if ev:
+                actioned = conn.execute(
+                    "SELECT id, updated_at FROM nudges WHERE dedup_key=? AND"
+                    " state IN ('done','dismissed') ORDER BY id DESC LIMIT 1",
+                    (dedup_key,)).fetchone()
+                if actioned and str(ev)[:19] <= str(actioned["updated_at"])[:19]:
+                    return {"id": actioned["id"], "op": "suppressed-unchanged",
+                            "urgency": 0.0}
         cur = conn.execute(
             "INSERT INTO nudges (source, dept, kind, title, action, due, urgency,"
             " money_at_stake, score, dedup_key, state, payload_json, client,"

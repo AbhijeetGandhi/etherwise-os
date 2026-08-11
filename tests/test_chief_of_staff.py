@@ -53,9 +53,44 @@ class TestDedup(CoSCase):
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0]["title"], "Reply to X (ping 2)")
 
-    def test_done_then_refire_creates_new(self):
-        # owed_reply is a RECURRING kind: if the condition recurs after done, it
-        # SHOULD refire (this is by design, not the resurrection bug)
+    def test_done_sticks_when_nothing_has_changed(self):
+        # THE BUG (found 2026-08-12): a follow-up the founder marked done came
+        # back on the very next sweep, forever. Rocky Choy had 10 rows for one
+        # dedup_key, Mustafa 11. 'Done' was meaningless and the Today tab
+        # stopped being trustworthy. A follow-up must only return when the
+        # CLIENT says something new.
+        pay = {"thread_id": "t1", "evidence_ts": "2026-08-01T10:00:00"}
+        a = self.nudge(payload=pay)
+        self.assertEqual(a["op"], "created")
+        nudges.set_state(self.db_path, state="done", dedup_key="followup:t1")
+        b = self.nudge(payload=pay)             # same thread, nothing new said
+        self.assertEqual(b["op"], "suppressed-unchanged")
+        self.assertEqual(len(self.rows(
+            "SELECT * FROM nudges WHERE state='open'")), 0)
+
+    def test_a_new_client_message_DOES_bring_it_back(self):
+        # the other half: suppression must not become a black hole. If the
+        # client replies after we marked it done, that is a genuinely live card.
+        a = self.nudge(payload={"thread_id": "t1",
+                                "evidence_ts": "2026-08-01T10:00:00"})
+        nudges.set_state(self.db_path, state="done", dedup_key="followup:t1")
+        b = self.nudge(payload={"thread_id": "t1",
+                                "evidence_ts": "2099-01-01T10:00:00"})
+        self.assertEqual(b["op"], "created")
+        self.assertNotEqual(a["id"], b["id"])
+        self.assertEqual(len(self.rows(
+            "SELECT * FROM nudges WHERE state='open'")), 1)
+
+    def test_owed_reply_rule_publishes_evidence_ts(self):
+        # the suppression is only as good as the evidence the rule supplies —
+        # if rules.py stops sending evidence_ts the bug silently returns
+        from modules.chief_of_staff import rules
+        import inspect
+        self.assertIn("evidence_ts", inspect.getsource(rules.rule_owed_replies))
+
+    def test_done_then_refire_creates_new_when_no_evidence(self):
+        # kinds that supply NO evidence_ts keep the old recurring behaviour —
+        # this fix must not silently mute other rules
         a = self.nudge()
         nudges.set_state(self.db_path, state="done", dedup_key="followup:t1")
         c = self.nudge()                       # condition recurred

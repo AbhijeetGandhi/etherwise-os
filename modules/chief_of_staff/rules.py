@@ -50,8 +50,15 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
                 "due": None, "dedup_key": f"followup:{r['thread_id']}",
                 # thread_id in the payload so the Today assembler can dedup this
                 # nudge against its follow-up card (the "follow-up x2" root cause)
+                # evidence_ts = the last message on the thread. nudges.add() uses
+                # it to decide whether a card the founder already marked done has
+                # any REASON to come back: if nothing has been said since they
+                # actioned it, it stays gone. Without this the card refired every
+                # sweep and 'Done' was meaningless (Rocky Choy accumulated 10
+                # rows, Mustafa 11, before this was caught on 2026-08-12).
                 "payload": {"idle_days": r["idle_days"],
-                            "thread_id": r["thread_id"]}})
+                            "thread_id": r["thread_id"],
+                            "evidence_ts": r["latest_message_dt"]}})
     return out
 
 
