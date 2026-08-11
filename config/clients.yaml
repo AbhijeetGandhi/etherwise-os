@@ -111,6 +111,28 @@ clients:
       - david@tryclara.org
     scope_notes: "PROSPECT — Upwork proposal 'AI Automation & Workflow Developer' EXPIRED, no payments. Kept (matchable) so its calls retain context; excluded from client economics. Contact: David Jeffries (david@tryclara.org)."
   -
+    id: reco-health
+    name: RECO Health
+    kind: prospect
+    aliases:
+      - RECO Intensive
+      - RECO Immersive
+      - RECO Island
+      - RECO Institute
+      - RECO Integrated Psychiatry
+      - Brian Greenblott
+      - Erika Boodhoo
+      - Steve Church
+    emails:
+      - recointensive.com
+      - reco.health
+    scope_notes: "PROSPECT (2026-08-09, inbound via ChatGPT recommendation). Five-brand
+      behavioural-health network, Delray Beach FL. Wants a unified executive dashboard
+      across Kipu (EMR) + CollaborateMD (billing) + Salesforce — explicitly NOT replacing
+      their billing company. Call #1 held 2026-08-11 with BD, COO and CFO. Nothing quoted,
+      nothing paid. Decision-maker is Erika Boodhoo (CFO). Full record:
+      clients/RECO Health/context.md"
+  -
     id: cmf-publishing
     name: CMF Publishing
     aliases:
