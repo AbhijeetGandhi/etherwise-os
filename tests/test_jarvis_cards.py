@@ -75,6 +75,14 @@ class CardIdentityTests(unittest.TestCase):
         # both rooms remain reachable — collapsed, not hidden
         q = [c for c in out["queue"] if c.get("item_key") == cards[0]["item_key"]]
         self.assertEqual(len(q[0]["detail"]["thread_urls"]), 2)
+        # ...and so do both DRAFTS. Rendering only the head thread's body would
+        # make the second room's pre-written reply unreachable from Today,
+        # which is hiding work, not collapsing a duplicate row.
+        self.assertEqual(sorted(d["thread_id"] for d in q[0]["detail"]["drafts"]),
+                         ["rX", "rX2"])
+        # the OLDEST thread sets the age (rX2 is a day older than rX)
+        self.assertEqual(q[0]["detail"]["age_days"], cards[0]["age_days"])
+        self.assertEqual(cards[0]["age_days"], 3)
 
     def test_no_provenance_client_card_hidden_and_flagged(self):
         # a client-facing nudge with NO evidence link (no commitment row -> no

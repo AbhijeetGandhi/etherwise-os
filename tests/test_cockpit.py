@@ -1111,6 +1111,49 @@ class TestNudgeActions(unittest.TestCase):
         self.assertIn(k, [f["item_key"] for f in
                           data.today(self.db_path, today="2026-06-15")["follow_ups"]])
 
+    def test_a_stale_done_does_not_gag_a_re_minted_card(self):
+        # dedup_keys are stable per entity ('stale_dossier:<client>'), and only
+        # owed_reply carries evidence_ts. Without a created_at check, ONE Done
+        # in August would hide that client's backlog in January while the
+        # morning brief — which reads the nudges table — nagged daily.
+        from modules.chief_of_staff import nudges as eng
+        eng.write_nudge(self.db_path, source="knowledge", dept="knowledge",
+                        kind="stale_dossier", title="Unprocessed: acme",
+                        dedup_key="stale_dossier:acme", client="acme")
+        key = "nudge:stale_dossier:acme"
+        actions.nudge(self.db_path, {"item_key": key, "action": "done"})
+        self.assertNotIn(key, [q.get("item_key") for q in
+                               data.today(self.db_path, today="2026-06-15")["queue"]])
+        with db.connect(self.db_path) as conn:      # the condition re-arises
+            conn.execute("UPDATE nudges SET state='open', created_at="
+                         "'2099-01-01T00:00:00' WHERE dedup_key="
+                         "'stale_dossier:acme'")
+        self.assertIn(key, [q.get("item_key") for q in
+                            data.today(self.db_path, today="2026-06-15")["queue"]])
+
+    def test_a_hidden_escalation_cannot_hide_its_constituents(self):
+        # an escalation stands IN FRONT OF work. If the escalation itself is
+        # hidden, its covers must stop applying — otherwise the board goes
+        # blank while real cards sit open in the engine.
+        from modules.chief_of_staff import nudges as eng
+        eng.write_nudge(self.db_path, source="knowledge", dept="knowledge",
+                        kind="stale_dossier", title="Unprocessed: acme",
+                        dedup_key="stale_dossier:acme", client="acme")
+        eng.write_nudge(self.db_path, source="sweep", dept="knowledge",
+                        kind="escalate_client", title="Acme is drifting",
+                        dedup_key="escalate_client:acme", client="acme",
+                        payload={"covers": ["stale_dossier:acme"]})
+        keys = lambda: [q.get("item_key") for q in
+                        data.today(self.db_path, today="2026-06-15")["queue"]]
+        self.assertIn("nudge:escalate_client:acme", keys())
+        self.assertNotIn("nudge:stale_dossier:acme", keys())   # rolled up
+        actions.nudge(self.db_path, {"item_key": "nudge:escalate_client:acme",
+                                     "action": "done"})
+        with db.connect(self.db_path) as conn:      # sweep re-mints the same key
+            conn.execute("UPDATE nudges SET state='open' WHERE"
+                         " dedup_key='escalate_client:acme'")
+        self.assertIn("nudge:stale_dossier:acme", keys())      # NOT blacked out
+
     def test_done_writes_through_to_the_engine(self):
         # the morning brief and the sweep read the NUDGES table, not the
         # cockpit's nudge_state overlay. A Done that only wrote the overlay left

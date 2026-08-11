@@ -94,7 +94,9 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
             # accumulated 10 rows, Mustafa 11, before this was caught
             # 2026-08-12). Grouping matters here too: acting on the newer of a
             # person's two rooms now settles both.
-            "payload": {"idle_days": min(r["idle_days"] for r in rows),
+            # the OLDEST obligation sets the age; ranking a person by their
+            # freshest thread hides real neglect
+            "payload": {"idle_days": max(r["idle_days"] for r in rows),
                         "thread_id": head["thread_id"],
                         "thread_ids": [r["thread_id"] for r in rows],
                         "client_id": g["client_id"],
@@ -239,7 +241,8 @@ def rule_system(db_path, now=None) -> List[dict]:
             "SELECT f.id, f.task_name, f.started_at FROM runs f"
             " WHERE f.status='failed' AND f.started_at >= ?"
             " AND NOT EXISTS (SELECT 1 FROM runs ok WHERE ok.task_name=f.task_name"
-            "   AND ok.status='completed' AND ok.started_at > f.started_at)",
+            "   AND ok.status IN ('completed','skipped_empty')"
+            "   AND ok.started_at > f.started_at)",
                 (_iso(fail_lo),)):
             out.append({
                 "source": "system", "dept": "system", "kind": "system",

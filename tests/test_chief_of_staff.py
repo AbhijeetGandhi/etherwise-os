@@ -100,6 +100,23 @@ class TestDedup(CoSCase):
                                 "evidence_ts": "2026-07-29T14:00:00Z"})
         self.assertEqual(b["op"], "suppressed-unchanged")
 
+    def test_a_reply_inside_the_ist_utc_gap_is_not_swallowed(self):
+        # nudges.updated_at is IST-naive (_iso); Upwork message times are UTC.
+        # Treating both as the same clock discarded any reply landing in the
+        # 5h30m after a Done as "nothing changed".
+        a = self.nudge(payload={"thread_id": "t1",
+                                "evidence_ts": "2026-08-12T09:00:00Z"})
+        with db.connect(self.db_path) as conn:      # Done at 15:30 IST = 10:00Z
+            conn.execute("UPDATE nudges SET state='done',"
+                         " updated_at='2026-08-12T15:30:00' WHERE id=?",
+                         (a["id"],))
+        quiet = self.nudge(payload={"thread_id": "t1",       # 09:00Z < 10:00Z
+                                    "evidence_ts": "2026-08-12T09:00:00Z"})
+        self.assertEqual(quiet["op"], "suppressed-unchanged")
+        live = self.nudge(payload={"thread_id": "t1",        # 11:00Z > 10:00Z
+                                   "evidence_ts": "2026-08-12T11:00:00Z"})
+        self.assertEqual(live["op"], "created")
+
     def test_owed_reply_rule_publishes_evidence_ts(self):
         # the suppression is only as good as the evidence the rule supplies —
         # if rules.py stops sending evidence_ts the bug silently returns
@@ -450,7 +467,13 @@ class TestSweep(CoSCase):
         # Five keys, one problem, none reconciled -> "manychat is in there
         # like 10 times". Identity must come from WHAT it is about.
         self.seed_one_candidate()
-        covers = ["hotlead_no_loom:j1"]
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j2','L2',23,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        # the real ladder covered four commitments; two is the floor at which
+        # containment means anything (MIN_MERGE_COVERS)
+        covers = ["hotlead_no_loom:j1", "hotlead_no_loom:j2"]
         s1 = mock.Mock(return_value={"correlations": [
             self._corr("escalate_capacity:aug8-10", covers)],
             "priorities": [], "narrative": "x"})
@@ -461,7 +484,7 @@ class TestSweep(CoSCase):
             "priorities": [], "narrative": "x"})
         with db.connect(self.db_path) as conn:      # force a material change
             conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
-                         "status,first_scored_at) VALUES ('j2','L2',23,1,"
+                         "status,first_scored_at) VALUES ('j3','L3',22,1,"
                          "'Scored','2026-06-22T08:00:00')")
         out = sweep.run_sweep(self._ctx(), _opus=s2, now=dt(hh=14))
         self.assertEqual(out["escalations_merged"], 1)
@@ -470,6 +493,58 @@ class TestSweep(CoSCase):
         self.assertEqual(len(esc), 1)               # one card, not two
         self.assertEqual(esc[0]["dedup_key"], "escalate_capacity:aug8-10")
         self.assertEqual(esc[0]["title"], "Same crunch, new name")  # refreshed
+
+    def test_two_claims_about_one_card_are_not_merged(self):
+        # containment alone over-merges at the bottom: 'Acme will churn' and
+        # 'Acme deadline slipping' both cover exactly {commitment:1}. Merging
+        # them OVERWRITES the first, because write_nudge refreshes the whole
+        # card. A destroyed escalation is worse than a duplicate one.
+        self.seed_one_candidate()
+        one = ["hotlead_no_loom:j1"]
+        s1 = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_client:acme", one, "Acme will churn")],
+            "priorities": [], "narrative": "x"})
+        sweep.run_sweep(self._ctx(), _opus=s1, now=dt(hh=12))
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j2','L2',23,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        s2 = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_deadline:acme", one, "Acme deadline slipping")],
+            "priorities": [], "narrative": "x"})
+        out = sweep.run_sweep(self._ctx(), _opus=s2, now=dt(hh=14))
+        self.assertEqual(out["escalations_merged"], 0)
+        titles = {r["title"] for r in self.rows(
+            "SELECT title FROM nudges WHERE source='sweep'")}
+        self.assertEqual(titles, {"Acme will churn", "Acme deadline slipping"})
+
+    def test_a_new_escalation_never_inherits_someone_elses_snooze(self):
+        self.seed_one_candidate()
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j2','L2',23,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        cov = ["hotlead_no_loom:j1", "hotlead_no_loom:j2"]
+        s1 = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_client:acme", cov, "Old")],
+            "priorities": [], "narrative": "x"})
+        sweep.run_sweep(self._ctx(), _opus=s1, now=dt(hh=12))
+        nudges.set_state(self.db_path, state="snoozed",
+                         dedup_key="escalate_client:acme",
+                         snooze_until="2026-12-31T00:00:00")
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
+                         "status,first_scored_at) VALUES ('j3','L3',22,1,"
+                         "'Scored','2026-06-22T08:00:00')")
+        s2 = mock.Mock(return_value={"correlations": [
+            self._corr("escalate_churn:acme", cov, "URGENT: churn risk")],
+            "priorities": [], "narrative": "x"})
+        sweep.run_sweep(self._ctx(), _opus=s2, now=dt(hh=14))
+        new = self.rows("SELECT state, snooze_until FROM nudges WHERE"
+                        " dedup_key='escalate_churn:acme'")
+        self.assertEqual(len(new), 1)
+        self.assertEqual(new[0]["state"], "open")       # not silenced till Dec
+        self.assertIsNone(new[0]["snooze_until"])
 
     def test_distinct_situations_stay_distinct(self):
         # containment, not similarity: merging two real issues would bury one

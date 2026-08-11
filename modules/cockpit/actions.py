@@ -276,15 +276,24 @@ def apply_nudge(db_path: Optional[Path], item_key: str, action: str,
     # stayed open everywhere except the one list that happened to consult it —
     # and the sweep, seeing it open, kept refreshing it. Same decision, one
     # place. Silent no-op when the key is a follow-up with no nudge row yet.
-    engine = _engine_key(item_key)
+    engine, engine_rows, engine_error = _engine_key(item_key), 0, None
     try:
         from modules.chief_of_staff import nudges as _n
-        _n.set_state(db_path, state=state, dedup_key=engine,
-                     snooze_until=snooze_until, note=note)
-    except Exception:
-        pass                       # the founder's action is recorded regardless
+        engine_rows = _n.set_state(db_path, state=state, dedup_key=engine,
+                                   snooze_until=snooze_until,
+                                   note=note)["updated"]
+    except Exception as exc:       # the founder's action is recorded regardless
+        engine_error = f"{type(exc).__name__}: {exc}"
+    # engine_rows == 0 is NORMAL and not an error: Today lists a follow-up as
+    # soon as its draft exists, while the sweep only mints the nudge after
+    # COS_FOLLOWUP_IDLE_DAYS, so a card can be actioned before the engine has a
+    # row for it. _is_actioned covers that window off nudge_state, and the
+    # sweep's own evidence check covers it once the row appears. It is reported
+    # rather than swallowed because a silent 0 here is indistinguishable from
+    # the write-through being broken, which is the bug this exists to fix.
     return {"ok": True, "item_key": item_key, "state": state,
-            "snooze_until": snooze_until}
+            "snooze_until": snooze_until, "engine_rows": engine_rows,
+            "engine_error": engine_error}
 
 
 def nudge(db_path: Optional[Path], body: dict,

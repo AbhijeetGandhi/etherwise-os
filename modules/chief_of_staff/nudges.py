@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from core import config, db
@@ -71,18 +71,35 @@ def intent_hash(client: Optional[str], intent: str) -> str:
     return hashlib.sha1(key.encode()).hexdigest()[:10]
 
 
-def ts_key(ts) -> str:
-    """Comparable form of a timestamp that may arrive in any of this codebase's
-    three shapes: '2026-07-29T14:00:00Z' (Upwork), '2026-07-29 22:54:11'
-    (SQLite datetime('now')), '2026-07-29T14:00:00+05:30' (IST writers).
+def ts_key(ts, *, naive: str = "utc") -> str:
+    """A timestamp reduced to a comparable UTC instant.
 
-    Comparing those as raw strings is subtly wrong rather than obviously wrong:
-    'T' (0x54) sorts ABOVE ' ' (0x20), so any same-day 'T' timestamp looks newer
-    than any same-day ' ' timestamp. That is not hypothetical — it put Adam
-    Goldsmith back on Today because his last message and Abhijeet's Done landed
-    on the same date in different formats."""
-    s = str(ts or "").strip().replace("T", " ")
-    return s[:19]
+    This codebase stores four shapes and they are NOT interchangeable:
+      '2026-07-29T14:00:00Z'      Upwork message times          — UTC
+      '2026-07-29T14:00:00+05:30' explicit-offset writers       — aware
+      '2026-07-29 22:54:11'       SQLite datetime('now')        — UTC
+      '2026-07-29T22:54:11'       nudges.updated_at via _iso()  — IST, naive
+
+    Two traps, both of which have bitten. First, 'T' (0x54) sorts ABOVE ' '
+    (0x20), so a naive string compare made any same-day 'T' timestamp look newer
+    than any same-day ' ' one — that put Adam Goldsmith back on Today. Second,
+    the last two shapes are indistinguishable by inspection and differ by 5h30m,
+    which opened a window after every Done in which a real client reply was
+    discarded as "nothing changed". So the caller must SAY which zone a naive
+    value is in; there is no safe guess.
+
+    naive: 'utc' (SQLite-stamped columns) or 'ist' (anything written by _iso)."""
+    s = str(ts or "").strip()
+    if not s:
+        return ""
+    s = s.replace("Z", "+00:00").replace(" ", "T", 1)
+    try:
+        d = datetime.fromisoformat(s[:32])
+    except ValueError:
+        return s.replace("T", " ")[:19]      # unparseable: degrade, don't crash
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=config.TZ if naive == "ist" else timezone.utc)
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 _SLUG = re.compile(r"[^a-z0-9]+")
@@ -242,7 +259,8 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
                     "SELECT id, updated_at FROM nudges WHERE dedup_key=? AND"
                     " state IN ('done','dismissed') ORDER BY id DESC LIMIT 1",
                     (dedup_key,)).fetchone()
-                if actioned and ts_key(ev) <= ts_key(actioned["updated_at"]):
+                if actioned and ts_key(ev) <= ts_key(actioned["updated_at"],
+                                                    naive="ist"):
                     return {"id": actioned["id"], "op": "suppressed-unchanged",
                             "urgency": 0.0}
         cur = conn.execute(

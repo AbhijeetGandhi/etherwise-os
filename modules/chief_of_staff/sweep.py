@@ -41,7 +41,7 @@ TASK_NAME = "cos_sweep"
 RULE_KINDS = ("owed_reply", "hotlead_no_loom", "won_no_outcome", "lost_pattern",
               "stale_dossier", "commitment_due", "system")
 
-def escalation_covers(conn) -> dict:
+def escalation_covers(conn, *, open_only: bool = False) -> dict:
     """{dedup_key -> set(covered dedup_keys)} for every ACTIVE escalation.
 
     An escalation is anything the SWEEP wrote (source='sweep'), not anything
@@ -51,9 +51,13 @@ def escalation_covers(conn) -> dict:
     reconciliation and sit on the board indefinitely. Provenance is ours;
     vocabulary is the model's."""
     out: dict = {}
+    # open_only: merge candidates must be OPEN. Refreshing into a SNOOZED card
+    # makes a brand-new escalation inherit an unrelated "not until December",
+    # silencing something nobody chose to silence.
+    states = "('open')" if open_only else "('open','snoozed')"
     for r in conn.execute(
-        "SELECT dedup_key, payload_json FROM nudges WHERE state IN"
-        " ('open','snoozed') AND source='sweep'"):
+        f"SELECT dedup_key, payload_json FROM nudges WHERE state IN {states}"
+        " AND source='sweep' ORDER BY dedup_key"):
         try:
             pl = json.loads(r["payload_json"] or "{}")
         except Exception:
@@ -62,13 +66,23 @@ def escalation_covers(conn) -> dict:
     return out
 
 
+MIN_MERGE_COVERS = 2
+
+
 def _same_situation(new: set, existing: set) -> bool:
     """Two escalations are the same situation when one's constituents contain
-    the other's. Jaccard would call {A,B} and {B,C} similar; containment will
-    not, and a wrongly-merged escalation buries an issue the founder never saw.
-    Empty covers never merges — an escalation that claims nothing gets its own
-    card and its own scrutiny."""
-    if not new or not existing:
+    the other's AND there are enough of them for that to mean anything.
+
+    Jaccard would call {A,B} and {B,C} similar; containment will not. But
+    containment alone still over-merges at the bottom: two escalations that each
+    cover one card ('Acme will churn', 'Acme deadline slipping' — both about
+    commitment:1) are different claims about the same fact, and merging them
+    OVERWRITES the first, because write_nudge refreshes title/action/payload
+    wholesale. A destroyed escalation is strictly worse than a duplicate one.
+
+    So: >=2 shared constituents before we call it one situation. Empty covers
+    never merges — a card that claims nothing gets its own scrutiny."""
+    if len(new) < MIN_MERGE_COVERS or len(existing) < MIN_MERGE_COVERS:
         return False
     return new <= existing or existing <= new
 
@@ -325,7 +339,7 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
     new_corr, merged = 0, 0
     live_now = {n["dedup_key"] for n in active} | live_keys
     with db.connect(db_path) as conn:
-        covers_by_key = escalation_covers(conn)
+        covers_by_key = escalation_covers(conn, open_only=True)
     for c in (opus.get("correlations") or [])[:3]:
         # cluster/count correlations are render-time groupings, never stored
         # cards (J1.5) — an atomic per-client / per-commitment escalation is kept

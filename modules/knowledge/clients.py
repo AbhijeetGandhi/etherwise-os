@@ -89,7 +89,14 @@ def _match(hay: str, client_map: List[dict]):
             k = registry.norm(ident)
             if not k or _DOMAIN.match(k):
                 continue
-            if (" " in k or len(k) >= _SUBSTR_MIN_LEN) and k in hay:
+            if not (" " in k or len(k) >= _SUBSTR_MIN_LEN):
+                continue
+            # WORD BOUNDARIES. Plain `k in hay` let the registry alias "rick k"
+            # (Celcius Herbs) claim "Patrick Kelly", and "remote office" claim
+            # any topic mentioning a remote office. A false attribution is
+            # permanent — link_threads never overwrites a non-null client_id —
+            # and it then merges a stranger into that client's single card.
+            if re.search(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])", hay):
                 return c["client_id"], c["name"]
     return None, None
 

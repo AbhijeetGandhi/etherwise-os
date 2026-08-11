@@ -116,6 +116,13 @@ def run_daily(ctx) -> dict:
         "fathom": _poll_fathom(ctx),
         "email": _poll_email(ctx),
         "ingest": _ingest_inbox(dbp),
+        # attribute newly-ingested Upwork threads to registry clients. This has
+        # to run on a schedule, not just once: every new thread lands with
+        # client_id NULL, and an unattributed thread belonging to an active
+        # client renders on Today as a cold lead (the Brandi Jordan / Cradle
+        # Company symptom) AND splits out of that client's single card.
+        # Idempotent, never overwrites an approved linkage.
+        "link_threads": clients.link_threads(dbp),
         "extract": _extract_pending(dbp),
     }
     result["compile"] = _compile(dbp, now_iso)

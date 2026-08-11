@@ -67,7 +67,7 @@ def _card_key(item_key: str, client=None) -> str:
 
 
 def _is_actioned(key: str, suppressed: set, actioned_at: dict,
-                 evidence_ts=None) -> bool:
+                 evidence_ts=None, created_at=None) -> bool:
     """Has the founder dealt with this card, and has nothing happened since?
 
     The cockpit's Done button writes ONLY to nudge_state, and until 2026-08-12
@@ -77,15 +77,30 @@ def _is_actioned(key: str, suppressed: set, actioned_at: dict,
     yesterday and the day before but it still shows up"). Every card the queue
     renders now passes through here, under both key forms the UI can send.
 
-    A Done is not permanent — it means "handled". Newer evidence (the client
-    actually replied) revives the card; the clock alone does not."""
+    A Done is not permanent — it means "handled" — and it goes stale two ways:
+
+      evidence_ts  the counterparty said something after we closed it;
+      created_at   the card itself is NEWER than the Done, i.e. the condition
+                   genuinely re-arose and the engine minted a fresh row.
+
+    The second check is what stops this becoming a permanent gag. dedup_keys are
+    deliberately stable per entity ('stale_dossier:horizons-aba',
+    'escalate_client:<id>'), and only owed_reply carries evidence_ts — so
+    without it one Done in August would hide that client's dossier backlog in
+    January while the morning brief, which reads the nudges table, nagged about
+    it daily. Two surfaces diverging permanently in opposite directions is worse
+    than the bug this function was written to fix."""
     hit = next((k for k in (key, f"nudge:{key}") if k in suppressed), None)
     if hit is None:
         return False
     from modules.chief_of_staff import nudges as eng
     was = actioned_at.get(hit)
-    if was and evidence_ts and eng.ts_key(evidence_ts) > eng.ts_key(was):
+    if not was:
+        return True                      # snoozed: an explicit "not until <date>"
+    if evidence_ts and eng.ts_key(evidence_ts) > eng.ts_key(was):
         return False                     # they said something new -> it's live
+    if created_at and eng.ts_key(created_at, naive="ist") > eng.ts_key(was):
+        return False                     # re-minted after the Done -> it's back
     return True
 
 
@@ -1375,7 +1390,18 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             if key in _fu_index:                       # same person, second room
                 prev = follow_ups[_fu_index[key]]
                 prev["thread_ids"].append(r["thread_id"])
-                prev["age_days"] = min(prev["age_days"], r["age_days"])
+                # the OLDEST thread sets the age: a person with one obligation
+                # idle 30 days and one idle 1 day is 30 days overdue, and
+                # ranking them as 1 day old pushes real neglect off the board
+                prev["age_days"] = max(prev["age_days"], r["age_days"])
+                # every draft rides along. Collapsing the row must not make the
+                # second room's pre-written reply unreachable — Dhanya's two
+                # rooms are two different job posts with two different drafts.
+                prev["drafts"].append({"thread_id": r["thread_id"],
+                                       "topic": r["topic"] or r["room_name"],
+                                       "body": r["body"], "tier": r["tier"],
+                                       "thread_url": ROOM_URL.format(
+                                           tid=r["thread_id"])})
                 continue
             _fu_index[key] = len(follow_ups)
             follow_ups.append({
@@ -1393,7 +1419,11 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                 # real thread age (days) so the queue reads honestly — the old UI
                 # showed word_count as "Nw" which was misread as weeks (redline 2)
                 "age_days": r["age_days"],
-                "thread_url": ROOM_URL.format(tid=r["thread_id"])})
+                "thread_url": ROOM_URL.format(tid=r["thread_id"]),
+                "drafts": [{"thread_id": r["thread_id"],
+                            "topic": r["topic"] or r["room_name"],
+                            "body": r["body"], "tier": r["tier"],
+                            "thread_url": ROOM_URL.format(tid=r["thread_id"])}]})
 
         # ── Ready-when-you-resume backlog (paused-aware) ──────────────────────
         # Applications are deliberately paused, so accumulated hot leads are a
@@ -1514,8 +1544,10 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             "detail": {"kind": "Follow-up (draft ready)", "client": f.get("client"),
                        "age_days": f["age_days"], "tier": f["tier"],
                        "thread_url": f["thread_url"], "draft": f["draft"],
-                       # every room this one card stands for, so collapsing two
-                       # of a person's threads never hides the second one
+                       # EVERY room and EVERY draft this one card stands for.
+                       # Collapsing two of a person's threads must not make the
+                       # second room's written reply unreachable.
+                       "drafts": f["drafts"],
                        "thread_urls": [ROOM_URL.format(tid=t)
                                        for t in f["thread_ids"]]}})
     # actionable M4 nudges — everything except the paused hot-lead stream, and
@@ -1536,28 +1568,39 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     # it covers must not also be listed. Three "Job failed: upwork_scan" rows
     # sitting beside an escalation that says "upwork_scan failed 3x" is the same
     # fact four times, and it is what made the board feel like noise.
-    superseded: set = set()
+    #
+    # A card may only be hidden by an escalation that is ITSELF VISIBLE. Built
+    # from all active nudges instead, a done-then-re-minted escalation would be
+    # hidden by _is_actioned while still suppressing its constituents — the
+    # board goes blank while real work sits open in the engine. An escalation
+    # can only stand in for work it is actually standing in front of.
+    _payload: dict = {}
     for n in active_n:
         try:
-            _pl = json.loads(n.get("payload_json") or "{}")
+            _payload[n["dedup_key"]] = json.loads(n.get("payload_json") or "{}")
         except (TypeError, ValueError):
-            _pl = {}
-        superseded |= {k for k in (_pl.get("covers") or [])
+            _payload[n["dedup_key"]] = {}
+    _visible = [n for n in active_n
+                if not _is_actioned(n["dedup_key"] or "", suppressed,
+                                    actioned_at,
+                                    _payload.get(n["dedup_key"], {}).get(
+                                        "evidence_ts"),
+                                    n.get("created_at"))]
+    superseded: set = set()
+    for n in _visible:
+        superseded |= {k for k in (_payload[n["dedup_key"]].get("covers") or [])
                        if k != n["dedup_key"]}
-    for n in active_n:
+    # ...and an escalation is never hidden BY the thing it covers: two cards
+    # naming each other would otherwise take each other off the board.
+    superseded -= {n["dedup_key"] for n in _visible
+                   if _payload[n["dedup_key"]].get("covers")}
+    for n in _visible:
         if n["kind"] == "hotlead_no_loom":
             continue                        # that IS the paused backlog
         dk = n["dedup_key"] or ""
         if dk in superseded:
             continue                        # rolled up into an escalation
-        try:
-            pl = json.loads(n.get("payload_json") or "{}")
-        except (TypeError, ValueError):
-            pl = {}
-        # the founder's own Done/Dismiss/Snooze, which lives in nudge_state and
-        # was never applied to this list before (see _is_actioned)
-        if _is_actioned(dk, suppressed, actioned_at, pl.get("evidence_ts")):
-            continue
+        pl = _payload.get(dk, {})
         # dedup an owed_reply against its follow-up card — both are keyed on the
         # COUNTERPARTY now, so the keys compare directly (the ×2 root cause)
         if n["kind"] == "owed_reply" and dk in fu_keys:
