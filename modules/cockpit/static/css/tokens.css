@@ -1,0 +1,169 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Etherwise cockpit — design tokens. The single visual source of truth.
+
+   Model: shadcn/ui's semantic-token system, ported to plain CSS. Components
+   NEVER name a colour — they name a ROLE (--card, --muted-foreground,
+   --destructive). Both themes define every name, and light is not the "real"
+   one with a dark afterthought: they are peers.
+
+   RULES FOR ANYONE EDITING A SECTION
+   1. No hex, rgb() or hsl() literal may appear outside this file.
+   2. Every token holds a COMPLETE css colour, so it can be dropped straight
+      into a canvas fillStyle (charts.js depends on this — see --chart-*).
+      Need translucency? color-mix(in srgb, var(--foreground) 8%, transparent).
+   3. Colour carries meaning. Neutrals do the layout work. If a thing is not
+      a status, it is a neutral.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── surfaces & ink ───────────────────────────────────────────────────── */
+  --background:            hsl(0 0% 100%);
+  --foreground:            hsl(240 10% 3.9%);
+  --card:                  hsl(0 0% 100%);
+  --card-foreground:       hsl(240 10% 3.9%);
+  --popover:               hsl(0 0% 100%);
+  --popover-foreground:    hsl(240 10% 3.9%);
+  --muted:                 hsl(240 4.8% 95.9%);
+  --muted-foreground:      hsl(240 3.8% 46.1%);
+  --accent:                hsl(240 4.8% 95.9%);   /* hover fill, not a colour */
+  --accent-foreground:     hsl(240 5.9% 10%);
+  --border:                hsl(240 5.9% 90%);
+  --border-strong:         hsl(240 5.5% 82%);
+  --input:                 hsl(240 5.9% 90%);
+  --ring:                  hsl(240 5% 64.9%);
+
+  /* ── meaning ──────────────────────────────────────────────────────────── */
+  --primary:               hsl(240 5.9% 10%);
+  --primary-foreground:    hsl(0 0% 98%);
+  --secondary:             hsl(240 4.8% 95.9%);
+  --secondary-foreground:  hsl(240 5.9% 10%);
+  --destructive:           hsl(0 72% 45%);
+  --destructive-foreground:hsl(0 0% 98%);
+  --destructive-soft:      hsl(0 86% 97%);
+  --destructive-border:    hsl(0 70% 88%);
+  --success:               hsl(151 66% 27%);
+  --success-foreground:    hsl(0 0% 98%);
+  --success-soft:          hsl(150 60% 96%);
+  --success-border:        hsl(150 40% 84%);
+  --warning:               hsl(32 81% 34%);
+  --warning-foreground:    hsl(0 0% 98%);
+  --warning-soft:          hsl(45 93% 96%);
+  --warning-border:        hsl(40 70% 82%);
+  --info:                  hsl(217 78% 43%);
+  --info-soft:             hsl(214 95% 97%);
+  --info-border:           hsl(214 70% 88%);
+
+  /* ── chart palette ────────────────────────────────────────────────────────
+     Concrete colours only: Chart.js writes these to a canvas context, which
+     will not resolve color-mix(). charts.js re-reads them on theme change. */
+  --chart-1:               hsl(240 5.9% 26%);
+  --chart-2:               hsl(217 78% 48%);
+  --chart-3:               hsl(151 55% 36%);
+  --chart-4:               hsl(32 85% 48%);
+  --chart-5:               hsl(0 68% 52%);
+  --chart-1-soft:          hsla(240 5.9% 26% / 0.14);
+  --chart-2-soft:          hsla(217 78% 48% / 0.14);
+  --chart-3-soft:          hsla(151 55% 36% / 0.16);
+  --chart-4-soft:          hsla(32 85% 48% / 0.18);
+  --chart-5-soft:          hsla(0 68% 52% / 0.14);
+  --chart-grid:            hsla(240 6% 10% / 0.08);
+  --chart-axis:            hsl(240 3.8% 46.1%);
+  --chart-target:          hsl(32 85% 44%);
+
+  /* ── shape ────────────────────────────────────────────────────────────── */
+  --radius:      0.625rem;                      /* 10px — the one radius */
+  --radius-sm:   calc(var(--radius) - 4px);
+  --radius-lg:   calc(var(--radius) + 4px);
+  --radius-full: 999px;
+
+  /* ── type scale: 12 / 13 / 14 / 16 / 20 / 24 / 30, body 14 ────────────── */
+  --text-xs:   12px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   16px;
+  --text-lg:   20px;
+  --text-xl:   24px;
+  --text-2xl:  30px;
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter",
+               "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, "JetBrains Mono", monospace;
+
+  /* ── spacing: 4px base, and use more of it than feels necessary ───────── */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-7: 32px; --space-8: 48px;
+
+  /* ── elevation: borders do the work; shadows only on floating things ──── */
+  --shadow-sm: 0 1px 2px hsla(240 6% 10% / 0.05);
+  --shadow-md: 0 4px 12px hsla(240 6% 10% / 0.08);
+  --shadow-lg: 0 16px 48px hsla(240 6% 10% / 0.18);
+
+  /* ── motion: 120–160ms ease-out, opacity + 2–4px only. Nothing bounces ── */
+  --ease:      cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast:  120ms;
+  --dur:       160ms;
+
+  /* ── layout ───────────────────────────────────────────────────────────── */
+  --sidebar-w:          220px;
+  --sidebar-w-collapsed: 60px;
+  --topbar-h:           56px;
+  --content-max:        1180px;
+
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --background:            hsl(240 10% 3.9%);
+  --foreground:            hsl(0 0% 95%);
+  --card:                  hsl(240 6% 7.5%);
+  --card-foreground:       hsl(0 0% 95%);
+  --popover:               hsl(240 7% 9%);
+  --popover-foreground:    hsl(0 0% 95%);
+  --muted:                 hsl(240 4% 14%);
+  --muted-foreground:      hsl(240 5% 64.9%);
+  --accent:                hsl(240 4% 16%);
+  --accent-foreground:     hsl(0 0% 95%);
+  --border:                hsl(240 4% 17%);
+  --border-strong:         hsl(240 4% 26%);
+  --input:                 hsl(240 4% 20%);
+  --ring:                  hsl(240 5% 45%);
+
+  --primary:               hsl(0 0% 95%);
+  --primary-foreground:    hsl(240 6% 10%);
+  --secondary:             hsl(240 4% 14%);
+  --secondary-foreground:  hsl(0 0% 95%);
+  --destructive:           hsl(0 78% 63%);
+  --destructive-foreground:hsl(240 6% 10%);
+  --destructive-soft:      hsl(0 45% 13%);
+  --destructive-border:    hsl(0 40% 26%);
+  --success:               hsl(150 55% 55%);
+  --success-foreground:    hsl(240 6% 10%);
+  --success-soft:          hsl(151 40% 11%);
+  --success-border:        hsl(151 30% 24%);
+  --warning:               hsl(40 88% 60%);
+  --warning-foreground:    hsl(240 6% 10%);
+  --warning-soft:          hsl(38 45% 12%);
+  --warning-border:        hsl(38 35% 26%);
+  --info:                  hsl(213 90% 68%);
+  --info-soft:             hsl(216 45% 14%);
+  --info-border:           hsl(216 40% 28%);
+
+  --chart-1:               hsl(240 5% 72%);
+  --chart-2:               hsl(213 90% 66%);
+  --chart-3:               hsl(150 55% 55%);
+  --chart-4:               hsl(40 88% 60%);
+  --chart-5:               hsl(0 78% 66%);
+  --chart-1-soft:          hsla(240 5% 72% / 0.16);
+  --chart-2-soft:          hsla(213 90% 66% / 0.18);
+  --chart-3-soft:          hsla(150 55% 55% / 0.18);
+  --chart-4-soft:          hsla(40 88% 60% / 0.18);
+  --chart-5-soft:          hsla(0 78% 66% / 0.18);
+  --chart-grid:            hsla(0 0% 100% / 0.08);
+  --chart-axis:            hsl(240 5% 64.9%);
+  --chart-target:          hsl(40 88% 60%);
+
+  --shadow-sm: 0 1px 2px hsla(0 0% 0% / 0.3);
+  --shadow-md: 0 4px 12px hsla(0 0% 0% / 0.45);
+  --shadow-lg: 0 16px 48px hsla(0 0% 0% / 0.6);
+
+  color-scheme: dark;
+}

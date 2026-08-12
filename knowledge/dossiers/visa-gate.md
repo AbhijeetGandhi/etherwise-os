@@ -1,6 +1,6 @@
 # Visa Gate GmbH — Dossier
 
-_Compiled 2026-08-08T22:30:36.799148+00:00 · 16 client facts (16 trusted) from 1 sources._
+_Compiled 2026-08-12 05:15 IST · 16 client facts (16 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -46,4 +46,5 @@ _Compiled 2026-08-08T22:30:36.799148+00:00 · 16 client facts (16 trusted) from 
 
 ## Sources
 
+- `crm/visa-gate` · — · crm · CRM numbers — Visa Gate GmbH
 - `fathom/64401809` · 2025-05-23 · fathom · Kick-off Call AI-BOT

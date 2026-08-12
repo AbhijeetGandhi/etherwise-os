@@ -1,6 +1,6 @@
 # Sale Pros Corp — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 40 client facts (37 trusted) from 7 sources._
+_Compiled 2026-08-12 05:15 IST · 42 client facts (39 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -15,7 +15,9 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 40 client facts (37 trusted) from 
 
 ## The numbers
 
+- Contract: AI Voice - Inbound Expert Needed - Vapi, HighLevel, Make — status ACTIVE. [CONFIRMED · CRM:contracts/41584201]
 - Land owner reference and notes field previously incorrectly mapped as single line and multi-line fields [CONFIRMED · https://www.loom.com/share/a4459478348842e88507c796bb857321 @ 'land owner reference and notes, like previously it was coming into the single line and multi-line fields, ah, which was, because, you know, it was incorrectly mapped']
+- Revenue to date: $1,609 across 11 earning transactions (2025-09-14 → 2025-11-23). [CONFIRMED · CRM:transactions]
 - Test data: ad spend €2,000, impressions 1,000 (CPM €2), clicks 400 (CPC €5), CTR 40%, LP% 25%, leads 100 (CPL €20), lead percentage 10%, TS 10 (CPTS €200), LTS% 10%, QL 100 (CPQL €20), QBC 20%, booked calls 20 (CPBC €100), SU% 75%, show-ups 15 (CPSU €133.33), CO €93.33, sales 14, revenue €150, cash collected €100,000, CPA €142.86, ROAS 75, CROS 50, RPNL €1,500. [CONFIRMED · https://www.loom.com/share/782730ea82c643d392b36b384409c73e @ detailed metrics listing from 0:00 onwards with all numerical test values]
 - When a lead is created from an email contact, only first name, last name, and pipeline stage are mapped; pipeline stage is set to 'interest expressed'. [CONFIRMED · https://www.loom.com/share/eddf03edec554092ab08a55b45d29faf @ 00:01:50 – 'While creating a lead, all I'm... creating is... the first name, last name, and the lead pipeline stage is interest expressed']
 - OpenAI model replacements have been made in at least 4 locations where Render code blocks were being used [_INFERRED_ · https://www.loom.com/share/1a50280ca4654ed1acaf10acd9a6c9b0 @ 0:02:00 - 'there are multiple places where the code block was being used and now it's replaced everywhere. So it's like three and then maybe it was being used somewhere down here as well. Four']
@@ -64,6 +66,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 40 client facts (37 trusted) from 
 
 ## Sources
 
+- `crm/sale-pros-corp` · — · crm · CRM numbers — Sale Pros Corp
 - `loom/1a50280ca4654ed1acaf10acd9a6c9b0` · 2025-09-25 · loom · Update on Open AI Model Integration and Render Transition
 - `loom/a4459478348842e88507c796bb857321` · 2025-10-13 · loom · Form Submission Update and Automation Progress 🚀
 - `loom/782730ea82c643d392b36b384409c73e` · 2025-10-20 · loom · Formula Implementation and Insights for Marketing Metrics 📊

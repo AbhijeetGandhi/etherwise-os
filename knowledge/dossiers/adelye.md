@@ -1,6 +1,6 @@
 # Adelye — Dossier
 
-_Compiled 2026-08-11 05:15 IST · 511 client facts (509 trusted) from 43 sources · 20 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-12 05:15 IST · 510 client facts (508 trusted) from 43 sources · 20 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -64,7 +64,6 @@ _Compiled 2026-08-11 05:15 IST · 511 client facts (509 trusted) from 43 sources
 - Maximum expected volume of certification emails requiring sending is approximately 60 per day. [CONFIRMED · fathom/136572363 @ 00:07:00]
 - On the day of the call, only 1 course record was added to Google Sheets when there should have been 19; the discrepancy was not caught by the automation. [CONFIRMED · fathom/133748149 @ [00:01:21] Fathom have sent one originally, but there should have been 19]
 - Once all certificate templates are live, the client estimates approximately 500–600 certificates processed per month through the automation. [CONFIRMED · fathom/124767903 @ 00:15:00 – 00:15:32]
-- Revenue to date: $19,457 across 58 earning transactions (2024-11-03 → 2025-11-30). [CONFIRMED · CRM:transactions]
 - Simone (client-side) topped up Make.com credits; Abhijeet estimated approximately 20,000 credits would be needed. [CONFIRMED · fathom/104884850 @ 00:08:00 – 'Simone, if you can do, like, 20,000 credits, I think that's what we'll need']
 - TRG's certificate generation process is currently on approximately version 7 or 8 of certification automation. [CONFIRMED · fathom/114109770 @ 00:08:19]
 - The 400 missing courses translate to an estimated 2,000–4,000 individual delegate certificates that need to be created and uploaded to TechEdge. [CONFIRMED · fathom/108964818 @ we are talking probably somewhere in the region of 2,000 4,000 certificates]

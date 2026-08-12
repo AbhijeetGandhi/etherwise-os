@@ -1,6 +1,6 @@
 # Beglaubigt — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) from 38 sources._
+_Compiled 2026-08-12 05:15 IST · 541 client facts (537 trusted) from 51 sources · 3 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -31,6 +31,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) fro
 - The client's core service offering includes three registration types: Transparenzregister (transparency register), Gewerbeanmeldung (business registration), and tax registration, sold as an 'authority package'. [CONFIRMED · fathom/150959714 @ 00:03:32 – 'These three things, transparency register, is one thing of our service. Same for Gewerbeanmeldung... business registration and tax registration.']
 - The client's long-term vision is to become a bank, with plans to include digital notarizations (digitale Beglaubigungen) and a Lexware-alternative accounting product. [CONFIRMED · fathom/158533688 @ 00:03:12 – 'Long-Term Vision, dass wir der Bank werden']
 - The client's product lines being reviewed for automation include: notarizations, incorporations, holdings, translations, registrations, KBR, EGBR, and business address. [CONFIRMED · fathom/139349483 @ 00:06:02 – 'the first product is following notarizations… incorporations… holdings… translations… registrations… KBR, EGBR… business address']
+- The client's product or platform is named 'Petuno' and the trademark for that name has not yet been registered as of the time of this email. [CONFIRMED · email/19f8e9c134ac9ec0 @ Petuno ist noch frei.]
 - The client's system has two to three different types of events per product (e.g. incorporation, authorization, translations, business address, registration), with two fixed automated events for every product: 'Qualify Lead' and 'Checkout Complete'. [CONFIRMED · fathom/145347333 @ mainly the one event that is fixed for every or two events that are fixed for every product is Qualify Lead and Checkout Complete]
 - The primary KPIs being tracked for this client are 'first time to response' (speed-to-lead) and 'call-through rate'. [CONFIRMED · fathom/163246821 @ 00:02:35]
 - The primary problem being addressed is duplicate deals being created in HubSpot. The two main Make.com scenarios causing this are: (1) 'Incorporation to HubSpot' and (2) 'Stripe Checkout Completed'. [CONFIRMED · fathom/138117567 @ 00:02:24 – 'the main ones are just the incorporation to HubSpot and then the checkout company, like those two would solve like 80% of issues right now']
@@ -50,12 +51,14 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) fro
 - Backfill scope is deals created in approximately the last two months (referenced date anchor: 20th of February). [CONFIRMED · fathom/140686808 @ just for the deals for the last two months]
 - Client tracks custom property 'paid' (boolean) to mark when deals are paid, but trigger mechanism for marking deals as paid has not yet been decided [CONFIRMED · https://www.loom.com/share/5529644cf05a4820853300a5386a7b69 @ we still needed to decide what will be the trigger for this and how do we identify which deal that mark has paid... custom property paid is equal to true]
 - Comparing month-to-date (1st–13th) of two consecutive months, revenue was €51k in the earlier month and €58k in the current month, indicating growth on a like-for-like daily basis. [CONFIRMED · fathom/145985536 @ 00:14:13 – '1 bis 13 sind bei mir 51k ... und jetzt in diesem Monat, 1 bis 13 sind hier 58k']
+- Contract: Ai Automations sales outbound & Inbound — status ACTIVE. [CONFIRMED · CRM:contracts/43406906]
 - Cross-client example: Pfizer's CPA (a healthcare company) has more than 197 active automations and approximately 137 deprecated or in-progress automations built by the agency in Make.com. [CONFIRMED · fathom/137629968 @ this is one of the clients that we work with, is Pfizer's CPA. They are a healthcare company... we have more than like, so this is in the folder... more than 197 that are active automations and probably 137 that either deprecated or being built out]
 - Estimated effort to build the PDF attachment module is 30 minutes to one hour. [CONFIRMED · fathom/142178012 @ 00:14:01 - 00:14:32]
 - HubSpot enforces a rate limit of approximately 2 API requests per second on lower-tier plans; upgrading to get ~60 requests per second costs approximately 1,000 euros per month. [CONFIRMED · fathom/147956460 @ HubSpot has a limit of like two requests per second... if you want more requests per second you need to pay 1000 euro per month and then you get 60 requests per second]
 - Ioannis stated that 544 deals were created last week alone, implying a two-month contact count should be around 2,400 — significantly higher than the 431 currently synced to HubSpot/Dialpad. [CONFIRMED · fathom/163246821 @ 00:10:42]
 - Jonas Espeloer calls approximately 70 to 80 people per day as part of the sales process. [CONFIRMED · fathom/145347333 @ 00:09:45]
 - Multiple duplicate deals are being created for the same email address due to automation triggering without deduplication logic. [CONFIRMED · https://www.loom.com/share/7d6ebdcfc5274389a39dfc5a32e36b9a @ 0:05-0:20 and 2:30-3:00]
+- Revenue to date: $922 across 2 earning transactions (2026-05-27 → 2026-06-03). [CONFIRMED · CRM:transactions]
 - Stripe transaction sync with HubSpot has only 2 missing transactions out of 100; both missing are caused by the same translation products issue. [CONFIRMED · fathom/156935557 @ Yeah, mainly the transactions, like the Stripe transaction, we only have two missing out of 100 now, and those two are because of the same translation products]
 - The Trustpilot review count was hardcoded as 284 in the old email template; the correct current count is 401, and the rating is 4.8. [CONFIRMED · fathom/160649819 @ 00:09:46 / 00:12:11 / 00:21:05]
 - The ad spend per lead is described as close to maximum 1x (ROAS ≈1), with an example figure of ~€88 per lead cited as yielding poor margins given current customer LTV. [CONFIRMED · fathom/145985536 @ 00:18:01 – 'pro Lead, den wir bekommen, der Adspend schon maximal 1, irgendwas ist ... Lass auch nur 88 sein pro Lead, dann ist es trotzdem keine gute Marge']
@@ -93,15 +96,23 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) fro
 - Alejandro does not have access to Google Tag Manager (GTM) and needs to be granted access. [CONFIRMED · fathom/163246821 @ 00:17:05]
 - CC recipients for outgoing emails include alex@theglaubegt.de and ioannis@theglaubegt.de. [CONFIRMED · fathom/157903369 @ "it would be alex at theglaubegt.de and Ioannis at theglaubegt.de"]
 - Cati (or Carti) is identified as the person responsible for sending nurturing email campaigns on the client side. [CONFIRMED · fathom/155027110 @ 00:13:32]
+- Felix Adrian (felix.adrian@beglaubigt.de) is the organiser of the beglaubigt.de client sync, indicating he is the primary contact at beglaubigt.de. [CONFIRMED · email/19fcc019ecc7d7c4 @ Organiser: Felix Adrian, felix.adrian@beglaubigt.de]
+- Felix Adrian (felix.adrian@beglaubigt.de) is the organiser of the beglaubigt.de sync meetings with Etherwise. [CONFIRMED · email/19fcbe28fd0c1553 @ Organiser: Felix Adrian, felix.adrian@beglaubigt.de]
+- Felix Adrian holds an organiser/contact role at beglaubigt.de (email: felix.adrian@beglaubigt.de) and is the client-side point of contact for the Etherwise engagement. [CONFIRMED · email/19fc9768dff6c068 @ Organiser: Felix Adrian, felix.adrian@beglaubigt.de]
+- Felix Adrian's email domain is beglaubigt.de, indicating his organisational affiliation. [CONFIRMED · email/19fd7d02cee4c5de @ From: Felix Adrian <felix.adrian@beglaubigt.de>]
+- Felix Adrian's email is felix.adrian@beglaubigt.de, indicating he is associated with the domain 'beglaubigt.de'. [CONFIRMED · email/19fcc355708833f7 @ Organiser: Felix Adrian felix.adrian@beglaubigt.de]
 - Felix is a stakeholder on the client side who was informed about the missing phone number field issue. [CONFIRMED · fathom/146740663 @ 00:29:47 – 'I also highlighted this stress list to Felix, and he knows it']
+- Ioannis Pirigkos (ioannis@beglaubigt.de) holds the organiser role for the mid-week update automation recurring touchpoint with Etherwise. [CONFIRMED · email/19f652f63d8e0812 @ Organiser: Ioannis Pirigkos ioannis@beglaubigt.de]
 - Ioannis Pirigkos and Abhijeet Gandhi are the two main speakers on this call, working together on a HubSpot automation build. [CONFIRMED · fathom/146740663 @ 00:11:00]
 - Ioannis Pirigkos and Abhijeet Gandhi are the two speakers on this call. [CONFIRMED · fathom/157903369 @ 00:00:41]
+- Ioannis Pirigkos is associated with Etherwise, reachable at contact@etherwise.io. [CONFIRMED · email/19f5fd156893e978 @ Guests: Ioannis Pirigkos, contact@etherwise.io]
 - Ioannis Pirigkos is the account lead/project manager; Abhijeet Gandhi (Abhi) is building the automations; Katharina Ilgner is the client-side marketing contact. [CONFIRMED · fathom/145557938 @ 00:00:26]
 - Ioannis Pirigkos is the client contact on this call. Mehran Akhavan is the client's intern who handles Make automations and deal duplicate issues. Abhijeet Gandhi is the agency-side automation specialist. [CONFIRMED · fathom/138117567 @ 00:00:33 – 'Avi kümmert sich um die Make Automations und kümmert sich darum, dass wir nicht mehr Deal Duplicates haben in Make selber']
 - Ioannis Pirigkos is the client-side lead coordinating between Jonas and Abhijeet and managing the overall project direction. [CONFIRMED · fathom/145347333 @ 00:00:26]
 - Ioannis Pirigkos is the client/project lead; Abhijeet Gandhi is the freelancer working on the automation project. [CONFIRMED · fathom/150036301 @ 00:00:00]
 - Ioannis Pirigkos is the client; Abhijeet Gandhi is from the agency; Thomas Charlier is the client's lead engineer. [CONFIRMED · fathom/139349483 @ 00:08:28 – 'Our lead engineer is joining now' / 00:09:29 – 'Hi Thomas']
 - Jackson Ly has been assigned ownership of the UTM parameter tracking project, as Felix does not know how to handle it. [CONFIRMED · fathom/147956460 @ The UTM parameter project is officially yours. So you have now the responsibility of, because Felix doesn't know how to do it.]
+- Jackson Ly is associated with Etherwise (contact@etherwise.io), serving as the client-side point of contact for automation discussions. [CONFIRMED · email/19f6f4a8cdcfd0f3 @ Jackson Ly contact@etherwise.io]
 - Jackson Ly is the agency representative on the call; he is based in Germany but was traveling in South Korea at the time of the call. [CONFIRMED · fathom/158165102 @ 00:00:49 – 'I'm currently in South Korea, just for traveling, you know, but I will come back to Germany soon']
 - Jonas Espeloer is responsible for setting up the B2B pipeline using Clay; he has a background working with private equity funds and investment banks. [CONFIRMED · fathom/145347333 @ 00:00:43]
 - Key people on the call: Jackson Ly, Abhijeet Gandhi (automation builder), Ioannis Pirigkos (client), Felix Adrian (client team member). [CONFIRMED · fathom/160868884 @ 00:00:00]
@@ -119,6 +130,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) fro
 - Team members on this call include Ioannis Pirigkos, Abhijeet Gandhi (Abi), and Jackson Ly. [CONFIRMED · fathom/160184365 @ 00:00:05]
 - Team members present or referenced: Ioannis Pirigkos, Abhijeet Gandhi, Jackson Ly (agency/developer side); Thomas is a client-side contact sending requirements; Felix and Alexandros are also referenced on the client/project side. [CONFIRMED · fathom/142178012 @ 00:26:36 - 00:26:45 and 00:33:03 - 00:34:17]
 - The Make automation logic for the GTM-event-to-HubSpot deal creation was originally built by Alexander and/or Christian; Christian is no longer working on it and Alexander handed it over to Ioannis. [CONFIRMED · fathom/139349483 @ 00:18:20 – 'I don't know if it's Alexander or Christian that did it' / 00:18:32 – 'Alexander gave it over to me and Christian is not working on it anymore']
+- The client contact receiving this email is named Andrea. [CONFIRMED · email/19f8e9c134ac9ec0 @ Hi Andrea,]
 - The client has an intern who is manually reviewing a list; at the time of the call the intern had 108 entries remaining to process before the email send-out can proceed. [CONFIRMED · fathom/141991615 @ [00:38:36] Ioannis: 'He is currently, he has another 108 to go through. And then we can send out this.']
 - The client's customer support team includes agents named Susi and Sophia, available Monday to Friday 8:00–18:00; the company is not reachable on weekends. [CONFIRMED · fathom/141991615 @ [00:35:43] Ioannis (voicemail recording): 'unser Customer Support Susi und Sophia sich um ihre Anfrage kümmern']
 - The email template contains the name 'Felix Gerlach' (co-founder) and needs to be updated to 'Alexander Spornberg' (co-founder) and the greeting changed from 'Felix' to 'Alex / VLA group'. [CONFIRMED · fathom/144965679 @ 00:15:53 – 'it should say co-founder Alexander Spornberg…instead of Felix, right?']
@@ -538,6 +550,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) fro
 - Phone number reformatting for HubSpot was noted as a pending task to be changed later. [CONFIRMED · fathom/138663787 @ [00:18:34] Ioannis Pirigkos: This is something we have to change later on. / [00:18:44] Ioannis Pirigkos: Reform the phone number for HubSpot.]
 - Team uses Notion for documentation and SOPs, and Fathom for meeting transcripts. [CONFIRMED · fathom/156935557 @ 00:16:55 / 'If you have Notion page, you can also paste the link to Notion page' and 00:23:53 / 'Fathomations']
 - Team uses a Bug Reporter tool and plans to create an equivalent Automation Reporter (or Automation Suggestions) tool by copying the Bug Reporter setup for automations. [CONFIRMED · fathom/156935557 @ 00:09:45 / 'Automations Reporter. Also dass wir das gleiche wie Bug Reporter für Automations haben']
+- The call topic between Ioannis/agency and Etherwise is 'Call Through rate', suggesting call-through rate is an active metric or concern being discussed for the Etherwise engagement. [CONFIRMED · email/19f5c0cf6b7759f0 @ Subject: Call Through rate Abhi/Jackson]
 - The client acknowledged that existing SOPs and processes are incorrect and need to be rebuilt. [CONFIRMED · fathom/158533688 @ 00:03:54 – 'die Prozesse und die SOPs, die wir bisher haben, sind falsch']
 - The email co-founder title line in German reads: 'Co / Gründer' with a self-introduction as Felix. [CONFIRMED · fathom/157903369 @ 00:02:06 – "Hier ist Lieberherr XYZ, dann hier ist Felix, and then Co minus Gründer"]
 - The email template includes a payment link specific to each recipient, pulled from a customer record (referred to as 'the customer' in the workflow). [CONFIRMED · fathom/157903369 @ "i use it yeah okay i'll send it out" / "you use the customer great"]
@@ -556,10 +569,12 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) fro
 - The webhook endpoint URL structure for the tax registration flow follows the pattern: register/tags/[identifier] (e.g. register/tags/beglaubicht or register/tags/staffdesk). [CONFIRMED · fathom/146740663 @ 00:25:34 – 'I probably think this would be the URL. Register slash tags slash biglobbit' and 00:31:32 – 'tag slash register slash tag slash staff desk']
 - To enable tailored nurturing campaigns, the team needs to create tags and data properties at deal, contact, and company level in HubSpot before marketing can execute campaigns. [CONFIRMED · fathom/159342280 @ 00:18:36]
 - UTM parameter fields exist on deals in HubSpot but were noted as not properly populating for some deals; the fields are text-type properties. [CONFIRMED · fathom/156112726 @ 00:08:05]
+- The recurring mid-week update automation meeting is a 15-minute slot, indicating a lightweight, frequent check-in cadence between the agency and Etherwise. [_INFERRED_ · email/19f652f63d8e0812 @ Mid week update automation Wednesday 15 Jul 2026 ⋅ 4:15pm – 4:15pm – 4:30pm]
 - The upsell email is specifically for 'authority registration' (Gewerbe/business registration service context implied by 'damit du vor Gericht auf der sicheren Seite'). [_INFERRED_ · fathom/160649819 @ 00:08:28 / 00:21:05]
 
 ## Sources
 
+- `crm/beglaubigt` · — · crm · CRM numbers — Beglaubigt
 - `loom/46a946b7ebfb47258876994c678a47c0` · 2025-10-22 · loom · Clarifying Voice Agent Capabilities and Data Handling
 - `fathom/137629968` · 2026-04-13 · fathom · Impromptu Zoom Meeting
 - `fathom/138117567` · 2026-04-15 · fathom · Impromptu Google Meet Meeting
@@ -596,5 +611,17 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 527 client facts (524 trusted) fro
 - `fathom/160423286` · 2026-07-02 · fathom · Impromptu Google Meet Meeting
 - `fathom/160649819` · 2026-07-03 · fathom · Impromptu Google Meet Meeting
 - `fathom/160868884` · 2026-07-06 · fathom · Impromptu Google Meet Meeting
+- `email/19f5c0cf6b7759f0` · 2026-07-13 · email · Invitation: Call Through rate Abhi/Jackson @ Mon 13 Jul 11:30pm - Tue 14 Jul 2026 12am (IST) (contact@etherwise.io)
 - `fathom/163246821` · 2026-07-13 · fathom · Impromptu Google Meet Meeting
+- `email/19f5fd156893e978` · 2026-07-14 · email · Invitation: Abhi x Jackson @ Tue 14 Jul 2026 6pm - 6:30pm (IST) (contact@etherwise.io)
 - `loom/5529644cf05a4820853300a5386a7b69` · 2026-07-14 · loom · B2B Pipeline Webhook and Stage Timers
+- `email/19f652f63d8e0812` · 2026-07-15 · email · Updated invitation: Mid week update automation @ Wed 15 Jul 2026 4:15pm - 4:30pm (IST) (contact@etherwise.io)
+- `email/19f6f4a8cdcfd0f3` · 2026-07-17 · email · Updated invitation: Check out automation @ Fri 17 Jul 2026 3pm - 3:30pm (IST) (contact@etherwise.io)
+- `email/19f8e9c134ac9ec0` · 2026-07-23 · email · Petuno gehört dir. Der Name (noch) nicht. 
+- `email/19fc9768dff6c068` · 2026-08-03 · email · Invitation: Sync beglaubigt.de @ Tue 4 Aug 2026 2:30pm - 3pm (IST) (contact@etherwise.io)
+- `email/19fcbe28fd0c1553` · 2026-08-04 · email · Updated invitation: Sync beglaubigt.de @ Tue 4 Aug 2026 4:30pm - 5pm (IST) (contact@etherwise.io)
+- `email/19fcc019ecc7d7c4` · 2026-08-04 · email · Updated invitation: Sync beglaubigt.de @ Tue 4 Aug 2026 5:30pm - 6pm (IST) (contact@etherwise.io)
+- `email/19fcc355708833f7` · 2026-08-04 · email · Invitation: felix - abhi @ Tue 4 Aug 11:30pm - Wed 5 Aug 2026 1:30am (IST) (contact@etherwise.io)
+- `email/19fd38bb98f37f18` · 2026-08-05 · email · Updated invitation: felix - abhi @ Thu 6 Aug 2026 1:30am - 3:30am (IST) (contact@etherwise.io)
+- `email/19fd7d02cee4c5de` · 2026-08-06 · email · Invitation: felix - abhi @ Thu 6 Aug 2026 9:30pm - 10pm (IST) (contact@etherwise.io)
+- `email/19fd8cbac00e3b80` · 2026-08-06 · email · signature

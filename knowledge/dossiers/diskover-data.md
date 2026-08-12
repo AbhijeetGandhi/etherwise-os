@@ -1,24 +1,54 @@
 # Diskover Data — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 25 client facts (25 trusted) from 2 sources._
+_Compiled 2026-08-12 05:15 IST · 60 client facts (58 trusted) from 22 sources · 3 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
+
+## Overview
+
+- Client requires a weekly top-of-funnel (TOF) marketing analytics email covering: social media (LinkedIn and YouTube follower counts and week-over-week change, paid social spend/CTR/CPL by campaign, notable posts), website traffic (sessions, unique visitors, top 3 landing pages, MoM change, conversion rate via form fills and download completions, notable sources/anomalies), marketing funnel (new MQLs, MQL-to-SQL conversion, disqualified MQLs and top reason, funnel stage movement), email (sends/open rate/click rate by campaign, nurture sequence performance, list growth/attrition), blogs (published titles/links, prior post performance, upcoming queue), and a flags section for blockers. [CONFIRMED · email/19faee6bbf9d0a9d @ TOF Update - DATE [full template body]]
+- Diskover Data previously built a working Slack channel automation that posted updates for new social/blog posts using a Zapier Free Trial, but that trial has expired and access has been lost; they are requesting the agency rebuild this automation. [CONFIRMED · email/19faefc64538c419 @ another automation I was working on was a slack channel that had updates for new social/blog posts. I made a working channel using the Zapier Free Trial, but I no longer have access to it. Could this be something we build?]
+- Diskover Data wants a weekly top-of-funnel (TOF) analytics update email covering social media, website, marketing funnel, email campaigns, blog posts, and flags/blockers. [CONFIRMED · email/19faefc64538c419 @ I've attached what I need in order to send out the weekly analytics update email below.]
+- Diskover Data wants to connect Sprout Social to their existing Airtable workflow and automate a weekly social media analytics report. [CONFIRMED · email/19fef83eef41fd14 @ could I also add automating a weekly report of our social media analytics to your Airtable requests]
+- The active workstream with Diskover Data includes mapping an approval flow, as evidenced by a dedicated session titled 'Approval Flow Mapping Diskover Data'. [CONFIRMED · email/19fa46fc12c480a6 @ Subject: Accepted: Approval Flow Mapping Diskover Data]
+- The primary automation deliverable requested by Diskover Data is a weekly 'TOF Update' email covering: social media metrics (LinkedIn and YouTube follower counts and weekly delta, paid social spend/CTR/CPL), website traffic (sessions, unique visitors, top landing pages, MoM delta, conversion rates), marketing funnel (new MQLs, MQL-to-SQL conversion, disqualified MQLs), email campaign performance (sends, open rate, click rate, nurture sequences, list growth), and blog publishing status. [CONFIRMED · email/19fb406e7bb2800c @ I've attached what I need in order to send out the weekly analytics update email below. TOF Update - DATE]
+
+## People
+
+- Amanda Thomas holds a marketing-related role at Diskover Data and is the organiser of the Diskover Data Marketing Team Connect meetings with Etherwise. [CONFIRMED · email/19fec22a009ecbb7 @ Organiser: Amanda Thomas <amanda.thomas@diskoverdata.com>]
+- Amanda Thomas holds a role at Diskover Data and is a contact/client of Etherwise. [CONFIRMED · email/19fd1fe722172e49 @ From: Amanda Thomas <amanda.thomas@diskoverdata.com>]
+- Amanda Thomas is a contact at Diskover Data (email: amanda.thomas@diskoverdata.com) involved in approval flow mapping for the engagement with Etherwise. [CONFIRMED · email/19fa46fc12c480a6 @ From: Amanda Thomas <amanda.thomas@diskoverdata.com>]
+- Joshua Ichiriu works at Diskover Data (email domain: diskoverdata.com) and is a prospect or client contact engaging with Etherwise for a consultation. [CONFIRMED · email/19fa9cd95d1be2dd @ From: Joshua Ichiriu <joshua.ichiriu@diskoverdata.com>]
+- Natasha Travis is the Diskover Data contact responsible for the webinar workflow build-out in Airtable; her role involves coordinating with the agency on Zoom integration and webinar template creation. [CONFIRMED · email/19fd3b1b7bec4eca @ natasha.travis@diskoverdata.com / 'Two things I'd love your help with as we build out the webinar workflow in Airtable.']
+- Nathalie Sampson (nathalie.sampson@diskoverdata.com) is associated with Diskover Data and had booked a consultation call with Etherwise. [CONFIRMED · email/19f8fe87d426e540 @ Booked by Nathalie Sampson nathalie.sampson@diskoverdata.com]
+- Nathalie Sampson holds the role of Marketing Consultant & User Docs at Diskover Data (diskoverdata.com). [CONFIRMED · email/19f9022241dd2fad @ NATHALIE SAMPSON / Marketing Consultant & User Docs / E: nathalie.sampson@diskoverdata.com]
+- Nathalie Sampson holds the role of Marketing Consultant & User Docs at Diskover Data (diskoverdata.com). [CONFIRMED · email/19f9080058dce3ba @ NATHALIE SAMPSON / Marketing Consultant & User Docs / E: nathalie.sampson@diskoverdata.com]
+- Nathalie Sampson holds the role of Marketing Consultant & User Docs at Diskover Data, and her phone number is 310-709-1588. [CONFIRMED · email/19f94c60b660dcf2 @ NATHALIE SAMPSON / Marketing Consultant & User Docs / nathalie.sampson@diskoverdata.com]
+- Nathalie Sampson holds the role of Marketing Consultant & User Docs at Diskover Data, and her phone number is 310-709-1588. [CONFIRMED · email/19fecec2b23e3f0d @ NATHALIE SAMPSON / Marketing Consultant & User Docs]
+- Joshua Ichiriu holds a marketing/analytics owner role at Diskover Data and is the primary client contact managing TOF reporting and automation requirements. [_INFERRED_ · email/19faee6bbf9d0a9d @ joshua.ichiriu@diskoverdata.com — From field and sign-off 'Josh']
+- Joshua Ichiriu holds a marketing/analytics ownership role at Diskover Data, responsible for the weekly TOF reporting and social/blog update workflows. [_INFERRED_ · email/19fb406e7bb2800c @ I've attached what I need in order to send out the weekly analytics update email below.]
 
 ## Architecture & systems
 
 - Campaign creation workflow supports templating with production item type selection (webinar, WordPress, or blank page) and allows users to specify which production items to create from the selected template. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'you get the option to choose what type of production item template you want to use, uhm, like webinar, wordpress or blank page and then you can select here like for the webinar what are the production items that you can create']
+- Client previously built a working Slack channel automation for new social/blog post updates using a Zapier Free Trial, but no longer has access to it and is requesting Etherwise rebuild this automation. [CONFIRMED · email/19faee6bbf9d0a9d @ another automation I was working on was a slack channel that had updates for new social/blog posts. I made a working channel using the Zapier Free Trial, but I no longer have access to it. Could this be something we build?]
 - Client's Airtable nested structure has four hierarchical levels: Integrated Campaigns (top level) → Campaigns → Campaign Tactics → Production Items. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'integrated campaigns at the top, which are like the highest level in the nested structure' and 'inside of the campaign, there will be campaign tactic. And then inside of the campaign tactic, you can have one of the production items']
+- Diskover Data requires an Airtable template for each 'Customer Connect' webinar containing 21 defined task fields: Zoom registration event page, Speaker prep call scheduled, Speaker prep call completed, Mock questions, In-event poll questions, CTA link, Invite email, Zoom registration page copy, Post-event email, Post-event follow-up, Speakers (multi-select pick-list), Schedule dry run with speakers, Q&A person, Masthead graphic, Sales registration URL, 4 social media pre-event posts, 1 on-demand page for the recorded webinar (gated behind email only), 1 presentation deck, Speaker bios and headshots, Inclusion in the customer newsletter, and Promotion by sales reps and executives. [CONFIRMED · email/19fd3b1b7bec4eca @ Can you please create a template for each of the Customer Connect webinars so that each one includes these tasks]
 - Drag-and-drop functionality allows users to move production items between campaign tactics, with a notification confirming the link and the ability to unlink by moving items back to the unlinked panel. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'you have a drag and drop feature, so you can just move it there and you can get a small notification' and 'if you just want to unlink it, you can just move it back here']
 - Multi-select and bulk delete functionality is available for managing production items and campaign elements. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'you can do a multi-select and delete like this as well']
 - Production item templates are specific to the selected type; webinar template generates a defined set of production items that can be customized before campaign creation. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'if you select, like webinar...you can just modify what production items you want to create here']
+- The Zoom-Airtable integration for Diskover Data must support: connected registration pages, lead lists flowing back automatically, email invitations, and live registration counts. [CONFIRMED · email/19fd3b1b7bec4eca @ Specifically, we want the integration to support: Connected registration pages / Lead lists flowing back automatically / Email invitations / Live registration counts]
+- The on-demand page for recorded Customer Connect webinars must be gated behind email capture only. [CONFIRMED · email/19fd3b1b7bec4eca @ 1 on-demand page for the recorded webinar (gated behind email only)]
 - The system includes an 'unlinked' tab that shows all tactics, production items, and campaigns that have not yet been linked to a parent structure, with the expectation that these will be eliminated as linking is completed. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'there is this unlinked tab here. Which basically says like all the tactics, all the production items and all the campaigns that are not linked yet. So over time, once everything becomes linked, these all would go away']
 - The system maintains a data layer that reflects the nested relationships across tables: Integrated Campaigns, Campaigns, Campaign Tactics, and Production Items, with linked references visible in each table view. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'let me quickly show you how these changes reflect in our data layer' and description of seeing 'test integrated campaigns' linked to 'test campaign' across multiple table views]
+- The weekly TOF update report must include: LinkedIn and YouTube follower totals and week-over-week changes; paid social spend, CTR, and CPL by campaign; website sessions, unique visitors, top 3 landing pages, MoM traffic delta, and conversion rate (form fills, download completions); new MQLs (count and WoW % change), MQL-to-SQL conversion rate, disqualified MQLs and top disqualification reason; email sends, open rate, and click rate by campaign, nurture sequence performance, list growth/attrition; blog titles/links published that week, top-performing prior post traffic, upcoming queue; and a flags section for blockers requiring input. [CONFIRMED · email/19faefc64538c419 @ TOF Update - DATE ... Flags [Anything blocking progress or requiring my input]]
 - UI maintains consistency across different dashboards with matching functionality patterns (e.g., HideEmpty and similar controls). [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'I'm trying to stay consistent with the UI so that when you navigate through different dashboards, you have the same sort of functionality']
 
 ## Stack & tools
 
 - Approval dashboard displays all tasks requiring approval from all tables, with filtering by table source (content catalog, campaigns, blogs, social media, Josh, Natasha boards) [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:04:00]
 - Approval workflow: task marked as approved in dashboard, then team member publishes and marks as complete [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:07:00]
+- Client (Diskover Data) is granting Etherwise access to their Google Analytics account to support the weekly analytics update automation. [CONFIRMED · email/19faee6bbf9d0a9d @ I'm currently adding you to our Google Analytics account, you should receive an email when that's complete.]
 - Client's primary platform for the campaign management system is Airtable. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'I was working on the Airtable nested architecture']
 - Dashboard built with workflow status column that replaced individual status columns across multiple tables (content catalog, campaigns, blogs, social media, and others) [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:00:30 - 00:02:15]
 - Dashboard has two views: All Tasks (showing all tasks with filters and grouping) and My Work (showing only assigned tasks for user) [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:07:30]
@@ -26,19 +56,53 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 25 client facts (25 trusted) from 
 - Dashboard includes search functionality across owner and board fields [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:04:45]
 - Dashboard supports filtering by due date (on and after specific dates) and other column-based conditions with logical combinations [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:05:45]
 - Dashboard supports grouping by owner, type, product, approver, and stage [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:05:15]
+- Diskover Data is building a webinar workflow in Airtable and wants Zoom connected to it to eliminate manual data movement. [CONFIRMED · email/19fd3b1b7bec4eca @ Two things I'd love your help with as we build out the webinar workflow in Airtable.]
+- Diskover Data is granting Etherwise access to its Google Analytics account as a data source for the weekly analytics update automation. [CONFIRMED · email/19fb406e7bb2800c @ I'm currently adding you to our Google Analytics account, you should receive an email when that's complete.]
+- Diskover Data previously built a working Slack channel for new social/blog post notifications using a Zapier Free Trial, but no longer has access to that Zapier account. [CONFIRMED · email/19fb406e7bb2800c @ I made a working channel using the Zapier Free Trial, but I no longer have access to it.]
+- Diskover Data uses Sprout Social for social media management and Airtable as part of their automation stack. [CONFIRMED · email/19fef83eef41fd14 @ discuss connecting Sprout Social... add automating a weekly report of our social media analytics to your Airtable requests]
+- Diskover Data's client contact is granting the agency access to their Google Analytics account; a Diskover-domain email address is needed to complete the addition. [CONFIRMED · email/19faefc64538c419 @ I'm currently adding you to our Google Analytics account, you should receive an email when that's complete. / Do you have a Diskover email address that we can use to add you to Google Analytics?]
+- Diskover Data's public website (diskoverdata.com) runs on WordPress, with wp-admin access granted to the agency contact. [CONFIRMED · email/19fecec2b23e3f0d @ https://diskoverdata.com/wp-admin/]
 - Hidden/empty columns can be toggled visible/invisible in dashboard views [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:08:15]
 - Status values from legacy columns were mapped to new workflow statuses (e.g., draft → in progress, live/ready to go live → complete/approved) [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:01:30]
 - Team members can send tasks for review (updates status to interview), which alerts approver [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:10:00]
 - Team members cannot mark tasks as approved; only approver can approve [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:10:00]
+- The proposed Slack notification automation for new social/blog posts was previously prototyped on Zapier's Free Trial tier, which is no longer available to the client. [CONFIRMED · email/19faefc64538c419 @ I made a working channel using the Zapier Free Trial, but I no longer have access to it.]
 - Workflow status column contains standardized options: to do, in progress, interview, approve, complete, stack, and pause [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:00:45]
+
+## Timeline
+
+- Client's Slack social/blog update automation was last actively worked on approximately two months before the date of this email. [CONFIRMED · email/19faee6bbf9d0a9d @ it's been a couple months since I was working on it]
 
 ## Commitments
 
 - Additional training loom will be recorded for team on dashboard usage after client approval [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:00:15]
 - Approval dashboard ready for rollout to full team once client confirmation received [CONFIRMED · https://www.loom.com/share/794dca83215c4f45a4dc1a9e3cc52cc8 @ 00:11:15]
+- Diskover Data has requested the agency (Abhi) to: (1) connect Zoom to their Airtable webinar workflow and (2) create a Customer Connect webinar template in Airtable with the specified task fields. [CONFIRMED · email/19fd3b1b7bec4eca @ Subject: AIrtable Zoom connection + webinar template creation]
+- Etherwise confirmed it can build a Slack channel automation that posts notifications for new social/blog posts for Diskover Data; agency will check existing automation platforms before planning it out. [CONFIRMED · email/19fb406e7bb2800c @ Regarding the Slack channel notifications, yes, we can definitely build an automation for them. Let me check if we already use any automation platforms and then plan it out.]
+- Joshua Ichiriu (Diskover Data) requested that the Sprout Social integration and weekly social media analytics report automation be added to the existing Airtable project scope. [CONFIRMED · email/19fef83eef41fd14 @ could I also add automating a weekly report of our social media analytics to your Airtable requests? That would be great!]
 - POC for nested Airtable architecture is ready for feedback before fine-tuning and finalization. [CONFIRMED · https://www.loom.com/share/d9ec5e406c8f40fb974afddbd24b717d @ 'I just wanted to confirm is the direction that I'm heading is correct and this is how you wanted it. If not, let me know so we can quickly make changes before I put too much time on finalizing and fine-tuning this']
 
 ## Sources
 
+- `crm/diskover-data` · — · crm · CRM numbers — Diskover Data
+- `email/19f8fe87d426e540` · 2026-07-23 · email · Appointment cancelled: Etherwise Consultation Call (30 min) (Nathalie Sampson) @ Fri 24 Jul 2026 11am - 11:30am (IST) (contact@etherwise.io)
+- `email/19f9022241dd2fad` · 2026-07-23 · email · Re: Appointment booked: Etherwise Consultation Call (30 min) (Nathalie Sampson) @ Fri Jul 24, 2026 8:30am - 9am (PDT) (nathalie.sampson@diskoverdata.com)
+- `email/19f9080058dce3ba` · 2026-07-23 · email · Re: Appointment booked: Etherwise Consultation Call (30 min) (Nathalie Sampson) @ Fri Jul 24, 2026 8:30am - 9am (PDT) (nathalie.sampson@diskoverdata.com)
+- `email/19f94c60b660dcf2` · 2026-07-24 · email · Re: Etherwise Consultation Call (30 min) (Nathalie Sampson) @ Fri, 24 Jul 2026 9:00pm – 9:30pm (GMT+05:30)
+- `email/19fa46fc12c480a6` · 2026-07-27 · email · Accepted: Approval Flow Mapping Diskover Data @ Mon 27 Jul 2026 11pm - 11:30pm (IST) (contact@etherwise.io)
+- `email/19fa9cd95d1be2dd` · 2026-07-28 · email · Re: google meet link
 - `loom/794dca83215c4f45a4dc1a9e3cc52cc8` · 2026-07-28 · loom · Approval Dashboard Workflow Status Setup Walkthrough
+- `email/19faa10bde74a19a` · 2026-07-28 · email · Re: Etherwise Consultation Call (30 min) (Natasha Travis) @ Wed, 29 Jul 2026 12:30am – 1:00am (GMT+05:30)
+- `email/19faee6bbf9d0a9d` · 2026-07-29 · email · Re: google meet link
+- `email/19faefc64538c419` · 2026-07-29 · email · Re: google meet link
+- `email/19fb406e7bb2800c` · 2026-07-30 · email · Re: google meet link
+- `email/19fd1fe722172e49` · 2026-08-05 · email · Accepted: Amanda <> Abhijett @ Wed 5 Aug 2026 9:30pm - 10pm (IST) (contact@etherwise.io)
+- `email/19fd3b1b7bec4eca` · 2026-08-05 · email · AIrtable Zoom connection + webinar template creation
 - `loom/d9ec5e406c8f40fb974afddbd24b717d` · 2026-08-07 · loom · Airtable Nested Architecture Proof of Concept Update
+- `email/19fec22a009ecbb7` · 2026-08-10 · email · Invitation: Diskover Data Marketing Team Connect  @ Mon 10 Aug 2026 11:30pm - 11:45pm (IST) (contact@etherwise.io)
+- `email/19fecec2b23e3f0d` · 2026-08-10 · email · WordPress user
+- `email/19fef83eef41fd14` · 2026-08-11 · email · Sprout Social/Airtable
+- `email/19ff12babec83464` · 2026-08-11 · email · Re: AIrtable Zoom connection + webinar template creation
+- `email/19ff19b445813915` · 2026-08-11 · email · Re: Sprout Social/Airtable
+- `email/19ff1c14d0b98394` · 2026-08-11 · email · Re: Sprout Social/Airtable
+- `email/19ff2abc798db664` · 2026-08-11 · email · Re: Sprout Social/Airtable

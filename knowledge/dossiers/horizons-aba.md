@@ -1,6 +1,6 @@
 # Horizons ABA — Dossier
 
-_Compiled 2026-08-11 05:15 IST · 5667 client facts (5416 trusted) from 938 sources · 525 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-12 05:15 IST · 5670 client facts (5419 trusted) from 938 sources · 525 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -710,6 +710,8 @@ _Compiled 2026-08-11 05:15 IST · 5667 client facts (5416 trusted) from 938 sour
 - Client's readiness score calculated as 100 based on intake form responses [CONFIRMED · https://www.loom.com/share/b77dbd29af3c4fb7bcb6fc36c5fdf861 @ 0:03:15 the readiness score here in our case is 100]
 - Client's recent payroll invoices from the agency have been approximately $1,900–$2,000 per pay period (bi-weekly), equating to roughly 190–200 hours every two weeks or ~100 hours per week. [CONFIRMED · fathom/171000338 @ 00:22:27]
 - Commitment duration of less than three months versus three months or more is a factor in readiness score calculation [CONFIRMED · https://www.loom.com/share/4350a907925749c283a41e013871bc70 @ 00:00:54 'if it is less than three or if it is more than or equal to three']
+- Contract: Automation Expert make.com and monday — status CLOSED. [CONFIRMED · CRM:contracts/39756036]
+- Contract: Make.com Automation Expert — status CLOSED. [CONFIRMED · CRM:contracts/41207650]
 - Current review process issues were experienced over the past 2-3 weeks prior to this recording. [CONFIRMED · https://www.loom.com/share/9e2f7844d9e04311a394c2cd53c2636a @ Alex has, you know, like, you know, in the past, like, two, three weeks ago we had a lot of issues come through]
 - Dashboard displays BCBA (Board Certified Behavior Analyst) work distribution showing which BCBA is working on how many treatment plans and their active status [CONFIRMED · https://www.loom.com/share/50dc9b45714e447990f14568a444e643 @ 00:00:55 'BCBA working on distribution... which BCBA is working on how many treatment plans, which of them are active']
 - Dashboard shows treatment plan stage distribution including initial, planned, document created, and approved statuses [CONFIRMED · https://www.loom.com/share/50dc9b45714e447990f14568a444e643 @ 00:00:30 'stage distribution, like, how many stages, uh, treatment plans are initial, planned, a document created, how many are approved']
@@ -765,6 +767,7 @@ _Compiled 2026-08-11 05:15 IST · 5667 client facts (5416 trusted) from 938 sour
 - Referral is needed if the period between the client's last diagnosis and current date is more than six months; referral is not needed if within six months. [CONFIRMED · https://www.loom.com/share/4350a907925749c283a41e013871bc70 @ 'if it is more than six months, we update their referral needed as yes. And if it is within six months, we update their referral needed as no']
 - Request approval stage typically receives approval within 2-3 hours maximum. [CONFIRMED · https://www.loom.com/share/1920086788694436a12e6ae4ac75a094 @ 00:02:30 'whenever the approval is requested, usually within like two three hours max, it gets... approved']
 - Required credentialing fields are missing approximately 30% of the time, due to incomplete onboarding forms or missing MPI numbers. [CONFIRMED · fathom/99170207 @ 00:10:33 – 'Yeah, probably 30% of the time where sometimes they're either not done']
+- Revenue to date: $22,695 across 40 earning transactions (2025-02-16 → 2025-11-16). [CONFIRMED · CRM:transactions]
 - Ryan Gilliam previously spent approximately $250,000 in development and ~$2,500/month per digital worker on a prior bot initiative (8 bots built simultaneously) at a previous organization — cited as a cautionary example of over-scoping. [CONFIRMED · fathom/147806767 @ 00:04:38]
 - Send feedback to BCBA stage takes an average of 1.6 days. [CONFIRMED · https://www.loom.com/share/1920086788694436a12e6ae4ac75a094 @ 00:01:50 'it usually is done in 1.6 days']
 - Send for review stage takes an average of 0.5 days (half day). [CONFIRMED · https://www.loom.com/share/1920086788694436a12e6ae4ac75a094 @ 00:02:15 'it takes like 0.5 days to change it']

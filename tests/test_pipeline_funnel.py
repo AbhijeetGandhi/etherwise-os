@@ -1,4 +1,4 @@
-"""modules/cockpit/static/funnel.js — the conversion-funnel topology.
+"""modules/cockpit/static/js/funnel.js — the conversion-funnel topology.
 
 The law the UI states is "each band IS a subset of the one above". These tests
 pin it as an INVARIANT: band counts are monotonic non-increasing and no
@@ -22,7 +22,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FUNNEL_JS = ROOT / "modules" / "cockpit" / "static" / "funnel.js"
+# moved under static/js/ in the 2026-08-12 UI rebuild; the module itself is
+# byte-for-byte unchanged (it is the one place the band topology lives)
+FUNNEL_JS = ROOT / "modules" / "cockpit" / "static" / "js" / "funnel.js"
 
 
 def _node() -> str | None:

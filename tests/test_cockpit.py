@@ -1971,5 +1971,418 @@ class TestIcpPersistence(unittest.TestCase):
         self.assertEqual(v["tier"], "icp")
 
 
+# ── Activity (UI brief §3): the daily digest, run detail, re-run ─────────────
+ACT_DAY = "2026-07-04"          # the IST day under test
+ACT_PREV = "2026-07-03"
+ACT_NEXT = "2026-07-05"
+RUN_OK, RUN_FAIL, RUN_PREV = 9001, 9002, 9003
+
+# A git log for ONE day, in exactly the shape _registry_changes asks for
+# (%H\x1f%cI\x1f%s + --numstat). Two approvals: one big, one a single alias.
+FAKE_GIT_LOG = (
+    "aaaaaaaaaaaabbbbbbbbbbbb\x1f2026-07-04T16:42:03+05:30\x1f"
+    "registry: netfly emails += netflydigital.com\n"
+    "\n"
+    "2\t0\tconfig/clients.yaml\n"
+    "\n"
+    "ccccccccccccdddddddddddd\x1f2026-07-04T03:29:35+05:30\x1f"
+    "registry: add RECO Health as a prospect\n"
+    "\n"
+    "22\t3\tconfig/clients.yaml\n"
+)
+
+
+def seed_activity(db_path, day=ACT_DAY):
+    """Rows shaped like the LIVE ones. THREE clock conventions on purpose:
+    runs stamp IST-with-offset, the KB/thread/shadow/event tables stamp UTC via
+    datetime('now'), and nudges stamp IST-naive via nudges._iso(). Seeding them
+    all one way would let a reader that mixes them up still look right."""
+    ist = day + "T{}+05:30"          # runs / claude_usage
+    utc = day + " {}"                # sources / facts / threads / shadow / events
+    naive = day + "T{}"              # nudges
+    with db.connect(db_path) as conn:
+        # runs: one clean, one failed, one on the previous day (the comparison)
+        conn.execute(
+            "INSERT INTO runs (id, task_name, started_at, completed_at, status,"
+            " shadow, duration_ms, metrics_json) VALUES (?,'kb_daily',?,?,"
+            " 'completed',1,42000,?)",
+            (RUN_OK, ist.format("10:00:00"), ist.format("10:00:42"),
+             json.dumps({"fathom": {"saved": 2, "deduped": 0},
+                         "extract": {"facts": 3}})))
+        conn.execute(
+            "INSERT INTO runs (id, task_name, started_at, completed_at, status,"
+            " shadow, duration_ms, error) VALUES (?,'upwork_scan',?,?,'failed',"
+            " 1,1500,'BridgeError(''osascript timed out'')')",
+            (RUN_FAIL, ist.format("11:00:00"), ist.format("11:00:01")))
+        conn.execute(
+            "INSERT INTO runs (id, task_name, started_at, completed_at, status,"
+            " shadow, duration_ms) VALUES (?,'cos_sweep',?,?,'skipped_empty',"
+            " 1,50)", (RUN_OK + 100, ist.format("12:00:00"),
+                       ist.format("12:00:00")))
+        conn.execute(
+            "INSERT INTO runs (id, task_name, started_at, completed_at, status,"
+            " shadow, duration_ms) VALUES (?,'kb_daily',?,?,'completed',1,1000)",
+            (RUN_PREV, ACT_PREV + "T10:00:00+05:30",
+             ACT_PREV + "T10:00:01+05:30"))
+        # anomalies: attached to the failed run by run_id (migration 015)
+        conn.execute(
+            "INSERT INTO anomalies (detected_at, task_name, kind, severity,"
+            " detail_json, run_id) VALUES (?,'upwork_scan','task_failure',"
+            " 'critical','{}',?)", (utc.format("05:30:01"), RUN_FAIL))
+        # claude_usage: run_id is NEVER written in production, so these carry
+        # NULL and must be matched to the run by task + window.
+        for hhmm, cost in (("10:00:05", 0.02), ("10:00:30", 0.03)):
+            conn.execute(
+                "INSERT INTO claude_usage (called_at, ist_date, task_name, model,"
+                " billing_route, input_tokens, output_tokens, total_cost_usd)"
+                " VALUES (?,?,'kb_daily','claude-sonnet-4-6','payg',100,20,?)",
+                (ist.format(hhmm), day, cost))
+        conn.execute(                       # same task, OUTSIDE the run window
+            "INSERT INTO claude_usage (called_at, ist_date, task_name, model,"
+            " billing_route, total_cost_usd) VALUES (?,?,'kb_daily',"
+            " 'claude-sonnet-4-6','payg',0.05)", (ist.format("23:30:00"), day))
+        # sources: 2 fathom + 1 loom + 1 email on the day, and one at 19:00 UTC
+        # which is 00:30 IST the NEXT day — the boundary that proves the reader
+        # converts instead of slicing the string.
+        rows = [("fathom", "fathom/a", "h-a", "07:00:00", "extracted"),
+                ("fathom", "fathom/b", "h-b", "08:00:00", "extracted"),
+                ("loom", "loom/a", "h-c", "09:00:00", "ingested"),
+                ("email", "email/a", "h-d", "10:00:00", "ingested"),
+                ("fathom", "fathom/next", "h-e", "19:00:00", "ingested")]
+        for stype, ref, h, hhmm, status in rows:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, status, ingested_at) VALUES (?,?,?,?,?,?)",
+                (stype, ref, h, "adelye" if stype == "fathom" else None,
+                 status, utc.format(hhmm)))
+        sid = conn.execute("SELECT id FROM sources WHERE source_ref='fathom/a'"
+                           ).fetchone()["id"]
+        for client, n in (("adelye", 3), ("netfly", 1)):
+            for i in range(n):
+                conn.execute(
+                    "INSERT INTO facts (source_id, client_id, category,"
+                    " fact_text, citation, confidence, created_at)"
+                    " VALUES (?,?,'overview',?,'fathom/a @ 00:01','CONFIRMED',?)",
+                    (sid, client, "{} fact {}".format(client, i),
+                     utc.format("07:05:00")))
+        conn.execute(
+            "INSERT INTO threads (id, room_name, client_id, first_seen_at)"
+            " VALUES ('room_new','New Room','adelye',?)", (utc.format("06:00:00"),))
+        conn.execute(
+            "INSERT INTO threads (id, room_name, first_seen_at)"
+            " VALUES ('room_old','Old Room',?)",
+            (ACT_PREV + " 06:00:00",))
+        conn.execute(
+            "INSERT INTO events (id, source, native_id, state, client_id,"
+            " resolved_at, resolved_by) VALUES ('evt:email:1','email','1',"
+            " 'mapped','adelye',?, 'cockpit-approval')", (utc.format("08:30:00"),))
+        conn.execute(
+            "INSERT INTO nudges (source, dept, kind, title, dedup_key, state,"
+            " created_at, refreshed_at, updated_at) VALUES ('sales','sales',"
+            " 'owed_reply','Reply to Adelye','followup:c:adelye','open',?,?,?)",
+            (naive.format("09:30:00"), naive.format("09:30:00"),
+             naive.format("09:30:00")))
+        conn.execute(
+            "INSERT INTO nudges (source, dept, kind, title, dedup_key, state,"
+            " created_at, refreshed_at, updated_at) VALUES ('sweep','system',"
+            " 'system','Old card','system:old','done',?,?,?)",
+            (ACT_PREV + "T09:00:00", ACT_PREV + "T09:00:00",
+             naive.format("14:00:00")))
+        conn.execute(
+            "INSERT INTO shadow_ledger (at, run_id, task_name, target,"
+            " operation, payload_json) VALUES (?,?,'cos_sweep','email','send',"
+            " '{}')", (utc.format("08:00:00"), RUN_OK))
+
+
+class ActivityCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-activity-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_activity(self.db_path)
+        data._registry_cache.clear()   # module-level TTL cache; never leak days
+
+    def tearDown(self):
+        data._registry_cache.clear()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def act(self, day=ACT_DAY, git_stdout=FAKE_GIT_LOG):
+        """activity() with the registry git log stubbed, so the assertions are
+        about the reader and not about this checkout's history."""
+        with mock.patch.object(data.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=git_stdout,
+                                         stderr="")
+            return data.activity(self.db_path, day=day)
+
+
+class TestActivityDigest(ActivityCase):
+    def test_runs_totals_and_by_task(self):
+        out = self.act()
+        r = out["runs"]
+        self.assertEqual(r["total"], 3)          # the prev-day run is excluded
+        self.assertEqual(r["completed"], 1)
+        self.assertEqual(r["failed"], 1)
+        self.assertEqual(r["skipped"], 1)        # skipped_empty counts as skipped
+        self.assertAlmostEqual(r["wall_seconds"], 43.5, places=1)
+        self.assertEqual(r["prev_total"], 1)
+        by_task = {e["task"]: e for e in r["by_task"]}
+        self.assertEqual(by_task["kb_daily"]["status_counts"], {"completed": 1})
+        self.assertEqual(by_task["cos_sweep"]["status_counts"],
+                         {"skipped_empty": 1})
+
+    def test_run_log_rows_carry_summary_and_cost(self):
+        rows = {r["id"]: r for r in self.act()["runs"]["rows"]}
+        self.assertEqual(rows[RUN_OK]["summary"], "fathom.saved 2 · extract.facts 3")
+        # cost is attributed by task+window (claude_usage.run_id is never set)
+        self.assertAlmostEqual(rows[RUN_OK]["usd"], 0.05, places=4)
+        # no fabricated zero: a run with no attributable spend shows nothing
+        self.assertIsNone(rows[RUN_FAIL]["usd"])
+        self.assertEqual([f["id"] for f in self.act()["runs"]["failures"]],
+                         [RUN_FAIL])
+
+    def test_fathom_count_is_named_and_ist_bounded(self):
+        out = self.act()["ingest"]
+        # 19:00 UTC is 00:30 IST tomorrow — it belongs to the NEXT day
+        self.assertEqual(out["fathom_transcripts"], 2)
+        self.assertEqual(out["loom_recordings"], 1)
+        self.assertEqual(out["email_messages"], 1)
+        self.assertEqual(out["total"], 4)
+        self.assertEqual(out["extracted"], 2)
+        self.assertEqual(self.act(day=ACT_NEXT)["ingest"]["fathom_transcripts"], 1)
+
+    def test_facts_by_client(self):
+        out = self.act()["facts"]
+        self.assertEqual(out["total"], 4)
+        self.assertEqual(out["by_client"][0], {"client": "adelye", "n": 3})
+        self.assertEqual(out["clients"], 2)
+        self.assertEqual(out["prev_total"], 0)
+
+    def test_threads_new_and_attribution_is_honest(self):
+        out = self.act()["threads"]
+        self.assertEqual(out["new"], 1)
+        self.assertEqual(out["new_attributed"], 1)
+        self.assertEqual(out["attributed_total"], 1)
+        self.assertEqual(out["unattributed_total"], 1)
+        self.assertEqual(out["mapping_resolved"], 1)
+        self.assertIn("no attribution timestamp", out["note"])
+
+    def test_spend_and_nudges_and_shadow(self):
+        out = self.act()
+        self.assertAlmostEqual(out["spend"]["usd"], 0.10, places=4)
+        self.assertEqual(out["spend"]["calls"], 3)
+        # the 23:30 call falls outside every run window and says so
+        self.assertAlmostEqual(out["spend"]["unattributed_usd"], 0.05, places=4)
+        self.assertEqual(out["nudges"]["created"], 1)
+        self.assertEqual(out["nudges"]["closed"], 1)     # closed today, made prev
+        self.assertEqual(out["nudges"]["done"], 1)
+        self.assertEqual(out["shadow"]["total"], 1)
+        self.assertEqual(out["shadow"]["rows"][0]["target"], "email")
+
+    def test_registry_commits_parsed_from_git_log(self):
+        reg = self.act()["registry"]
+        self.assertEqual(reg["count"], 2)
+        self.assertIsNone(reg["note"])
+        self.assertEqual(reg["commits"][0]["sha"], "aaaaaaaaaaaa")   # 12 chars
+        self.assertEqual(reg["commits"][0]["subject"],
+                         "registry: netfly emails += netflydigital.com")
+        self.assertEqual(reg["commits"][1]["insertions"], 22)
+        self.assertEqual(reg["commits"][1]["deletions"], 3)
+        self.assertEqual(reg["insertions"], 24)
+        self.assertEqual(reg["file"], "config/clients.yaml")
+
+    def test_day_defaults_to_today_ist(self):
+        with mock.patch.object(data.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            out = data.activity(self.db_path)
+        self.assertEqual(out["day"],
+                         datetime.now(config.TZ).strftime("%Y-%m-%d"))
+
+    def test_bad_day_returns_error_not_traceback(self):
+        self.assertIn("error", data.activity(self.db_path, day="not-a-day"))
+
+
+class TestActivityEmptyDay(ActivityCase):
+    def test_empty_day_is_declared_not_faked(self):
+        out = self.act(day="2026-07-01", git_stdout="")   # no registry commits
+        self.assertTrue(out["empty"])
+        self.assertEqual(out["runs"]["total"], 0)
+        self.assertEqual(out["ingest"]["total"], 0)
+        self.assertEqual(out["runs"]["rows"], [])
+
+    def test_a_day_with_anything_is_not_empty(self):
+        self.assertFalse(self.act()["empty"])
+        # a day whose ONLY event is a registry approval still counts as activity
+        with mock.patch.object(data.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=FAKE_GIT_LOG,
+                                         stderr="")
+            out = data.activity(self.db_path, day="2026-07-01")
+        self.assertFalse(out["empty"])
+
+
+class TestActivityRegistryDegradation(ActivityCase):
+    """git is a subprocess on a machine that may not have it, may be slow, or
+    may be mid-rebase. None of that may take the page down."""
+
+    def test_git_missing_degrades_to_empty_list(self):
+        with mock.patch.object(data.subprocess, "run",
+                               side_effect=FileNotFoundError("git")):
+            out = data.activity(self.db_path, day=ACT_DAY)
+        self.assertEqual(out["registry"]["commits"], [])
+        self.assertEqual(out["registry"]["count"], 0)
+        self.assertIn("unavailable", out["registry"]["note"])
+        self.assertFalse(out["empty"])          # the rest of the day survived
+
+    def test_git_timeout_degrades(self):
+        import subprocess as _sp
+        with mock.patch.object(data.subprocess, "run",
+                               side_effect=_sp.TimeoutExpired("git", 6)):
+            reg = data.activity(self.db_path, day=ACT_DAY)["registry"]
+        self.assertEqual(reg["count"], 0)
+        self.assertIn("TimeoutExpired", reg["note"])
+
+    def test_git_nonzero_exit_degrades(self):
+        with mock.patch.object(data.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=128, stdout="", stderr="bad")
+            reg = data.activity(self.db_path, day=ACT_DAY)["registry"]
+        self.assertEqual(reg["count"], 0)
+        self.assertIn("git exit 128", reg["note"])
+
+    def test_result_is_cached_so_the_subprocess_runs_once(self):
+        with mock.patch.object(data.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=FAKE_GIT_LOG,
+                                         stderr="")
+            data.activity(self.db_path, day=ACT_DAY)
+            data.activity(self.db_path, day=ACT_DAY)
+        self.assertEqual(run.call_count, 1)
+
+    def test_real_git_never_raises(self):
+        # no stub: whatever this checkout's git does, the reader survives it
+        out = data.activity(self.db_path, day=ACT_DAY)
+        self.assertIsInstance(out["registry"]["commits"], list)
+
+
+class TestActivityRunDetail(ActivityCase):
+    def test_known_run_has_metrics_anomalies_and_usage(self):
+        out = data.activity_run(self.db_path, run_id=RUN_OK)
+        self.assertEqual(out["run"]["task_name"], "kb_daily")
+        self.assertEqual(out["metrics"]["fathom"]["saved"], 2)
+        self.assertIsNone(out["metrics_error"])
+        self.assertEqual(out["usage"]["calls"], 2)          # the 23:30 call is out
+        self.assertAlmostEqual(out["usage"]["usd"], 0.05, places=4)
+        self.assertEqual(out["usage"]["attribution"], "window")
+        self.assertEqual(out["shadow"]["total"], 1)
+        self.assertFalse(out["failed"])
+        self.assertTrue(out["rerunnable"])                  # kb_daily is allowed
+
+    def test_failed_run_carries_error_and_its_anomalies(self):
+        out = data.activity_run(self.db_path, run_id=RUN_FAIL)
+        self.assertTrue(out["failed"])
+        self.assertIn("osascript timed out", out["error"])
+        self.assertEqual([a["kind"] for a in out["anomalies"]], ["task_failure"])
+        self.assertEqual(out["usage"]["attribution"], "none")
+        self.assertEqual(out["usage"]["calls"], 0)
+
+    def test_unknown_run_returns_error_not_exception(self):
+        self.assertIn("error", data.activity_run(self.db_path, run_id=424242))
+        self.assertIn("error", data.activity_run(self.db_path, run_id="nope"))
+        self.assertIn("error", data.activity_run(self.db_path, run_id=None))
+
+    def test_string_run_id_from_a_query_string_works(self):
+        out = data.activity_run(self.db_path, run_id=str(RUN_OK))
+        self.assertEqual(out["run"]["id"], RUN_OK)
+
+
+class TestActivityServerParams(CockpitServerCase):
+    """The server forwards KEYWORD-ONLY params. A positional `day`/`run_id`
+    would be silently dropped and every request would answer for today —
+    exactly the latent bug four older routes still carry."""
+
+    def setUp(self):
+        super().setUp()
+        seed_activity(self.db_path)
+        data._registry_cache.clear()
+
+    def tearDown(self):
+        data._registry_cache.clear()
+        super().tearDown()
+
+    def test_params_are_declared_keyword_only(self):
+        import inspect
+        for fn, name in ((data.activity, "day"),
+                         (data.activity_run, "run_id")):
+            param = inspect.signature(fn).parameters[name]
+            self.assertEqual(param.kind, param.KEYWORD_ONLY, fn.__name__)
+
+    def test_day_param_reaches_the_reader_over_http(self):
+        status, body = self.get("/api/activity?day=" + ACT_DAY)
+        self.assertEqual(status, 200)
+        out = json.loads(body)
+        self.assertEqual(out["day"], ACT_DAY)
+        self.assertEqual(out["runs"]["total"], 3)
+        self.assertFalse(out["empty"])
+
+    def test_run_id_param_reaches_the_reader_over_http(self):
+        status, body = self.get("/api/activity/run?run_id=%d" % RUN_OK)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["run"]["id"], RUN_OK)
+
+    def test_unknown_run_is_a_message_not_a_500(self):
+        status, body = self.get("/api/activity/run?run_id=999999")
+        self.assertEqual(status, 200)
+        self.assertIn("error", json.loads(body))
+
+    def test_db_path_query_cannot_redirect_activity(self):
+        status, body = self.get("/api/activity?db_path=/etc/passwd&day=" + ACT_DAY)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["day"], ACT_DAY)
+
+    def test_rerun_route_is_authed_and_allowlisted(self):
+        with mock.patch.object(actions.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stderr="")
+            ok, body = self.post("/api/rerun", body={"task": "kb_daily"})
+        self.assertEqual(ok, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        unauth, _ = self.post("/api/rerun", token=None, body={"task": "kb_daily"})
+        self.assertEqual(unauth, 401)
+
+
+class TestRerunAllowlist(unittest.TestCase):
+    def test_rerun_kicks_the_allowlisted_label(self):
+        with mock.patch.object(actions.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stderr="")
+            out = actions.rerun(None, {"task": "upwork_scan"})
+        self.assertTrue(out["ok"])
+        argv = run.call_args[0][0]
+        self.assertIn("kickstart", argv)
+        self.assertIn("io.etherwise.v3.upwork-scan", " ".join(argv))
+
+    def test_rerun_refuses_an_unlisted_task(self):
+        with mock.patch.object(actions.subprocess, "run") as run:
+            for task in ("cockpit", "catch_up", "finance_payment_mail",
+                         "cos_brief_am", "rm -rf", "", None):
+                with self.assertRaises(ValueError):
+                    actions.rerun(None, {"task": task})
+            run.assert_not_called()
+
+    def test_every_label_has_a_plist_on_disk(self):
+        launchd = Path(config.V3_ROOT) / "launchd"
+        for task, label in actions.RERUN_JOBS.items():
+            self.assertTrue((launchd / (label + ".plist")).is_file(),
+                            "{} -> {} has no plist".format(task, label))
+
+    def test_catch_up_safe_sources_are_all_rerunnable(self):
+        """The source registry already decided which rails are safe to re-run
+        unattended; the button must not disagree with it in either direction."""
+        for s in config.SOURCES:
+            label = s.get("launchd_label")
+            if not label:
+                continue
+            if s.get("catch_up"):
+                self.assertEqual(actions.RERUN_JOBS.get(s["task_name"]), label,
+                                 s["key"])
+            else:
+                self.assertNotIn(s["task_name"], actions.RERUN_JOBS, s["key"])
+
+
 if __name__ == "__main__":
     unittest.main()

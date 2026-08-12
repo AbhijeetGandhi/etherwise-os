@@ -1,6 +1,6 @@
 # Homestyling — Dossier
 
-_Compiled 2026-08-10 10:39:09.479517+00:00 · 14 client facts (13 trusted) from 3 sources · 62 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-12 05:15 IST · 16 client facts (15 trusted) from 4 sources · 62 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -12,6 +12,8 @@ _Compiled 2026-08-10 10:39:09.479517+00:00 · 14 client facts (13 trusted) from 
 ## The numbers
 
 - Client receives more than hundreds of leads every week [CONFIRMED · https://www.loom.com/share/6703f8e402264ab796597e321cc754c4 @ 'we have more than hundreds of leads coming every, every week']
+- Contract: Airtable + Make Automation Specialist / Technical Coordinator (Ongoing Role) — status ACTIVE. [CONFIRMED · CRM:contracts/43475182]
+- Revenue to date: $2,050 across 6 earning transactions (2026-04-26 → 2026-05-31). [CONFIRMED · CRM:transactions]
 
 ## Architecture & systems
 
@@ -41,6 +43,7 @@ _Compiled 2026-08-10 10:39:09.479517+00:00 · 14 client facts (13 trusted) from 
 
 ## Sources
 
+- `crm/homestyling` · — · crm · CRM numbers — Homestyling
 - `fathom/150793211` · 2026-05-29 · fathom · Impromptu Google Meet Meeting
 - `loom/2558f580bf3846eebb9095db4217c70b` · 2026-06-10 · loom · Senior Automation Engineer, Make, GoHighLevel, OpenAI
 - `loom/6703f8e402264ab796597e321cc754c4` · 2026-06-19 · loom · Meta Ads Lead Response Automation, Built and Proven

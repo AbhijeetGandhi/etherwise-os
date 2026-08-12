@@ -1,0 +1,153 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   base.css — reset, typography, the app shell layout, utility primitives.
+   Everything here is theme-agnostic: it only ever names tokens.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Digits never dance. The single biggest cheap-looking tell in a money UI. */
+.num, .metric, .kpi .val, .tabnum, td.num, th.num,
+input[type="number"], time { font-variant-numeric: tabular-nums; }
+
+h1, h2, h3, h4, h5 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, kbd {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  background: var(--muted); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 1px 5px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+::selection { background: color-mix(in srgb, var(--info) 22%, transparent); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-foreground) 30%, transparent);
+  border-radius: var(--radius-full);
+  border: 3px solid var(--background);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+}
+
+/* ── app shell ────────────────────────────────────────────────────────────
+   Left sidebar (collapsible) + a scrolling content column. Desktop tool on a
+   large screen: seven nav items in a top bar would be a compromise.        */
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  min-height: 100vh;
+  transition: grid-template-columns var(--dur) var(--ease);
+}
+.app[data-nav="collapsed"] { grid-template-columns: var(--sidebar-w-collapsed) minmax(0, 1fr); }
+
+.sidebar {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  border-right: 1px solid var(--border);
+  background: var(--card);
+  padding: var(--space-4) var(--space-3);
+  position: sticky; top: 0; height: 100vh;
+  overflow: hidden auto;
+}
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+
+.topbar {
+  display: flex; align-items: center; gap: var(--space-4);
+  height: var(--topbar-h); padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(8px);
+  position: sticky; top: 0; z-index: 20;
+}
+.topbar .spacer { flex: 1; }
+
+.view {
+  width: 100%; max-width: var(--content-max);
+  margin: 0 auto; padding: var(--space-6) var(--space-6) var(--space-8);
+  display: flex; flex-direction: column; gap: var(--space-6);
+}
+
+/* ── layout primitives ───────────────────────────────────────────────────── */
+.stack   { display: flex; flex-direction: column; gap: var(--space-3); }
+.stack-2 { display: flex; flex-direction: column; gap: var(--space-2); }
+.hstack  { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.hstack-tight { display: flex; align-items: center; gap: var(--space-1); }
+.between { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.grow    { flex: 1; min-width: 0; }
+.grid    { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.grid-2  { display: grid; gap: var(--space-4); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid-4  { display: grid; gap: var(--space-4); grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1080px) { .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px)  { .grid-4, .grid-2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── text utilities ──────────────────────────────────────────────────────── */
+.muted     { color: var(--muted-foreground); }
+.small     { font-size: var(--text-xs); }
+.sm        { font-size: var(--text-sm); }
+.strong    { font-weight: 600; color: var(--foreground); }
+.mono      { font-family: var(--font-mono); font-size: var(--text-xs); }
+.truncate  { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pre       { white-space: pre-wrap; }
+.num       { text-align: right; white-space: nowrap; }
+.pos       { color: var(--success); }
+.neg       { color: var(--destructive); }
+.nowrap    { white-space: nowrap; }
+.center    { text-align: center; }
+
+/* "—" is a load-bearing glyph: it means NOT MEASURED, and it must never be
+   mistaken for a styled zero. ui.js `dash()` emits this class. */
+.dash { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+/* ── section heading ─────────────────────────────────────────────────────── */
+.section-head { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.section-head h2 { font-size: var(--text-lg); letter-spacing: -0.02em; }
+.section-head h3 { font-size: var(--text-md); letter-spacing: -0.01em; }
+.section-head .hint {
+  font-size: var(--text-sm); font-weight: 400; color: var(--muted-foreground);
+}
+
+/* ── motion ──────────────────────────────────────────────────────────────── */
+@keyframes ew-fade-in  { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes ew-shimmer  { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.fade-in { animation: ew-fade-in var(--dur) var(--ease); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important; scroll-behavior: auto !important;
+  }
+}
+
+/* ── responsive: below 900px the sidebar becomes an overlay drawer ───────── */
+@media (max-width: 900px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .app[data-nav="collapsed"] { grid-template-columns: minmax(0, 1fr); }
+  .sidebar {
+    position: fixed; z-index: 40; left: 0; top: 0; width: var(--sidebar-w);
+    transform: translateX(-100%); transition: transform var(--dur) var(--ease);
+    box-shadow: var(--shadow-lg);
+  }
+  .app[data-nav="open"] .sidebar { transform: none; }
+  .view { padding: var(--space-4) var(--space-4) var(--space-8); }
+}

@@ -1,6 +1,6 @@
 # Alfredo Elias — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 20 client facts (20 trusted) from 2 sources._
+_Compiled 2026-08-12 05:15 IST · 22 client facts (22 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -11,6 +11,8 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 20 client facts (20 trusted) from 
 ## The numbers
 
 - Alfredo sent four lead lists for upload; only one had been uploaded at the time of the call, and the first message was inadvertently sent to those leads before the no-message instruction was understood. [CONFIRMED · fathom/85765696 @ 00:12:11 - 'I think those are four lists, right? So only one was uploaded...when we upload the next three, those will be in a way that they will go into new lead with the tag of new lead']
+- Contract: GHL Workflow + KPI Automation — status ACTIVE. [CONFIRMED · CRM:contracts/40747534]
+- Revenue to date: $4,989 across 20 earning transactions (2025-06-08 → 2025-10-19). [CONFIRMED · CRM:transactions]
 - The client's GHL pipeline currently contains 4,720 opportunities. [CONFIRMED · fathom/85765696 @ 00:08:48 - 'we have 4,720 opportunities']
 
 ## People
@@ -47,5 +49,6 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 20 client facts (20 trusted) from 
 
 ## Sources
 
+- `crm/alfredo-elias` · — · crm · CRM numbers — Alfredo Elias
 - `fathom/85765696` · 2025-09-08 · fathom · Abhi <> chloe
 - `loom/02d7e143d1cc48758f0386c25d866c12` · 2025-09-29 · loom · Searching and Utilizing Reference Fields in Contacts 📊

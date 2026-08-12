@@ -1,6 +1,6 @@
 # College Life — Dossier
 
-_Compiled 2026-08-10 00:57 IST · 31 client facts (29 trusted) from 4 sources · 9 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-12 05:15 IST · 33 client facts (31 trusted) from 5 sources · 9 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -17,6 +17,8 @@ _Compiled 2026-08-10 00:57 IST · 31 client facts (29 trusted) from 4 sources ·
 ## The numbers
 
 - All meetings in the client's dataset share the same created by user ID: 4587391 [CONFIRMED · https://www.loom.com/share/6681f24f3af1418bb564b4521615de81 @ 00:02:00 - the created by user ID is always same. So, like, if you can see, it is four, five, eight, seven, three, nine, one. And even if I go on the 10th one, uh, it's, it's. Still the same]
+- Contract: Automate Proposal Creation in Canva using Make.com — status ACTIVE. [CONFIRMED · CRM:contracts/39606005]
+- Revenue to date: $2,763 across 31 earning transactions (2025-02-02 → 2026-01-18). [CONFIRMED · CRM:transactions]
 - Task 2 (Campaign Creator) requires a landing page URL and a backlink count (e.g., 4 backlinks) as inputs. [CONFIRMED · https://www.loom.com/share/acf537dd324b4191904521dc5889cc18 @ 00:03:40 to 00:04:15 'landing page link and then the backlink count...four']
 - The bulk scenario's record limit was set to 10,000 members, and the run processed more than 10,000 members. [CONFIRMED · fathom/104751248 @ [00:14:14] 'We did more than 10,000 members. The limit was set to 10,000']
 - The client's HubSpot connection is returning the same email address for all meeting records because all meetings share the same creator user ID [CONFIRMED · https://www.loom.com/share/6681f24f3af1418bb564b4521615de81 @ 00:02:30 - in every record, since it's, you know, a same, you know, user ID that created it, the email is always the same]
@@ -55,6 +57,7 @@ _Compiled 2026-08-10 00:57 IST · 31 client facts (29 trusted) from 4 sources ·
 
 ## Sources
 
+- `crm/college-life` · — · crm · CRM numbers — College Life
 - `loom/acf537dd324b4191904521dc5889cc18` · 2025-05-01 · loom · Videos | Library | Loom - 1 May 2025
 - `loom/6681f24f3af1418bb564b4521615de81` · 2025-08-12 · loom · Meeting Booking Update and Insights 📅
 - `loom/3a25a6a68ebc412e85e5277f6cf63c16` · 2025-10-21 · loom · Mech Configuration Specialist Application Walkthrough 🚀

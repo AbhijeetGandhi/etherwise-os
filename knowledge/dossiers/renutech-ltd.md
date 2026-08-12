@@ -1,12 +1,17 @@
 # Renutech Ltd — Dossier
 
-_Compiled 2026-08-07T22:48:31.431358+00:00 · 9 client facts (9 trusted) from 1 sources._
+_Compiled 2026-08-12 05:15 IST · 11 client facts (11 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## Overview
 
 - The client's workflow involves inputting city/location names in bulk (e.g. Anaheim, Los Angeles) so the scraper generates SEO keyword data for each location sequentially; a prior SOD referenced a cities file filtered by population range of 40,000–50,000. [CONFIRMED · fathom/64678208 @ 00:13:04 – 'on the original SOD, Arisha was referencing a file that said 40,000 to 50,000, for example, which was the population range for that set of cities']
+
+## The numbers
+
+- Contract: Fixing / Developing Jupyter Notebook Scaper Application — status ACTIVE. [CONFIRMED · CRM:contracts/40100550]
+- Revenue to date: $609 across 8 earning transactions (2025-03-30 → 2025-10-12). [CONFIRMED · CRM:transactions]
 
 ## People
 
@@ -30,4 +35,5 @@ _Compiled 2026-08-07T22:48:31.431358+00:00 · 9 client facts (9 trusted) from 1 
 
 ## Sources
 
+- `crm/renutech-ltd` · — · crm · CRM numbers — Renutech Ltd
 - `fathom/64678208` · 2025-05-26 · fathom · Abhi <> Stephen

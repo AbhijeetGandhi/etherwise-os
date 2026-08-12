@@ -1,6 +1,6 @@
 # Clara — Dossier
 
-_Compiled 2026-08-08T22:30:36.785202+00:00 · 16 client facts (16 trusted) from 1 sources._
+_Compiled 2026-08-12 05:15 IST · 16 client facts (16 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -40,4 +40,5 @@ _Compiled 2026-08-08T22:30:36.785202+00:00 · 16 client facts (16 trusted) from 
 
 ## Sources
 
+- `crm/clara` · — · crm · CRM numbers — Clara
 - `fathom/86208079` · 2025-09-10 · fathom · Clara

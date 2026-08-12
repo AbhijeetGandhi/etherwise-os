@@ -1,6 +1,6 @@
 # Sunil Paul — Dossier
 
-_Compiled 2026-08-08T22:30:36.808989+00:00 · 105 client facts (105 trusted) from 7 sources._
+_Compiled 2026-08-12 05:15 IST · 106 client facts (106 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -21,6 +21,7 @@ _Compiled 2026-08-08T22:30:36.808989+00:00 · 105 client facts (105 trusted) fro
 - Abhijeet estimates 4–5 hours to set up the entire current scope of the gratitude chain workflow. [CONFIRMED · fathom/61317495 @ 00:14:16 – 00:14:22]
 - Current platform costs are effectively zero as the project is operating on free credits. [CONFIRMED · fathom/62084384 @ 00:06:21]
 - Make.com free plan limits active scenarios to 2 at a time; the client needs to upgrade to a Core (paid) plan to keep all scenarios active simultaneously. [CONFIRMED · fathom/61813233 @ 00:01:00 – 00:01:18]
+- Revenue to date: $846 across 3 earning transactions (2025-05-11 → 2025-06-01). [CONFIRMED · CRM:transactions]
 - The client has approximately 10 use cases they want to build out using VAPI, Make.com, and related tools. [CONFIRMED · fathom/61317495 @ 00:15:41 – 00:15:49]
 
 ## People
@@ -138,6 +139,7 @@ _Compiled 2026-08-08T22:30:36.808989+00:00 · 105 client facts (105 trusted) fro
 
 ## Sources
 
+- `crm/sunil-paul` · — · crm · CRM numbers — Sunil Paul
 - `fathom/60769759` · 2025-05-05 · fathom · Tenni Theurer
 - `fathom/61317495` · 2025-05-07 · fathom · Project Kickoff
 - `fathom/61813233` · 2025-05-09 · fathom · Project Check in

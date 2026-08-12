@@ -1,6 +1,6 @@
 # Hermon — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 1128 client facts (1091 trusted) from 129 sources · 109 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-12 05:15 IST · 1130 client facts (1093 trusted) from 130 sources · 109 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -77,6 +77,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 1128 client facts (1091 trusted) f
 - Calls on calendar count is 30, while calls booked count is 33 — a discrepancy noted during the review. [CONFIRMED · fathom/138756156 @ 00:26:00 – 'Calls on calendar का count 30 है फिर भी, और यहां पे 33 है, Calls booked का']
 - Commission base fee for DM setups was changed to 5% (up from a prior rate); all payments made in April for DM setups were updated to 5%. [CONFIRMED · fathom/137410319 @ 00:14:12 - 'Base fee went up to 5% from Fokud, all the payments made in April for the DM setups changed to 5%.']
 - Commission figure referenced during the call: 8475; salary figure referenced: 846. Payment date range discussed was 1 April to 3 April. [CONFIRMED · fathom/147240801 @ 00:11:43]
+- Contract: Ongoing support and development on Airtable — status CLOSED. [CONFIRMED · CRM:contracts/41416526]
 - DQ (disqualification) percentage shown on the dashboard is 58%. [CONFIRMED · fathom/138756156 @ 00:10:15 – '58% seen']
 - Example treatment plan therapy hours: assessment = 8 hours (CPT 97151), direct therapy = 40 hours (CPT 97153), supervision = 10 hours, parent training = 2 hours. [CONFIRMED · fathom/111455935 @ 00:11:32]
 - Example unit calculation mentioned: 572 total hours × 4 = 2,288 total units for H2102 (full authorization period). [CONFIRMED · fathom/111455935 @ 00:16:12]
@@ -90,6 +91,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 1128 client facts (1091 trusted) f
 - One billing unit = 15 minutes. Hours are converted to units for the authorization forms (e.g. 22 hours/week = 88 units; total hours × 4 = total units). [CONFIRMED · fathom/111455935 @ 00:14:12]
 - One person handled 142 people directly in the system. [CONFIRMED · fathom/170232285 @ 00:09:13]
 - Phone setters with a base fee contract receive a 2.5% commission on payments; other phone setters receive the normal 5% commission. [CONFIRMED · fathom/163059147 @ 00:07:01 – 'Only phone setters with base fee contract will get 2.5% commission on payments. Other phone setters will get the normal 5%.']
+- Revenue to date: $428 across 3 earning transactions (2025-08-31 → 2025-09-21). [CONFIRMED · CRM:transactions]
 - Show rate calculated from available data is approximately 18.1% (244 qualified leads divided by 30 calls on calendar) and approximately 11% from another calculation path discussed. [CONFIRMED · fathom/138756156 @ 00:26:00 – '244 डिवाइड बाई 30, तो वो आता है, 18.1']
 - TFP student Vendro profiles are set to inactive/suspended status approximately four to six months after graduation date. [CONFIRMED · fathom/147240801 @ 00:04:14]
 - The client's Airtable system has tracked more than 3,500 leads. [CONFIRMED · https://www.loom.com/share/c4f71924a29049aa8c6e73a85223a92b @ 0:02:10 - 'we have more than 3,500 leads']
@@ -1158,6 +1160,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 1128 client facts (1091 trusted) f
 
 ## Sources
 
+- `crm/hermon` · — · crm · CRM numbers — Hermon
 - `loom/3bd9834db5894df1bd967215bfdd39dd` · 2025-09-24 · loom · Overview of Student Performance and Revenue Insights 📊
 - `loom/bc045d3a43c64904a51f2058188c1805` · 2025-10-22 · loom · Template Creation and E-Signature Discussion ✍️
 - `fathom/98506111` · 2025-11-01 · fathom · Impromptu Google Meet Meeting

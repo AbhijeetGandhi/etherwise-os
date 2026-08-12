@@ -1,6 +1,6 @@
 # celciusherbs — Dossier
 
-_Compiled 2026-08-09T20:29:38.274826+00:00 · 15 client facts (14 trusted) from 1 sources._
+_Compiled 2026-08-12 05:15 IST · 17 client facts (16 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -13,6 +13,8 @@ _Compiled 2026-08-09T20:29:38.274826+00:00 · 15 client facts (14 trusted) from 
 ## The numbers
 
 - Client has approximately 100 products and approximately 1,000 SEO keywords they want to target. [CONFIRMED · fathom/143011671 @ We like 100 products, and then we have quite a bit of SEO, so we probably have like 1,000 keywords that we want to do SEO on]
+- Contract: Design code for website front end — status ACTIVE. [CONFIRMED · CRM:contracts/43562664]
+- Revenue to date: $425 across 2 earning transactions (2026-05-27 → 2026-06-03). [CONFIRMED · CRM:transactions]
 
 ## Architecture & systems
 
@@ -36,4 +38,5 @@ _Compiled 2026-08-09T20:29:38.274826+00:00 · 15 client facts (14 trusted) from 
 
 ## Sources
 
+- `crm/celciusherbs` · — · crm · CRM numbers — celciusherbs
 - `fathom/143011671` · 2026-05-02 · fathom · Impromptu Zoom Meeting

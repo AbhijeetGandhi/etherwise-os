@@ -1,6 +1,6 @@
 # The Cradle Company — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 139 client facts (136 trusted) from 10 sources · 1 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-12 05:15 IST · 140 client facts (137 trusted) from 11 sources · 1 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -26,6 +26,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 139 client facts (136 trusted) fro
 
 - A Doula Match lead received a score of 10 [CONFIRMED · https://www.loom.com/share/dcd4bf4e8fa643158c43e6b7283379fc @ it looks like a really good doula as it got the score of 10]
 - A sourced doula received an AI score of 10 on a 1-10 scale, classified as 'really good'. [CONFIRMED · https://www.loom.com/share/dee6bad9e0544cc881c85d0f5df93dec @ 0:03:35 - 'it got the score of 10. And all the data we received from doula match is saved properly here']
+- Contract: AI Automation Specialist — status ACTIVE. [CONFIRMED · CRM:contracts/44099615]
 - Example lead score from DoolaMatch search was 10 out of 10 (described as 'really good' with 'best' quality). [CONFIRMED · https://www.loom.com/share/0e29ef7121f2473c87d55b4e4630b1be @ 03:45 'we got a really good dooline in the first search itself where the lead score is 10 and the quality is best']
 - Example lead score from Indeed application was 8 out of 10. [CONFIRMED · https://www.loom.com/share/0e29ef7121f2473c87d55b4e4630b1be @ 01:00 'lead has been scored and it is got 8 points on the scale of 1 to 10']
 - Phase 1 timeline estimate: automating 3 sourcing platforms (DolaMatch, Indeed, and one more) will take approximately 40 hours of work (20 hours/week × 2 weeks), inclusive of development, deployment, testing, and refactoring to a working v1. [CONFIRMED · fathom/168107325 @ 00:24:44]
@@ -163,6 +164,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 139 client facts (136 trusted) fro
 
 ## Sources
 
+- `crm/the-cradle-company` · — · crm · CRM numbers — The Cradle Company
 - `loom/a3eab5af54c34d4f92ae1e68ff63a916` · 2026-01-29 · loom · Updates on BTRBT Interview Form and Approval Process ✉️
 - `loom/fa37c3f4785b4ad3a14055021e3433a9` · 2026-02-10 · loom · Overview of New UI Features and Email Sending Process
 - `loom/93f9846a762b4b24b2a666ded0e78b7e` · 2026-02-17 · loom · Overview of Updated UI for Magic Platform Client Dashboard 🚀

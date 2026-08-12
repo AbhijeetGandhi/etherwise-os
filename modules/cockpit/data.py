@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -2102,3 +2103,484 @@ def queue(db_path: Optional[Path] = None) -> dict:
                         for cid in sorted(reg.matchable_ids(),
                                           key=lambda i: reg.by_id[i]["name"].lower())],
             "registry_sha": reg.sha[:12], "last_sweep": last_sweep}
+
+
+# ── Activity: what the system actually did on a day (UI brief §3) ────────────
+# THE CLOCKS IN THIS SCHEMA DO NOT AGREE, and mixing them silently moves a whole
+# day's numbers (migration 015 documents the same trap between runs+anomalies):
+#
+#   runs.started_at        IST with an explicit +05:30  -> substr(...,1,10) IS
+#                          the IST date (every runner stamps it that way)
+#   claude_usage.ist_date  already an IST calendar date -> compare directly
+#   nudges.created_at etc. IST but NAIVE (nudges._iso)  -> substr(...,1,10)
+#   sources / facts / threads / shadow_ledger / events
+#                          UTC via datetime('now')      -> _ist_day(col)
+#
+# date(col,'+330 minutes') is the IST calendar date of a UTC-stamped column and
+# stays correct if that column ever gains an offset or a Z, because SQLite
+# normalizes to UTC before applying the modifier. Unparseable values yield NULL,
+# so a junk timestamp drops out of the day instead of being mis-filed into it.
+_ACTIVITY_RUN_CAP = 500          # run-log rows per day (true total also returned)
+_ACTIVITY_TOP_CLIENTS = 8
+_REGISTRY_GIT_TIMEOUT_S = 6      # the git log is the only slow read here
+_REGISTRY_CACHE_TTL_S = 120
+_registry_cache: dict = {}       # day -> (fetched_at, payload)
+
+
+def _ist_day(col: str) -> str:
+    """SQL fragment: the IST calendar date of a UTC-stamped column."""
+    return "date({}, '+330 minutes')".format(col)
+
+
+def _ts_utc(ts) -> str:
+    """A timestamp reduced to a comparable UTC instant. Delegates to the CoS
+    engine's ts_key — the one place that knows all four shapes this codebase
+    stores. Imported lazily because `modules.chief_of_staff.nudges` collides
+    with this module's own nudges() reader at module scope."""
+    from modules.chief_of_staff import nudges as _eng
+    return _eng.ts_key(ts)
+
+
+def _metrics_summary(metrics, limit: int = 4) -> Optional[str]:
+    """One plain line from an arbitrary metrics dict: the first `limit` non-zero
+    numeric leaves, path-labelled, in the order the task wrote them. Generic on
+    purpose — every task writes a different shape and a per-task formatter would
+    rot the day a task changes its metrics."""
+    if not isinstance(metrics, dict):
+        return None
+    pairs = []
+
+    def walk(node, path):
+        for k, v in node.items():
+            p = k if not path else path + "." + k
+            if isinstance(v, dict):
+                walk(v, p)
+            elif isinstance(v, bool):
+                continue                     # flags are not counts
+            elif isinstance(v, (int, float)) and v:
+                pairs.append((p, round(v, 4) if isinstance(v, float) else v))
+            if len(pairs) >= limit:
+                return
+
+    walk(metrics, "")
+    return " · ".join("{} {}".format(k, v) for k, v in pairs[:limit]) or None
+
+
+def _registry_changes(day: str) -> dict:
+    """Changes to config/clients.yaml on `day` (IST), read from git.
+
+    Every mapping-queue approval writes an AUDITED commit (modules/jarvis/
+    approve._git_commit) — that commit log is the only record that "2 clients
+    added, 1 alias" ever happened, and it has been invisible until now.
+
+    Degrades to an empty list with a note whenever git is missing, slow or
+    angry: a registry line is worth less than the page it would take down. The
+    result (success or degradation) is cached briefly — the subprocess is the
+    slowest thing in activity() by an order of magnitude."""
+    now = time.time()
+    hit = _registry_cache.get(day)
+    if hit and now - hit[0] < _REGISTRY_CACHE_TTL_S:
+        return hit[1]
+    root = Path(config.V3_ROOT)
+    reg_path = Path(config.CLIENTS_REGISTRY)
+    try:
+        rel = str(reg_path.relative_to(root))
+    except ValueError:
+        rel = str(reg_path)
+    out = {"file": rel, "commits": [], "count": 0, "insertions": 0,
+           "deletions": 0, "note": None}
+    argv = ["git", "-C", str(root), "log",
+            "--since=" + day + "T00:00:00+05:30",
+            "--until=" + day + "T23:59:59+05:30",
+            "--no-merges", "--format=%H\x1f%cI\x1f%s", "--numstat",
+            "--", rel]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              cwd=str(root), timeout=_REGISTRY_GIT_TIMEOUT_S)
+    except Exception as exc:               # noqa: BLE001 — never raise from here
+        out["note"] = "registry history unavailable ({})".format(
+            type(exc).__name__)
+        _registry_cache[day] = (now, out)
+        return out
+    if proc.returncode != 0:
+        out["note"] = "registry history unavailable (git exit {})".format(
+            proc.returncode)
+        _registry_cache[day] = (now, out)
+        return out
+    current = None
+    for line in (proc.stdout or "").splitlines():
+        if "\x1f" in line:
+            sha, at, subject = (line.split("\x1f", 2) + ["", ""])[:3]
+            current = {"sha": sha[:12], "at": at, "subject": subject,
+                       "insertions": 0, "deletions": 0}
+            out["commits"].append(current)
+            continue
+        parts = line.split("\t")
+        if current is not None and len(parts) == 3:
+            for key, raw in (("insertions", parts[0]), ("deletions", parts[1])):
+                try:
+                    current[key] += int(raw)       # '-' on a binary diff
+                except ValueError:
+                    pass
+    out["count"] = len(out["commits"])
+    out["insertions"] = sum(c["insertions"] for c in out["commits"])
+    out["deletions"] = sum(c["deletions"] for c in out["commits"])
+    _registry_cache[day] = (now, out)
+    return out
+
+
+def _run_costs(run_rows: list, usage_rows: list) -> tuple:
+    """Cost per run, and the spend no run can claim.
+
+    claude_usage.run_id exists (migration 002) but has NEVER been written — 0 of
+    9310 rows on the live DB — so task + time window is the only attribution
+    available. ts_key() reconciles the mixed clock shapes (legacy naive rows are
+    UTC, current writers stamp +05:30). A call outside every window of its task
+    is reported as unattributed rather than smeared onto the nearest run."""
+    now_key = _ts_utc(datetime.now(config.TZ).isoformat())
+    windows = []
+    for r in run_rows:
+        start = _ts_utc(r.get("started_at"))
+        if not start:
+            continue                        # no window => claims nothing
+        windows.append((r["id"], r.get("task_name"), start,
+                        _ts_utc(r.get("completed_at")) or now_key))
+    by_run: dict = {}
+    unattributed = 0.0
+    for u in usage_rows:
+        usd = float(u.get("total_cost_usd") or 0)
+        if u.get("run_id"):                 # if it is ever written, trust it
+            by_run[u["run_id"]] = by_run.get(u["run_id"], 0.0) + usd
+            continue
+        called = _ts_utc(u.get("called_at"))
+        hit = next((rid for rid, task, s, e in windows
+                    if task == u.get("task_name") and s <= called <= e), None)
+        if hit is None:
+            unattributed += usd
+        else:
+            by_run[hit] = by_run.get(hit, 0.0) + usd
+    return by_run, round(unattributed, 4)
+
+
+def activity(db_path: Optional[Path] = None, *, day: Optional[str] = None) -> dict:
+    """The daily digest — "what did the system do on this day?" in figures the
+    UI can render as plain sentences. `day` is an IST calendar date (defaults to
+    today IST) and is KEYWORD-ONLY: the server only forwards keyword-only
+    params, so a positional one would silently ignore ?day=.
+
+    Every section carries the previous day where the comparison is honest (a
+    volume, not a stock). `empty` is True when literally nothing happened, so
+    the UI says "nothing ran" instead of rendering a shell of zeros."""
+    day = (day or _ist_today())[:10]
+    try:
+        d0 = date.fromisoformat(day)
+    except ValueError:
+        return {"error": "bad day {!r} (expected YYYY-MM-DD)".format(day)}
+    prev = (d0 - timedelta(days=1)).isoformat()
+
+    conn = _ro(db_path)
+    try:
+        # ── runs ────────────────────────────────────────────────────────────
+        by_task: dict = {}
+        totals = {"total": 0, "completed": 0, "failed": 0, "skipped": 0,
+                  "running": 0, "wall_seconds": 0.0}
+        wall_ms = 0
+        for r in conn.execute(
+                "SELECT task_name, status, COUNT(*) n,"
+                " COALESCE(SUM(duration_ms),0) ms FROM runs"
+                " WHERE substr(started_at,1,10)=? GROUP BY task_name, status",
+                (day,)):
+            entry = by_task.setdefault(r["task_name"],
+                                       {"task": r["task_name"], "n": 0,
+                                        "status_counts": {}, "wall_seconds": 0.0})
+            entry["n"] += r["n"]
+            entry["status_counts"][r["status"]] = r["n"]
+            entry["wall_seconds"] = round(
+                entry["wall_seconds"] + (r["ms"] or 0) / 1000.0, 1)
+            totals["total"] += r["n"]
+            wall_ms += r["ms"] or 0
+            status = r["status"] or ""
+            if status == "completed":
+                totals["completed"] += r["n"]
+            elif status == "failed":
+                totals["failed"] += r["n"]
+            elif status.startswith("skipped"):
+                totals["skipped"] += r["n"]
+            elif status == "running":
+                totals["running"] += r["n"]
+        totals["wall_seconds"] = round(wall_ms / 1000.0, 1)
+        totals["by_task"] = sorted(by_task.values(), key=lambda e: -e["n"])
+        prev_runs = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE substr(started_at,1,10)=?",
+            (prev,)).fetchone()[0]
+
+        run_rows = [dict(r) for r in conn.execute(
+            "SELECT id, task_name, status, started_at, completed_at,"
+            " duration_ms, shadow, error, metrics_json FROM runs"
+            " WHERE substr(started_at,1,10)=?"
+            " ORDER BY started_at DESC, id DESC LIMIT ?",
+            (day, _ACTIVITY_RUN_CAP))]
+
+        # ── spend (ist_date is authoritative; no clock maths needed) ────────
+        spend_row = conn.execute(
+            "SELECT COALESCE(SUM(total_cost_usd),0) usd, COUNT(*) calls"
+            " FROM claude_usage WHERE ist_date=?", (day,)).fetchone()
+        spend_by_task = [dict(r) for r in conn.execute(
+            "SELECT task_name, ROUND(SUM(total_cost_usd),4) usd, COUNT(*) calls"
+            " FROM claude_usage WHERE ist_date=? GROUP BY task_name"
+            " ORDER BY usd DESC", (day,))]
+        prev_spend = conn.execute(
+            "SELECT COALESCE(SUM(total_cost_usd),0) FROM claude_usage"
+            " WHERE ist_date=?", (prev,)).fetchone()[0]
+        usage_rows = [dict(r) for r in conn.execute(
+            "SELECT run_id, task_name, called_at, total_cost_usd"
+            " FROM claude_usage WHERE ist_date=?", (day,))]
+
+        # ── ingest: how many Fathoms were transcribed, and what else came in ─
+        ingest_by_type = {r["source_type"]: r["n"] for r in conn.execute(
+            "SELECT source_type, COUNT(*) n FROM sources WHERE "
+            + _ist_day("ingested_at") + "=? GROUP BY source_type", (day,))}
+        extracted = conn.execute(
+            "SELECT COUNT(*) FROM sources WHERE " + _ist_day("ingested_at")
+            + "=? AND status='extracted'", (day,)).fetchone()[0]
+        prev_ingest = conn.execute(
+            "SELECT COUNT(*) FROM sources WHERE " + _ist_day("ingested_at")
+            + "=?", (prev,)).fetchone()[0]
+
+        # ── facts ───────────────────────────────────────────────────────────
+        facts_total = conn.execute(
+            "SELECT COUNT(*) FROM facts WHERE " + _ist_day("created_at") + "=?",
+            (day,)).fetchone()[0]
+        facts_by_client = [{"client": r["c"], "n": r["n"]} for r in conn.execute(
+            "SELECT COALESCE(client_id,'(unattributed)') c, COUNT(*) n"
+            " FROM facts WHERE " + _ist_day("created_at") + "=?"
+            " GROUP BY c ORDER BY n DESC, c LIMIT ?",
+            (day, _ACTIVITY_TOP_CLIENTS))]
+        facts_clients = conn.execute(
+            "SELECT COUNT(DISTINCT COALESCE(client_id,'(unattributed)'))"
+            " FROM facts WHERE " + _ist_day("created_at") + "=?",
+            (day,)).fetchone()[0]
+        prev_facts = conn.execute(
+            "SELECT COUNT(*) FROM facts WHERE " + _ist_day("created_at") + "=?",
+            (prev,)).fetchone()[0]
+
+        # ── threads ─────────────────────────────────────────────────────────
+        th = conn.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(client_id IS NOT NULL),0) att"
+            " FROM threads WHERE " + _ist_day("first_seen_at") + "=?",
+            (day,)).fetchone()
+        th_all = conn.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(client_id IS NOT NULL),0) att"
+            " FROM threads").fetchone()
+        prev_threads = conn.execute(
+            "SELECT COUNT(*) FROM threads WHERE "
+            + _ist_day("first_seen_at") + "=?", (prev,)).fetchone()[0]
+        # events.resolved_at is the one TIMESTAMPED attribution decision in the
+        # schema (mapping-queue approvals + the auto-resolvers).
+        mapping_resolved = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE " + _ist_day("resolved_at")
+            + "=? AND client_id IS NOT NULL", (day,)).fetchone()[0]
+
+        # ── nudges (IST-naive stamps: substr, never date(+330)) ─────────────
+        nudge_created = conn.execute(
+            "SELECT COUNT(*) FROM nudges WHERE substr(created_at,1,10)=?",
+            (day,)).fetchone()[0]
+        nudge_created_by_kind = {r["kind"]: r["n"] for r in conn.execute(
+            "SELECT kind, COUNT(*) n FROM nudges"
+            " WHERE substr(created_at,1,10)=? GROUP BY kind ORDER BY n DESC",
+            (day,))}
+        closed = {r["state"]: r["n"] for r in conn.execute(
+            "SELECT state, COUNT(*) n FROM nudges"
+            " WHERE state IN ('done','dismissed')"
+            " AND substr(updated_at,1,10)=? GROUP BY state", (day,))}
+        prev_nudges = conn.execute(
+            "SELECT COUNT(*) FROM nudges WHERE substr(created_at,1,10)=?",
+            (prev,)).fetchone()[0]
+
+        # ── shadow ledger (cutover evidence) ────────────────────────────────
+        shadow_rows = [dict(r) for r in conn.execute(
+            "SELECT target, operation, COUNT(*) n FROM shadow_ledger WHERE "
+            + _ist_day("at") + "=? GROUP BY target, operation ORDER BY n DESC",
+            (day,))]
+    finally:
+        conn.close()
+
+    cost_by_run, unattributed_usd = _run_costs(run_rows, usage_rows)
+    log = []
+    for r in run_rows:
+        try:
+            metrics = json.loads(r["metrics_json"]) if r["metrics_json"] else None
+        except (TypeError, ValueError):
+            metrics = None
+        log.append({
+            "id": r["id"], "task": r["task_name"], "status": r["status"],
+            "started_at": r["started_at"], "completed_at": r["completed_at"],
+            "duration_ms": r["duration_ms"], "shadow": r["shadow"],
+            "error": (r["error"] or None),
+            "summary": _metrics_summary(metrics),
+            "usd": round(cost_by_run.get(r["id"], 0.0), 4)
+            if r["id"] in cost_by_run else None,
+        })
+    totals["rows"] = log
+    totals["rows_capped"] = totals["total"] > len(log)
+    totals["rows_shown"] = len(log)
+    totals["prev_total"] = prev_runs
+    totals["failures"] = [e for e in log if e["status"] == "failed"][:20]
+
+    reg_changes = _registry_changes(day)
+    ingest_total = sum(ingest_by_type.values())
+    shadow_total = sum(r["n"] for r in shadow_rows)
+    nudge_closed = sum(closed.values())
+
+    empty = not any((totals["total"], ingest_total, facts_total, th["n"],
+                     mapping_resolved, reg_changes["count"], spend_row["calls"],
+                     nudge_created, nudge_closed, shadow_total))
+    return {
+        "day": day,
+        "prev_day": prev,
+        "empty": empty,
+        "runs": totals,
+        "ingest": {
+            "total": ingest_total,
+            "by_source_type": ingest_by_type,
+            # named, not inferred: this is the "how many Fathoms were
+            # transcribed today" figure Abhijeet asked for by name
+            "fathom_transcripts": ingest_by_type.get("fathom", 0),
+            "loom_recordings": ingest_by_type.get("loom", 0),
+            "email_messages": ingest_by_type.get("email", 0),
+            "slack_messages": ingest_by_type.get("slack", 0),
+            "extracted": extracted,
+            "prev_total": prev_ingest,
+        },
+        "facts": {"total": facts_total, "clients": facts_clients,
+                  "by_client": facts_by_client,
+                  "top_n": _ACTIVITY_TOP_CLIENTS, "prev_total": prev_facts},
+        "threads": {
+            "new": th["n"], "new_attributed": th["att"],
+            "attributed_total": th_all["att"],
+            "unattributed_total": th_all["n"] - th_all["att"],
+            "mapping_resolved": mapping_resolved,
+            "prev_new": prev_threads,
+            # honesty over a fabricated figure: link_threads UPDATEs
+            # threads.client_id in place and stamps nothing, so "threads
+            # attributed on this day" is not recoverable from the threads
+            # table. mapping_resolved is the timestamped decision that IS.
+            "note": "threads.client_id carries no attribution timestamp;"
+                    " mapping_resolved counts events resolved to a client"
+                    " on this day",
+        },
+        "registry": reg_changes,
+        "spend": {"usd": round(spend_row["usd"] or 0, 4),
+                  "calls": spend_row["calls"],
+                  "by_task": spend_by_task,
+                  "unattributed_usd": unattributed_usd,
+                  "prev_usd": round(prev_spend or 0, 4)},
+        "nudges": {"created": nudge_created,
+                   "created_by_kind": nudge_created_by_kind,
+                   "closed": nudge_closed,
+                   "done": closed.get("done", 0),
+                   "dismissed": closed.get("dismissed", 0),
+                   "prev_created": prev_nudges},
+        "shadow": {"total": shadow_total, "rows": shadow_rows},
+    }
+
+
+def activity_run(db_path: Optional[Path] = None, *,
+                 run_id: Optional[str] = None) -> dict:
+    """Everything about ONE run: the runs row, its parsed metrics, the anomalies
+    it raised, its Claude calls and cost, and — when it failed — the error.
+
+    `run_id` is KEYWORD-ONLY (the server forwards nothing else) and an unknown
+    or malformed id returns {"error": ...} rather than raising, so a stale link
+    in the run log renders a message instead of a 500."""
+    try:
+        rid = int(str(run_id).strip())
+    except (TypeError, ValueError):
+        return {"error": "bad run_id {!r}".format(run_id)}
+
+    conn = _ro(db_path)
+    try:
+        row = conn.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
+        if row is None:
+            return {"error": "no run {}".format(rid)}
+        run = dict(row)
+        anomalies = [dict(r) for r in conn.execute(
+            "SELECT id, detected_at, task_name, kind, severity, detail_json,"
+            " resolved_at FROM anomalies WHERE run_id=? ORDER BY id", (rid,))]
+        usage = [dict(r) for r in conn.execute(
+            "SELECT id, called_at, task_name, purpose, model, billing_route,"
+            " input_tokens, output_tokens, cache_creation_tokens,"
+            " cache_read_tokens, total_cost_usd, duration_ms, tool_calls,"
+            " stop_reason, error, run_id FROM claude_usage WHERE run_id=?"
+            " ORDER BY id", (rid,))]
+        attribution = "run_id"
+        if not usage:
+            # claude_usage.run_id has never been written by any task, so the
+            # window fallback carries this entirely. Bound the scan to the run's
+            # IST date ±1 day, then match exactly with ts_key.
+            anchor = (run.get("started_at") or "")[:10]
+            lo, hi = anchor, anchor
+            try:
+                d = date.fromisoformat(anchor)
+                lo = (d - timedelta(days=1)).isoformat()
+                hi = (d + timedelta(days=1)).isoformat()
+            except ValueError:
+                pass
+            candidates = [dict(r) for r in conn.execute(
+                "SELECT id, called_at, task_name, purpose, model, billing_route,"
+                " input_tokens, output_tokens, cache_creation_tokens,"
+                " cache_read_tokens, total_cost_usd, duration_ms, tool_calls,"
+                " stop_reason, error, run_id FROM claude_usage"
+                " WHERE task_name=? AND run_id IS NULL AND ist_date BETWEEN ? AND ?"
+                " ORDER BY id", (run.get("task_name"), lo, hi))]
+            start = _ts_utc(run.get("started_at"))
+            end = (_ts_utc(run.get("completed_at"))
+                   or _ts_utc(datetime.now(config.TZ).isoformat()))
+            usage = [u for u in candidates
+                     if start and start <= _ts_utc(u.get("called_at")) <= end]
+            attribution = "window" if usage else "none"
+        shadow_rows = [dict(r) for r in conn.execute(
+            "SELECT target, operation, COUNT(*) n FROM shadow_ledger"
+            " WHERE run_id=? GROUP BY target, operation ORDER BY n DESC",
+            (rid,))]
+    finally:
+        conn.close()
+
+    metrics, metrics_error = None, None
+    if run.get("metrics_json"):
+        try:
+            metrics = json.loads(run["metrics_json"])
+        except (TypeError, ValueError) as exc:
+            metrics_error = "unparseable metrics_json: {!r}".format(exc)
+    inline_anomalies = None
+    if run.get("anomalies_json"):
+        try:
+            inline_anomalies = json.loads(run["anomalies_json"])
+        except (TypeError, ValueError):
+            inline_anomalies = run["anomalies_json"]
+
+    from modules.cockpit import actions
+    return {
+        "run": run,
+        "metrics": metrics,
+        "metrics_error": metrics_error,
+        "summary": _metrics_summary(metrics),
+        "failed": run.get("status") == "failed",
+        "error": run.get("error") or None,
+        "anomalies": anomalies,
+        "anomalies_inline": inline_anomalies,
+        "usage": {
+            "rows": usage,
+            "calls": len(usage),
+            "usd": round(sum(float(u.get("total_cost_usd") or 0)
+                             for u in usage), 4),
+            "input_tokens": sum(int(u.get("input_tokens") or 0) for u in usage),
+            "output_tokens": sum(int(u.get("output_tokens") or 0) for u in usage),
+            # how the calls were tied to this run, so the UI never presents a
+            # window guess as a hard link
+            "attribution": attribution,
+        },
+        "shadow": {"total": sum(r["n"] for r in shadow_rows),
+                   "rows": shadow_rows},
+        "rerunnable": run.get("task_name") in actions.RERUN_JOBS,
+    }

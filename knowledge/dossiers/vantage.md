@@ -1,11 +1,13 @@
 # VANTAGE — Dossier
 
-_Compiled 2026-08-10 00:57 IST · 12 client facts (12 trusted) from 1 sources._
+_Compiled 2026-08-12 05:15 IST · 14 client facts (14 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## The numbers
 
+- Contract: Automations & Systems | N8N, Make.com, GHL — status ACTIVE. [CONFIRMED · CRM:contracts/40800346]
+- Revenue to date: $468 across 3 earning transactions (2025-06-15 → 2025-06-29). [CONFIRMED · CRM:transactions]
 - Two SMS messages failed to send in initial testing due to missing phone number configuration [CONFIRMED · https://www.loom.com/share/a1d93da999d9403a8464ed82c283d000 @ So, as you can see right now, it failed, uh, for two]
 
 ## Architecture & systems
@@ -30,4 +32,5 @@ _Compiled 2026-08-10 00:57 IST · 12 client facts (12 trusted) from 1 sources._
 
 ## Sources
 
+- `crm/vantage` · — · crm · CRM numbers — VANTAGE
 - `loom/a1d93da999d9403a8464ed82c283d000` · 2025-06-15 · loom · Videos | Library | Loom - 16 June 2025

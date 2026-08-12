@@ -1,6 +1,6 @@
 # Diat Khan — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 13 client facts (13 trusted) from 3 sources._
+_Compiled 2026-08-12 05:15 IST · 14 client facts (14 trusted) from 4 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -8,6 +8,10 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 13 client facts (13 trusted) from 
 
 - An automation was built to merge contacts based on phone number matching, triggered by form submissions. [CONFIRMED · https://www.loom.com/share/02e7674808694e91b2900d5597bd5584 @ whenever there is a form submission, it checks whether there is a contact, uh, already existing by the same phone number. And if there is, then it would merge it]
 - The contact merge automation now operates in real-time mode. [CONFIRMED · https://www.loom.com/share/02e7674808694e91b2900d5597bd5584 @ we'll also have the automation that, you know, is like real time now]
+
+## The numbers
+
+- Contract: AI Agent Engineer — status CLOSED. [CONFIRMED · CRM:contracts/40883094]
 
 ## Architecture & systems
 
@@ -34,6 +38,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 13 client facts (13 trusted) from 
 
 ## Sources
 
+- `crm/diat-khan` · — · crm · CRM numbers — Diat Khan
 - `loom/02e7674808694e91b2900d5597bd5584` · 2025-10-20 · loom · Videos | Library | Loom - 20 October 2025
 - `loom/8e61dd6b687148b380c055aa87e23850` · 2025-12-02 · loom · Meeting Link Issues and Required Changes 🔗
 - `loom/a23a5a7ea3404606bee1dfcfc7eda1eb` · 2026-04-08 · loom · How to Add Email Recipients Easily ✉️

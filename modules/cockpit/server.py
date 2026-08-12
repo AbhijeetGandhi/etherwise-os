@@ -42,12 +42,17 @@ GET_ROUTES: dict = {
     "/api/pipeline/facts": data.pipeline_facts,          # chart source (one row/job)
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     "/api/queue": data.queue,     # Jarvis J1 mapping queue (unmapped events)
+    # Activity: the daily digest (?day=YYYY-MM-DD) + one run's full detail
+    # (?run_id=N). Both params are KEYWORD-ONLY on the readers — see below.
+    "/api/activity": data.activity,
+    "/api/activity/run": data.activity_run,
 }
 POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
     "/api/queue/resolve": actions.queue_resolve,  # assign|create_alias|ignore
     "/api/wake": actions.wake,    # allowlisted launchd kick
     "/api/rail": actions.rail,    # allowlisted rail trigger
+    "/api/rerun": actions.rerun,  # allowlisted re-run of a task from the run log
     "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
     "/api/note": actions.note,    # Quick Capture -> CoS notes inbox
     "/api/cos-nudge": actions.cos_nudge,  # act on a real M4 nudge

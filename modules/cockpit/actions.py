@@ -35,6 +35,37 @@ RAIL_JOBS = {
     "outcome-capture": "io.etherwise.v3.upwork-outcomes",
 }
 
+# Re-run a task from the Activity run log (UI brief §3b). SAME mechanism as
+# wake/rail — one _kick, one allowlist — keyed by the `runs.task_name` the run
+# log actually displays, so the UI never has to know a launchd label.
+#
+# Membership mirrors the source registry's `catch_up` verdict ("safe to re-run
+# unattended after a missed window", core/config.py SOURCES) and extends it only
+# to jobs that are idempotent reads/mirrors. Deliberately ABSENT, though their
+# plists exist in launchd/:
+#   cos-brief-am / cos-brief-pm   outward brief with a send side-effect
+#   finance-payment-mail          catch_up=False, staged and not loaded
+#   catch-up                      kicks other jobs — an indirect exec surface
+#   cockpit                       would restart the server serving the request
+#   june15-credit-validation      a one-off, not a rail
+# Every label here must exist as a plist in launchd/ (tests assert it).
+RERUN_JOBS = {
+    "upwork_scan": "io.etherwise.v3.upwork-scan",
+    "upwork_sync": "io.etherwise.v3.upwork-sync",
+    "upwork_inbox": "io.etherwise.v3.upwork-inbox",
+    "upwork_outcomes": "io.etherwise.v3.upwork-outcomes",
+    "upwork_connects": "io.etherwise.v3.upwork-connects",
+    "crm_mirror": "io.etherwise.v3.crm-mirror",
+    "kb_daily": "io.etherwise.v3.kb-daily",
+    "loom_fetch": "io.etherwise.v3.kb-loom-fetch",
+    "cos_sweep": "io.etherwise.v3.cos-sweep",
+    "jarvis_sweep": "io.etherwise.v3.jarvis-sweep",
+    "jarvis_slack": "io.etherwise.v3.jarvis-slack",
+    "finance_stripe": "io.etherwise.v3.finance-stripe",
+    "finance_wise_mail": "io.etherwise.v3.finance-wise-mail",
+    "finance_upwork_weekly": "io.etherwise.v3.finance-upwork-weekly",
+}
+
 
 def _kick(label: str) -> dict:
     proc = subprocess.run(
@@ -162,6 +193,18 @@ def wake(db_path: Optional[Path], body: dict) -> dict:
         raise ValueError(f"unknown/forbidden wake job: {job!r}"
                          f" (allowed: {sorted(WAKE_JOBS)})")
     return {**_kick(WAKE_JOBS[job]), "job": job}
+
+
+def rerun(db_path: Optional[Path], body: dict) -> dict:
+    """POST /api/rerun — re-run an allowlisted task from the Activity run log.
+    body: {task}, where task is the `runs.task_name` shown in the log. Refuses
+    anything not in RERUN_JOBS (the cockpit must not become a launchd-exec
+    surface); the kick itself is the same launchctl kickstart as wake/rail."""
+    task = (body or {}).get("task")
+    if task not in RERUN_JOBS:
+        raise ValueError("unknown/forbidden rerun task: {!r}"
+                         " (allowed: {})".format(task, sorted(RERUN_JOBS)))
+    return {**_kick(RERUN_JOBS[task]), "task": task}
 
 
 def rail(db_path: Optional[Path], body: dict) -> dict:

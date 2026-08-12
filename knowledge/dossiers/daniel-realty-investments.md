@@ -1,6 +1,6 @@
 # Daniel Realty & Investments — Dossier
 
-_Compiled 2026-08-10 17:56:25.909618+00:00 · 28 client facts (28 trusted) from 4 sources._
+_Compiled 2026-08-12 05:15 IST · 31 client facts (31 trusted) from 5 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -8,6 +8,12 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 28 client facts (28 trusted) from 
 
 - Bulk message automation system is ready with phone lines 1, 2, 3, 4, 5, and 6 configured with numbers set. [CONFIRMED · https://www.loom.com/share/dc2a6f8dd58b40ae93f67efd0796ad75 @ 'bulk message automation where we have, like, all the numbers set for, like, phone 1, 2, 3, and 4, 5, 6']
 - Phone lines 4, 5, and 6 are currently disabled and not live yet. [CONFIRMED · https://www.loom.com/share/dc2a6f8dd58b40ae93f67efd0796ad75 @ 'the 4, 5, 6 is currently disabled. It won't be live for now']
+
+## The numbers
+
+- Contract: Automation and scripting for Make, Airtable and third party  clicksend connection — status ACTIVE. [CONFIRMED · CRM:contracts/43601563]
+- Contract: Automation and scripting for Make, Airtable and third party connections — status PAUSED. [CONFIRMED · CRM:contracts/42481834]
+- Revenue to date: $688 across 8 earning transactions (2025-12-28 → 2026-03-29). [CONFIRMED · CRM:transactions]
 
 ## Architecture & systems
 
@@ -49,6 +55,7 @@ _Compiled 2026-08-10 17:56:25.909618+00:00 · 28 client facts (28 trusted) from 
 
 ## Sources
 
+- `crm/daniel-realty-investments` · — · crm · CRM numbers — Daniel Realty & Investments
 - `loom/7c0dec52c60043318dead828eb762c02` · 2026-01-26 · loom · Understanding the Bulk SMS Flow Process
 - `loom/dc2a6f8dd58b40ae93f67efd0796ad75` · 2026-01-28 · loom · Bulk Message Automation Setup and Mobile Filtering Discussion 📱
 - `loom/bb6a3c8b560f4816b4fd16f62a9553c8` · 2026-04-05 · loom · Overview of SMS Sending Setup with ClickSend
