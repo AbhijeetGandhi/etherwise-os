@@ -6,6 +6,7 @@ SQLite-local).
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import threading
@@ -111,6 +112,134 @@ class TestAuth(CockpitServerCase):
 
     def test_bind_is_loopback(self):
         self.assertEqual(self.host, "127.0.0.1")
+
+
+class TestStaticCaching(CockpitServerCase):
+    """/static/* must ALWAYS revalidate, and revalidation must be cheap.
+
+    The defect (2026-08-13): static responses carried no Cache-Control, no
+    ETag and no Last-Modified, so under HTTP/1.0 freshness fell to the
+    browser's heuristic. Chrome served a 22 KB today.js out of cache while
+    disk held 32 KB, and a hash-only SPA navigation never re-requests a
+    module — so a day of shipped fixes was invisible in the open tab, which
+    made every OTHER fix unverifiable. These tests pin the contract:
+    revalidate on every reuse, 304 when the bytes are unchanged, a DIFFERENT
+    ETag and the new bytes the moment they are not.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # resolve(): the macOS temp dir is a symlink, and _static compares the
+        # RESOLVED target against STATIC_DIR before it will serve anything.
+        self.static = (self.tmp / "static").resolve()
+        self.static.mkdir()
+        (self.static / "app.js").write_text("export const a = 1;\n")
+        (self.static / "index.html").write_text("<html><body>shell</body></html>")
+        patcher = mock.patch.object(server, "STATIC_DIR", self.static)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def fetch(self, path, headers=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
+
+    def test_static_carries_no_cache_and_a_strong_etag(self):
+        status, headers, body = self.fetch("/static/app.js")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Cache-Control"), "no-cache")
+        self.assertIn("Last-Modified", headers)
+        etag = headers.get("ETag", "")
+        self.assertTrue(etag.startswith('"') and etag.endswith('"'), etag)
+        self.assertFalse(etag.startswith("W/"), "must be a STRONG validator")
+        self.assertEqual(body, b"export const a = 1;\n")
+
+    def test_index_shell_revalidates_too(self):
+        # the shell holds the module graph; a cached one pins every module
+        for path in ("/", "/index.html"):
+            _, headers, _ = self.fetch(path)
+            self.assertEqual(headers.get("Cache-Control"), "no-cache", path)
+            self.assertIn("ETag", headers, path)
+
+    def test_if_none_match_returns_304_with_no_body(self):
+        _, headers, _ = self.fetch("/static/app.js")
+        status, h2, body = self.fetch(
+            "/static/app.js", {"If-None-Match": headers["ETag"]})
+        self.assertEqual(status, 304)
+        self.assertEqual(body, b"")
+        self.assertEqual(h2.get("ETag"), headers["ETag"])
+        self.assertEqual(h2.get("Cache-Control"), "no-cache")
+        # RFC 9110 §15.4.5: a 304 has no body, so it must not claim a length
+        self.assertNotIn("Content-Length", h2)
+
+    def test_weak_and_wildcard_if_none_match_also_match(self):
+        _, headers, _ = self.fetch("/static/app.js")
+        etag = headers["ETag"]
+        for sent in (f'W/{etag}', "*", f'"nope", {etag}'):
+            status, _, _ = self.fetch("/static/app.js", {"If-None-Match": sent})
+            self.assertEqual(status, 304, sent)
+
+    def test_a_modified_file_produces_a_different_etag(self):
+        _, headers, _ = self.fetch("/static/app.js")
+        (self.static / "app.js").write_text("export const a = 2;\n// grew\n")
+        status, h2, body = self.fetch(
+            "/static/app.js", {"If-None-Match": headers["ETag"]})
+        self.assertEqual(status, 200)                    # NOT 304
+        self.assertNotEqual(h2["ETag"], headers["ETag"])
+        self.assertEqual(body, b"export const a = 2;\n// grew\n")
+
+    def test_same_length_same_second_edit_still_changes_the_etag(self):
+        """The exact shape of the original bug.
+
+        A validator built from (mtime, size) calls this file unchanged — same
+        byte count, same second — and serves the stale copy forever. Hashing
+        the bytes is why this passes.
+        """
+        f = self.static / "app.js"
+        _, headers, _ = self.fetch("/static/app.js")
+        f.write_text("export const a = 9;\n")           # identical length
+        os.utime(f, (1, 1))                             # …and an older mtime
+        status, h2, body = self.fetch(
+            "/static/app.js", {"If-None-Match": headers["ETag"]})
+        self.assertEqual(status, 200)
+        self.assertNotEqual(h2["ETag"], headers["ETag"])
+        self.assertEqual(body, b"export const a = 9;\n")
+
+    def test_if_modified_since_is_honoured_as_the_fallback(self):
+        _, headers, _ = self.fetch("/static/app.js")
+        status, _, _ = self.fetch(
+            "/static/app.js", {"If-Modified-Since": headers["Last-Modified"]})
+        self.assertEqual(status, 304)
+        status, _, body = self.fetch(
+            "/static/app.js",
+            {"If-Modified-Since": "Sun, 01 Jan 2023 00:00:00 GMT"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"export const a = 1;\n")
+
+    def test_a_stale_if_none_match_beats_a_fresh_if_modified_since(self):
+        # RFC 9110 §13.2.2: when both are present, the entity tag decides.
+        _, headers, _ = self.fetch("/static/app.js")
+        status, _, _ = self.fetch("/static/app.js", {
+            "If-None-Match": '"stale"',
+            "If-Modified-Since": headers["Last-Modified"],
+        })
+        self.assertEqual(status, 200)
+
+    def test_garbage_if_modified_since_does_not_500(self):
+        status, _, _ = self.fetch(
+            "/static/app.js", {"If-Modified-Since": "not a date at all"})
+        self.assertEqual(status, 200)
+
+    def test_api_json_is_never_stored(self):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/system")
+        req.add_header("X-Cockpit-Token", TOKEN)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.headers.get("Cache-Control"), "no-store")
 
 
 class TestRouting(CockpitServerCase):

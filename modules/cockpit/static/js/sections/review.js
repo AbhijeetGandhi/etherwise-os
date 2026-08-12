@@ -180,8 +180,11 @@ function statsCard(d, ctx) {
 function shaCode(sha, why) {
   if (!sha) return el("span", "dash", "—");
   const code = el("code", { attrs: { title: why || "" } }, String(sha));
-  const btnEl = iconBtn("copy", `Copy ${sha}`, () => copyText(String(sha)),
-    { ghost: true, size: 13 });
+  // pass the BUTTON: without it copyText falls through to a toast, and a toast
+  // in the corner is not the confirmation you look for after clicking a tiny
+  // icon next to the sha you are about to paste into `git show`.
+  const btnEl = iconBtn("copy", `Copy ${sha}`,
+    () => copyText(String(sha), btnEl), { ghost: true, size: 13 });
   return el("span", "hstack-tight", [code, btnEl]);
 }
 

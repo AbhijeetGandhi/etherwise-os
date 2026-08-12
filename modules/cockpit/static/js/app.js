@@ -227,6 +227,25 @@ function renderNav(active) {
 function setNavState(state) {
   document.getElementById("app").dataset.nav = state;
   if (state !== "open") localStorage.setItem(NAV_KEY, state);
+  // The button names what the NEXT click does — the same contract the theme
+  // toggle beside it already honoured. It used to say "Collapse sidebar" in
+  // BOTH states, so the one control that brings the sidebar back announced
+  // itself as the control that takes it away.
+  const b = document.getElementById("navToggle");
+  if (b) {
+    // ≤900px the sidebar is an off-canvas drawer and only "open" shows it
+    // (base.css:151); above that it is a rail that is either full-width or
+    // icon-only. Same button, two different verbs.
+    const narrow = window.matchMedia("(max-width: 900px)").matches;
+    const shown = narrow ? state === "open" : state !== "collapsed";
+    const label = narrow
+      ? (shown ? "Close sidebar" : "Open sidebar")
+      : (shown ? "Collapse sidebar" : "Expand sidebar");
+    b.setAttribute("aria-label", label);
+    b.setAttribute("aria-expanded", String(shown));
+    b.setAttribute("aria-controls", "sidebar");
+    b.title = label;
+  }
 }
 
 /* ── health chip + review badge (both on the 5-minute timer) ──────────────── */
@@ -244,7 +263,9 @@ async function refreshHealth() {
     chip.className = "healthchip " + cls;
     append(clear(chip),
       el("span", "dot2"),
-      `doctor ${worst}` + (last ? ` · sync ${fmt.dateTime(last).slice(3)}` : ""),
+      // dateTimeShort, not dateTime().slice(3): the slice was written against a
+      // docblock that lied about the format and ate "202" out of the year.
+      `doctor ${worst}` + (last ? ` · sync ${fmt.dateTimeShort(last)}` : ""),
     );
     chip.title = `finance-doctor: ${worst}` + (last ? ` · last job ${fmt.dateTime(last)}` : "");
   } catch (e) {
@@ -395,6 +416,11 @@ function boot() {
     }
   });
   setNavState(localStorage.getItem(NAV_KEY) === "collapsed" ? "collapsed" : "expanded");
+  // crossing the drawer breakpoint changes what the toggle's next click DOES,
+  // so it has to change what the toggle SAYS
+  window.matchMedia("(max-width: 900px)").addEventListener("change", () => {
+    setNavState(document.getElementById("app").dataset.nav || "expanded");
+  });
 
   window.addEventListener("hashchange", () => {
     const { id, params } = parseHash();

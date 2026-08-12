@@ -28,7 +28,32 @@ const ROW_CAP = 300;          // rendered rows; the header always states the tru
 
 let _panel = null, _backdrop = null, _opener = null, _escBound = false;
 
+// ── the close animation's teardown timer ─────────────────────────────────────
+// THE DEFECT THIS EXISTS FOR (2026-08-13): closeDrill() scheduled the teardown
+// (empty the panel, hide the backdrop) 200ms later and kept no handle, so
+// nothing could cancel it. Its guard — `if (!isOpen())` — reads a class that
+// show() applies inside a requestAnimationFrame callback, which makes it a
+// check-then-act race. Open a new drill inside that 200ms and, if the main
+// thread is busy enough that the rAF lands after the timer (these drills render
+// 300-row tables, so it routinely is), the timer empties the panel that was
+// just built and sets the backdrop to display:none. What is left is an opaque
+// 920px sheet at z-index 51 with pointer-events:auto, no children — no close
+// button — and a backdrop that cannot be clicked. There is NO WAY OUT WITH A
+// MOUSE; only Escape or a section change recovers.
+//
+// Two guards, because there are two directions to the race:
+//   _closeTimer  — cancelled by mount(), so an open always wins over a pending
+//                  teardown instead of racing it.
+//   _showGen     — bumped by every open AND every close, so a rAF from a
+//                  superseded show() cannot re-add .show to a closed panel.
+let _closeTimer = null, _showGen = 0;
+
+function cancelTeardown() {
+  if (_closeTimer !== null) { clearTimeout(_closeTimer); _closeTimer = null; }
+}
+
 function mount() {
+  cancelTeardown();
   // isConnected, not just truthiness: a panel that was removed from the DOM
   // (a section that cleared document.body's tail, a hot reload) left `_panel`
   // pointing at a detached node, and every later openDrill() then rendered
@@ -52,9 +77,21 @@ export function isOpen() { return !!_panel && _panel.classList.contains("show");
 
 export function closeDrill() {
   if (!_panel) return;
+  cancelTeardown();                 // never stack two teardowns
+  _showGen += 1;                    // abandon any show() rAF still in flight
   _panel.classList.remove("show");
   _backdrop.classList.remove("show");
-  setTimeout(() => { if (!isOpen()) { clear(_panel); _backdrop.style.display = "none"; } }, 200);
+  const mine = _showGen;
+  _closeTimer = setTimeout(() => {
+    _closeTimer = null;
+    // `mine !== _showGen` means an open (or another close) happened after this
+    // teardown was scheduled and mount() somehow did not cancel it. Belt to
+    // isOpen()'s braces: isOpen() reads a class that is applied a frame late,
+    // so it alone cannot tell "closed" from "opening".
+    if (mine !== _showGen || isOpen() || !_panel) return;
+    clear(_panel);
+    _backdrop.style.display = "none";
+  }, 200);
   if (_opener && document.contains(_opener)) { try { _opener.focus(); } catch (e) { /* ignore */ } }
   _opener = null;
 }
@@ -190,7 +227,22 @@ export function openDrill(spec) {
   const upTo = (i) => rows.filter((r) =>
     facets.every((f, j) => j >= i || picks[j] == null || f.of(r) === picks[j]));
 
-  function pillStrip(items, activeKey, onPick, allLabel) {
+  /**
+   * One facet strip. `all` describes the ROW SET this strip groups over —
+   * {n, sum, missing, label} — and is NOT derived from `items`.
+   *
+   * THE DEFECT THIS SIGNATURE EXISTS FOR (2026-08-13): the "All …" pill used
+   * to sum and count the GROUPS beside it. groupsFor() drops every row whose
+   * facet key is null/empty and then slices to `maxFacet`, so those two
+   * numbers are different sets. Live: the header read "608 rows ·
+   * $292,497.73", the All pill directly beneath it read "$291,444 ×604", and
+   * clicking that pill rendered 608 rows summing to $292,497.73 — the pill
+   * contradicted both the line above it and the view it produced, inside the
+   * one component whose docblock promises a stated sum is the sum of the rows
+   * rendered. The All pill now counts the rows it will render; what the pills
+   * beside it do not cover is stated separately rather than quietly deducted.
+   */
+  function pillStrip(items, activeKey, onPick, allLabel, all) {
     const strip = el("div", "drillstrip");
     const mk = (label, key, sum, n, extra) => {
       const b = el("button", {
@@ -205,10 +257,22 @@ export function openDrill(spec) {
       ]);
       return b;
     };
-    strip.appendChild(mk(allLabel, null,
-      amount ? items.reduce((s, g) => s + g.sum, 0) : null,
-      items.reduce((s, g) => s + g.n, 0), " all"));
+    strip.appendChild(mk(allLabel, null, all.sum, all.n, " all"));
     items.forEach((g) => strip.appendChild(mk(g.label, g.key, amount ? g.sum : null, g.n)));
+    if (all.missing > 0) {
+      // not a button: there is no single key that selects these rows. It is a
+      // statement of what the pills above do NOT account for, so that "the
+      // pills do not add up to All" is answered on the strip itself.
+      strip.appendChild(el("span", {
+        class: "gpill-rest",
+        attrs: {
+          title: `${fmt.num(all.missing)} of these ${fmt.num(all.n)} rows are in`
+            + ` no pill above — their ${all.label || "value"} is blank, or their`
+            + ` group is outside the ${items.length} biggest shown. They are`
+            + ` counted in “${allLabel}”, and they are in the table below.`,
+        },
+      }, `+${fmt.num(all.missing)} in no pill`));
+    }
     return strip;
   }
 
@@ -246,11 +310,19 @@ export function openDrill(spec) {
     facets.forEach((f, i) => {
       const gs = groupsFor(i);
       if (gs.length < 2) return;           // a one-group strip explains nothing
+      // the rows this strip groups over — the same set clicking "All" renders
+      const src = upTo(i);
+      const inPills = gs.reduce((s, g) => s + g.n, 0);
       controls.appendChild(pillStrip(gs, picks[i], (k) => {
         picks[i] = k;
         for (let j = i + 1; j < picks.length; j++) picks[j] = null;
         renderControls(); renderRows();
-      }, f.allLabel || ("All " + (f.label || "groups"))));
+      }, f.allLabel || ("All " + (f.label || "groups")), {
+        n: src.length,
+        sum: amount ? sumOf(src) : null,
+        missing: src.length - inPills,
+        label: f.label,
+      }));
     });
     if (searchOf || amount) {
       const bar = el("div", "field-row");
@@ -312,8 +384,11 @@ export function openDrill(spec) {
 }
 
 function show() {
+  cancelTeardown();
   _backdrop.style.display = "";
+  const mine = ++_showGen;
   requestAnimationFrame(() => {
+    if (mine !== _showGen) return;      // closed (or reopened) before we painted
     _backdrop.classList.add("show");
     _panel.classList.add("show");
     const close = _panel.querySelector(".btn-icon");

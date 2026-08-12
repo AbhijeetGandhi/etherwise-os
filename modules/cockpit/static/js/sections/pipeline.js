@@ -334,6 +334,33 @@ export async function render(root, ctx) {
     range = { preset: "all", from: null, to: null };
   }
 
+  /**
+   * Move one end of the custom window, and never let it end before it starts.
+   *
+   * THE §0 VIOLATION THIS PREVENTS (2026-08-13): the month pickers took
+   * `from > to` unvalidated. Every chart below reads `inRange`, which is
+   * `x.m >= from && x.m <= to` — unsatisfiable — so the page went quiet and
+   * the Outcomes tiles rendered "0 — a true zero — the rail was running and
+   * recorded no application". Nothing was measured. That is rule 1 asserted
+   * backwards: an impossible window is not a zero, and the honest thing is to
+   * make it unreachable rather than to describe its emptiness as a finding.
+   *
+   * The end he did NOT just touch follows the one he did (dragging the start
+   * past the end collapses the window to that month, rather than silently
+   * swapping his two inputs around behind him). drawSeg() repaints both
+   * inputs from `range`, so the correction is visible in the pickers.
+   */
+  const setEdge = (edge, value) => {
+    range.preset = "custom";
+    range[edge] = value || null;
+    if (range.from && range.to && range.from > range.to) {
+      range[edge === "from" ? "to" : "from"] = range[edge];
+    }
+    redraw();
+  };
+  // …and a window restored inverted from localStorage gets the same rule
+  if (range.from && range.to && range.from > range.to) range.to = range.from;
+
   const bounds = () => {
     const pr = PRESETS.find(([k]) => k === range.preset);
     return pr && pr[2] ? pr[2]() : [range.from, range.to];
@@ -373,12 +400,8 @@ export async function render(root, ctx) {
   const toIn = el("input", { type: "month", attrs: { "aria-label": "range to month" } });
   const customWrap = el("div", { class: "hstack-tight", style: { display: "none" } },
     [fromIn, el("span", "muted small", "→"), toIn]);
-  fromIn.addEventListener("change", () => {
-    range.preset = "custom"; range.from = fromIn.value || null; redraw();
-  });
-  toIn.addEventListener("change", () => {
-    range.preset = "custom"; range.to = toIn.value || null; redraw();
-  });
+  fromIn.addEventListener("change", () => setEdge("from", fromIn.value));
+  toIn.addEventListener("change", () => setEdge("to", toIn.value));
 
   function drawSeg() {
     clear(segHost);
@@ -433,6 +456,11 @@ export async function render(root, ctx) {
     const [bf, bt] = bounds();
     range.from = bf || null;
     range.to = bt || null;
+    // backstop for every path setEdge() does not own (the Custom segment
+    // button adopts the pickers' values; a preset could in principle be
+    // mis-ordered). An inverted window is empty by construction and the tiles
+    // below would report that emptiness as a measured zero — see setEdge().
+    if (range.from && range.to && range.from > range.to) range.to = range.from;
     localStorage.setItem(FILTERS_KEY, JSON.stringify(range));
     drawSeg();
     myCharts.forEach((h) => { try { h.destroy(); } catch (e) { /* already gone */ } });
@@ -1164,14 +1192,36 @@ function kpiStrip(d, openRows, when) {
             + ` · ${fmt.num(a.last_week)} the week before`
           : "last 7 days — a TRUE zero (applications paused; rail live since"
             + ` ${a.since || "—"})`),
+    // The tile counts SEVEN DAYS (data.py's _rail_applied_windows: day−6..day).
+    // The drill used to pass `{stage:"applied"}` with no window at all, so a
+    // tile reading 6 opened all 22 rows the rail has ever recorded — and with
+    // no `figure:` either, openRows' mismatch guard could not even say so.
+    // `week=<day−6>` is the SAME window: pipeline_rows turns a week anchor into
+    // anchor..anchor+6 on event_date, the identical column and predicate the
+    // tile's COUNT(*) used. (The Carded tile 60 lines above and the
+    // Client-replies tile below were both fixed this way; this one was missed.)
     onClick: !a.available ? null
-      : () => openRows("Applications (connects rail)", { stage: "applied" }, appliedCols, {
-        subtitle: a.note || "connects-history rail (daily scrape)",
-        note: railStale
-          ? "The rail behind these rows is stale, so the newest applications may"
-            + " be missing. The count above is deliberately not shown as a number."
-          : null,
-      }),
+      : () => (week7
+        ? openRows(`Applications — last 7 days (${week7} → ${asOf})`,
+          { stage: "applied", week: week7 }, appliedCols, {
+            figure: a.week,
+            subtitle: a.note || "connects-history rail (daily scrape)",
+            note: railStale
+              ? "The rail behind these rows is stale, so the newest applications"
+                + " may be missing. The count above is deliberately not shown as"
+                + " a number."
+              : null,
+          })
+        : openRows("Applications (connects rail) — all time",
+          { stage: "applied" }, appliedCols, {
+            subtitle: a.note || "connects-history rail (daily scrape)",
+            note: "The server reported no usable reference day, so these rows"
+              + " could not be cut to the tile's seven-day window — this is"
+              + " EVERY application the rail has recorded, not the figure above."
+              + (railStale
+                ? " The rail is also stale, so the newest may be missing."
+                : ""),
+          })),
   });
   // a DASHED outline, on top of .kpi-stale's amber border: this tile is not
   // reporting a number, it is reporting that the number cannot be trusted, and

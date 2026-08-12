@@ -156,10 +156,29 @@ export const fmt = {
     if (Number.isNaN(+d)) return String(iso).slice(0, 10);
     return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
   },
-  /** "12 Aug 14:03" from any of the three timestamp shapes this DB stores */
+  /**
+   * "2026-08-12 14:03" — the stored wall clock to the minute, from any of the
+   * three timestamp shapes this DB holds ("…T14:03:00Z", "… 14:03:00",
+   * "…T14:03:00+05:30"). It does NOT convert timezones: what you see is what
+   * the row says.
+   *
+   * The docblock used to claim "12 Aug 14:03", which this has never returned.
+   * A caller wrote `fmt.dateTime(last).slice(3)` against that claim, meaning
+   * to drop a two-digit day, and shipped a health chip reading
+   * "sync 6-08-13 03:15" — `.slice(3)` ate "202". If you want the short form,
+   * it is `dateTimeShort` below; do not slice this one.
+   */
   dateTime(iso) {
     if (!iso) return "—";
     return String(iso).replace("T", " ").slice(0, 16);
+  },
+  /** "12 Aug 14:03" — dateTime without the year, for chips. Same wall clock. */
+  dateTimeShort(iso) {
+    const s = fmt.dateTime(iso);
+    if (s === "—") return s;
+    const [d, t] = s.split(" ");
+    const day = fmt.dateShort(d);
+    return t ? `${day} ${t}` : day;
   },
   /** seconds → "1m 12s" / "340ms" */
   duration(secs) {
@@ -394,13 +413,19 @@ export function chip(text, tone) {
  * `iconRight` puts a glyph AFTER the label — for "Next ›" style pairs, so a
  * back/forward pair can use the real chevrons instead of literal "←"/"→" text.
  */
+/**
+ * A labelled button. `opts.aria` overrides the accessible NAME — reach for it
+ * whenever the visible label is not unique on the screen (six "Upload"
+ * buttons whose only distinguishing text lives in a sibling element).
+ */
 export function btn(label, onClick, opts = {}) {
   const sz = opts.sm ? 13 : 14;
   const b = el("button", {
     class: "btn" + (opts.variant ? " " + opts.variant : "") + (opts.sm ? " sm" : "")
       + (opts.class ? " " + opts.class : ""),
     type: "button",
-    attrs: opts.title ? { title: opts.title } : {},
+    attrs: Object.assign({}, opts.title ? { title: opts.title } : {},
+      opts.aria ? { "aria-label": opts.aria } : {}),
     disabled: !!opts.disabled,
   }, [
     opts.icon ? icon(opts.icon, { size: sz }) : null,
@@ -548,18 +573,87 @@ export function toast(msg, isError) {
   return t;
 }
 
-/** copy text to the clipboard and confirm on the button that asked. */
+/**
+ * Copy text to the clipboard and confirm on the button that asked.
+ *
+ * TWO THINGS THIS GUARDS (2026-08-13, both observed live):
+ *
+ * 1. `navigator.clipboard.writeText` can hang. When the document is not
+ *    focused — and it is not, if the click landed while a permission chip or
+ *    a devtools pane had focus — Chrome neither resolves nor rejects the
+ *    promise. Observed: >2.5s with no settle, so NEITHER the success path nor
+ *    the catch ran and the button silently did nothing at all. A bare `await`
+ *    on that promise has no timeout, so it is raced against one.
+ * 2. There is a synchronous fallback that works in exactly those cases
+ *    (`document.execCommand("copy")` over a hidden textarea). Deprecated, but
+ *    it is the difference between a receipt you can paste and a dead button.
+ *
+ * Always resolves — true if the text is on the clipboard, false if it is not,
+ * and false is always accompanied by something the user can see.
+ */
 export async function copyText(text, button, okLabel = "Copied ✓") {
-  try {
-    await navigator.clipboard.writeText(text || "");
-    if (button) {
-      const prev = button.textContent;
-      button.textContent = okLabel;
-      setTimeout(() => { button.textContent = prev; }, 1400);
-    } else { toast("Copied to clipboard"); }
+  const s = text == null ? "" : String(text);
+  const done = (ok) => {
+    if (!ok) { toast("Could not copy — select the text and copy it by hand", true); return false; }
+    if (button) flashCopied(button, okLabel); else toast("Copied to clipboard");
     return true;
+  };
+
+  let ok = false;
+  try {
+    const write = navigator.clipboard && navigator.clipboard.writeText
+      ? navigator.clipboard.writeText(s)
+      : Promise.reject(new Error("no clipboard API"));
+    // TIMEOUT, the whole point: a promise that never settles must not be able
+    // to leave the button in "nothing happened".
+    ok = await Promise.race([
+      write.then(() => true, () => false),
+      new Promise((res) => setTimeout(() => res(false), 800)),
+    ]);
   } catch (e) {
-    toast("Could not copy to the clipboard", true);
+    ok = false;
+  }
+  if (ok) return done(true);
+  return done(copyFallback(s));
+}
+
+/**
+ * Confirm ON the control that was pressed, then put it back exactly as it was.
+ *
+ * `button.textContent = okLabel` was wrong for an ICON button: its text is ""
+ * (the content is an <svg>), so the swap deleted the icon and "restoring" it
+ * restored the empty string — a button that vanishes on success. Children are
+ * saved and replaced, and an icon-only button flashes a tick instead of text.
+ */
+function flashCopied(button, okLabel) {
+  const prev = Array.from(button.childNodes);
+  const iconOnly = !String(button.textContent || "").trim();
+  button.replaceChildren(iconOnly
+    ? icon("check", { size: 13 })
+    : document.createTextNode(okLabel));
+  const said = button.getAttribute("aria-label");
+  if (iconOnly && said) button.setAttribute("aria-label", "Copied");
+  setTimeout(() => {
+    button.replaceChildren(...prev);
+    if (iconOnly && said) button.setAttribute("aria-label", said);
+  }, 1400);
+}
+
+/** the synchronous path — works while the async API is hung or unavailable */
+function copyFallback(s) {
+  try {
+    const ta = el("textarea", {
+      value: s,
+      attrs: { readonly: "", "aria-hidden": "true", tabindex: "-1" },
+      style: { position: "fixed", top: "0", left: "-9999px", opacity: "0" },
+    });
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, s.length);
+    const ok = document.execCommand && document.execCommand("copy");
+    ta.remove();
+    return !!ok;
+  } catch (e) {
     return false;
   }
 }

@@ -1499,15 +1499,24 @@ function dossierCell(r) {
   ]);
 }
 
+/**
+ * A commit sha and the button that copies it — which confirms ON ITSELF.
+ *
+ * copyText() only shows the on-button tick when it is GIVEN the button;
+ * without it the only feedback is a toast in the far corner, which is not
+ * where you are looking after clicking a 12px icon next to a sha.
+ */
+function shaWithCopy(sha) {
+  const b = iconBtn("copy", "Copy commit " + sha, () => copyText(sha, b),
+    { ghost: true, size: 12 });
+  return el("span", "hstack-tight", [el("code", null, sha), b]);
+}
+
 function registryCell(r) {
   const rc = r.registry_change || {};
   if (rc.state === "committed") {
     return el("div", "stack-1", (rc.commits || []).map((c) => el("div", "stack-1", [
-      el("span", "hstack-tight", [
-        el("code", null, c.sha),
-        iconBtn("copy", "Copy commit " + c.sha, () => copyText(c.sha),
-          { ghost: true, size: 12 }),
-      ]),
+      shaWithCopy(c.sha),
       el("div", "small muted", c.subject || ""),
     ])));
   }
@@ -1546,6 +1555,19 @@ function partsCell(r) {
   }
   return el("div", { class: "small", attrs: { title: p.join(", ") } },
     p.join(", "));
+}
+
+/**
+ * The per-source story for one IST day, openable from OUTSIDE Activity.
+ *
+ * Knowledge's "Fathom ingest" tile used to end in a caveat naming this screen
+ * ("the per-run detail lives under Activity"). Both tiles are real and they
+ * are different — Knowledge reports the poll's STATE, this reports the CALLS —
+ * so the fix is a door between them, not a second implementation of this
+ * table. `day` rather than the whole `act` object is all this ever needed.
+ */
+export function openSourcesDrill(ctx, day, type, ev) {
+  return drillSources(ctx, { day }, type, ev);
 }
 
 async function drillSources(ctx, act, type, ev) {
@@ -1751,14 +1773,7 @@ function drillRegistry(act) {
     total: reg.count,
     columns: [
       { key: "at", label: "At", render: (c) => fmt.dateTime(c.at) },
-      {
-        key: "sha", label: "Commit",
-        render: (c) => el("span", "hstack-tight", [
-          el("code", null, c.sha),
-          iconBtn("copy", "Copy commit " + c.sha, () => copyText(c.sha),
-            { ghost: true, size: 12 }),
-        ]),
-      },
+      { key: "sha", label: "Commit", render: (c) => shaWithCopy(c.sha) },
       {
         key: "change", label: "What changed",
         render: (c) => (c.change

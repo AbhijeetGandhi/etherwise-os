@@ -10,11 +10,13 @@ Tests use make_server(host, port, db_path, token) on an ephemeral port.
 """
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import os
 import secrets
 import stat
+from email.utils import formatdate, parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Optional
@@ -147,19 +149,79 @@ class Handler(BaseHTTPRequestHandler):
         return bool(token) and \
             self.headers.get("X-Cockpit-Token") == token
 
-    def _send(self, status: int, body: bytes, content_type: str) -> None:
+    def _send(self, status: int, body: bytes, content_type: str,
+              extra: Optional[dict] = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         # localhost single-user tool; lock down embedding/sniffing
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
     def _json(self, status: int, obj) -> None:
-        self._send(status, json.dumps(obj).encode(), "application/json")
+        # API reads are live state. A JSON body must never be cached, and
+        # "no cache headers at all" is not the same thing as "do not cache":
+        # HTTP/1.0 lets a client heuristically reuse an un-validated response.
+        self._send(status, json.dumps(obj).encode(),
+                   "application/json", {"Cache-Control": "no-store"})
+
+    # ── static caching ────────────────────────────────────────────────────
+    # THE DEFECT THIS EXISTS FOR (2026-08-13): /static/* went out with no
+    # Cache-Control, no ETag and no Last-Modified. Under HTTP/1.0 that leaves
+    # freshness entirely to the browser's heuristic, and Chrome duly served a
+    # 22 KB today.js out of memory cache while disk held 32 KB. A hash-only SPA
+    # navigation never re-requests a module, so every fix shipped that day was
+    # invisible in the tab that was open — which makes EVERY other fix
+    # unverifiable, not just slow to appear.
+    #
+    # The contract now: `no-cache` (store it, but revalidate before every
+    # reuse) plus a STRONG ETag over the exact bytes served, and Last-Modified
+    # as the weak fallback. Unchanged file → 304 with no body; changed file →
+    # a different ETag and the new bytes, on the very next request. The hash is
+    # taken over the bytes themselves rather than (mtime, size): a same-second,
+    # same-length edit is exactly the case that produced this bug, and a
+    # validator that cannot see it would reintroduce it.
+
+    @staticmethod
+    def _etag_for(body: bytes) -> str:
+        return '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+
+    def _if_none_match(self, etag: str) -> Optional[bool]:
+        """True/False if the request carried If-None-Match, else None.
+
+        RFC 9110 §13.1.2: a list, `*` matches anything, and the comparison is
+        weak — `W/"x"` and `"x"` are the same entity for a GET.
+        """
+        raw = self.headers.get("If-None-Match")
+        if not raw:
+            return None
+        if raw.strip() == "*":
+            return True
+        for cand in raw.split(","):
+            c = cand.strip()
+            if c.startswith("W/"):
+                c = c[2:]
+            if c == etag:
+                return True
+        return False
+
+    def _not_modified_since(self, mtime: float) -> bool:
+        raw = self.headers.get("If-Modified-Since")
+        if not raw:
+            return False
+        try:
+            since = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            return False
+        if since is None:
+            return False
+        # both sides to whole seconds — Last-Modified has no sub-second part
+        return int(mtime) <= int(since.timestamp())
 
     def _static(self, path: str) -> None:
         rel = "index.html" if path in ("/", "/index.html") \
@@ -169,8 +231,33 @@ class Handler(BaseHTTPRequestHandler):
         if STATIC_DIR not in target.parents or not target.is_file():
             self._json(404, {"error": "not found"})
             return
-        self._send(200, target.read_bytes(),
-                   _CT.get(target.suffix, "application/octet-stream"))
+        try:
+            body = target.read_bytes()
+            mtime = target.stat().st_mtime
+        except OSError:
+            self._json(404, {"error": "not found"})
+            return
+        etag = self._etag_for(body)
+        validators = {
+            "Cache-Control": "no-cache",
+            "ETag": etag,
+            "Last-Modified": formatdate(mtime, usegmt=True),
+        }
+        inm = self._if_none_match(etag)
+        fresh = inm if inm is not None else self._not_modified_since(mtime)
+        if fresh:
+            # 304 carries the validators and NO body (RFC 9110 §15.4.5), so it
+            # is also the one response that must not claim a Content-Length.
+            self.send_response(304)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            for k, v in validators.items():
+                self.send_header(k, v)
+            self.end_headers()
+            return
+        self._send(200, body,
+                   _CT.get(target.suffix, "application/octet-stream"),
+                   validators)
 
     # ── verbs ─────────────────────────────────────────────────────────────
     def do_GET(self) -> None:

@@ -1084,15 +1084,27 @@ export async function render(root, ctx) {
       [["dt", "Date", false], ["b", "Bucket", false], ["t", "Type", false],
        ["s", "Source", false], ["d", "Description", false], ["u", "Amount", true]]
         .forEach(([k, label, num]) => {
+          // The arrow said which column was sorted and which way; the markup
+          // said nothing. `aria-sort` on the <th> is how a table states that,
+          // and the button's NAME has to change with its state too — a static
+          // "sort by Date" announces the control as if nothing had happened,
+          // on the column that is already sorted.
+          const active = sortKey === k;
+          const dir = sortDir < 0 ? "descending" : "ascending";
           const th = el("th", num ? "num" : null);
+          if (active) th.setAttribute("aria-sort", dir);
           th.appendChild(el("button", {
             class: "linknum", type: "button",
-            attrs: { "aria-label": "sort by " + label },
+            attrs: {
+              "aria-label": active
+                ? `sorted by ${label}, ${dir} — press to reverse`
+                : `sort by ${label}`,
+            },
             on: { click: () => {
               if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
               draw();
             } },
-          }, label + (sortKey === k ? (sortDir < 0 ? " ▼" : " ▲") : "")));
+          }, label + (active ? (sortDir < 0 ? " ▼" : " ▲") : "")));
           hr.appendChild(th);
         });
       t.appendChild(el("thead", null, hr));
@@ -1273,7 +1285,17 @@ function importCard(ctx) {
 
     KINDS.forEach(([kind, label, hint, accept]) => {
       const input = el("input", { type: "file", accept, style: { display: "none" } });
-      const go = btn("Upload", () => input.click(), { sm: true, icon: "upload" });
+      // SIX buttons, all reading "Upload". The visible label sits in a sibling
+      // <b>, so the accessible NAME of every one of them was the same word —
+      // "list the buttons" offered six identical choices and nothing said
+      // which one writes to the bank ledger and which to the Upwork agency
+      // one. Importing a Wise CSV as a card statement is not a cosmetic error.
+      const go = btn("Upload", () => input.click(), {
+        sm: true, icon: "upload",
+        aria: `Upload ${label} — ${hint}`,
+        title: `Choose a file to stage as ${label} (${hint}). Nothing is`
+          + ` written until you read the dry-run and click Commit.`,
+      });
       input.addEventListener("change", () => {
         if (input.files[0]) doUpload(kind, input.files[0], go, out, ctx);
         input.value = "";

@@ -129,7 +129,7 @@ export async function render(root, ctx) {
       + " worth, and every answer carries its citations"),
     freshnessLine(fr, dossiers),
     askCard(d, ctx),
-    statCards(d, dossiers, totals),
+    statCards(d, dossiers, totals, ctx),
     searchCard(ctx),
     ...dossierRegion(dossiers, fr, ctx),
   );
@@ -183,7 +183,8 @@ function askCard(d, ctx) {
     if (!list.length) return;
     const og = el("optgroup", { attrs: { label: `${label} (${list.length})` } });
     list.forEach((x) => og.appendChild(el("option", { value: x.client_id },
-      `${x.client_name || x.client_id} — ${fmt.num(x.fact_count)} facts`)));
+      `${x.client_name || x.client_id} — ${fmt.num(x.fact_count)}`
+      + ` fact${x.fact_count === 1 ? "" : "s"}`)));
     sel.appendChild(og);
   };
   group("With facts", withFacts);
@@ -343,7 +344,50 @@ function answerBlock(a, meta2) {
 
 /* ── 3. the four stat cards ───────────────────────────────────────────────── */
 
-function statCards(d, dossiers, t) {
+/** the IST calendar day a stored timestamp falls in — the unit Activity's
+ *  digest and /api/activity/sources are both keyed on. */
+function istDayOf(ts) {
+  const s = String(ts || "");
+  if (!s) return null;
+  const d = new Date(s.includes("T") ? s : s.replace(" ", "T"));
+  if (Number.isNaN(+d)) return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+  return new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);
+}
+
+/**
+ * The note under the Fathom state table: a real way through to the calls.
+ *
+ * Activity already builds the per-transcript story — one row per source with
+ * who was on the call, which client it was filed under and HOW that was
+ * decided, what came out of it and what it cost. Knowledge's tile knew that
+ * and said so in prose, which left the reader to go and find it. This opens
+ * it, in place, for the day the last poll ran. The module is pulled on the
+ * click, not on page load: Knowledge does not otherwise need it.
+ */
+function fathomCallsNote(f, ctx) {
+  const base = "/api/knowledge returns the poll's STATE, not the transcripts it"
+    + " pulled — those are counted per IST day, not per poll.";
+  const day = istDayOf(f.last_poll);
+  if (!day) return base + " No poll has completed, so there is no day to open.";
+  const n = f.last_saved;
+  const go = btn(
+    n ? `Show the ${fmt.num(n)} call${n === 1 ? "" : "s"} from that poll`
+      : "Show what was ingested that day",
+    async (e) => {
+      const mod = await import("./activity.js");
+      mod.openSourcesDrill(ctx, day, "fathom", e);
+    },
+    { sm: true, icon: "arrow-up-right" });
+  return el("div", "stack-1", [
+    el("div", null, base + ` The last poll finished on ${fmt.date(day)} (IST);`
+      + " Activity holds one row per call ingested that day — who was on it,"
+      + " which client it was filed under and how that was decided, what came"
+      + " out of it, and what it cost."),
+    go,
+  ]);
+}
+
+function statCards(d, dossiers, t, ctx) {
   const g = el("div", "grid-4");
 
   // the part of the kb no dossier can account for. dossier_index carries a
@@ -429,8 +473,7 @@ function statCards(d, dossiers, t) {
         + " kb is not just quiet, it is blind",
     onClick: () => openDrill({
       title: "Fathom ingest state",
-      subtitle: "the poll runs inside the kb_daily task — open that run under"
-        + " Activity for exactly which calls it saved",
+      subtitle: "the poll runs inside the kb_daily task",
       rows: [
         { k: "Last poll", v: f.last_poll || null },
         { k: "Cursor (caught up to)", v: f.cursor || null },
@@ -441,8 +484,14 @@ function statCards(d, dossiers, t) {
         { key: "k", label: "Field" },
         { key: "v", label: "Value", cls: "mono" },
       ],
-      note: "/api/knowledge returns the poll's STATE, not the transcripts it"
-        + " pulled. The per-run detail lives in the kb_daily run under Activity.",
+      // This tile reports the poll's STATE ("daily ✓"), and a state table is
+      // the honest drill for it. But the note used to stop at "the per-run
+      // detail lives under Activity" — a caveat pointing at a screen, which is
+      // a dead end you have to navigate yourself. The per-transcript story is
+      // REAL (/api/activity/sources?source_type=fathom, one row per call with
+      // its attribution, facts, dossier, cost and any registry commit), so the
+      // note now opens it instead of naming it.
+      note: fathomCallsNote(f, ctx),
       emptyText: "The Fathom poll has never run.",
     }),
   }));
@@ -725,7 +774,7 @@ async function openDossier(entry, ctx, host) {
   const metaLine = el("div", "muted small", [
     `${fmt.num(facts.length)} client fact${facts.length === 1 ? "" : "s"} · `,
     sources.length
-      ? linkNum(`${fmt.num(sources.length)} sources`, () => openDrill({
+      ? linkNum(`${fmt.num(sources.length)} source${sources.length === 1 ? "" : "s"}`, () => openDrill({
         title: `Sources — ${m.client_name || d.client}`,
         subtitle: "the meetings, recordings, threads and documents these facts"
           + " were extracted from",
