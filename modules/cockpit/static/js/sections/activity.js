@@ -1,44 +1,1469 @@
 // ════════════════════════════════════════════════════════════════════════════
-// sections/activity.js — NOT PORTED YET. Overwrite this whole file.
+// sections/activity.js — "where can I see everything the system is doing on a
+// daily basis, and every run, with details."  (brief §3 — the surface Abhijeet
+// asked for by name.)
 //
-// Read js/sections/today.js first: it is the worked reference for this contract.
-// v1 source to port from: modules/cockpit/static/_legacy/RENDERERS.System (app.js v1 ~L213-363) + the NEW run log
+// THREE STACKED REGIONS, top to bottom:
 //
-// THE HIGHEST-PRIORITY NEW SURFACE (brief §3). Three stacked regions:
-//   3a daily digest — plain language, one line per real thing, date picker,
-//      'nothing ran' on an empty day. /api/activity?day=YYYY-MM-DD.
-//   3b run log — every row in runs, newest first, filterable, click for the full
-//      metrics JSON + anomalies + claude_usage + (on failure) error and Re-run
-//      (/api/rerun, allowlisted). /api/activity/run?run_id=N.
-//   3c the old System content — doctor, source health, spend vs ceilings, shadow
-//      ledger, anomalies, and the Run-now buttons (ctx.kick).
+//   1 DAILY DIGEST   plain language, one line per real thing, with the
+//                    previous-day comparison ONLY where the payload actually
+//                    carries a prev_* (never a computed guess). Fathom
+//                    transcripts lead, because they are the thing he named.
+//                    Registry changes come from `registry` — git commits on
+//                    config/clients.yaml, each with sha/subject/insertions —
+//                    which is the only record that "2 clients added" happened.
+//                    `empty: true` renders "nothing ran", not a shell of zeros.
 //
-// CONTRACT (enforced by app.js):
-//   export const meta = { title, hint };
-//   export async function render(root, ctx) { … }
-//   ctx = { api, post, kick, refresh, navigate, section, params }
-//   Own nothing global. Use ui.js for every primitive, drill.js for every
-//   drill, charts.js for every chart. `—` = not measured, `0` = a real zero
-//   that carries a note. Every figure drills. No send route, ever.
+//   2 RUN LOG        every row in runs, newest first, filterable by task and
+//                    status, one row expands IN PLACE into the full detail:
+//                    readable metrics, the anomalies that run raised, its
+//                    model calls, and on a failure the error + Re-run.
+//
+//   3 SYSTEM HEALTH  v1's System tab in full — Run-now, the four cards, and
+//                    the Jobs / Source health / Anomalies / Doctor checks /
+//                    Shadow ledger tables. The per-status copy there is
+//                    VERBATIM from v1 on purpose: each phrase was written
+//                    after a specific misread ("never produced a successful
+//                    run" is not the same fault as "ran but output was thin").
+//
+// THE COST HONESTY RULE (this file's one hard-won rule):
+//   `claude_usage.run_id` has never been written by any task. So a run's cost
+//   is almost always a TIME-WINDOW match on (task, started..completed), which
+//   is an inference, not a ledger link. Every windowed figure here is prefixed
+//   `≈` and says so; `usage.attribution` ("run_id" | "window" | "none") drives
+//   the wording, and `spend.unattributed_usd` — the spend no run can claim —
+//   gets its OWN line and is never folded into a total.
+//
+// CONTRACT (enforced by app.js): meta + async render(root, ctx). Own nothing
+// global. ui.js for primitives, drill.js for drills, charts.js for charts.
+// `—` = not measured · `0` = a real zero and it says why. No send route.
 // ════════════════════════════════════════════════════════════════════════════
 
 "use strict";
 
-import { el, heading, emptyState } from "../ui.js";
+import {
+  el, clear, fmt, dash, icon, heading, card, kpi, pill, btn, linkNum,
+  table, emptyState, notice, expander, skeleton,
+} from "../ui.js";
+import { openDrill } from "../drill.js";
+import { chart, axes } from "../charts.js";
 
 export const meta = { title: "Activity", hint: "everything the system did, run by run" };
 
+const TREND_KEY = "ew_cockpit_activity_trend";     // "7" | "14" | "30"
+const TREND_DEFAULT = 14;
+
+/* ── day helpers ──────────────────────────────────────────────────────────────
+   The server's day is an IST CALENDAR DATE. The browser may sit in any zone, so
+   "today" is computed as UTC+5:30 explicitly rather than from the local clock —
+   otherwise the date picker and the payload disagree either side of midnight. */
+
+function istToday() {
+  return new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+}
+
+function shiftDay(iso, n) {
+  const d = new Date(String(iso).slice(0, 10) + "T00:00:00Z");
+  if (Number.isNaN(+d)) return iso;
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function normDay(raw) {
+  const s = String(raw || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function daysEndingAt(day, n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) out.push(shiftDay(day, -i));
+  return out;
+}
+
+/** "16:56" — the log is already scoped to one day, so the date is noise. */
+const hhmm = (ts) => (ts ? String(ts).slice(11, 16) : null);
+
+/* ── small shared bits ────────────────────────────────────────────────────── */
+
+const STATUS_TONE = { completed: "completed", failed: "failed", running: "info" };
+
+function statusPill(s) {
+  const name = String(s || "unknown");
+  return pill(name.replace(/_/g, " "), STATUS_TONE[name] || "outline");
+}
+
+function doctorTone(worst) {
+  const w = String(worst || "").toUpperCase();
+  if (w === "PASS" || w === "GREEN") return "ok";
+  if (w === "WARN") return "warn";
+  if (w === "?" || w === "") return "outline";
+  return "fail";
+}
+
+/**
+ * "yesterday 4 (+1)" — rendered ONLY from a prev_* the server sent. A missing
+ * comparison prints nothing rather than implying a zero baseline.
+ */
+function vsPrev(cur, prev, f = fmt.num) {
+  if (cur == null || prev == null) return null;
+  const diff = Number(cur) - Number(prev);
+  const sign = diff > 0 ? "+" : "−";
+  return el("span", "muted small nowrap",
+    `yesterday ${f(prev)}` + (diff ? ` (${sign}${f(Math.abs(diff))})` : " · no change"));
+}
+
+/** one digest line: an icon, a sentence, an optional sub-line, a right slot. */
+function digestLine(iconName, tone, body, sub, right) {
+  return el("div", "lead-row", [
+    el("div", "grow", [
+      el("div", "hstack", [
+        icon(iconName, { size: 15, class: tone || "muted" }),
+        el("div", "grow", body),
+      ]),
+      sub ? el("div", { class: "muted small", style: { marginTop: "3px", paddingLeft: "23px" } }, sub) : null,
+    ]),
+    right ? el("div", "lead-right", right) : null,
+  ]);
+}
+
+/* ── render ───────────────────────────────────────────────────────────────── */
+
 export async function render(root, ctx) {
+  const day = normDay(ctx.params.get("day")) || istToday();
+  const focusRun = String(ctx.params.get("run") || "").trim();
+
+  const act = await ctx.api("/api/activity?day=" + encodeURIComponent(day));
+
+  // a malformed ?day= returns {error}, not a 500 — say so and keep the picker
+  if (act && act.error) {
+    root.append(
+      heading("Activity", "— everything the system did, run by run"),
+      dayBar(day, ctx),
+      el("div", "errstate", String(act.error)),
+    );
+    return;
+  }
+
+  // System is a second read: if it fails the daily digest must still render.
+  const sys = await ctx.api("/api/system").catch((e) => {
+    if (e && e.unauthorized) throw e;               // let the router unlock
+    return { __error: String((e && e.message) || e) };
+  });
+
   root.append(
     heading("Activity", "— everything the system did, run by run"),
-    el("div", "card", emptyState(
-      "This section has not been rebuilt yet.",
-      {
-        icon: "refresh-cw",
-        title: "Activity is being ported",
-        detail: "The v1 implementation is preserved at"
-          + " static/_legacy/app.js and still works; this rebuild ports it"
-          + " section by section onto the shared ui/drill/charts modules.",
-      })),
+    dayBar(day, ctx),
+    ...digestRegion(act, ctx, day),
+    ...runLogRegion(act, ctx, focusRun),
+    ...systemRegion(sys, ctx),
   );
+}
+
+/* ── the date bar ─────────────────────────────────────────────────────────── */
+
+function dayBar(day, ctx) {
+  const today = istToday();
+  const go = (d) => ctx.navigate("activity", { day: d });
+
+  const picker = el("input", {
+    type: "date", value: day, class: "input",
+    attrs: { max: today, "aria-label": "show the day" },
+    on: { change: (e) => { const d = normDay(e.target.value); if (d) go(d); } },
+  });
+
+  const label = day === today ? "today"
+    : day === shiftDay(today, -1) ? "yesterday"
+      : fmt.date(day);
+
+  return el("div", "card", el("div", "between", [
+    el("div", "hstack", [
+      icon("calendar", { size: 15, class: "muted" }),
+      el("strong", null, fmt.date(day)),
+      el("span", "muted small", "· " + label + " · IST calendar day"),
+    ]),
+    el("div", "hstack-tight", [
+      btn("← Previous", () => go(shiftDay(day, -1)), { sm: true }),
+      picker,
+      btn("Next →", () => go(shiftDay(day, 1)), { sm: true, disabled: day >= today }),
+      btn("Today", () => go(today), { sm: true, disabled: day === today }),
+    ]),
+  ]));
+}
+
+/* ══ 1. DAILY DIGEST ══════════════════════════════════════════════════════ */
+
+function digestRegion(act, ctx, day) {
+  const out = [heading("What the system did", "— " + fmt.date(day), "h3")];
+
+  if (act.empty) {
+    out.push(el("div", "card", emptyState(
+      "Nothing ran on " + fmt.date(day) + ".",
+      {
+        icon: "moon",
+        title: "Nothing ran",
+        detail: "No run started, nothing was ingested, no fact was extracted,"
+          + " the client registry did not change, no model call was billed and"
+          + " no card was opened or closed. This is a real empty day, not a"
+          + " failed read — walk back with the date picker above.",
+      })));
+    out.push(trendCard(ctx, day));
+    return out;
+  }
+
+  out.push(glanceCards(act, ctx));
+  out.push(digestCard(act, ctx));
+  out.push(trendCard(ctx, day));
+  return out;
+}
+
+/** five figures, each a real button, each drilling to the rows behind it. */
+function glanceCards(act, ctx) {
+  const g = el("div", "grid");
+  const ing = act.ingest || {}, f = act.facts || {}, r = act.runs || {},
+    sp = act.spend || {}, reg = act.registry || {};
+
+  // 1) FATHOM — the thing he asked for by name, so it leads.
+  const fathom = ing.fathom_transcripts;
+  g.appendChild(kpi({
+    label: "Fathom transcripts",
+    value: dash(fathom, fmt.num),
+    sub: fathom === 0
+      ? "a true zero — the Fathom poll runs inside kb_daily; "
+        + (ranToday(r, "kb_daily")
+          ? "kb_daily ran today and found no new call to pull"
+          : "kb_daily has not run yet on this day")
+      : `pulled into the knowledge base · ${dash(ing.extracted, fmt.num)} of `
+        + `${dash(ing.total, fmt.num)} sources today reached extraction`,
+    onClick: () => drillIngest(act),
+  }));
+
+  // 2) FACTS
+  g.appendChild(kpi({
+    label: "Facts extracted",
+    value: dash(f.total, fmt.num),
+    sub: f.total === 0
+      ? "a true zero — nothing was extracted from any source on this day"
+      : `across ${dash(f.clients, fmt.num)} client${f.clients === 1 ? "" : "s"}`
+        + ` · yesterday ${fmt.num(f.prev_total)}`,
+    onClick: () => drillFacts(act),
+  }));
+
+  // 3) REGISTRY — invisible until now; every approval writes a git commit
+  g.appendChild(kpi({
+    label: "Registry changes",
+    value: reg.note ? "—" : dash(reg.count, fmt.num),
+    stale: !!reg.note,
+    sub: reg.note ? reg.note
+      : reg.count === 0
+        ? "a true zero — config/clients.yaml was not touched on this day"
+        : `commits on ${reg.file} · +${fmt.num(reg.insertions)} −${fmt.num(reg.deletions)} lines`,
+    onClick: reg.count ? () => drillRegistry(act) : null,
+  }));
+
+  // 4) RUNS
+  g.appendChild(kpi({
+    label: "Runs",
+    value: dash(r.total, fmt.num),
+    warn: r.failed ? `${fmt.num(r.failed)} failed` : null,
+    sub: `${fmt.num(r.completed)} completed · ${fmt.num(r.skipped)} skipped`
+      + (r.running ? ` · ${fmt.num(r.running)} still running` : "")
+      + ` · yesterday ${fmt.num(r.prev_total)}`,
+    onClick: () => drillRuns(act),
+  }));
+
+  // 5) SPEND — exact (claude_usage.ist_date is authoritative for the DAY; only
+  //    the per-RUN split below is inferred)
+  g.appendChild(kpi({
+    label: "Model spend",
+    value: dash(sp.usd, fmt.usd2),
+    sub: sp.usd === 0
+      ? "a true zero — no model call was billed on this day"
+      : `${fmt.num(sp.calls)} calls · yesterday ${fmt.usd2(sp.prev_usd)}`,
+    onClick: () => drillSpendByTask(act),
+  }));
+
+  return g;
+}
+
+/** did this task run at all on this day? (drives the honest zero-notes) */
+function ranToday(runs, task) {
+  return (runs.by_task || []).some((t) => t.task === task);
+}
+
+function digestCard(act, ctx) {
+  const ing = act.ingest || {}, f = act.facts || {}, r = act.runs || {},
+    sp = act.spend || {}, reg = act.registry || {}, th = act.threads || {},
+    nd = act.nudges || {}, sh = act.shadow || {};
+  const box = el("div", "card flush");
+
+  // ── FATHOM, unmissable ──────────────────────────────────────────────────
+  const nF = ing.fathom_transcripts;
+  box.appendChild(el("div", { style: { padding: "var(--space-4) var(--space-5) 0" } },
+    nF
+      ? notice("ok", `${fmt.num(nF)} Fathom call transcript${nF === 1 ? " was" : "s were"}`
+        + ` transcribed and added to the knowledge base today.`, {
+        children: el("div", { class: "small", style: { marginTop: "4px" } },
+          "Fathom is polled inside the kb_daily task — open that run below to see"
+          + " exactly which calls it saved."),
+      })
+      : notice("info", "No Fathom transcript came in today.", {
+        children: el("div", { class: "small", style: { marginTop: "4px" } },
+          ranToday(r, "kb_daily")
+            ? "kb_daily ran and found no new call to pull — a real zero, not a gap."
+            : "kb_daily has not run yet on this day, so nothing has been polled."),
+      })));
+
+  // ── sources ingested ────────────────────────────────────────────────────
+  const byType = ing.by_source_type || {};
+  const typeBits = Object.entries(byType)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${fmt.num(n)} ${k}`).join(" · ");
+  box.appendChild(digestLine("inbox", "muted", [
+    linkNum(fmt.num(ing.total), () => drillIngest(act)),
+    ing.total === 1 ? " source was ingested" : " sources were ingested",
+    typeBits ? " — " + typeBits + "." : ".",
+  ],
+    ing.total
+      ? `${fmt.num(ing.extracted)} of them reached extraction`
+        + (ing.extracted === 0 ? " — a true zero: nothing has been read for facts yet" : "")
+      : "a true zero — no source landed on this day",
+    vsPrev(ing.total, ing.prev_total)));
+
+  // ── facts ───────────────────────────────────────────────────────────────
+  box.appendChild(digestLine("book-open", "muted", [
+    linkNum(fmt.num(f.total), () => drillFacts(act)),
+    f.total === 1 ? " fact was extracted across " : " facts were extracted across ",
+    el("b", null, fmt.num(f.clients)),
+    f.clients === 1 ? " client." : " clients.",
+  ],
+    (f.by_client || []).length
+      ? "most on " + f.by_client.slice(0, 3)
+        .map((c) => `${c.client} (${fmt.num(c.n)})`).join(", ")
+      : "a true zero — no source produced a fact on this day",
+    vsPrev(f.total, f.prev_total)));
+
+  // ── registry (git commits on clients.yaml) ──────────────────────────────
+  if (reg.note) {
+    box.appendChild(digestLine("file-text", "neg",
+      "Registry history could not be read for this day.", reg.note));
+  } else if (reg.count) {
+    box.appendChild(digestLine("file-text", "pos", [
+      "The client registry changed — ",
+      linkNum(fmt.num(reg.count), () => drillRegistry(act)),
+      reg.count === 1 ? " audited commit on " : " audited commits on ",
+      el("code", null, reg.file),
+      ` (+${fmt.num(reg.insertions)} −${fmt.num(reg.deletions)} lines).`,
+    ], (reg.commits || []).slice(0, 3).map((c) => c.subject).join(" · ")));
+  } else {
+    box.appendChild(digestLine("file-text", "muted",
+      "The client registry did not change today.",
+      `a true zero — no commit touched ${reg.file || "config/clients.yaml"};`
+      + " every approval writes one, so no commit means no approval landed"));
+  }
+
+  // ── threads / attribution ───────────────────────────────────────────────
+  box.appendChild(digestLine("message-square", "muted", [
+    el("b", null, fmt.num(th.new)),
+    th.new === 1 ? " new thread was seen · " : " new threads were seen · ",
+    el("b", null, fmt.num(th.mapping_resolved)),
+    " event" + (th.mapping_resolved === 1 ? " was" : "s were") + " resolved to a client.",
+  ], (th.note ? th.note + " · " : "")
+    + `${fmt.num(th.attributed_total)} threads attributed in total,`
+    + ` ${fmt.num(th.unattributed_total)} still unattributed`,
+  vsPrev(th.new, th.prev_new)));
+
+  // ── runs ────────────────────────────────────────────────────────────────
+  box.appendChild(digestLine("activity", r.failed ? "neg" : "muted", [
+    linkNum(fmt.num(r.total), () => drillRuns(act)),
+    r.total === 1 ? " run started — " : " runs started — ",
+    `${fmt.num(r.completed)} completed, ${fmt.num(r.skipped)} skipped, `,
+    r.failed
+      ? el("b", "neg", `${fmt.num(r.failed)} failed`)
+      : el("span", null, "0 failed"),
+    r.running ? `, ${fmt.num(r.running)} still running` : "",
+    ` · ${fmt.duration(r.wall_seconds)} of wall time.`,
+  ],
+  r.failed === 0
+    ? "the 0 is a true zero — every run on this day ended completed, skipped, or is still going"
+    : "open the failed runs in the log below for the error and a re-run",
+  vsPrev(r.total, r.prev_total)));
+
+  // ── spend, and then the part of it no run can claim ─────────────────────
+  box.appendChild(digestLine("wallet", "muted", [
+    linkNum(fmt.usd2(sp.usd), () => drillSpendByTask(act)),
+    ` was billed across ${fmt.num(sp.calls)} model call${sp.calls === 1 ? "" : "s"}.`,
+  ],
+  sp.calls === 0 ? "a true zero — no model call was made on this day" : null,
+  vsPrev(sp.usd, sp.prev_usd, fmt.usd2)));
+
+  if (sp.calls) {
+    const un = sp.unattributed_usd;
+    box.appendChild(digestLine("alert-triangle", un ? "neg" : "pos", [
+      el("b", null, fmt.usd2(un)),
+      un
+        ? " of that spend could not be tied to any run."
+        : " of that spend is unattributed — every call fell inside a run's window.",
+    ], un
+      ? "cost is matched to a run by task + time window (claude_usage.run_id has"
+        + " never been written), so a call logged under a different task name than"
+        + " the run — kb_extract inside kb_daily, for example — matches nothing."
+        + " It is shown on its own line and is never folded into a per-run figure."
+      : "a true zero — nothing was left over after the window match"));
+  }
+
+  // ── nudges ──────────────────────────────────────────────────────────────
+  box.appendChild(digestLine("list-checks", "muted", [
+    linkNum(fmt.num(nd.created), () => drillNudges(act)),
+    nd.created === 1 ? " card was opened, " : " cards were opened, ",
+    el("b", null, fmt.num(nd.closed)),
+    " closed",
+    nd.closed ? ` (${fmt.num(nd.done)} done, ${fmt.num(nd.dismissed)} dismissed).` : ".",
+  ],
+  nd.created === 0 ? "a true zero — the sweep opened nothing new on this day" : null,
+  vsPrev(nd.created, nd.prev_created)));
+
+  // ── shadow ledger ───────────────────────────────────────────────────────
+  box.appendChild(digestLine("eye-off", "muted", [
+    sh.total
+      ? linkNum(fmt.num(sh.total), () => drillShadowDay(act))
+      : el("b", null, "0"),
+    sh.total === 1 ? " write intent was held (not sent)." : " write intents were held (not sent).",
+  ], sh.total
+    ? "shadow mode captured these instead of writing them out — cutover evidence"
+    : "a true zero — no module tried an external write on this day, or the module is live"));
+
+  return box;
+}
+
+/* ── the trend chart (loads after first paint; re-themes by construction) ─── */
+
+function trendCard(ctx, day) {
+  const host = el("div", "card");
+  const body = el("div");
+  const stored = parseInt(localStorage.getItem(TREND_KEY), 10);
+  let days = [7, 14, 30].includes(stored) ? stored : TREND_DEFAULT;
+
+  const seg = el("div", "segmented", [7, 14, 30].map((n) =>
+    el("button", {
+      class: "segbtn" + (n === days ? " on" : ""), type: "button",
+      attrs: { "aria-pressed": String(n === days) },
+      on: {
+        click: (e) => {
+          days = n;
+          localStorage.setItem(TREND_KEY, String(n));
+          seg.querySelectorAll(".segbtn").forEach((b) => b.classList.remove("on"));
+          e.currentTarget.classList.add("on");
+          load();
+        },
+      },
+    }, n + "d")));
+
+  host.append(
+    el("div", "card-head", [
+      el("h3", "card-title", "Runs and spend, day by day"),
+      seg,
+    ]),
+    body,
+  );
+
+  // the chart handle is kept so a range change DESTROYS the previous chart —
+  // charts.js keeps every live handle for the theme flip, and an orphan whose
+  // canvas has been cleared out of the DOM would be refreshed forever.
+  let handle = null;
+  function load() {
+    if (handle) { try { handle.destroy(); } catch (e) { /* already gone */ } handle = null; }
+    clear(body).appendChild(skeleton({ lines: 4, height: 16 }));
+    drawTrend(body, ctx, day, days).then((h) => { handle = h; });
+  }
+  load();
+  return host;
+}
+
+async function drawTrend(body, ctx, day, days) {
+  const list = daysEndingAt(day, days);
+  let payloads;
+  try {
+    payloads = await Promise.all(list.map((d) =>
+      ctx.api("/api/activity?day=" + encodeURIComponent(d)).catch(() => null)));
+  } catch (e) {
+    clear(body).appendChild(el("div", "errstate",
+      "Could not read the trend: " + String((e && e.message) || e)));
+    return null;
+  }
+  if (!body.isConnected) return null;            // the section was navigated away
+
+  const pt = list.map((d, i) => {
+    const p = payloads[i];
+    // a day we could NOT read stays null (a gap in the line) — never a 0
+    if (!p || p.error) return { d, ok: false };
+    return {
+      d, ok: true,
+      completed: p.runs.completed, failed: p.runs.failed,
+      skipped: p.runs.skipped, running: p.runs.running,
+      total: p.runs.total, usd: p.spend.usd,
+    };
+  });
+  const missing = pt.filter((x) => !x.ok).length;
+  const val = (k) => pt.map((x) => (x.ok ? x[k] : null));
+  const any = (k) => pt.some((x) => x.ok && x[k]);
+
+  clear(body);
+  const wrap = el("div");
+  body.appendChild(wrap);
+
+  const series = [
+    ["completed", "Completed", 0],
+    ["skipped", "Skipped", 3],
+    ["running", "Running", 2],
+    ["failed", "Failed", null],
+  ].filter(([k]) => any(k));
+
+  const handle = chart(wrap, (p) => ({
+    type: "bar",
+    data: {
+      labels: pt.map((x) => x.d.slice(5)),
+      datasets: [
+        ...series.map(([k, label, idx]) => ({
+          type: "bar",
+          label,
+          data: val(k),
+          backgroundColor: pt.map((x) => {
+            const base = idx == null ? p.destructive : p.color(idx);
+            return x.d === day ? base : (idx == null ? base : p.soft(idx));
+          }),
+          stack: "runs",
+          borderRadius: 2,
+          maxBarThickness: 26,
+          yAxisID: "y",
+        })),
+        {
+          type: "line",
+          label: "Model spend",
+          data: val("usd"),
+          borderColor: p.color(4),
+          backgroundColor: p.color(4),
+          borderWidth: 2,
+          tension: 0.3,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          spanGaps: false,
+          yAxisID: "y1",
+          order: 0,
+        },
+      ],
+    },
+    options: {
+      onClick: (evt, els) => {
+        if (!els || !els.length) return;
+        const d = pt[els[0].index];
+        if (d) ctx.navigate("activity", { day: d.d });
+      },
+      interaction: { mode: "index", intersect: false },
+      scales: Object.assign(axes(p, { x: { stacked: true }, y: { stacked: true } }), {
+        y1: {
+          position: "right", beginAtZero: true,
+          grid: { display: false, drawBorder: false },
+          border: { display: false },
+          // daily spend is cents-scale: whole-dollar ticks would print $0/$1/$1
+          ticks: {
+            color: p.axis, padding: 6,
+            callback: (v) => (Number(v) >= 10 ? fmt.usd(v) : fmt.usd2(v)),
+          },
+        },
+      }),
+      plugins: {
+        legend: { display: true, position: "bottom" },
+        tooltip: {
+          callbacks: {
+            title: (items) => fmt.date(pt[items[0].dataIndex].d),
+            label: (item) => (item.dataset.yAxisID === "y1"
+              ? "spend " + fmt.usd2(item.raw)
+              : `${item.dataset.label.toLowerCase()} ${fmt.num(item.raw)}`),
+          },
+        },
+      },
+    },
+  }), { height: 230 });
+
+  wrap.appendChild(el("div", "muted small", [
+    `Runs per day, stacked by outcome, with model spend on the right axis.`
+    + ` Click a bar to open that day.`,
+    missing
+      ? ` ${missing} day${missing === 1 ? "" : "s"} in this window could not be read`
+        + ` and are drawn as a gap, not as a zero.`
+      : "",
+  ]));
+  return handle;
+}
+
+/* ══ 2. RUN LOG ═══════════════════════════════════════════════════════════ */
+
+function runLogRegion(act, ctx, focusRun) {
+  const r = act.runs || {};
+  const rows = r.rows || [];
+  const linkedRun = focusRun;                     // survives the one-shot below
+  const out = [heading("Run log", "— newest first · click a run for everything it did", "h3")];
+
+  const box = el("div", "card flush");
+  const tasks = [...new Set(rows.map((x) => x.task))].sort();
+  const statuses = [...new Set(rows.map((x) => x.status))].sort();
+  let fTask = "", fStatus = "";
+
+  const count = el("span", "muted small");
+  const host = el("div");
+
+  const sel = (label, values, onChange) => el("select", {
+    class: "input", attrs: { "aria-label": label },
+    on: { change: (e) => { onChange(e.target.value); paint(); } },
+  }, [el("option", { value: "" }, label)].concat(
+    values.map((v) => el("option", { value: v }, String(v).replace(/_/g, " ")))));
+
+  const controls = el("div", "backlog-ctx field-row", [
+    icon("filter", { size: 14, class: "muted" }),
+    sel("All tasks", tasks, (v) => { fTask = v; }),
+    sel("All statuses", statuses, (v) => { fStatus = v; }),
+    el("span", "grow"),
+    count,
+  ]);
+
+  function visible() {
+    return rows.filter((x) => (!fTask || x.task === fTask)
+      && (!fStatus || x.status === fStatus));
+  }
+
+  function paint() {
+    const list = visible();
+    clear(count).append(
+      `${fmt.num(list.length)} of ${fmt.num(r.rows_shown)} shown`,
+      r.rows_capped
+        ? el("span", { class: "neg" },
+          ` · the server capped this day at ${fmt.num(r.rows_shown)} of ${fmt.num(r.total)} runs`)
+        : "",
+    );
+    // the deep-linked run auto-opens ONCE. Re-opening it on every filter change
+    // would fight whoever is using the filters.
+    const focus = focusRun;
+    focusRun = "";
+    clear(host).appendChild(list.length
+      ? runTable(list, ctx, focus)
+      : emptyState(rows.length
+        ? "No run matches that filter — clear it above."
+        : "No run started on this day.", { icon: "inbox" }));
+  }
+
+  box.append(controls, host,
+    el("div", { class: "muted small", style: { padding: "var(--space-3) var(--space-5)", borderTop: "1px solid var(--border)" } },
+      "Cost is prefixed ≈ because it is INFERRED: claude_usage.run_id has never"
+      + " been written, so a model call is matched to a run by task + time"
+      + " window. A run with no matched call shows — (not $0), and the spend"
+      + " that matched no run at all is on its own line in the digest above."));
+  paint();
+  out.push(box);
+
+  // deep link from Review (#/activity?day=…&run=N) for a run not in this day
+  if (linkedRun && !rows.some((x) => String(x.id) === linkedRun)) {
+    out.push(standaloneRun(linkedRun, ctx));
+  }
+  return out;
+}
+
+/**
+ * The log itself. A real <table> (this is tabular data and the digits must
+ * line up), with a detail <tr> inserted directly beneath the row you open —
+ * the same expand-in-place idea as the Today queue, so two runs can be read
+ * side by side without losing your place.
+ */
+function runTable(rows, ctx, focusRun) {
+  const t = el("table");
+  const cols = ["Time", "Task", "Status", "Duration", "What it did", "Cost"];
+  t.appendChild(el("thead", null, el("tr", null,
+    cols.map((c, i) => el("th", { class: i === 5 ? "num" : "" }, c)))));
+  const tb = el("tbody");
+
+  rows.forEach((run) => {
+    const open = el("button", {
+      class: "linkname", type: "button",
+      attrs: { "aria-expanded": "false", "aria-label": `open run ${run.id}` },
+    });
+
+    const tr = el("tr", null, [
+      el("td", { style: { whiteSpace: "nowrap" } }, open),
+      el("td", null, el("span", "mono", run.task)),
+      el("td", null, statusPill(run.status)),
+      el("td", { class: "num" }, dash(run.duration_ms == null ? null : run.duration_ms / 1000, fmt.duration)),
+      el("td", null, run.summary
+        ? el("span", "small", run.summary)
+        : el("span", "dash", run.status === "running" ? "still running" : "—")),
+      el("td", { class: "num" }, run.usd == null
+        ? el("span", { class: "dash", title: "no model call could be matched to this run" }, "—")
+        : el("span", { title: "inferred by task + time window, not a ledger link" },
+          "≈" + fmt.usd2(run.usd))),
+    ]);
+
+    // the chevron is swapped rather than rotated: the CSS rotation rule is
+    // scoped to .q-title (the Today card), and this is a table row.
+    const chevron = (name) => clear(open).append(
+      icon(name, { size: 13 }), " ", dash(hhmm(run.started_at)));
+    chevron("chevron-right");
+
+    const toggle = () => {
+      const nxt = tr.nextElementSibling;
+      if (nxt && nxt.classList.contains("run-detail")) {
+        nxt.remove();
+        open.setAttribute("aria-expanded", "false");
+        chevron("chevron-right");
+        return;
+      }
+      const cell = el("td", { colSpan: cols.length });
+      const holder = el("tr", "run-detail", cell);
+      tr.after(holder);
+      open.setAttribute("aria-expanded", "true");
+      chevron("chevron-down");
+      cell.appendChild(skeleton({ lines: 3 }));
+      ctx.api("/api/activity/run?run_id=" + encodeURIComponent(run.id))
+        .then((d) => {
+          if (!cell.isConnected) return;
+          clear(cell).appendChild(readFailed(d)
+            ? el("div", "errstate", String((d && d.error) || "unknown run"))
+            : runDetail(d, ctx));
+        })
+        .catch((e) => {
+          if (!cell.isConnected) return;
+          clear(cell).appendChild(el("div", "errstate",
+            "Could not read that run: " + String((e && e.message) || e)));
+        });
+    };
+    open.addEventListener("click", toggle);
+    tb.appendChild(tr);
+
+    if (focusRun && String(run.id) === focusRun) {
+      // deep-linked from Review: open it, and put it on screen
+      setTimeout(() => { toggle(); tr.scrollIntoView({ block: "center" }); }, 0);
+    }
+  });
+
+  t.appendChild(tb);
+  return el("div", "tablewrap", t);
+}
+
+/**
+ * Did the READ fail, as opposed to the run failing?
+ *
+ * activity_run() puts the RUN's own error text in `error` — that is the whole
+ * point of opening a failed run — and reports a bad/unknown run_id with an
+ * `error` and NO `run`. Keying off `error` alone therefore hides the detail of
+ * exactly the runs you opened the panel to read. The presence of `run` is the
+ * only honest discriminator.
+ */
+function readFailed(d) {
+  return !d || !d.run;
+}
+
+/** a run that is not on the day being shown (deep link) — fetched on its own */
+function standaloneRun(runId, ctx) {
+  const box = card("Linked run #" + runId, skeleton({ lines: 3 }), { class: "" });
+  ctx.api("/api/activity/run?run_id=" + encodeURIComponent(runId))
+    .then((d) => {
+      if (!box.isConnected) return;
+      const body = readFailed(d)
+        ? el("div", "errstate", String((d && d.error) || "unknown run"))
+        : runDetail(d, ctx);
+      clear(box).append(
+        el("div", "card-head", [
+          el("h3", "card-title", `Linked run #${runId}`),
+          el("span", "card-sub", d && d.run
+            ? `${d.run.task_name} · ${fmt.dateTime(d.run.started_at)}` : ""),
+        ]),
+        body);
+    })
+    .catch((e) => {
+      if (!box.isConnected) return;
+      clear(box).appendChild(el("div", "errstate",
+        "Could not read run " + runId + ": " + String((e && e.message) || e)));
+    });
+  return box;
+}
+
+/* ── one run, in full ─────────────────────────────────────────────────────── */
+
+function runDetail(d, ctx) {
+  const run = d.run || {};
+  const wrap = el("div", "q-detail-inner");
+  const kv = (k, v) => {
+    if (v == null || v === "") return;
+    wrap.appendChild(el("div", "q-kv", [el("span", "k", k), el("span", "v", v)]));
+  };
+
+  kv("Run", el("span", "hstack", [
+    el("span", "mono", "#" + run.id),
+    el("b", null, run.task_name || "—"),
+    statusPill(run.status),
+    run.shadow ? pill("shadow", "outline") : null,
+  ]));
+  kv("Started", fmt.dateTime(run.started_at));
+  kv("Finished", run.completed_at
+    ? fmt.dateTime(run.completed_at)
+    : el("span", "dash", run.status === "running" ? "still running" : "—"));
+  kv("Duration", dash(run.duration_ms == null ? null : run.duration_ms / 1000, fmt.duration));
+  if (d.summary) kv("In one line", d.summary);
+
+  // ── failure: the error, then the only button that can act on it ─────────
+  if (d.failed || d.error) {
+    const errBox = el("div", { class: "errstate", style: { marginTop: "var(--space-3)" } }, [
+      el("div", "strong", "This run failed."),
+      el("div", {
+        class: "pre mono",
+        style: { marginTop: "6px", maxHeight: "220px", overflow: "auto" },
+      }, String(d.error || "(no error text was recorded)")),
+    ]);
+    const actions = el("div", { class: "hstack", style: { marginTop: "var(--space-3)" } });
+    if (d.rerunnable) {
+      // the allowlist is SERVER-side; `rerunnable` is the server's own answer,
+      // so this file never keeps a copy of it that could drift.
+      const b = btn("Re-run " + run.task_name, () =>
+        ctx.kick("/api/rerun", { task: run.task_name }, b), { variant: "primary" });
+      actions.append(b, el("span", "muted small",
+        "starts the launchd job again from scratch — it does not replay this"
+        + " run's inputs, and nothing is sent anywhere."));
+    } else {
+      actions.appendChild(el("span", "muted small",
+        `${run.task_name} is not in the server's re-run allowlist, so the cockpit`
+        + " cannot start it. Run it from the terminal, or wait for its schedule."));
+    }
+    errBox.appendChild(actions);
+    wrap.appendChild(errBox);
+  }
+
+  // ── cost, and how honestly it is attached to this run ───────────────────
+  const u = d.usage || {};
+  const attribution = u.attribution;
+  if (attribution === "run_id") {
+    wrap.appendChild(el("div", { style: { marginTop: "var(--space-3)" } },
+      notice("ok", `${fmt.num(u.calls)} model call${u.calls === 1 ? "" : "s"} · `
+        + `${fmt.usd2(u.usd)} — linked to this run by run_id (an exact link).`)));
+  } else if (attribution === "window") {
+    wrap.appendChild(el("div", { style: { marginTop: "var(--space-3)" } },
+      notice("warn", `≈${fmt.usd2(u.usd)} across ${fmt.num(u.calls)} model call`
+        + `${u.calls === 1 ? "" : "s"} — INFERRED, not an exact per-run figure.`, {
+        children: el("div", { class: "small", style: { marginTop: "4px" } },
+          "claude_usage.run_id has never been written by any task, so these calls"
+          + " are attached to this run because they carry the same task name and"
+          + " fall between its start and finish. Another run of the same task"
+          + " overlapping this window would claim them too."),
+      })));
+  } else {
+    wrap.appendChild(el("div", { style: { marginTop: "var(--space-3)" } },
+      notice("info", "No model call could be matched to this run.", {
+        children: el("div", { class: "small", style: { marginTop: "4px" } },
+          "That is a — , not a $0: the run may genuinely have made no model call,"
+          + " or its calls were logged under a different task name (kb_extract"
+          + " logs separately from the kb_daily run that invokes it) and are"
+          + " counted in the digest's unattributed line."),
+      })));
+  }
+
+  if (u.calls) {
+    const rowsShown = (u.rows || []).slice(0, 5);
+    wrap.append(
+      el("div", { class: "hstack", style: { marginTop: "var(--space-3)" } }, [
+        el("span", "muted small",
+          `${fmt.num(u.input_tokens)} in / ${fmt.num(u.output_tokens)} out tokens ·`),
+        linkNum(`all ${fmt.num(u.calls)} calls`, () => drillUsage(d)),
+      ]),
+      el("div", { style: { marginTop: "var(--space-2)" } }, table({
+        columns: [
+          { key: "called_at", label: "At", render: (x) => el("span", "muted", hhmm(x.called_at)) },
+          { key: "purpose", label: "Purpose" },
+          { key: "model", label: "Model", cls: "mono" },
+          { key: "billing_route", label: "Route" },
+          {
+            key: "total_cost_usd", label: "USD", num: true,
+            render: (x) => fmt.usd2(x.total_cost_usd),
+          },
+        ],
+        rows: rowsShown,
+        empty: "No model call rows.",
+      })),
+      u.calls > rowsShown.length
+        ? el("div", "muted small", `showing ${rowsShown.length} of ${fmt.num(u.calls)} —`
+          + " open the drill above for all of them, with the exact sum")
+        : null,
+    );
+  }
+
+  // ── metrics ─────────────────────────────────────────────────────────────
+  const flat = flattenMetrics(d.metrics);
+  if (d.metrics_error) {
+    wrap.appendChild(el("div", { class: "errstate", style: { marginTop: "var(--space-3)" } },
+      String(d.metrics_error)));
+  } else if (flat.length) {
+    wrap.append(
+      el("div", { class: "muted small", style: { marginTop: "var(--space-4)" } },
+        `Metrics this run wrote (${fmt.num(flat.length)} values)`),
+      el("div", { style: { marginTop: "var(--space-2)" } }, table({
+        columns: [
+          { key: "k", label: "Key", cls: "mono" },
+          {
+            key: "v", label: "Value", num: true,
+            render: (x) => (x.v == null
+              ? el("span", "dash", "—")
+              : (typeof x.v === "number" ? fmt.num(x.v) : String(x.v))),
+          },
+        ],
+        rows: flat,
+        empty: "No metrics.",
+      })),
+      expander("Raw metrics JSON", (body) => {
+        body.appendChild(el("div", {
+          class: "pre mono",
+          style: { maxHeight: "320px", overflow: "auto" },
+        }, JSON.stringify(d.metrics, null, 2)));
+      }),
+    );
+  } else {
+    wrap.appendChild(el("div", { class: "muted small", style: { marginTop: "var(--space-4)" } },
+      "This run wrote no metrics — the task records none, or it died before it could."));
+  }
+
+  // ── anomalies this run raised ───────────────────────────────────────────
+  const an = d.anomalies || [];
+  wrap.appendChild(el("div", { class: "muted small", style: { marginTop: "var(--space-4)" } },
+    an.length
+      ? `Anomalies this run raised (${fmt.num(an.length)})`
+      : "This run raised no anomaly."));
+  if (an.length) {
+    wrap.appendChild(el("div", { style: { marginTop: "var(--space-2)" } }, table({
+      columns: [
+        { key: "detected_at", label: "Detected", render: (x) => el("span", "muted", fmt.dateTime(x.detected_at)) },
+        { key: "kind", label: "Kind", cls: "mono" },
+        {
+          key: "severity", label: "Severity",
+          render: (x) => pill(x.severity, x.severity === "critical" ? "fail" : "warn"),
+        },
+        {
+          key: "detail_json", label: "Detail",
+          render: (x) => el("span", { class: "small mono", title: x.detail_json || "" },
+            String(x.detail_json || "—").slice(0, 160)),
+        },
+        {
+          key: "resolved_at", label: "Resolved",
+          render: (x) => (x.resolved_at ? fmt.dateTime(x.resolved_at) : el("span", "dash", "—")),
+        },
+      ],
+      rows: an,
+      empty: "None.",
+    })));
+  }
+  if (d.anomalies_inline) {
+    wrap.append(
+      el("div", { class: "muted small", style: { marginTop: "var(--space-3)" } },
+        "Anomalies recorded inline on the run row"),
+      el("div", "pre mono", typeof d.anomalies_inline === "string"
+        ? d.anomalies_inline : JSON.stringify(d.anomalies_inline, null, 2)),
+    );
+  }
+
+  // ── shadow intents this run captured ────────────────────────────────────
+  const sh = d.shadow || {};
+  if (sh.total) {
+    wrap.append(
+      el("div", { class: "muted small", style: { marginTop: "var(--space-4)" } },
+        `${fmt.num(sh.total)} write intent${sh.total === 1 ? "" : "s"} captured (not sent)`),
+      el("div", { style: { marginTop: "var(--space-2)" } }, table({
+        columns: [
+          { key: "target", label: "Target" },
+          { key: "operation", label: "Operation" },
+          { key: "n", label: "Intents", num: true, render: (x) => fmt.num(x.n) },
+        ],
+        rows: sh.rows || [],
+        empty: "None.",
+      })),
+    );
+  }
+
+  return wrap;
+}
+
+/** metrics → [{k: "feeds.my_feed.new", v: 4}] in the order the task wrote them */
+function flattenMetrics(m, path = "", out = []) {
+  if (m == null) return out;
+  if (typeof m !== "object" || Array.isArray(m)) {
+    out.push({ k: path || "(value)", v: Array.isArray(m) ? JSON.stringify(m) : String(m) });
+    return out;
+  }
+  Object.entries(m).forEach(([k, v]) => {
+    const p = path ? path + "." + k : k;
+    if (v && typeof v === "object" && !Array.isArray(v)) flattenMetrics(v, p, out);
+    else if (Array.isArray(v)) out.push({ k: p, v: v.length ? JSON.stringify(v) : "[]" });
+    else if (typeof v === "boolean") out.push({ k: p, v: v ? "yes" : "no" });
+    else out.push({ k: p, v });
+  });
+  return out;
+}
+
+/* ══ 3. SYSTEM HEALTH (v1's System tab, ported in full) ═══════════════════ */
+
+function systemRegion(d, ctx) {
+  const out = [heading("System health", "— the machinery behind those runs", "h3")];
+  if (d.__error) {
+    out.push(el("div", "errstate",
+      "System health could not be read: " + d.__error
+      + " — the daily digest above is unaffected."));
+    return out;
+  }
+
+  out.push(runNow(ctx));
+  out.push(healthCards(d));
+
+  // ── Jobs ────────────────────────────────────────────────────────────────
+  out.push(heading("Jobs", "— the latest run of every task, by start time", "h3"));
+  out.push(table({
+    columns: [
+      { key: "task_name", label: "Job", cls: "mono" },
+      { key: "status", label: "Status", render: (j) => statusPill(j.status) },
+      {
+        key: "started_at", label: "Last run",
+        render: (j) => el("span", "muted", fmt.dateTime(j.started_at)),
+      },
+      {
+        key: "duration_ms", label: "Took", num: true,
+        render: (j) => dash(j.duration_ms == null ? null : j.duration_ms / 1000, fmt.duration),
+      },
+    ],
+    rows: d.jobs || [],
+    empty: "No job has ever run.",
+  }));
+
+  // ── Source health (v1 copy, verbatim) ───────────────────────────────────
+  const srcs = ((d.sources || {}).sources) || [];
+  if (srcs.length) {
+    out.push(heading("Source health",
+      "— freshness + degradation of each number-backing source · a critical one"
+      + " in trouble turns the health chip amber", "h3"));
+    out.push(table({
+      columns: [
+        {
+          key: "label", label: "Source",
+          render: (s) => el("span", null, [
+            s.label,
+            s.critical ? null : el("span", "muted small", " (non-critical)"),
+          ]),
+        },
+        {
+          key: "status", label: "Status",
+          render: (s) => pill(s.status, s.status === "ok" ? "green"
+            : s.status === "degraded" || s.status === "stale" ? "amber" : "red"),
+        },
+        {
+          key: "last_success", label: "Last success",
+          render: (s) => el("span", "muted", s.last_success ? fmt.dateTime(s.last_success) : "—"),
+        },
+        { key: "backs", label: "Backs", cls: "muted" },
+        { key: "detail", label: "Detail", cls: "muted", render: sourceDetail },
+      ],
+      rows: srcs,
+      empty: "No source reports health.",
+    }));
+  }
+
+  // ── Anomalies (v1 copy, verbatim) ───────────────────────────────────────
+  const an = d.anomalies || {};
+  const anoms = an.recent || [];
+  out.push(heading("Anomalies",
+    `— operational incidents, last ${an.window_days || 14} days · unresolved`
+    + " first · a crashlooping task collapses to one counted row", "h3"));
+  if (!anoms.length) {
+    out.push(el("div", "srcline ok", [
+      icon("circle-check", { size: 15 }),
+      el("div", "grow", "no anomalies filed in the window"),
+    ]));
+  } else {
+    out.push(table({
+      columns: [
+        { key: "last", label: "When", render: (a) => el("span", "muted", fmt.dateTime(a.last)) },
+        { key: "task_name", label: "Task", cls: "mono" },
+        { key: "kind", label: "Kind", render: (a) => el("code", null, a.kind) },
+        {
+          key: "severity", label: "Severity",
+          render: (a) => pill(a.severity, a.recovered ? "outline"
+            : a.severity === "critical" ? "red" : "amber"),
+        },
+        { key: "n", label: "Count", num: true, render: (a) => fmt.num(a.n) },
+        {
+          key: "state", label: "State",
+          // 'recovered' = the task succeeded after this fired (self-healed), or
+          // every occurrence was explicitly resolved. Only genuinely-active ones
+          // wear the loud colour.
+          render: (a) => (a.recovered
+            ? el("span", { title: "task has succeeded since, or every occurrence was resolved" },
+              pill("recovered", "green"))
+            : pill("active", a.severity === "critical" ? "red" : "amber")),
+        },
+      ],
+      rows: anoms,
+      empty: "None.",
+    }));
+  }
+
+  // ── Doctor checks ───────────────────────────────────────────────────────
+  out.push(heading("Doctor checks", null, "h3"));
+  out.push(table({
+    columns: [
+      { key: "name", label: "Check" },
+      {
+        key: "status", label: "Status",
+        render: (c) => pill(c.status, String(c.status || "").toLowerCase()),
+      },
+      { key: "detail", label: "Detail", cls: "muted" },
+    ],
+    rows: (d.doctor || {}).checks || [],
+    empty: "The doctor reported no checks.",
+  }));
+  out.push(el("div", { class: "muted small" }, [
+    "Model-ID validity vs /v1/models runs in ",
+    el("code", null, "bin/doctor"),
+    " (network).",
+  ]));
+
+  // ── Shadow ledger ───────────────────────────────────────────────────────
+  const byTask = (d.shadow || {}).by_task || {};
+  const shRows = Object.entries(byTask).map(([task, n]) => ({ task, n }));
+  if (shRows.length) {
+    out.push(heading("Shadow ledger (cutover evidence)",
+      "— external writes each module intended, captured instead of sent", "h3"));
+    out.push(table({
+      columns: [
+        { key: "task", label: "Task", cls: "mono" },
+        { key: "n", label: "Intents", num: true, render: (x) => fmt.num(x.n) },
+      ],
+      rows: shRows.sort((a, b) => b.n - a.n),
+      empty: "None.",
+    }));
+  }
+
+  return out;
+}
+
+/** v1's per-status Source-health copy, kept word for word. */
+function sourceDetail(s) {
+  if (s.status === "ok") return `fresh · ${s.age_hours}h ago`;
+  if (s.status === "down") return "never produced a successful run";
+  if (s.status === "stale") return `${s.age_hours}h ago > ${s.max_age_hours}h max`;
+  return "ran but output was thin/degraded";
+}
+
+function runNow(ctx) {
+  const box = el("div", "card");
+  const row = el("div", "hstack");
+  // NOTE: these buttons pass through ctx.kick, which replaces the button's
+  // textContent while it runs — so they carry no icon (an icon child would be
+  // wiped on the first click and never come back).
+  [["Scan", "/api/wake", { job: "scan" }],
+    ["Sync", "/api/wake", { job: "sync" }],
+    ["Inbox", "/api/wake", { job: "inbox" }],
+    ["Outcome capture (rail)", "/api/rail", { rail: "outcome-capture" }],
+  ].forEach(([label, path, body]) => {
+    const b = btn(label, () => ctx.kick(path, body, b), { sm: true });
+    row.appendChild(b);
+  });
+  const brief = btn("Brief", null, { sm: true, disabled: true });
+  brief.title = "The Chief-of-Staff brief runs on its own schedule (cos_brief_am)."
+    + " There is no allowlisted manual kick for it — re-run it from the run log"
+    + " above if it is in the server's re-run allowlist.";
+  row.appendChild(brief);
+
+  box.append(
+    el("div", "card-head", [
+      el("h3", "card-title", "Run now"),
+      el("span", "card-sub", "allowlisted launchd kicks · nothing here sends anything"),
+    ]),
+    row,
+  );
+  return box;
+}
+
+function healthCards(d) {
+  const g = el("div", "grid-4");
+  const dr = d.doctor || {}, sp = d.spend || {}, sh = d.shadow || {}, an = d.anomalies || {};
+
+  g.appendChild(kpi({
+    label: "Doctor",
+    value: pill(dr.worst || "?", doctorTone(dr.worst)),
+    sub: `${(dr.checks || []).length} checks · full list below`,
+    onClick: () => openDrill({
+      title: "Doctor checks",
+      rows: dr.checks || [],
+      total: (dr.checks || []).length,
+      columns: [
+        { key: "name", label: "Check" },
+        { key: "status", label: "Status", render: (c) => pill(c.status, String(c.status || "").toLowerCase()) },
+        { key: "detail", label: "Detail" },
+      ],
+      search: (c) => `${c.name} ${c.status} ${c.detail}`,
+      facets: [{ label: "status", allLabel: "All statuses", of: (c) => c.status }],
+      emptyText: "The doctor reported no checks.",
+    }),
+  }));
+
+  const over = sp.today_usd != null && sp.soft_limit_usd != null
+    && sp.today_usd > sp.soft_limit_usd;
+  g.appendChild(kpi({
+    label: "Spend today",
+    // usd2, not usd: the soft limit is $1.50 and whole-dollar rounding printed
+    // it as "$2 soft", which is a ceiling the server does not have.
+    value: el("span", null, [fmt.usd2(sp.today_usd),
+      el("small", null, " / " + fmt.usd2(sp.soft_limit_usd) + " soft")]),
+    warn: over ? `over the ${fmt.usd2(sp.soft_limit_usd)} soft limit`
+      + ` · hard stop ${fmt.usd2(sp.hard_limit_usd)}` : null,
+    sub: `MTD ${fmt.usd2(sp.mtd_usd)}`
+      + ((sp.by_task || []).length ? " · click for the breakdown" : " · nothing spent today"),
+    onClick: (sp.by_task || []).length ? () => openDrill({
+      title: "Model spend today, by task",
+      subtitle: "exact — grouped straight off claude_usage.ist_date, no inference",
+      rows: sp.by_task,
+      total: (sp.by_task || []).length,
+      columns: spendCols,
+      amount: (r) => r.usd,
+      emptyText: "Nothing spent today.",
+    }) : null,
+  }));
+
+  g.appendChild(kpi({
+    label: "Shadow ledger",
+    value: el("span", null, [fmt.num(sh.pending || 0), el("small", null, " pending intents")]),
+    sub: sh.pending
+      ? "captured writes, held while shadowed"
+      : "no writes held — modules live or idle",
+    onClick: Object.keys(sh.by_task || {}).length ? () => openDrill({
+      title: "Shadow ledger — intents by task",
+      subtitle: "every external write a module intended while its module flag is shadowed",
+      rows: Object.entries(sh.by_task).map(([task, n]) => ({ task, n })),
+      total: Object.keys(sh.by_task).length,
+      columns: [
+        { key: "task", label: "Task" },
+        { key: "n", label: "Intents", num: true, render: (x) => fmt.num(x.n) },
+      ],
+      emptyText: "No intent has ever been captured.",
+    }) : null,
+  }));
+
+  g.appendChild(kpi({
+    label: `Anomalies (${an.window_days || 14}d)`,
+    value: el("span", null, [fmt.num(an.open || 0), el("small", null, " open")]),
+    sub: an.open ? "unresolved operational signals below" : "nothing unresolved ✓",
+    onClick: (an.recent || []).length ? () => openDrill({
+      title: `Anomalies, last ${an.window_days || 14} days`,
+      subtitle: "recovered = the task succeeded after this fired, or every"
+        + " occurrence was explicitly resolved",
+      rows: an.recent,
+      total: (an.recent || []).length,
+      columns: [
+        { key: "last", label: "When", render: (a) => fmt.dateTime(a.last) },
+        { key: "task_name", label: "Task" },
+        { key: "kind", label: "Kind" },
+        { key: "severity", label: "Severity" },
+        { key: "n", label: "Count", num: true, render: (a) => fmt.num(a.n) },
+        { key: "state", label: "State", render: (a) => (a.recovered ? "recovered" : "active") },
+      ],
+      time: (a) => a.last,
+      search: (a) => `${a.task_name} ${a.kind} ${a.severity}`,
+      facets: [{ label: "task", allLabel: "All tasks", of: (a) => a.task_name }],
+      emptyText: "No anomaly in the window.",
+    }) : null,
+  }));
+
+  return g;
+}
+
+/* ── drills ───────────────────────────────────────────────────────────────── */
+
+const runCols = [
+  { key: "started_at", label: "Time", render: (r) => el("span", "muted", hhmm(r.started_at)) },
+  { key: "task", label: "Task" },
+  { key: "status", label: "Status", render: (r) => statusPill(r.status) },
+  {
+    key: "duration_ms", label: "Duration", num: true,
+    render: (r) => dash(r.duration_ms == null ? null : r.duration_ms / 1000, fmt.duration),
+  },
+  { key: "summary", label: "What it did" },
+  {
+    key: "usd", label: "≈ Cost", num: true,
+    render: (r) => (r.usd == null ? null : "≈" + fmt.usd2(r.usd)),
+  },
+];
+
+const spendCols = [
+  { key: "task_name", label: "Task" },
+  { key: "calls", label: "Calls", num: true, render: (r) => fmt.num(r.calls) },
+  { key: "usd", label: "USD", num: true, render: (r) => fmt.usd2(r.usd) },
+];
+
+function drillRuns(act) {
+  const r = act.runs || {};
+  openDrill({
+    title: "Runs on " + fmt.date(act.day),
+    subtitle: "cost is ≈ — inferred from task + time window, never a ledger link",
+    rows: r.rows || [],
+    total: r.total,
+    columns: runCols,
+    time: (x) => x.started_at,
+    search: (x) => `${x.task} ${x.status} ${x.summary || ""}`,
+    facets: [
+      { label: "task", allLabel: "All tasks", of: (x) => x.task },
+      { label: "status", allLabel: "All statuses", of: (x) => x.status },
+    ],
+    emptyText: "No run started on this day.",
+  });
+}
+
+function drillIngest(act) {
+  const ing = act.ingest || {};
+  const rows = Object.entries(ing.by_source_type || {})
+    .map(([source_type, n]) => ({ source_type, n }))
+    .sort((a, b) => b.n - a.n);
+  openDrill({
+    title: "Sources ingested on " + fmt.date(act.day),
+    subtitle: `${fmt.num(ing.total)} items across ${rows.length} source type`
+      + `${rows.length === 1 ? "" : "s"} · ${fmt.num(ing.extracted)} reached extraction`,
+    note: "One row per SOURCE TYPE, not per item — /api/activity returns the"
+      + " day's ingest as counts, so the individual rows are not available here."
+      + " Open the kb_daily / jarvis_slack runs in the log for the per-run detail.",
+    rows,
+    total: rows.length,
+    columns: [
+      { key: "source_type", label: "Source type" },
+      { key: "n", label: "Items", num: true, render: (r) => fmt.num(r.n) },
+    ],
+    emptyText: "Nothing was ingested on this day.",
+  });
+}
+
+function drillFacts(act) {
+  const f = act.facts || {};
+  const rows = f.by_client || [];
+  openDrill({
+    title: "Facts extracted on " + fmt.date(act.day),
+    subtitle: `${fmt.num(f.total)} facts across ${fmt.num(f.clients)} clients`,
+    note: `The server returns the TOP ${fmt.num(f.top_n)} clients by fact count,`
+      + ` not the newest — ${fmt.num(rows.length)} of ${fmt.num(f.clients)} clients`
+      + ` are listed, and they account for`
+      + ` ${fmt.num(rows.reduce((s, r) => s + r.n, 0))} of ${fmt.num(f.total)} facts.`,
+    rows,
+    total: rows.length,
+    columns: [
+      { key: "client", label: "Client" },
+      { key: "n", label: "Facts", num: true, render: (r) => fmt.num(r.n) },
+    ],
+    emptyText: "No fact was extracted on this day.",
+  });
+}
+
+function drillRegistry(act) {
+  const reg = act.registry || {};
+  openDrill({
+    title: "Registry changes on " + fmt.date(act.day),
+    subtitle: `audited git commits on ${reg.file} · +${fmt.num(reg.insertions)} `
+      + `−${fmt.num(reg.deletions)} lines`,
+    note: "Every approval in Review writes one of these commits. This is the only"
+      + " record that a client was added or an alias learned.",
+    rows: reg.commits || [],
+    total: reg.count,
+    columns: [
+      { key: "at", label: "At", render: (c) => fmt.dateTime(c.at) },
+      { key: "sha", label: "Commit", render: (c) => el("code", null, c.sha) },
+      { key: "subject", label: "Subject" },
+      { key: "insertions", label: "+", num: true, render: (c) => fmt.num(c.insertions) },
+      { key: "deletions", label: "−", num: true, render: (c) => fmt.num(c.deletions) },
+    ],
+    time: (c) => c.at,
+    emptyText: "config/clients.yaml did not change on this day.",
+  });
+}
+
+function drillSpendByTask(act) {
+  const sp = act.spend || {};
+  openDrill({
+    title: "Model spend on " + fmt.date(act.day),
+    subtitle: `${fmt.num(sp.calls)} calls · exact, grouped off claude_usage.ist_date`,
+    note: sp.unattributed_usd
+      ? `${fmt.usd2(sp.unattributed_usd)} of this total could not be tied to any`
+        + " run (the per-RUN split is a time-window inference; the per-TASK split"
+        + " below is exact)."
+      : null,
+    rows: sp.by_task || [],
+    total: (sp.by_task || []).length,
+    columns: spendCols,
+    amount: (r) => r.usd,
+    emptyText: "No model call was billed on this day.",
+  });
+}
+
+function drillNudges(act) {
+  const nd = act.nudges || {};
+  const rows = Object.entries(nd.created_by_kind || {})
+    .map(([kind, n]) => ({ kind, n }))
+    .sort((a, b) => b.n - a.n);
+  openDrill({
+    title: "Cards opened on " + fmt.date(act.day),
+    subtitle: `${fmt.num(nd.created)} opened · ${fmt.num(nd.closed)} closed`
+      + ` (${fmt.num(nd.done)} done, ${fmt.num(nd.dismissed)} dismissed)`,
+    note: "Grouped by kind — /api/activity returns the day's cards as counts, so"
+      + " the individual cards live on Today, not here.",
+    rows,
+    total: rows.length,
+    columns: [
+      { key: "kind", label: "Kind", render: (r) => String(r.kind).replace(/_/g, " ") },
+      { key: "n", label: "Cards", num: true, render: (r) => fmt.num(r.n) },
+    ],
+    emptyText: "No card was opened on this day.",
+  });
+}
+
+function drillShadowDay(act) {
+  const sh = act.shadow || {};
+  openDrill({
+    title: "Write intents held on " + fmt.date(act.day),
+    subtitle: "captured by shadow mode instead of being sent",
+    rows: sh.rows || [],
+    total: (sh.rows || []).length,
+    columns: [
+      { key: "target", label: "Target" },
+      { key: "operation", label: "Operation" },
+      { key: "n", label: "Intents", num: true, render: (r) => fmt.num(r.n) },
+    ],
+    emptyText: "No write intent was captured on this day.",
+  });
+}
+
+function drillUsage(d) {
+  const u = d.usage || {};
+  const run = d.run || {};
+  const inferred = u.attribution === "window";
+  openDrill({
+    title: `Model calls · ${run.task_name} run #${run.id}`
+      + (inferred ? " (inferred match)" : ""),
+    subtitle: inferred
+      ? "matched to this run by task + time window — claude_usage.run_id has never"
+        + " been written, so this is an inference, not a ledger link"
+      : "linked to this run by run_id",
+    rows: u.rows || [],
+    total: (u.rows || []).length,
+    columns: [
+      { key: "called_at", label: "At", render: (r) => fmt.dateTime(r.called_at) },
+      { key: "purpose", label: "Purpose" },
+      { key: "model", label: "Model" },
+      { key: "billing_route", label: "Route" },
+      { key: "input_tokens", label: "In", num: true, render: (r) => fmt.num(r.input_tokens) },
+      { key: "output_tokens", label: "Out", num: true, render: (r) => fmt.num(r.output_tokens) },
+      {
+        key: "duration_ms", label: "Took", num: true,
+        render: (r) => dash(r.duration_ms == null ? null : r.duration_ms / 1000, fmt.duration),
+      },
+      { key: "total_cost_usd", label: "USD", num: true, render: (r) => fmt.usd2(r.total_cost_usd) },
+    ],
+    amount: (r) => r.total_cost_usd,
+    time: (r) => r.called_at,
+    search: (r) => `${r.purpose || ""} ${r.model || ""}`,
+    emptyText: "No model call could be matched to this run.",
+  });
 }

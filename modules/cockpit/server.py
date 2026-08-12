@@ -34,6 +34,10 @@ GET_ROUTES: dict = {
     "/api/pipeline": data.pipeline,
     "/api/clients": data.clients,
     "/api/clients/transactions": data.client_transactions,  # per-client drill
+    # the Airtable roster (Status/Tags/Notes). Computed since M0 and never
+    # routed, so no screen could show it; the Clients view merges it onto the
+    # ledger rows by name. Reader is 60s-cached — Airtable is a network hop.
+    "/api/clients/airtable": data.clients_airtable,
     "/api/knowledge": data.knowledge,
     "/api/system": data.system,
     "/api/money": data.money,
