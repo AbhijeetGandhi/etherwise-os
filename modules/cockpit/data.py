@@ -78,19 +78,38 @@ def _is_actioned(key: str, suppressed: set, actioned_at: dict,
     yesterday and the day before but it still shows up"). Every card the queue
     renders now passes through here, under both key forms the UI can send.
 
-    A Done is not permanent — it means "handled" — and it goes stale two ways:
+    A Done is not permanent — it means "handled" — and it goes stale two ways.
+    The two ways are NOT interchangeable, and which one applies depends on
+    whether the card's kind can supply evidence at all. Both halves exist
+    because the two failure modes are exact mirrors of each other; deleting
+    either one to "simplify" reintroduces a bug we have already shipped once.
 
-      evidence_ts  the counterparty said something after we closed it;
-      created_at   the card itself is NEWER than the Done, i.e. the condition
-                   genuinely re-arose and the engine minted a fresh row.
+      evidence_ts  THE AUTHORITY WHENEVER IT IS PRESENT. A kind that can say
+                   "here is when the counterparty last spoke" (owed_reply, via
+                   modules.chief_of_staff.evidence) has told us everything there
+                   is to know: newer than the Done -> live again; not newer ->
+                   nothing has happened, stay gone. `created_at` MUST NOT get a
+                   vote here. The sweep re-mints a follow-up row on a schedule,
+                   not on news, so a re-mint is not an event — and letting it
+                   override the Done meant the founder's "done" survived for
+                   exactly as long as the gap to the next sweep. Measured
+                   2026-08-12: followup:p:julie-heffernan (done 08-11 08:41Z,
+                   evidence 08-10 19:36Z, i.e. NOTHING new) came back purely
+                   because the sweep minted a fresh row at 08-11 22:41Z.
 
-    The second check is what stops this becoming a permanent gag. dedup_keys are
-    deliberately stable per entity ('stale_dossier:horizons-aba',
-    'escalate_client:<id>'), and only owed_reply carries evidence_ts — so
-    without it one Done in August would hide that client's dossier backlog in
-    January while the morning brief, which reads the nudges table, nagged about
-    it daily. Two surfaces diverging permanently in opposite directions is worse
-    than the bug this function was written to fix."""
+      created_at   THE FALLBACK, and only for kinds that supply no evidence at
+                   all. Their dedup_keys are deliberately stable per entity
+                   ('stale_dossier:horizons-aba', 'escalate_client:<id>'), so
+                   with nothing else to go on one Done in August would hide that
+                   client's dossier backlog in January while the morning brief,
+                   which reads the nudges table, nagged about it daily. For
+                   those kinds a fresh row IS the only available news.
+
+    Edge case, stated rather than hidden: if a kind that normally carries
+    evidence hands us None (an old payload written before evidence_ts existed),
+    it falls through to the created_at branch and the card comes BACK. That is
+    the safe direction — showing work that may be handled beats hiding work that
+    is not."""
     hit = next((k for k in (key, f"nudge:{key}") if k in suppressed), None)
     if hit is None:
         return False
@@ -98,8 +117,9 @@ def _is_actioned(key: str, suppressed: set, actioned_at: dict,
     was = actioned_at.get(hit)
     if not was:
         return True                      # snoozed: an explicit "not until <date>"
-    if evidence_ts and eng.ts_key(evidence_ts) > eng.ts_key(was):
-        return False                     # they said something new -> it's live
+    if evidence_ts:
+        # evidence present -> it decides, alone. No created_at override.
+        return not eng.ts_key(evidence_ts) > eng.ts_key(was)
     if created_at and eng.ts_key(created_at, naive="ist") > eng.ts_key(was):
         return False                     # re-minted after the Done -> it's back
     return True
@@ -1414,6 +1434,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     Design bar (2026-07-27): answer 'what do I act on right now?' in one view;
     respect intent (applications paused since ~Jun 30) rather than nagging with
     an accumulating guilt pile of hot leads."""
+    from modules.chief_of_staff import evidence as _evidence
     from modules.chief_of_staff import nudges as _eng
     day = today or _ist_today()
     paused, paused_since = _applications_paused(day)
@@ -1435,14 +1456,43 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         # have dealt with this", and it is undone by the other side saying
         # something new. Snoozes carry no timestamp here — a snooze is an
         # explicit "not until <date>" and evidence must not cut it short.
+        #
+        # ONE DECISION, TWO STORES — READ BOTH. The Done button reaches the
+        # engine and the overlay by different routes: a FOLLOW-UP card posts
+        # /api/nudge (nudge_state + write-through to nudges), a NUDGE card posts
+        # /api/cos-nudge (nudges only). This function used to read nudge_state
+        # alone, so a Done pressed while a counterparty rendered as a nudge card
+        # was invisible the moment the same counterparty rendered as a follow-up
+        # card — and it came back carrying whatever ancient nudge_state row it
+        # still had. Live on 2026-08-12: followup:c:the-cradle-company was done
+        # in the engine at 08-11 23:20Z while nudge_state still said 07-29
+        # 22:54Z, so the card returned and Abhijeet's Done looked ignored. The
+        # LATER of the two timestamps is the founder's real decision; the
+        # earlier one is just the store that route did not touch.
         suppressed, actioned_at = set(), {}
+
+        def _record(key: str, state: str, when: str) -> None:
+            suppressed.add(key)
+            if state not in ("done", "dismissed"):
+                return               # snoozed: explicit "not until <date>"
+            prev = actioned_at.get(key)
+            if not prev or _eng.ts_key(when) > _eng.ts_key(prev):
+                actioned_at[key] = when
+
         for r in conn.execute(
             "SELECT item_key, state, updated_at FROM nudge_state WHERE state IN"
             " ('done','dismissed') OR (state='snoozed' AND"
             " COALESCE(snooze_until,'') > ?)", (day,)):
-            suppressed.add(r["item_key"])
-            if r["state"] in ("done", "dismissed"):
-                actioned_at[r["item_key"]] = str(r["updated_at"] or "")
+            # nudge_state.updated_at is SQLite datetime('now') -> UTC
+            _record(r["item_key"], r["state"], str(r["updated_at"] or ""))
+        for r in conn.execute(
+            "SELECT dedup_key, state, updated_at, snooze_until FROM nudges"
+            " WHERE state IN ('done','dismissed') OR (state='snoozed' AND"
+            " COALESCE(snooze_until,'') > ?)", (day,)):
+            # nudges.updated_at is IST-naive (nudges._iso) — normalised to the
+            # same UTC shape before it is compared with anything (ts_key law)
+            _record(r["dedup_key"] or "", r["state"],
+                    _eng.ts_key(r["updated_at"], naive="ist"))
 
         # follow-ups = pending drafts + thread context; owed before followup.
         # ONE ROW PER COUNTERPARTY (nudges.followup_key): Upwork opens a room per
@@ -1450,29 +1500,70 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         # dismissed separately — which is what "I marked it done and it's still
         # there" actually was. The extra threads ride along in thread_ids so the
         # card can name them; nothing is dropped, only the duplicate row is.
-        follow_ups = []
-        _fu_index: dict = {}
+        #
+        # EVIDENCE IS CROSS-PLATFORM (2026-08-12). This list used to be built
+        # entirely from t.latest_message_dt — the newest row of ANY kind on the
+        # UPWORK thread. Two consequences, both live on the board that morning:
+        # The Cradle Company (signed contract, two weeks of Slack) read as a
+        # cold lead ignoring us for 9 days because its newest Upwork message was
+        # 08-03; and Julie Heffernan came back the day after a real call because
+        # Upwork wrote a *system* row. So the pass below is two-phase: collect
+        # the rows first, then ask modules.chief_of_staff.evidence — once per
+        # counterparty — when THEY last spoke on any channel, and whether they
+        # are a contracted client at all. See that module for what each channel
+        # can and cannot prove.
+        _fu_rows: list = []
         for r in conn.execute(
             "SELECT d.thread_id, d.body, d.word_count, d.tier,"
-            " t.bucket, t.topic, t.room_name, t.client_id, t.latest_message_dt,"
-            " CAST(julianday(?) - julianday(substr(t.latest_message_dt,1,10))"
-            "   AS INT) AS age_days"
+            " t.bucket, t.topic, t.room_name, t.client_id, t.latest_message_dt"
             " FROM drafts d JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status = 'pending'"
             " ORDER BY CASE t.bucket WHEN 'owed' THEN 0 WHEN 'unmatched-owed'"
-            " THEN 1 ELSE 2 END, d.generated_at DESC", (day,)):
-            key = _eng.followup_key(r["client_id"], r["room_name"],
-                                    r["thread_id"])
-            if _is_actioned(key, suppressed, actioned_at,
-                            r["latest_message_dt"]):
+            " THEN 1 ELSE 2 END, d.generated_at DESC"):
+            row = dict(r)
+            row["key"] = _eng.followup_key(r["client_id"], r["room_name"],
+                                           r["thread_id"])
+            _fu_rows.append(row)
+        _fu_groups: dict = {}
+        for row in _fu_rows:
+            g = _fu_groups.setdefault(row["key"], {"threads": [],
+                                                   "client_id": None})
+            g["threads"].append(row["thread_id"])
+            g["client_id"] = g["client_id"] or row["client_id"]
+        _fu_evidence: dict = {}
+        for k, g in _fu_groups.items():
+            ev = _evidence.counterparty(conn, thread_ids=g["threads"],
+                                        client_id=g["client_id"])
+            eng_state = _evidence.engagement(conn, thread_ids=g["threads"],
+                                             client_id=g["client_id"])
+            # aged against `day`, not the wall clock: today(today=...) must stay
+            # reproducible for fixtures and for a replayed date. `waiting_since`
+            # (oldest obligation, cross-channel aware), never `ts` (newest) —
+            # they answer different questions; see evidence.counterparty.
+            _fu_evidence[k] = {
+                "ev": ev, "engagement": eng_state,
+                "age": _evidence.age_days(ev["waiting_since"], day)}
+
+        follow_ups = []
+        _fu_index: dict = {}
+        for r in _fu_rows:
+            key = r["key"]
+            _meta = _fu_evidence[key]
+            # the Done check now asks the CROSS-CHANNEL question: did they say
+            # anything, anywhere, after the founder closed this?
+            if _is_actioned(key, suppressed, actioned_at, _meta["ev"]["ts"]):
                 continue
+            r["age_days"] = _meta["age"]
             if key in _fu_index:                       # same person, second room
                 prev = follow_ups[_fu_index[key]]
                 prev["thread_ids"].append(r["thread_id"])
-                # the OLDEST thread sets the age: a person with one obligation
-                # idle 30 days and one idle 1 day is 30 days overdue, and
-                # ranking them as 1 day old pushes real neglect off the board
-                prev["age_days"] = max(prev["age_days"], r["age_days"])
+                # the OLDEST obligation sets the age. (Age is now derived per
+                # COUNTERPARTY, not per thread, so the two are already equal —
+                # the max stays as the invariant, None-safe because an
+                # unmeasured age must render '—', never 0.)
+                prev["age_days"] = max([a for a in (prev["age_days"],
+                                                    r["age_days"])
+                                        if a is not None], default=None)
                 # every draft rides along. Collapsing the row must not make the
                 # second room's pre-written reply unreachable — Dhanya's two
                 # rooms are two different job posts with two different drafts.
@@ -1495,9 +1586,13 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                 "client_id": r["client_id"],
                 "tier": r["tier"], "bucket": r["bucket"],
                 "draft": r["body"], "word_count": r["word_count"],
-                # real thread age (days) so the queue reads honestly — the old UI
-                # showed word_count as "Nw" which was misread as weeks (redline 2)
+                # age = days since the COUNTERPARTY last spoke on ANY channel.
+                # Not since the newest Upwork row: that counted our own replies
+                # and Upwork's system rows, and told Abhijeet the Cradle Company
+                # had been silent for 9 days when the answer was 4, on Slack.
                 "age_days": r["age_days"],
+                "evidence": _meta["ev"],
+                "engagement": _meta["engagement"],
                 "thread_url": ROOM_URL.format(tid=r["thread_id"]),
                 "drafts": [{"thread_id": r["thread_id"],
                             "topic": r["topic"] or r["room_name"],
@@ -1606,29 +1701,69 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     queue = []
     fu_keys = {f["item_key"] for f in follow_ups}
     for f in follow_ups:
+        ev = f.get("evidence") or {}
+        eng_state = f.get("engagement") or {}
+        # A PENDING UPWORK DRAFT ON AN ACTIVE CLIENT IS NOT A SALES FOLLOW-UP.
+        # It is client comms with an unsent message attached. Chosen treatment:
+        # RELABEL, not suppress. Suppression cannot be justified here — an
+        # active client can still be owed an Upwork reply, and hiding it would
+        # trade a noisy board for a silently missed obligation, which is the
+        # strictly worse failure. What was actually wrong was the CLAIM: calling
+        # a contracted client a prospect who has ignored us for 9 days. So the
+        # card stays, says what the relationship is, ages off the real
+        # cross-channel last-contact, and ranks accordingly.
+        client_card = bool(eng_state.get("active"))
         owed = f["bucket"] in ("owed", "unmatched-owed")
         urg = _eng.compute_urgency(
-            "owed_reply" if owed else "capture",
+            "owed_reply" if owed and not client_card else "capture",
             score=None, refreshed_at=None, now=now_dt,
             overdue=(f.get("age_days") or 0) >= 3)
         # age is the live signal: an owed reply sitting 8 days is hotter
         urg = round(urg * (1.0 + min((f.get("age_days") or 0), 14) / 14.0), 3)
-        queue.append({
+        entry = {
             "kind": "followup", "urgency": urg,
-            "title": f["topic"], "client": f.get("client"),
+            "title": (f"Client comms: {f['topic']}" if client_card
+                      else f["topic"]),
+            "client": f.get("client"),
             "tier": f["tier"], "bucket": f["bucket"],
             "age_days": f["age_days"], "draft": f["draft"],
             "thread_url": f["thread_url"], "item_key": f["item_key"],
             "threads": len(f["thread_ids"]),
-            "detail": {"kind": "Follow-up (draft ready)", "client": f.get("client"),
+            # server-supplied label so a surface never has to infer the
+            # relationship from the card kind (today.js still hard-codes a
+            # "reply owed" pill for every followup card — that is the one
+            # remaining place this claim is made without checking).
+            "label": "client comms" if client_card else "reply owed",
+            "engagement": eng_state, "evidence": ev,
+            "detail": {"kind": ("Client comms (draft ready)" if client_card
+                                else "Follow-up (draft ready)"),
+                       "client": f.get("client"),
                        "age_days": f["age_days"], "tier": f["tier"],
+                       # renders as "Idle — N days since the client wrote", now
+                       # measured across every channel rather than Upwork alone
+                       "idle_days": f["age_days"],
+                       # renders as "From" — where the conversation actually is
+                       "source": _evidence.describe(ev, eng_state),
                        "thread_url": f["thread_url"], "draft": f["draft"],
                        # EVERY room and EVERY draft this one card stands for.
                        # Collapsing two of a person's threads must not make the
                        # second room's written reply unreachable.
                        "drafts": f["drafts"],
                        "thread_urls": [ROOM_URL.format(tid=t)
-                                       for t in f["thread_ids"]]}})
+                                       for t in f["thread_ids"]]}}
+        # PROVABLE cross-channel closure -> the existing "possibly resolved"
+        # chip, never a hide. If we spoke to them after they last spoke to us,
+        # on any channel, no reply is owed: Cradle's Upwork message of 08-03
+        # 14:41Z was answered on Slack at 15:35Z, 54 minutes later. The chip
+        # states the evidence and leaves the decision with the founder.
+        if ev.get("answered_since") and ev.get("ours_channel") != "upwork":
+            entry["possibly_resolved"] = {
+                "source": f"{ev['ours_channel']} — you replied there"
+                          f" {str(ev['ours_ts'])[:10]}, after their last message"
+                          f" ({ev.get('channel')} {str(ev.get('ts'))[:10]})",
+                "confidence": None,
+                "evidence": _evidence.describe(ev, eng_state)}
+        queue.append(entry)
     # actionable M4 nudges — everything except the paused hot-lead stream, and
     # minus any owed_reply whose thread is already a follow-up row above.
     # First build the CLOSURE overlay (J1.5): a card whose cross-source closure
@@ -1754,6 +1889,12 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     _cl_counts: dict = {}
     for e in queue:
         label = _CLUSTER.get(e.get("nudge_kind") or e.get("kind"), "other")
+        # a contracted client's thread is not part of the "follow-ups" (i.e.
+        # chase-the-prospect) count — the cluster line is the first thing read,
+        # and "3 follow-ups" that silently includes a live client is the same
+        # false claim the card itself used to make
+        if (e.get("engagement") or {}).get("active") and label == "follow-ups":
+            label = "client comms"
         _cl_counts[label] = _cl_counts.get(label, 0) + 1
     clusters = [{"label": k, "count": v}
                 for k, v in sorted(_cl_counts.items(), key=lambda x: -x[1])]

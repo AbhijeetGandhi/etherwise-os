@@ -329,6 +329,76 @@ class TestRules(CoSCase):
                          " VALUES ('t2','followup','pending')")
         self.assertEqual(rules.rule_owed_replies(self.db_path, dt(d=22)), [])
 
+    # ── cross-channel evidence (2026-08-12) ──────────────────────────────────
+    # "this cross platform sync is not at all working" — a contracted client
+    # with two weeks of live Slack was being minted as a cold Upwork lead
+    # because the only signal the rule read was threads.latest_message_dt.
+
+    def seed_client(self, contract_status="ACTIVE"):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name, client_id,"
+                         " contract_id, latest_message_dt) VALUES ('room_b',"
+                         "'Brandi Jordan','the-cradle-company','k9',"
+                         "'2026-06-10T10:00:00Z')")
+            conn.execute("INSERT INTO drafts (thread_id, draft_kind, body,"
+                         " sent_status) VALUES ('room_b','followup','p',"
+                         "'pending')")
+            conn.execute("INSERT INTO messages (id, thread_id, created_dt,"
+                         " direction) VALUES ('m1','room_b',"
+                         "'2026-06-10T10:00:00Z','Inbound')")
+            conn.execute("INSERT INTO contracts (id, upwork_status, start_dt,"
+                         " thread_id) VALUES ('k9',?,'2026-05-01T00:00:00Z',"
+                         "'room_b')", (contract_status,))
+
+    def slack(self, ts, direction):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO events (id, source, native_id, ts,"
+                         " client_id, state, direction) VALUES (?,'slack',?,?,"
+                         "'the-cradle-company','mapped',?)",
+                         (f"evt:slack:{ts}:{direction}", ts, ts, direction))
+
+    def test_an_active_client_is_not_minted_as_a_sales_follow_up(self):
+        self.seed_client()
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))[0]
+        self.assertEqual(c["kind"], "owed_reply")        # identity unchanged
+        self.assertTrue(c["title"].startswith("Client comms:"))
+        self.assertIn("UNSENT Upwork draft", c["action"])
+        self.assertTrue(c["payload"]["engagement"]["active"])
+        self.assertEqual(c["payload"]["engagement"]["contract_id"], "k9")
+
+    def test_a_prospect_still_reads_as_a_follow_up(self):
+        self.seed_client(contract_status="CLOSED")
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))[0]
+        self.assertTrue(c["title"].startswith("Follow up:"))
+        self.assertFalse(c["payload"]["engagement"]["active"])
+
+    def test_evidence_ts_is_the_max_across_channels(self):
+        self.seed_client()
+        self.slack("2026-06-20T08:00:00+00:00", "inbound")   # newer than Upwork
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))[0]
+        self.assertEqual(c["payload"]["evidence_ts"][:10], "2026-06-20")
+        self.assertEqual(c["payload"]["idle_days"], 2)       # not 12
+
+    def test_a_counterparty_who_spoke_elsewhere_today_is_not_idle(self):
+        # COS_FOLLOWUP_IDLE_DAYS applies to the CONVERSATION, not to one room.
+        # Dropping is safe: the sweep decays the nudge, and it re-mints the
+        # moment the condition holds again.
+        self.seed_client()
+        self.slack("2026-06-22T08:00:00+00:00", "inbound")
+        self.assertEqual(rules.rule_owed_replies(self.db_path, dt(d=22)), [])
+
+    def test_our_own_slack_reply_is_not_the_client_speaking(self):
+        self.seed_client()
+        self.slack("2026-06-22T08:00:00+00:00", "outbound")
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))[0]
+        self.assertEqual(c["payload"]["evidence_ts"][:10], "2026-06-10")
+        self.assertTrue(c["payload"]["evidence"]["answered_since"])
+
+    def test_an_unattributed_thread_admits_it_only_saw_upwork(self):
+        self.seed_owed()          # no client_id -> no cross-channel key exists
+        c = rules.rule_owed_replies(self.db_path, dt(d=22))[0]
+        self.assertIn("not attributed", c["payload"]["evidence"]["unproven"])
+
     def test_hotlead_no_loom(self):
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,status,"

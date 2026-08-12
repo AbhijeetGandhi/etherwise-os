@@ -1409,6 +1409,218 @@ class TestNudgeActions(unittest.TestCase):
         self.assertEqual(after, before - 1)
 
 
+class TestEvidenceAuthority(unittest.TestCase):
+    """_is_actioned: evidence beats a re-mint; a re-mint only speaks for kinds
+    that have no evidence to give.
+
+    Both halves exist and neither may be 'simplified' away — they are exact
+    mirrors. Drop the evidence branch and a scheduled re-mint resurrects a card
+    the founder closed (Julie Heffernan, 2026-08-12). Drop the created_at branch
+    and one Done in August gags that client's dossier backlog in January while
+    the morning brief nags about it daily."""
+
+    KEY = "followup:p:someone"
+    SUPPRESSED = {KEY}
+    ACTIONED = {KEY: "2026-08-11 08:41:35"}     # UTC (nudge_state is SQLite-stamped)
+
+    def test_a_re_mint_with_no_new_evidence_stays_hidden(self):
+        # the live shape: done 08-11 08:41Z, evidence 08-10 19:36Z (OLDER, so
+        # nothing was said), row re-minted 08-12 04:11 IST = 08-11 22:41Z.
+        self.assertTrue(data._is_actioned(
+            self.KEY, self.SUPPRESSED, self.ACTIONED,
+            evidence_ts="2026-08-10T19:36:41.140Z",
+            created_at="2026-08-12T04:11:25"))
+
+    def test_genuinely_newer_evidence_brings_it_back(self):
+        # ...and the mirror: they DID say something after the Done, so the card
+        # is live again even though the row is old.
+        self.assertFalse(data._is_actioned(
+            self.KEY, self.SUPPRESSED, self.ACTIONED,
+            evidence_ts="2026-08-11T18:00:00Z",
+            created_at="2026-08-01T04:11:25"))
+
+    def test_a_kind_with_no_evidence_is_revived_by_a_re_mint(self):
+        # stale_dossier etc. supply no evidence_ts at all, so a fresh row IS
+        # the only news there is.
+        self.assertFalse(data._is_actioned(
+            "stale_dossier:acme", {"stale_dossier:acme"},
+            {"stale_dossier:acme": "2026-08-11 08:41:35"},
+            evidence_ts=None, created_at="2026-08-12T04:11:25"))
+        self.assertTrue(data._is_actioned(          # ...and an OLD row does not
+            "stale_dossier:acme", {"stale_dossier:acme"},
+            {"stale_dossier:acme": "2026-08-11 08:41:35"},
+            evidence_ts=None, created_at="2026-08-01T04:11:25"))
+
+    def test_a_snooze_is_never_cut_short_by_evidence(self):
+        # a snooze carries no actioned_at: it is an explicit "not until <date>"
+        self.assertTrue(data._is_actioned(
+            self.KEY, self.SUPPRESSED, {}, evidence_ts="2099-01-01T00:00:00Z",
+            created_at="2099-01-01T00:00:00"))
+
+
+class TestCrossChannelEvidence(unittest.TestCase):
+    """Reply-owed is a claim about a COUNTERPARTY, not about one Upwork room.
+
+    Abhijeet, 2026-08-12: "if I look at the today tab it says reply owed for
+    cradle company [...] we have contract started and the communication going on
+    over slack for two weeks now."
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-xchan-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO threads (id, room_name, topic, bucket, tier,"
+                " client_id, contract_id, latest_message_dt) VALUES"
+                " ('rK','Brandi Jordan','AI Automation Specialist','followup',"
+                " 'HOT','the-cradle-company','k9','2026-08-03T14:41:36Z')")
+            conn.execute(
+                "INSERT INTO drafts (thread_id, draft_kind, tier, body,"
+                " word_count, sent_status) VALUES ('rK','followup','HOT',"
+                "'Reply',2,'pending')")
+            # Upwork says: they wrote on 08-03 and we never answered THERE.
+            # NOTE the capital 'I' — messages.direction is stored in mixed case
+            # ('Inbound' 1143 / 'inbound' 458 live), so every read lowercases.
+            conn.execute(
+                "INSERT INTO messages (id, thread_id, message, created_dt,"
+                " direction) VALUES ('m1','rK','ping','2026-08-03T14:41:36Z',"
+                "'Inbound')")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def card(self, today="2026-08-12"):
+        q = [c for c in data.today(self.db_path, today=today)["queue"]
+             if c.get("item_key") == "followup:c:the-cradle-company"]
+        return q[0] if q else None
+
+    def add_contract(self, status="ACTIVE"):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO contracts (id, title, upwork_status, start_dt,"
+                " thread_id, client_company) VALUES ('k9','AI Automation"
+                " Specialist',?,'2026-07-15T20:21:42Z','rK','Brandi Jordan')",
+                (status,))
+
+    def add_slack(self, ts, direction):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, ts, author,"
+                " client_id, state, direction) VALUES (?, 'slack', ?, ?,"
+                " 'someone','the-cradle-company','mapped',?)",
+                (f"evt:slack:{ts}:{direction}", ts, ts, direction))
+
+    def test_upwork_only_reads_an_active_client_as_a_nine_day_old_lead(self):
+        # the BEFORE picture, asserted so the fix cannot silently regress
+        c = self.card()
+        self.assertEqual(c["age_days"], 9)
+        self.assertEqual(c["label"], "reply owed")
+
+    def test_slack_activity_sets_the_honest_age(self):
+        self.add_slack("2026-08-08T03:37:49+00:00", "inbound")
+        self.assertEqual(self.card()["age_days"], 4)   # not 9
+
+    def test_an_active_contract_relabels_the_card_as_client_comms(self):
+        self.add_contract()
+        c = self.card()
+        self.assertEqual(c["label"], "client comms")
+        self.assertTrue(c["engagement"]["active"])
+        self.assertEqual(c["engagement"]["contract_id"], "k9")
+        self.assertTrue(c["title"].startswith("Client comms:"))
+        self.assertEqual(c["detail"]["kind"], "Client comms (draft ready)")
+        # ...and it leaves the "chase the prospect" count
+        labels = {cl["label"] for cl in
+                  data.today(self.db_path, today="2026-08-12")["clusters"]}
+        self.assertIn("client comms", labels)
+        self.assertNotIn("follow-ups", labels)
+
+    def test_a_client_card_is_never_hidden_only_relabelled(self):
+        # suppression would trade noise for a silently missed obligation
+        self.add_contract()
+        self.add_slack("2026-08-08T03:37:49+00:00", "inbound")
+        self.assertIsNotNone(self.card())
+
+    def test_answering_on_slack_raises_the_closure_chip_not_a_hide(self):
+        # provable, not a heuristic: they wrote on Upwork at 14:41Z and we
+        # answered in their Slack at 15:35Z the same day.
+        self.add_contract()
+        self.add_slack("2026-08-03T15:35:29+00:00", "outbound")
+        c = self.card()
+        self.assertIsNotNone(c)                       # still on the board
+        self.assertIn("slack", c["possibly_resolved"]["source"])
+        self.assertTrue(c["evidence"]["answered_since"])
+
+    def test_our_own_reply_does_not_count_as_them_speaking(self):
+        self.add_slack("2026-08-11T09:00:00+00:00", "outbound")
+        ev = self.card()["evidence"]
+        self.assertEqual(ev["ts"][:10], "2026-08-03")   # THEIR clock, not ours
+        self.assertEqual(ev["ours_ts"][:10], "2026-08-11")
+        self.assertTrue(ev["answered_since"])
+
+    def test_an_upwork_system_row_is_not_a_client_reply(self):
+        # Julie Heffernan: a call happened, then Upwork wrote a system row and
+        # the card came back the next morning claiming she was waiting.
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO messages (id, thread_id, message, created_dt,"
+                " direction) VALUES ('m2','rK',NULL,'2026-08-12T13:30:08Z',"
+                "'system')")
+        self.assertEqual(self.card()["evidence"]["ts"][:10], "2026-08-03")
+        self.assertEqual(self.card()["age_days"], 9)   # not 0
+
+    def test_an_unattributed_thread_says_it_only_checked_upwork(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE threads SET client_id=NULL WHERE id='rK'")
+        q = [c for c in data.today(self.db_path, today="2026-08-12")["queue"]
+             if str(c.get("item_key", "")).startswith("followup:")]
+        self.assertEqual(len(q), 1)
+        self.assertIn("not attributed", q[0]["evidence"]["unproven"])
+        self.assertIn("only Upwork was checked", q[0]["detail"]["source"])
+
+    def test_a_done_pressed_on_the_nudge_form_hides_the_followup_form(self):
+        # ONE DECISION, TWO STORES. /api/cos-nudge (nudge cards) wrote only the
+        # nudges table; /api/nudge (follow-up cards) wrote nudge_state. The same
+        # counterparty renders as either shape depending on whether a draft
+        # exists, so a Done recorded on one form was invisible to the other and
+        # the card came back — with a nudge_state timestamp from two weeks
+        # earlier. Live: the-cradle-company, engine done 08-11 23:20Z vs
+        # nudge_state 07-29 22:54Z.
+        from modules.chief_of_staff import nudges as eng
+        k = "followup:c:the-cradle-company"
+        eng.write_nudge(self.db_path, source="sales", dept="sales",
+                        kind="owed_reply", title="Follow up: x", dedup_key=k,
+                        payload={"thread_id": "rK"})
+        with db.connect(self.db_path) as conn:      # a stale overlay decision
+            conn.execute("INSERT INTO nudge_state (item_key, state, updated_at)"
+                         " VALUES (?,'done','2026-07-29 22:54:28')", (k,))
+        self.assertIsNotNone(self.card())           # 08-03 reply > 07-29 Done
+        actions.cos_nudge(self.db_path, {"dedup_key": k, "action": "done"})
+        self.assertIsNone(self.card())              # ...and now it stays gone
+
+    def test_confirming_a_render_time_chip_actually_lands(self):
+        # the chip can now be raised at render time from cross-channel evidence,
+        # so it exists on cards the engine has no OPEN row for. Returning
+        # "no open card" made the founder press a button that did nothing.
+        self.add_contract()
+        self.add_slack("2026-08-03T15:35:29+00:00", "outbound")
+        self.assertIsNotNone(self.card()["possibly_resolved"])
+        out = actions.card_closure(self.db_path,
+                                   {"item_key": "followup:c:the-cradle-company",
+                                    "action": "confirm"})
+        self.assertEqual(out["updated"], 1)
+        self.assertIsNone(self.card())
+
+    def test_a_done_survives_a_sweep_re_mint_but_not_a_slack_reply(self):
+        k = "followup:c:the-cradle-company"
+        actions.nudge(self.db_path, {"item_key": k, "action": "done"},
+                      today="2026-08-12")
+        self.assertIsNone(self.card("2026-08-13"))      # nothing new -> gone
+        self.add_slack("2099-01-01T00:00:00+00:00", "inbound")
+        self.assertIsNotNone(self.card("2099-01-02"))   # they spoke -> back
+
+
 class TestWakeAndRail(unittest.TestCase):
     def test_wake_kicks_allowlisted_label(self):
         with mock.patch.object(actions.subprocess, "run") as run:

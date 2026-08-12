@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from core import config, db, registry
-from modules.chief_of_staff import nudges
+from modules.chief_of_staff import evidence, nudges
 
 # scored_jobs states that are still actionable (not parked/declined/applied)
 _ACTIONABLE_JOB = ("Scored", "Drafted")
@@ -39,36 +39,62 @@ def _iso(dt: datetime) -> str:
 # ── Sales (M1) ────────────────────────────────────────────────────────────────
 
 def rule_owed_replies(db_path, now=None) -> List[dict]:
-    """A pending draft + the thread sat idle >= COS_FOLLOWUP_IDLE_DAYS -> nudge
-    'follow up (draft ready)'. Mirrors the cockpit Today follow-up source.
+    """A pending draft + the counterparty silent >= COS_FOLLOWUP_IDLE_DAYS ->
+    nudge 'follow up (draft ready)'. Mirrors the cockpit Today follow-up source.
 
     ONE CARD PER PERSON, not per room (see nudges.followup_key). The card is
     labelled with the registry client when the thread is attributed, so an
     active client never reads as a cold Upwork lead — the Brandi Jordan / Cradle
-    Company symptom Abhijeet caught on 2026-08-12."""
+    Company symptom Abhijeet caught on 2026-08-12.
+
+    IDLENESS AND EVIDENCE ARE CROSS-CHANNEL (2026-08-12). Both used to come from
+    `threads.latest_message_dt`: the newest row of ANY kind on the UPWORK thread.
+    That signal is not the counterparty (90 of 139 threads had a newer non-
+    inbound row; 21 had an Upwork *system* row as their latest) and it is not
+    the conversation (The Cradle Company's runs on Slack). The SQL below stays
+    as a cheap Upwork-side prefilter — it can only over-select — and
+    `evidence.counterparty` then answers, per person, when they actually last
+    spoke on any channel. A counterparty who spoke inside the idle window is
+    dropped: the rule's own semantics, applied to honest data. Dropping is safe
+    here — the sweep decays the nudge rather than deleting it, and it re-mints
+    the moment the condition holds again."""
     cutoff = (_now(now) - timedelta(days=config.COS_FOLLOWUP_IDLE_DAYS))
     groups: dict = {}
     with db.connect(db_path) as conn:
         for r in conn.execute(
             "SELECT d.thread_id, t.topic, t.room_name, t.latest_message_dt,"
-            " t.client_id,"
-            " CAST(julianday(?) - julianday(substr(t.latest_message_dt,1,10))"
-            "   AS INT) AS idle_days"
+            " t.client_id"
             " FROM drafts d JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status='pending'"
             " AND substr(t.latest_message_dt,1,10) <= ?"
             " ORDER BY t.latest_message_dt DESC",
-                (_iso(_now(now)), cutoff.strftime("%Y-%m-%d"))):
+                (cutoff.strftime("%Y-%m-%d"),)):
             key = nudges.followup_key(r["client_id"], r["room_name"],
                                       r["thread_id"])
             g = groups.setdefault(key, {"rows": [], "client_id": r["client_id"]})
             g["rows"].append(dict(r))
 
+        # one evidence read per counterparty, inside the same connection
+        for key, g in groups.items():
+            tids = [r["thread_id"] for r in g["rows"]]
+            g["ev"] = evidence.counterparty(
+                conn, thread_ids=tids, client_id=g["client_id"],
+                thread_latest=max(r["latest_message_dt"] for r in g["rows"]))
+            g["engagement"] = evidence.engagement(
+                conn, thread_ids=tids, client_id=g["client_id"])
+
     reg = _registry()
+    nowdt = _now(now)
     out = []
     for key, g in groups.items():
         rows = g["rows"]                       # newest thread first (ORDER BY)
         head = rows[0]
+        ev, eng = g["ev"], g["engagement"]
+        # idle = the OLDEST obligation this person holds, cross-channel aware
+        # (evidence.counterparty explains why that is not the same as `ts`)
+        idle = evidence.age_days(ev["waiting_since"], nowdt)
+        if idle is not None and idle < config.COS_FOLLOWUP_IDLE_DAYS:
+            continue      # they spoke recently, just not on Upwork — not idle
         # the label: registry name for an attributed thread, else the room's
         # counterparty name. Never the raw room id.
         label = None
@@ -77,16 +103,30 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
         label = label or (head["room_name"] or "").split(",")[0].strip() \
             or head["thread_id"]
         topic = head["topic"] or head["room_name"] or head["thread_id"]
-        title = f"Follow up: {topic}" if len(rows) == 1 \
-            else f"Follow up: {label} — {len(rows)} open threads"
+        # A CONTRACTED CLIENT IS NOT A SALES FOLLOW-UP. The kind stays
+        # 'owed_reply' on purpose — card identity, decay TTL, done-semantics and
+        # the Today dedup all key off it, and renaming the kind to fix a LABEL
+        # would break four things to fix one. What changes is the claim the card
+        # makes about the relationship, and where it points the founder.
+        client_card = bool(eng.get("active"))
+        if client_card:
+            title = f"Client comms: {topic}" if len(rows) == 1 \
+                else f"Client comms: {label} — {len(rows)} open threads"
+            action = (f"Active client (contract {eng['contract_id']}) with an"
+                      f" UNSENT Upwork draft. " + evidence.describe(ev, eng)
+                      + ". Send it or bin it — do not chase them as a lead.")
+        else:
+            title = f"Follow up: {topic}" if len(rows) == 1 \
+                else f"Follow up: {label} — {len(rows)} open threads"
+            action = "Draft is ready — review + send in Upwork."
         out.append({
             "source": "sales", "dept": "sales", "kind": "owed_reply",
             "title": title, "client": label,
-            "action": "Draft is ready — review + send in Upwork.",
+            "action": action,
             "due": None, "dedup_key": key,
             # thread_id(s) in the payload so the Today assembler can dedup this
             # nudge against its follow-up card (the "follow-up x2" root cause).
-            # evidence_ts = the LATEST message across every thread in the group.
+            # evidence_ts = when the COUNTERPARTY last spoke, ACROSS CHANNELS.
             # write_nudge uses it to decide whether a card the founder already
             # marked done has any REASON to come back: if nothing has been said
             # since they actioned it, it stays gone. Without this the card
@@ -94,14 +134,12 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
             # accumulated 10 rows, Mustafa 11, before this was caught
             # 2026-08-12). Grouping matters here too: acting on the newer of a
             # person's two rooms now settles both.
-            # the OLDEST obligation sets the age; ranking a person by their
-            # freshest thread hides real neglect
-            "payload": {"idle_days": max(r["idle_days"] for r in rows),
+            "payload": {"idle_days": idle,
                         "thread_id": head["thread_id"],
                         "thread_ids": [r["thread_id"] for r in rows],
                         "client_id": g["client_id"],
-                        "evidence_ts": max(r["latest_message_dt"]
-                                           for r in rows)}})
+                        "engagement": eng, "evidence": ev,
+                        "evidence_ts": ev["ts"]}})
     return out
 
 

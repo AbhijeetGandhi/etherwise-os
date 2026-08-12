@@ -238,6 +238,21 @@ def cos_nudge(db_path: Optional[Path], body: dict) -> dict:
         snooze_until = (base + timedelta(days=days)).isoformat()
     out = eng.set_state(db_path, state=_COS_STATE[action], dedup_key=dedup_key,
                         snooze_until=snooze_until, note=(body or {}).get("note"))
+    # WRITE THROUGH TO THE OVERLAY — the mirror of apply_nudge's write-through
+    # to the engine. Today renders the same counterparty as a NUDGE card or as a
+    # FOLLOW-UP card depending on whether a draft exists, and the two used to
+    # record their decisions in different tables. A Done pressed on one form was
+    # then invisible to the other, so it came back the next time the shape
+    # flipped (the Cradle Company, 2026-08-12). Same decision, both stores.
+    with db.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO nudge_state (item_key, state, snooze_until, note,"
+            " source, updated_at) VALUES (?,?,?,?, 'cockpit', datetime('now'))"
+            " ON CONFLICT(item_key) DO UPDATE SET state=excluded.state,"
+            " snooze_until=excluded.snooze_until, note=excluded.note,"
+            " updated_at=datetime('now')",
+            (dedup_key, _COS_STATE[action], snooze_until,
+             (body or {}).get("note")))
     return {"ok": out["updated"] > 0, "dedup_key": dedup_key,
             "state": _COS_STATE[action]}
 
@@ -383,7 +398,26 @@ def card_closure(db_path, body: dict) -> dict:
         row = conn.execute(
             "SELECT id FROM nudges WHERE dedup_key=? AND state IN ('open','snoozed')"
             " ORDER BY id DESC LIMIT 1", (dedup_key,)).fetchone()
-    if not row:
-        return {"error": "no open card for that key"}
+        if not row:
+            # A closure chip can now be raised at RENDER time from deterministic
+            # cross-channel evidence (data.today: "you already replied on Slack
+            # after their last message"), so a card can carry the chip while the
+            # engine row is done/decayed or has never been minted at all. The
+            # decision must still land somewhere — returning "no open card" made
+            # the founder press a button that visibly did nothing, which is the
+            # exact failure this whole area exists to stop.
+            row = conn.execute(
+                "SELECT id FROM nudges WHERE dedup_key=? ORDER BY id DESC"
+                " LIMIT 1", (dedup_key,)).fetchone()
     state = "confirmed" if action == "confirm" else "rejected"
-    return nudges.set_closure(db_path, row["id"], closure_state=state)
+    if row:
+        return nudges.set_closure(db_path, row["id"], closure_state=state)
+    # no engine row at all -> record it where a follow-up card's actions live.
+    # 'confirm' means handled (same as Done); 'reject' means keep it open, which
+    # for a card with no stored state is already true, so it is a no-op we SAY.
+    if action == "confirm":
+        res = apply_nudge(db_path, item_key, "done")
+        return {"updated": 1, "closure_state": state, "via": "nudge_state",
+                "engine_rows": res.get("engine_rows", 0)}
+    return {"updated": 0, "closure_state": state, "via": "none",
+            "note": "no stored card for that key — it was already open"}
