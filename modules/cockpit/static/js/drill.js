@@ -22,7 +22,7 @@
 
 "use strict";
 
-import { el, clear, fmt, icon, table as uiTable, emptyState, btn } from "./ui.js";
+import { el, append, clear, fmt, icon, table as uiTable, emptyState, btn } from "./ui.js";
 
 const ROW_CAP = 300;          // rendered rows; the header always states the truth
 
@@ -67,7 +67,14 @@ export function closeDrill() {
  *   total       number   the TRUE row count behind the figure. Defaults to
  *                        rows.length; pass the server's `total` whenever it
  *                        can exceed the returned page, or the drill will lie.
- *   note        Node|str an extra caveat line under the header
+ *   note        Node|str an extra caveat line under the header. It is rendered
+ *                        even when there are NO rows — a caveat on an empty
+ *                        drill is exactly when the caveat matters most.
+ *   capNote     string   REPLACES the default "…newest first" explanation of
+ *                        the cap. The default assumes the server truncated by
+ *                        TIME; say so here when it did not (a top-N-by-count
+ *                        list is truncated by rank, and calling that "the
+ *                        latest N" is a lie about which rows are missing).
  *
  * OPTIONAL POWER (each one lights up a piece of the panel)
  *   amount(row) → number   enables: header sum, facet sums, biggest-first sort,
@@ -112,8 +119,11 @@ export function openDrill(spec) {
   if (amount) countBits.push(`these rows sum to ${fmt.usd2(grandSum)}`);
   const countLine = el("span", "count", countBits.join(" · ") + " ");
   if (capped) {
-    countLine.appendChild(el("span", "capped",
-      `— showing the latest ${fmt.num(rows.length)}`));
+    // "the latest N" is a claim about ORDER. Only make it when the caller has
+    // not told us the cut was made some other way.
+    append(countLine, el("span", "capped", spec.capNote
+      ? `— showing ${fmt.num(rows.length)} of them`
+      : `— showing the latest ${fmt.num(rows.length)}`));
   }
 
   clear(_panel);
@@ -131,8 +141,13 @@ export function openDrill(spec) {
   ]));
 
   if (!rows.length) {
-    _panel.appendChild(el("div", "drill-body",
-      emptyState(spec.emptyText || "No rows behind this figure.", { icon: "inbox" })));
+    // The caveat is rendered HERE too. An empty drill with a hidden note is
+    // the worst case: "0 rows" reads as a fact when the note may be saying
+    // the read was gated, aggregated or capped to nothing.
+    append(_panel, el("div", "drill-body", [
+      spec.note ? el("div", "drillsub", spec.note) : null,
+      emptyState(spec.emptyText || "No rows behind this figure.", { icon: "inbox" }),
+    ]));
     show();
     return;
   }
@@ -256,10 +271,11 @@ export function openDrill(spec) {
         + ` filters above to see the rest.`));
     }
     if (capped) {
-      body.appendChild(el("div", "drill-cap",
-        `The server capped this read at ${fmt.num(rows.length)} of`
-        + ` ${fmt.num(total)} rows, newest first. The count in the header is the`
-        + ` true total; the sum covers only the rows above.`));
+      append(body, el("div", "drill-cap", spec.capNote
+        ? spec.capNote
+        : `The server capped this read at ${fmt.num(rows.length)} of`
+          + ` ${fmt.num(total)} rows, newest first. The count in the header is`
+          + ` the true total; the sum covers only the rows above.`));
     }
   }
 

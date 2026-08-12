@@ -51,6 +51,61 @@ GET_ROUTES: dict = {
     "/api/activity": data.activity,
     "/api/activity/run": data.activity_run,
 }
+# ── the query-param registry (the guard) ─────────────────────────────────────
+# A URL query param reaches a reader ONLY if its name appears here.
+#
+# Reading the signature was not enough on its own. It made URL-reachability an
+# ACCIDENT of how a param happened to be declared: `today` is a TEST clock slot,
+# positional (and so unreachable) on today()/pipeline()/money()/pipeline_facts()
+# but keyword-only (and so reachable) on today_rows()/clients()/pipeline_rows().
+# The same knob, safe on four routes and exposed on three. `?today=lol` 500'd
+# one of them and stamped a FALSE `"as_of": "lol"` onto the Clients view — a
+# provenance line the user reads as server truth.
+#
+# So the rule is opt-IN, not opt-out. A new keyword-only param is unreachable
+# from a URL until someone writes its name below, which is exactly the moment
+# they have to answer "is this user input, and what validates it?". Forgetting
+# now fails SAFE (the param is ignored) instead of failing open (a raw query
+# string handed to an internal slot). Naming a slot `_x` (clients_airtable's
+# `_client`) still marks the intent at the READER; this registry enforces it at
+# the ROUTER, and both are checked — the mistake has to be made twice now.
+#
+# VALIDATION of what is in here stays with the reader, in the reader's own error
+# envelope (activity()'s `day`, pipeline_rows()' `stage`/`week`): a 200 carrying
+# {"error": ...}, which the UI toasts in red. Never a bare empty list —
+# UI_BUILD_BRIEF §0, a rejected filter must not look like "no data".
+#
+# tests/test_cockpit.py::TestQueryParamGuard keeps this in sync with the readers
+# and fails the build if a routed reader grows a forwardable param.
+QUERY_PARAMS: dict = {
+    # /api/knowledge · /api/clients/transactions · /api/money/transactions
+    "client": "client id or display name",
+    "q": "free-text search",
+    # /api/clients
+    "sort": "revenue|recent",
+    # /api/today/rows
+    "which": "fresh|accumulated",
+    # /api/pipeline/rows — the one drill behind every Pipeline figure
+    "stage": "jobs|scanned|scored|carded|applied|replied|hired|triage|threads",
+    "week": "funnel week — the Monday, YYYY-MM-DD",
+    "status": "proposal status (threads stage)",
+    "frm": "month window start, YYYY-MM",
+    "to": "month window end, YYYY-MM",
+    "skip": "hard_rule_skip reason, or __none__/__any__",
+    "feed": "feed_source",
+    "icp": "icp_tier",
+    "score_min": "integer, inclusive",
+    "score_max": "integer, exclusive",
+    "carded": "1|0",
+    # /api/money/transactions
+    "bucket": "pnl bucket, comma-list",
+    "month": "YYYY-MM",
+    "source": "ledger source",
+    # /api/activity · /api/activity/run
+    "day": "IST calendar date, YYYY-MM-DD",
+    "run_id": "runs.id",
+}
+
 POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
     "/api/queue/resolve": actions.queue_resolve,  # assign|create_alias|ignore
@@ -125,10 +180,22 @@ class Handler(BaseHTTPRequestHandler):
             # (keyword-only), so adding ?client=/?q= can't break other routes
             raw = parse_qs(urlparse(self.path).query)
             params = {k: v[0] for k, v in raw.items()}
-            # keyword-only params only — db_path stays the fixed positional arg,
-            # so no ?db_path= query can redirect the read off the server's DB
+            # Three conditions, all required (see QUERY_PARAMS above):
+            #  1. KEYWORD_ONLY — db_path stays the fixed positional arg, so no
+            #     ?db_path= query can redirect the read off the server's DB.
+            #  2. in QUERY_PARAMS — registered as genuine user input. This is
+            #     the guard: anything a reader declares but nobody registered
+            #     (a clock slot, a test hook, a param added last week) is
+            #     simply not reachable from a URL.
+            #  3. no leading underscore — the reader-side marker for "a test
+            #     fills this in, a URL never does" (clients_airtable's
+            #     `_client` is an AirtableClient; forwarding a query string
+            #     into it handed the reader a str where it wanted an object,
+            #     and `?client=Adelye` 500'd that route).
             accepted = {p.name for p in inspect.signature(fn).parameters.values()
-                        if p.kind == p.KEYWORD_ONLY}
+                        if p.kind == p.KEYWORD_ONLY
+                        and p.name in QUERY_PARAMS
+                        and not p.name.startswith("_")}
             kwargs = {k: v for k, v in params.items() if k in accepted}
             try:
                 self._json(200, fn(self.server.db_path, **kwargs))

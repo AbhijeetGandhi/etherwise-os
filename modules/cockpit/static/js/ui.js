@@ -12,6 +12,8 @@
 // THE TWO NUMBER LAWS (brief §0), enforced by these helpers:
 //   1. `—` means NOT MEASURED. `0` means a real zero and must carry a note.
 //      Use `dash(v, fmtFn)`: null/undefined → an em dash, never "0" or "$0".
+//      On a tile, pass `unmeasured: true` to `kpi()` / `metricCard()` — they
+//      own the em dash AND the greying. Never hand-build a `.dash` span.
 //   2. Every figure drills. Render it with `linkNum()` / `kpi()` so it is a
 //      real <button>, not a div with a click handler.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -65,11 +67,23 @@ export function el(tag, props, children) {
   return node;
 }
 
-/** Append a Node / string / nested array to a parent. Strings become text. */
-export function append(parent, children) {
-  if (children == null || children === false) return parent;
-  if (Array.isArray(children)) { children.forEach((c) => append(parent, c)); return parent; }
-  parent.appendChild(children instanceof Node ? children : document.createTextNode(String(children)));
+/**
+ * append(parent, ...children) — Node / string / nested array, nulls dropped.
+ *
+ * THE FOOTGUN THIS EXISTS FOR: native `Element.append(null)` does NOT skip the
+ * null — it stringifies it and writes the literal text "null" into the page.
+ * This codebase writes `cond ? node : null` on nearly every line, so a single
+ * `parent.append(a, b, maybeNull)` prints "null" in the UI. ALWAYS use this
+ * helper (it is variadic, so it is a drop-in for `parent.append(a, b, c)`);
+ * native `.append` / `.appendChild` are only safe with values you can prove
+ * are non-null. `false` is dropped too, so `flag && node` is safe as well.
+ */
+export function append(parent, ...children) {
+  children.forEach(function add(c) {
+    if (c == null || c === false) return;
+    if (Array.isArray(c)) { c.forEach(add); return; }
+    parent.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+  });
   return parent;
 }
 
@@ -241,9 +255,11 @@ export function heading(title, hint, level = "h2") {
 export function card(title, body, opts = {}) {
   const c = el("div", { class: "card" + (opts.class ? " " + opts.class : "") });
   if (title) {
-    c.appendChild(el("div", "card-head", [
-      el("h3", "card-title", title),
-      opts.aside || null,
+    append(c, el("div", "card-head", [
+      // `plainTitle` opts out of the uppercase stat-label treatment — a client
+      // name is a name, not a metric label (see .card-title.plain).
+      el("h3", "card-title" + (opts.plainTitle ? " plain" : ""), title),
+      opts.aside,
     ]));
   }
   append(c, body);
@@ -266,16 +282,26 @@ export function metricCard({ label, value, note, tone, bar, unmeasured }) {
 }
 
 /**
- * kpi({label, value, sub, onClick, warn, stale}) — a clickable figure.
- * Renders a real <button>: every figure drills (brief §0 rule 2).
+ * kpi({label, value, sub, onClick, warn, stale, unmeasured, plainLabel})
+ * — a clickable figure. Renders a real <button>: every figure drills
+ * (brief §0 rule 2).
+ *
+ * `unmeasured: true` is the §0 rule-1 flag, the twin of metricCard's: it greys
+ * the figure and, when no `value` is supplied, renders the em dash itself. Do
+ * NOT hand-build `<span class="dash">—</span>` in a section — `—` and `0` are
+ * different things and exactly one helper should decide how each one looks.
+ *
+ * `plainLabel: true` drops the uppercase stat-label treatment (see the
+ * `.caps` modifier in components.css) — for labels that are names, not metrics.
  */
-export function kpi({ label, value, sub, onClick, warn, stale }) {
+export function kpi({ label, value, sub, onClick, warn, stale, unmeasured, plainLabel }) {
   const b = el("button", {
     class: "kpi" + (onClick ? "" : " static") + (stale ? " kpi-stale" : ""),
     attrs: onClick ? {} : { tabindex: "-1", "aria-disabled": "true" },
   }, [
-    el("div", "lbl", label),
-    el("div", "val", value),
+    el("div", "lbl" + (plainLabel ? "" : " caps"), label),
+    el("div", { class: "val" + (unmeasured ? " dash-value" : "") },
+      unmeasured && value == null ? "—" : value),
     sub ? el("div", "sub2", sub) : null,
     onClick ? el("div", "tag", "details →") : null,
     warn ? el("div", "kpiwarn", warn) : null,
@@ -304,15 +330,24 @@ export function chip(text, tone) {
   return el("span", "chip" + (tone ? " " + tone : ""), String(text));
 }
 
-/** btn("Done", fn, {variant:"primary"|"ghost"|"danger", icon:"check", sm:true}) */
+/**
+ * btn("Done", fn, {variant:"primary"|"ghost"|"danger", icon:"check", sm:true})
+ * `iconRight` puts a glyph AFTER the label — for "Next ›" style pairs, so a
+ * back/forward pair can use the real chevrons instead of literal "←"/"→" text.
+ */
 export function btn(label, onClick, opts = {}) {
+  const sz = opts.sm ? 13 : 14;
   const b = el("button", {
     class: "btn" + (opts.variant ? " " + opts.variant : "") + (opts.sm ? " sm" : "")
       + (opts.class ? " " + opts.class : ""),
     type: "button",
     attrs: opts.title ? { title: opts.title } : {},
     disabled: !!opts.disabled,
-  }, [opts.icon ? icon(opts.icon, { size: opts.sm ? 13 : 14 }) : null, label]);
+  }, [
+    opts.icon ? icon(opts.icon, { size: sz }) : null,
+    label,
+    opts.iconRight ? icon(opts.iconRight, { size: sz }) : null,
+  ]);
   if (onClick) b.addEventListener("click", onClick);
   return b;
 }

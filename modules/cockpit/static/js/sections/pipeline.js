@@ -40,11 +40,11 @@
 "use strict";
 
 import {
-  el, clear, fmt, icon, heading, kpi, pill, linkNum, extLink,
+  el, append, clear, dash, fmt, icon, heading, kpi, pill, linkNum, extLink,
   table, emptyState, notice, toast, qstr,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
-import { chart, axes, palette } from "../charts.js";
+import { chart, axes } from "../charts.js";
 
 export const meta = { title: "Pipeline", hint: "the scanner funnel, end to end" };
 
@@ -325,22 +325,12 @@ export async function render(root, ctx) {
 
   // charts.js keeps every live handle for the theme flip, so a redraw MUST
   // destroy the ones it is replacing — an orphan whose canvas has been cleared
-  // out of the DOM would be refreshed forever.
+  // out of the DOM would be refreshed forever. The detached-container problem
+  // is charts.js's (it defers construction a frame); this only tracks handles.
   let myCharts = [];
-  let chartGen = 0;
 
-  /** append a Chart.js chart once the container is actually in the document.
-      A canvas measured while detached comes out 0px wide, and app.js inserts
-      the section root only after render() resolves. */
   function mountChart(host, factory, opts) {
-    const gen = chartGen;
-    const slot = el("div");
-    host.appendChild(slot);
-    requestAnimationFrame(() => {
-      if (gen !== chartGen || !document.contains(slot)) return;
-      myCharts.push(chart(slot, factory, opts));
-    });
-    return slot;
+    myCharts.push(chart(host, factory, opts));
   }
 
   function redraw() {
@@ -348,7 +338,6 @@ export async function render(root, ctx) {
     drawSeg();
     myCharts.forEach((h) => { try { h.destroy(); } catch (e) { /* already gone */ } });
     myCharts = [];
-    chartGen += 1;
     clear(charts);
 
     const js = J();
@@ -391,7 +380,7 @@ export async function render(root, ctx) {
     (fnl.drops || []).forEach((dp) => { (dropsAfter[dp.after] ||= []).push(dp); });
 
     const c = el("div", "card");
-    const stack = el("div", "stack-2");
+    const stack = el("div", "funnel");
 
     (fnl.steps || []).forEach((s, i) => {
       const prev = i ? fnl.steps[i - 1] : null;
@@ -399,26 +388,23 @@ export async function render(root, ctx) {
       const w = scanned ? Math.max(0.6, (100 * (s.n || 0)) / scanned) : 0;
       const last = i === fnl.steps.length - 1;
 
+      // only the DATA is inline: how wide this band is and how far down the
+      // funnel it sits. Everything else is .funnel-bar in components.css.
       const bar = el("button", {
+        class: "funnel-bar" + (last ? " last" : ""),
         type: "button",
         attrs: {
           title: s.note,
           "aria-label": `show the ${fmt.num(s.n)} rows behind ${s.lbl}`,
         },
-        style: {
-          display: "block", width: w + "%", minWidth: "3px", height: "20px",
-          border: "0", padding: "0", cursor: "pointer",
-          borderRadius: "var(--radius-sm)",
-          background: last ? "var(--chart-3)" : "var(--chart-2)",
-          opacity: String(1 - i * 0.08),
-        },
+        style: { width: w + "%", opacity: String(1 - i * 0.08) },
         on: { click: () => openRows(`${s.lbl} — ${rl}`, scopeQ(s.scope), chartCols,
           { subtitle: s.note, facets: jobFacets }) },
       });
 
-      stack.appendChild(el("div", { style: { padding: "6px 0" } }, [
-        el("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap", marginBottom: "5px" } }, [
-          el("span", { style: { fontWeight: "600" } }, s.lbl),
+      append(stack, el("div", "funnel-step", [
+        el("div", "funnel-head", [
+          el("span", "lbl", s.lbl),
           el("span", "num", fmt.num(s.n)),
           scanned ? el("span", "muted small", pctOf(s.n, scanned) + "% of scanned") : null,
           conv != null
@@ -430,16 +416,10 @@ export async function render(root, ctx) {
 
       (dropsAfter[s.k] || []).forEach((dp) => {
         if (!dp.n) return;
-        stack.appendChild(el("button", {
+        append(stack, el("button", {
+          class: "funnel-drop",
           type: "button",
           attrs: { "aria-label": `show the ${fmt.num(dp.n)} jobs that ${dp.lbl}` },
-          style: {
-            display: "flex", alignItems: "center", gap: "8px", width: "100%",
-            textAlign: "left", background: "none", font: "inherit",
-            fontSize: "var(--text-xs)", color: "var(--muted-foreground)",
-            border: "1px dashed var(--border)", borderRadius: "var(--radius-sm)",
-            padding: "6px 10px", cursor: "pointer", margin: "2px 0 6px",
-          },
           on: { click: () => openRows(`${dp.lbl} — ${rl}`, scopeQ(dp.scope), chartCols,
             { facets: jobFacets }) },
         }, [
@@ -450,7 +430,7 @@ export async function render(root, ctx) {
       });
     });
 
-    c.append(stack, el("div", "muted small",
+    append(c, stack, el("div", "muted small",
       "Every band is computed by narrowing the band above it, so a step can"
       + " never read over 100%. Carded sits ABOVE Hot on purpose: the scanner"
       + ` cards every job it scores ≥${FLOOR}, so "hot" is a property of the`
@@ -500,9 +480,10 @@ export async function render(root, ctx) {
     ];
 
     cards.forEach((o) => {
-      g.appendChild(kpi({
+      append(g, kpi({
         label: o.lbl,
-        value: o.n == null ? el("span", "dash", "—") : fmt.num(o.n),
+        value: dash(o.n, fmt.num),
+        unmeasured: o.n == null,
         sub: o.n === 0 ? o.zero : o.src,
         // the drill inherits the SAME month bounds the card counted with
         onClick: o.n == null ? null : () => openRows(`${o.lbl} — ${rl}`,
@@ -548,14 +529,15 @@ export async function render(root, ctx) {
       return out;
     }
 
-    // the hot bar, drawn as a labelled dashed line. It reads the palette at
-    // DRAW time, because charts.js refresh() does not reassign config.plugins.
-    const hotBar = {
+    // The hot bar, drawn as a labelled dashed line. It takes the palette its
+    // factory was called with: charts.js re-creates the inline plugins from the
+    // factory on every refresh, so this closure is replaced on a theme flip and
+    // does not need to re-read the CSS variables at draw time.
+    const hotBar = (p) => ({
       id: "ew-hotbar",
       afterDatasetsDraw(ch) {
         const idx = hist.findIndex((h) => h.lo >= HOT);
         if (idx < 1 || !ch.chartArea) return;
-        const p2 = palette();
         const xs = ch.scales.x;
         const x = (xs.getPixelForValue(idx - 1) + xs.getPixelForValue(idx)) / 2;
         const { top, bottom } = ch.chartArea;
@@ -563,16 +545,16 @@ export async function render(root, ctx) {
         g2.save();
         g2.setLineDash([4, 4]);
         g2.lineWidth = 1;
-        g2.strokeStyle = p2.target;
+        g2.strokeStyle = p.target;
         g2.beginPath(); g2.moveTo(x, top); g2.lineTo(x, bottom); g2.stroke();
         g2.setLineDash([]);
-        g2.fillStyle = p2.target;
-        g2.font = "600 11px " + (p2.font || "system-ui");
+        g2.fillStyle = p.target;
+        g2.font = "600 11px " + (p.font || "system-ui");
         g2.textAlign = "left";
         g2.fillText("hot bar " + HOT, x + 5, top + 11);
         g2.restore();
       },
-    };
+    });
 
     mountChart(c, (p) => ({
       type: "bar",
@@ -619,7 +601,7 @@ export async function render(root, ctx) {
           if (t) t.style.cursor = els.length ? "pointer" : "default";
         },
       },
-      plugins: [hotBar],
+      plugins: [hotBar(p)],
     }), { height: 230 });
 
     const nScored = scoredJs.length;
@@ -782,10 +764,7 @@ export async function render(root, ctx) {
       rows,
       empty: "No feed returned a job in this range.",
     }));
-    c.appendChild(el("div", {
-      class: "muted small",
-      style: { padding: "var(--space-3) var(--space-5)", borderTop: "1px solid var(--border)" },
-    }, "A 0 here is a real zero — that feed returned nothing of that kind in"
+    append(c, el("div", "card-foot", "A 0 here is a real zero — that feed returned nothing of that kind in"
       + " this range. Carded rate is carded ÷ scanned for the feed, so a big"
       + " feed with a low rate is volume without fit."));
     out.push(c);
@@ -908,55 +887,40 @@ export async function render(root, ctx) {
       return out;
     }
 
-    const stack = el("div", {
-      style: {
-        display: "flex", width: "100%", height: "26px", overflow: "hidden",
-        borderRadius: "var(--radius-sm)", background: "var(--muted)",
-      },
-    });
+    // .stackbar / .stack-legend own the layout; only the DATA is inline —
+    // each segment's share (flex) and which chart colour it carries.
+    const stack = el("div", "stackbar");
     tiers.filter((t) => t.n).forEach((t) => {
-      stack.appendChild(el("button", {
+      append(stack, el("button", {
+        class: "stackbar-seg",
         type: "button",
         attrs: {
           title: `${t.lbl}: ${fmt.num(t.n)} (${pctOf(t.n, tot)}%) — ${t.note}`,
           "aria-label": `show the ${fmt.num(t.n)} ${t.lbl} jobs`,
         },
-        style: {
-          flex: String(t.n), border: "0", padding: "0", cursor: "pointer",
-          background: t.colour, minWidth: "3px",
-        },
+        style: { flex: String(t.n), background: t.colour },
         on: { click: () => openRows(`${t.lbl} — ${rl}`, scopeQ(t.q), chartCols,
           { subtitle: t.note, facets: jobFacets }) },
       }));
     });
 
-    const legend = el("div", { class: "hstack", style: { marginTop: "var(--space-3)" } });
+    const legend = el("div", "stack-legend");
     tiers.forEach((t) => {
-      legend.appendChild(el("button", {
+      append(legend, el("button", {
+        class: "legend-item",
         type: "button",
         disabled: !t.n,
         attrs: { title: t.note },
-        style: {
-          display: "inline-flex", alignItems: "center", gap: "6px",
-          background: "none", border: "0", font: "inherit",
-          fontSize: "var(--text-xs)", color: "var(--muted-foreground)",
-          padding: "2px 0", cursor: t.n ? "pointer" : "default",
-        },
         on: { click: () => { if (t.n) openRows(`${t.lbl} — ${rl}`, scopeQ(t.q), chartCols, { subtitle: t.note, facets: jobFacets }); } },
       }, [
-        el("span", {
-          style: {
-            width: "9px", height: "9px", borderRadius: "2px",
-            background: t.colour, display: "inline-block", flex: "none",
-          },
-        }),
-        el("span", { style: { color: "var(--foreground)" } }, t.lbl),
+        el("span", { class: "legend-swatch", style: { background: t.colour } }),
+        el("span", "name", t.lbl),
         el("b", "num", fmt.num(t.n)),
         el("span", null, pctOf(t.n, tot) + "%"),
       ]));
     });
 
-    c.append(stack, legend, el("div", { class: "muted small", style: { marginTop: "var(--space-3)" } },
+    append(c, stack, legend, el("div", { class: "muted small", style: { marginTop: "var(--space-3)" } },
       "ICP is recomputed from stored fields (bin/icp-backfill) — the tier in the"
       + " DB is always the tier today's profile would award. The four segments"
       + " partition everything scored in this range; click a segment or a legend"
@@ -1032,9 +996,9 @@ function kpiStrip(d, openRows) {
   const railStale = !!(rs.status && rs.status !== "ok");
   const appliedKpi = kpi({
     label: "Applied" + (a.available ? (railStale ? " ⚠" : "") : " (rail pending)"),
-    value: !a.available
-      ? el("span", "dash", "—")
-      : railStale ? el("span", null, "stale") : fmt.num(a.week),
+    // no rail = NOT MEASURED, and kpi() owns what that looks like
+    value: a.available ? (railStale ? "stale" : fmt.num(a.week)) : null,
+    unmeasured: !a.available,
     stale: railStale,
     sub: !a.available
       ? (a.rail || a.reason || "the applied-truth rail has not produced data yet")
@@ -1141,10 +1105,7 @@ function funnelByWeek(d, openRows) {
     rows: weeks,
     empty: "No week has been recorded yet.",
   }));
-  c.appendChild(el("div", {
-    class: "muted small",
-    style: { padding: "var(--space-3) var(--space-5)", borderTop: "1px solid var(--border)" },
-  }, "The outage (w/06-22) and the shadow weeks (carded 0) are real history —"
+  append(c, el("div", "card-foot", "The outage (w/06-22) and the shadow weeks (carded 0) are real history —"
     + " the funnel never rewrites the past. “—” under Applied means the"
     + " connects rail was not running that week: not measured, not zero."));
   return c;
@@ -1171,10 +1132,7 @@ function threadsByStatus(d, openRows) {
     rows,
     empty: "No proposal thread has been recorded.",
   }));
-  c.appendChild(el("div", {
-    class: "muted small",
-    style: { padding: "var(--space-3) var(--space-5)", borderTop: "1px solid var(--border)" },
-  }, "Status falls back to the raw Upwork status when ours is blank, so nothing"
+  append(c, el("div", "card-foot", "Status falls back to the raw Upwork status when ours is blank, so nothing"
     + " reads as “Unknown” when the API gave a real state. These are rooms the"
     + " client opened — a submission that never got a reply has no row here at"
     + " all, which is why the win rate above is an upper bound."));

@@ -639,17 +639,21 @@ def _is_passthrough(name: str) -> bool:
 
 
 def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
-            today: Optional[str] = None) -> dict:
+            _today: Optional[str] = None) -> dict:
     """Client-economics view from the LOCAL ledger (finance + contracts + threads
     are both live now). Revenue-to-date per client is the spine — ground truth
     from Upwork's assignment_company and the Wise payer, MERGED where they refer
     to one client (Adélye pays via both). Doctor-gated like Money: no finance
     number shows on RED. Every client's revenue drills to the exact transactions;
     a parity line proves the client totals + unlinked == the P&L revenue, to the
-    cent. sort: 'revenue' (default) | 'recent'."""
+    cent. sort: 'revenue' (default) | 'recent'.
+
+    `_today` is a TEST clock slot, not a request param — underscored so the
+    server cannot forward `?today=` into it. It feeds the `as_of` provenance
+    stamp, and a caller-supplied one printed a date the server never derived."""
     from modules.finance import doctor as _fdoc
     dbp = db_path or config.DB_PATH
-    day = today or _ist_today()
+    day = _today or _ist_today()
     dr = _fdoc.run(dbp)
     if not dr.green:
         return {"doctor": "RED", "blocked": True,
@@ -783,16 +787,25 @@ def client_transactions(db_path: Optional[Path] = None, *,
             "total": len(rows), "sum_usd": _from_minor(total)}
 
 
-def clients_airtable(db_path: Optional[Path] = None, *, client=None,
-                     use_cache: bool = True) -> dict:
+def clients_airtable(db_path: Optional[Path] = None, *, _client=None,
+                     _use_cache: bool = True) -> dict:
     """The prior Airtable-backed roster (status/tags/notes). Kept as a secondary
-    read; the primary Clients view is now the local economics one above."""
+    read; the primary Clients view is now the local economics one above.
+
+    `_client` / `_use_cache` are TEST INJECTION SLOTS, not request inputs, and
+    the leading underscore is load-bearing: server.py forwards every
+    KEYWORD-ONLY param straight off the query string, so while this read
+    declared a bare `client=` a plain `GET /api/clients/airtable?client=Adelye`
+    passed the string "Adelye" in where an AirtableClient was expected and the
+    route answered 500. server.py now also refuses to forward any param whose
+    name starts with "_", so the two rules hold each other up. Never give an
+    injection slot a name a URL could plausibly carry."""
     now = time.monotonic()
-    if use_cache and _clients_cache["data"] is not None \
+    if _use_cache and _clients_cache["data"] is not None \
             and now - _clients_cache["at"] < 60:
         return _clients_cache["data"]
 
-    cl = client or AirtableClient()
+    cl = _client or AirtableClient()
     recs = cl.list_records(
         config.AIRTABLE_BASE, config.AT["clients"],
         fields=["Name", "Status", "Folder Name", "First Contract Date",
@@ -1114,6 +1127,58 @@ def pipeline_facts(db_path: Optional[Path] = None,
             "score_floor": 8}
 
 
+# ── drill-down filter validation ─────────────────────────────────────────────
+# A reader validates its OWN user input, in its own error envelope: a 200
+# carrying {"error": ...}, which pipeline.js checks before it touches res.rows
+# and raises as a red toast. Established by activity()'s `day` and by
+# pipeline_rows()' `stage`; `week` was the one that got missed, and `?week=lol`
+# reached date.fromisoformat() and came back as a 500 stack-trace repr.
+#
+# WHICH filters get a validator: the ones where a malformed value produces a
+# WRONG answer rather than an honest one. Dates and integers do — `frm=lol`
+# string-compares its way to zero rows, and `score_min=lol` was silently dropped
+# and quietly widened the drill past the bar it was launched from. Both read as
+# data (UI_BUILD_BRIEF §0: a rejected filter must never render as a zero or an
+# empty list). The open-vocabulary equality filters (status/skip/feed/icp) do
+# NOT get one: they are SQL-bound against vocabularies that grow with the data,
+# "no rows where feed_source='lol'" is the true answer, and a whitelist there
+# would go stale and start refusing real values.
+_STAGES = ("jobs", "scanned", "scored", "carded", "applied", "replied",
+           "hired", "triage", "threads")
+
+
+def _bad_filter(param: str, value, expected: str) -> dict:
+    """The drill's rejection envelope — visibly an error, never a bare empty
+    list. `total` is None (= not measured), not 0: nothing was counted."""
+    return {"error": "bad {} {!r} (expected {})".format(param, value, expected),
+            "rows": [], "count": 0, "total": None}
+
+
+def _is_iso_day(v) -> bool:
+    """Strict YYYY-MM-DD. Length-checked as well as parsed because 3.11's
+    date.fromisoformat also accepts compact forms ('20260608') that the
+    substr(col,1,10) comparisons in here would never match."""
+    try:
+        return len(v) == 10 and bool(date.fromisoformat(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_iso_month(v) -> bool:
+    """Strict YYYY-MM — what the substr(col,1,7) comparisons are against."""
+    try:
+        return len(v) == 7 and bool(date.fromisoformat(v + "-01"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _opt_int(v) -> Optional[int]:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def pipeline_rows(db_path: Optional[Path] = None, *,
                   stage: Optional[str] = None,
                   week: Optional[str] = None,
@@ -1126,7 +1191,7 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                   score_min: Optional[str] = None,
                   score_max: Optional[str] = None,
                   carded: Optional[str] = None,
-                  today: Optional[str] = None) -> dict:
+                  _today: Optional[str] = None) -> dict:
     """Drill-down: the rows behind any Pipeline figure (traceability contract,
     same as Money).
 
@@ -1136,10 +1201,29 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
     its filters mirror the fact-row keys exactly (frm/to month window, skip,
     feed, icp, score_min/score_max, carded), so the rows it returns are by
     construction the same rows the bar counted. The week-based stages remain for
-    the funnel-by-week table. Read-only; capped at 300 rows."""
-    if stage not in ("jobs", "scanned", "scored", "carded", "applied",
-                     "replied", "hired", "triage", "threads"):
-        return {"error": f"unknown stage {stage!r}", "rows": [], "count": 0}
+    the funnel-by-week table. Read-only; capped at 300 rows.
+
+    Every filter above is real user input and is validated up front — including
+    one it does not read for this stage, because "silently ignored" is how a
+    typo becomes a wrong answer. `_today` is the exception: a TEST clock slot,
+    underscored so the server cannot forward `?today=` into it."""
+    if stage not in _STAGES:
+        return _bad_filter("stage", stage, "one of " + "|".join(_STAGES))
+    # ── validate the user-supplied filters (see the note above) ─────────────
+    # `week` IS user input — the funnel-by-week table sends it — so it is
+    # validated rather than hidden, unlike the `_today` clock slot.
+    if week and not _is_iso_day(week):
+        return _bad_filter("week", week,
+                           "YYYY-MM-DD, the Monday of a funnel week")
+    for _p, _v in (("frm", frm), ("to", to)):
+        if _v and not _is_iso_month(_v):
+            return _bad_filter(_p, _v, "YYYY-MM")
+    for _p, _v in (("score_min", score_min), ("score_max", score_max)):
+        if _v not in (None, "") and _opt_int(_v) is None:
+            return _bad_filter(_p, _v, "an integer")
+    if carded not in (None, "", "0", "1"):
+        return _bad_filter("carded", carded, "1 or 0")
+
     lo = hi = None
     if week:
         d = date.fromisoformat(week)
@@ -1161,12 +1245,6 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
             cond += f" AND substr({col},1,7) <= ?"
             args.append(to)
         return cond, args
-
-    def _int(v):
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return None
 
     conn = _ro(db_path)
     try:
@@ -1203,7 +1281,7 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
             if icp:
                 cond += " AND icp_tier=?"
                 args.append(icp)
-            smin, smax = _int(score_min), _int(score_max)
+            smin, smax = _opt_int(score_min), _opt_int(score_max)
             if smin is not None:
                 cond += " AND score >= ?"
                 args.append(smin)
@@ -1272,7 +1350,7 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                 "SELECT COUNT(*) FROM contracts"
                 f" WHERE start_dt LIKE '20%'{cond}", args).fetchone()[0]
         elif stage == "triage":
-            fresh_cut = (date.fromisoformat(today or _ist_today())
+            fresh_cut = (date.fromisoformat(_today or _ist_today())
                          - timedelta(days=BOARD_WINDOW_DAYS)).isoformat()
             rows = [dict(r) for r in conn.execute(
                 "SELECT id, title, score, status, job_url,"
@@ -1760,13 +1838,17 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
 
 
 def today_rows(db_path: Optional[Path] = None, *, which: Optional[str] = None,
-               today: Optional[str] = None) -> dict:
+               _today: Optional[str] = None) -> dict:
     """The rows behind a Today backlog figure (traceability contract). which:
     'fresh' (hot leads in the fresh window, awaiting a proposal) or
-    'accumulated' (all hot leads since applications paused). Read-only, capped."""
+    'accumulated' (all hot leads since applications paused). Read-only, capped.
+
+    `_today` is a TEST clock slot, not a request param — underscored so the
+    server cannot forward `?today=` into it (it used to, and `?today=lol` came
+    back as a 500 from date.fromisoformat)."""
     if which not in ("fresh", "accumulated"):
         return {"error": f"unknown scope {which!r}", "rows": [], "count": 0}
-    day = today or _ist_today()
+    day = _today or _ist_today()
     paused, paused_since = _applications_paused(day)
     fresh_lo = (date.fromisoformat(day)
                 - timedelta(days=config.TODAY_FRESH_LEAD_DAYS)).isoformat()

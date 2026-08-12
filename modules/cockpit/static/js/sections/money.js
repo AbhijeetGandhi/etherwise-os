@@ -54,11 +54,11 @@
 "use strict";
 
 import {
-  el, clear, fmt, dash, heading, card, kpi, pill, chip, btn,
+  el, append, clear, fmt, dash, isUnmeasured, heading, card, kpi, pill, chip, btn,
   emptyState, notice, expander, toast, qstr,
 } from "../ui.js";
 import { openDrill, cols } from "../drill.js";
-import { chart, axes, palette } from "../charts.js";
+import { chart, axes } from "../charts.js";
 import { bootToken } from "../app.js";           // raw-body upload needs the token
 
 export const meta = { title: "Money", hint: "every figure explains itself, to the cent" };
@@ -91,13 +91,14 @@ const KINDS = [
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const sumU = (rows) => round2(rows.reduce((s, r) => s + (Number(r.u) || 0), 0));
 
-/** "—" as a node when a thing was not measured; the formatted value otherwise. */
-function val(v, formatter) {
-  if (v == null || v === "" || (typeof v === "number" && Number.isNaN(v))) {
-    return el("span", "dash", "—");
-  }
-  return formatter ? formatter(v) : String(v);
-}
+/**
+ * The §0 rule-1 pair for a KPI tile: the formatted value, and whether it was
+ * measured at all. ui.js owns what "not measured" LOOKS like (kpi's
+ * `unmeasured` flag) — this file only decides which figures are missing.
+ */
+const kv = (v, formatter) => ({
+  value: dash(v, formatter), unmeasured: isUnmeasured(v),
+});
 
 /**
  * Who/what is behind a row — vendor for card/POS spends, payee for bank
@@ -290,7 +291,7 @@ export async function render(root, ctx) {
   // declared before the builders run: rangeBar() writes into them, and a `let`
   // below its own call site would be in the temporal dead zone.
   let segHost, fromIn, toIn, customWrap;
-  let revChart = null, chartGen = 0;
+  let revChart = null;
 
   const head = heading("Money",
     `— every figure is clickable and matches bin/finance-pnl · ledger through ${d.as_of || "?"}`);
@@ -360,9 +361,11 @@ export async function render(root, ctx) {
   function rerender() {
     persist();
     drawSeg();
+    // destroy() cancels a build that has not happened yet as well as one that
+    // has: charts.js keeps every live handle for the theme flip, and an orphan
+    // whose canvas has been cleared out of the DOM would refresh forever.
     if (revChart) { try { revChart.destroy(); } catch (e) { /* already gone */ } }
     revChart = null;
-    chartGen += 1;
     clear(body);
 
     const scoped = scopedRows();
@@ -404,14 +407,14 @@ export async function render(root, ctx) {
 
     g.appendChild(kpi({
       label: "Cash position",
-      value: val(cash.value_usd, fmt.usd),
+      ...kv(cash.value_usd, fmt.usd),
       sub: (cash.note ? cash.note + " · " : "") + "point-in-time, not scoped by the range",
       onClick: drillCash,
     }));
 
     g.appendChild(kpi({
       label: "Net revenue",
-      value: val(netRev, fmt.usd),
+      ...kv(netRev, fmt.usd),
       sub: `${rl} · revenue + refunds`,
       onClick: () => drillTx({
         title: `Net revenue — ${rl}`, buckets: ["revenue", "refund"], ranged: true,
@@ -421,7 +424,7 @@ export async function render(root, ctx) {
 
     g.appendChild(kpi({
       label: "Operating profit",
-      value: val(opProfit, fmt.usd),
+      ...kv(opProfit, fmt.usd),
       sub: `${rl} · after platform fees, taxes, payroll and opex`,
       onClick: () => drillTx({
         title: `Operating profit — ${rl}`, buckets: OPERATING_ALL, ranged: true,
@@ -449,7 +452,7 @@ export async function render(root, ctx) {
     ]));
     g.appendChild(kpi({
       label: `This month (${thisM || "—"})`,
-      value: val(mtd, fmt.usd),
+      ...kv(mtd, fmt.usd),
       sub: el("div", null, subBits),
       onClick: () => drillTx({
         title: `Revenue — ${thisM}`, buckets: ["revenue"], month: thisM,
@@ -468,11 +471,12 @@ export async function render(root, ctx) {
     // RUNWAY. null does not mean "not measured" here — it means the trailing
     // twelve months made money, so there is no burn to exhaust. Saying that is
     // the whole point; a bare em dash would read as a broken figure.
-    g.appendChild(kpi({
+    append(g, kpi({
       label: "Runway",
       value: p.runway_months != null
         ? el("span", null, [fmt.num(p.runway_months), el("small", null, " months")])
-        : el("span", "dash", "—"),
+        : null,
+      unmeasured: p.runway_months == null,
       sub: p.runway_months != null
         ? `${dash(cash.value_usd, fmt.usd)} of cash at ${fmt.usd(Math.abs(monthlyOp))}`
           + ` burned per month (trailing 12)`
@@ -490,7 +494,7 @@ export async function render(root, ctx) {
 
     g.appendChild(kpi({
       label: "Monthly operating profit",
-      value: val(monthlyOp, fmt.usd),
+      ...kv(monthlyOp, fmt.usd),
       sub: "trailing-12 average, the rate the runway is computed at",
       onClick: () => drillTx({
         title: "Operating rows — trailing 12 months", buckets: OPERATING_ALL,
@@ -501,7 +505,7 @@ export async function render(root, ctx) {
     const costs = isAll() ? p.operating_costs_usd : sumB(OPERATING_COSTS, scopedRows());
     g.appendChild(kpi({
       label: "Operating costs",
-      value: val(costs, fmt.usd),
+      ...kv(costs, fmt.usd),
       sub: `${rl} · platform fees + taxes + payroll + opex`
         + (isAll() ? "" : ` · ${dash(p.operating_costs_usd, fmt.usd)} all time`),
       onClick: () => drillTx({
@@ -513,7 +517,7 @@ export async function render(root, ctx) {
     const draws = isAll() ? p.owner_draw_usd : bucketSum("owner_draw");
     g.appendChild(kpi({
       label: "Owner draws",
-      value: val(draws, fmt.usd),
+      ...kv(draws, fmt.usd),
       sub: `${rl} · equity, NOT a cost — excluded from operating profit`,
       onClick: () => drillTx({
         title: `Owner draws — ${rl}`, buckets: ["owner_draw"], ranged: true,
@@ -532,7 +536,7 @@ export async function render(root, ctx) {
 
     g.appendChild(kpi({
       label: "Connects spend",
-      value: val(thisMonth, fmt.usd),
+      ...kv(thisMonth, fmt.usd),
       sub: thisMonth === 0
         ? `a true zero for ${thisM} — no Connect Purchase row has reached the`
           + ` ledger this month. ${dash(life, fmt.usd)} lifetime. If the Upwork`
@@ -548,7 +552,7 @@ export async function render(root, ctx) {
     const uc = p.uncategorized_count;
     g.appendChild(kpi({
       label: "Uncategorized rows",
-      value: val(uc, fmt.num),
+      ...kv(uc, fmt.num),
       sub: uc === 0
         ? "a true zero — every reconciled transaction has a P&L bucket"
         : `${dash(srvBuckets.uncategorized, fmt.usd2)} of value sits in no P&L`
@@ -584,13 +588,13 @@ export async function render(root, ctx) {
     const target = Number(r.target_usd) || 0;
     const top = Math.max(...data, target, 1);
 
-    // the monthly target, drawn as a labelled line. It reads the palette at
-    // DRAW time, so a theme flip repaints it correctly.
-    const targetLine = {
+    // The monthly target, drawn as a labelled line. It takes the palette its
+    // factory was handed: charts.js re-creates the inline plugins from the
+    // factory on every refresh, so a theme flip replaces this closure.
+    const targetLine = (p2) => ({
       id: "ew-target",
       afterDatasetsDraw(ch) {
         if (!target) return;
-        const p2 = palette();
         const y = ch.scales.y.getPixelForValue(target);
         const { left, right } = ch.chartArea;
         const g = ch.ctx;
@@ -606,7 +610,7 @@ export async function render(root, ctx) {
         g.fillText("target " + fmt.usd(target), right - 2, y - 5);
         g.restore();
       },
-    };
+    });
 
     const factory = (pal) => ({
       type: "bar",
@@ -661,23 +665,15 @@ export async function render(root, ctx) {
           if (t) t.style.cursor = els.length ? "pointer" : "default";
         },
       },
-      plugins: [targetLine],
+      plugins: [targetLine(pal)],
     });
 
-    // A canvas measured while its container is still detached comes out 0px
-    // wide. app.js inserts the section root synchronously after render()
-    // resolves, so one frame later the card is in the document and Chart.js
-    // measures it correctly. The guards drop a frame that a range change or a
-    // section switch has already superseded.
-    const gen = chartGen;
-    const slot = el("div");
-    c.appendChild(slot);
-    requestAnimationFrame(() => {
-      if (gen !== chartGen || !document.contains(slot)) return;
-      revChart = chart(slot, factory, { height: 250 });
-    });
+    // charts.js owns the detached-container problem (it defers construction a
+    // frame and skips a slot that never reached the page), so this is a plain
+    // call; the handle is kept only so a range change can destroy it.
+    revChart = chart(c, factory, { height: 250 });
 
-    c.appendChild(el("div", "muted small",
+    append(c, el("div", "muted small",
       `Bars outside ${rangeLabel()} are dimmed; the range does not change them,`
       + ` it only changes what the figures above are measuring.`));
     return c;
@@ -1153,7 +1149,7 @@ function importCard(ctx) {
 
     KINDS.forEach(([kind, label, hint, accept]) => {
       const input = el("input", { type: "file", accept, style: { display: "none" } });
-      const go = btn("Upload", () => input.click(), { sm: true, icon: "plus" });
+      const go = btn("Upload", () => input.click(), { sm: true, icon: "upload" });
       input.addEventListener("change", () => {
         if (input.files[0]) doUpload(kind, input.files[0], go, out, ctx);
         input.value = "";

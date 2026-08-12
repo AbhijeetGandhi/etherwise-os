@@ -17,13 +17,23 @@
 //     type: "bar",
 //     data: { labels, datasets: [{ data, backgroundColor: p.series[0] }] },
 //     options: { plugins: { legend: { display: false } } },
+//     plugins: [targetLine(p)],          // built FROM the palette, see below
 //   }), { height: 220 });
 //   // …later: c.setFactory(nextFactory) to re-draw with new data; c.destroy().
+//
+// TWO THINGS THIS MODULE OWNS SO NO SECTION HAS TO:
+//   1. The container is DETACHED while a section renders, so construction is
+//      deferred one frame. Never wrap chart() in your own rAF.
+//   2. Inline `plugins` are re-created from the factory on every refresh, so a
+//      custom plugin may close over its `p` — write
+//      `const line = (p) => ({ id, afterDatasetsDraw(ch) { …p.target… } })`
+//      and pass `plugins: [line(p)]`. Calling palette() again at draw time is
+//      no longer necessary (it was the workaround for this bug).
 // ═══════════════════════════════════════════════════════════════════════════
 
 "use strict";
 
-import { el } from "./ui.js";
+import { el, append } from "./ui.js";
 
 export const THEME_EVENT = "ew:themechange";
 
@@ -103,6 +113,19 @@ export function axes(p, opts = {}) {
 }
 
 /**
+ * Run `fn` on the next animation frame (or as soon as possible where there is
+ * no rAF, e.g. a jsdom test harness). Returns a cancel function.
+ */
+function nextFrame(fn) {
+  if (typeof requestAnimationFrame === "function") {
+    const id = requestAnimationFrame(fn);
+    return () => cancelAnimationFrame(id);
+  }
+  const id = setTimeout(fn, 0);
+  return () => clearTimeout(id);
+}
+
+/**
  * chart(container, factory, opts) → { instance, setFactory, refresh, destroy }
  *
  *   container  an element to render into (a <canvas> is created inside it)
@@ -111,12 +134,22 @@ export function axes(p, opts = {}) {
  *
  * The returned handle survives theme flips: the factory is re-run and the
  * chart updated in place. Sections must not keep their own Chart instance.
+ *
+ * DETACHED-CONTAINER RULE (owned here, never by a section):
+ *   A canvas measured while its container is outside the document comes out
+ *   0px wide, and app.js inserts a section's root only AFTER render() resolves
+ *   — so almost every chart is built detached. Construction is therefore
+ *   deferred to the next frame, by which time the root is in the page and
+ *   Chart.js measures it correctly. The handle is returned SYNCHRONOUSLY and
+ *   is fully usable before the instance exists: destroy() cancels a pending
+ *   build, setFactory()/refresh() update the factory it will be built from.
+ *   Sections must NOT wrap chart() in their own requestAnimationFrame.
  */
 export function chart(container, factory, opts = {}) {
   const frame = el("div", { class: "chartframe", style: { height: (opts.height || 220) + "px" } });
   const canvas = el("canvas");
-  frame.appendChild(canvas);
-  container.appendChild(frame);
+  append(frame, canvas);
+  append(container, frame);
 
   if (!window.Chart) {
     frame.replaceChildren(el("div", "chart-empty",
@@ -125,27 +158,57 @@ export function chart(container, factory, opts = {}) {
   }
 
   let fac = factory;
-  const p0 = palette();
-  applyDefaults(p0);
-  const instance = new window.Chart(canvas.getContext("2d"), fac(p0));
+  let config = null;              // the live config object Chart.js holds
+  let dead = false;
+  let cancel = null;
 
   const handle = {
-    instance,
+    instance: null,
     /** swap in new data/config (e.g. a range filter changed) */
     setFactory(next) { fac = next; handle.refresh(); },
     /** re-read the palette and redraw — called automatically on theme change */
     refresh() {
+      if (dead || !handle.instance) return;      // a pending build uses `fac`
       const p = palette();
       applyDefaults(p);
       const cfg = fac(p);
-      instance.data = cfg.data;
-      instance.options = cfg.options || {};
-      if (cfg.type && instance.config) instance.config.type = cfg.type;
-      instance.update("none");
+      handle.instance.data = cfg.data;
+      handle.instance.options = cfg.options || {};
+      if (cfg.type && handle.instance.config) handle.instance.config.type = cfg.type;
+      // INLINE PLUGINS ARE PART OF THE CONFIG, NOT OF options — and a custom
+      // plugin closes over the palette its factory was called with. Reassigning
+      // data+options alone leaves an ew-target / ew-hotbar line painting last
+      // theme's colour onto this theme's canvas. Chart.js exposes `plugins` as
+      // a getter only, but Config keeps the very object we passed in, so
+      // mutating it here IS the supported swap; update() then invalidates the
+      // plugin-descriptor cache and the new closures take over.
+      if (config) config.plugins = cfg.plugins || [];
+      handle.instance.update("none");
     },
-    destroy() { live.delete(handle); instance.destroy(); frame.remove(); },
+    destroy() {
+      dead = true;
+      live.delete(handle);
+      if (cancel) { cancel(); cancel = null; }
+      if (handle.instance) { handle.instance.destroy(); handle.instance = null; }
+      frame.remove();
+    },
   };
+
+  function build() {
+    cancel = null;
+    if (dead || handle.instance) return;
+    // superseded before it ever reached the page (a range change / a section
+    // switch): building it now would only measure a detached 0px canvas.
+    if (!frame.isConnected) { live.delete(handle); return; }
+    const p = palette();
+    applyDefaults(p);
+    config = fac(p);
+    handle.instance = new window.Chart(canvas.getContext("2d"), config);
+  }
+
   live.add(handle);
+  if (frame.isConnected) build();          // already in the page: no flicker
+  else cancel = nextFrame(build);
   return handle;
 }
 

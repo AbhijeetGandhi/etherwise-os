@@ -362,7 +362,7 @@ class TestTodayReader(unittest.TestCase):
         # traceability: the drilled rows total equals the figure shown
         out = data.today(self.db_path, today="2026-06-15")
         fresh = out["backlog"]["fresh_count"]
-        rows = data.today_rows(self.db_path, which="fresh", today="2026-06-15")
+        rows = data.today_rows(self.db_path, which="fresh", _today="2026-06-15")
         self.assertEqual(rows["total"], fresh)
 
     def test_applied_counts_windows(self):
@@ -548,10 +548,241 @@ class TestClientsAirtableReader(unittest.TestCase):
         ])
 
     def test_maps_fields_and_counts_links(self):
-        out = data.clients_airtable(client=self.fake(), use_cache=False)
+        out = data.clients_airtable(_client=self.fake(), _use_cache=False)
         self.assertEqual(out["count"], 2)
         acme = next(c for c in out["clients"] if c["name"] == "Acme")
         self.assertEqual(acme["contracts"], 2)
+
+    def test_injection_slots_are_underscored_so_no_url_can_reach_them(self):
+        """`_client` is an AirtableClient the tests supply, not user input.
+
+        While it was spelled `client`, server.py's "forward every keyword-only
+        param" rule handed `GET /api/clients/airtable?client=Adelye` a plain
+        string straight into `cl.list_records` -> AttributeError -> HTTP 500.
+        The leading underscore is what makes that unreachable, so it is pinned.
+        """
+        import inspect
+        params = inspect.signature(data.clients_airtable).parameters
+        self.assertIn("_client", params)
+        self.assertIn("_use_cache", params)
+        for name in ("client", "use_cache"):
+            self.assertNotIn(name, params,
+                             f"{name} is reachable from a query string again")
+
+
+class TestReaderInjectionSlots(CockpitServerCase):
+    """No routed reader may expose an injection slot to a query string."""
+
+    def test_no_routed_reader_forwards_an_underscored_param(self):
+        import inspect
+        for path, fn in server.GET_ROUTES.items():
+            for p in inspect.signature(fn).parameters.values():
+                if p.kind == p.KEYWORD_ONLY and p.name.startswith("_"):
+                    # the server's own filter is what must exclude it
+                    accepted = {q.name for q in
+                                inspect.signature(fn).parameters.values()
+                                if q.kind == q.KEYWORD_ONLY
+                                and not q.name.startswith("_")}
+                    self.assertNotIn(p.name, accepted, f"{path}:{p.name}")
+
+    def test_client_query_param_cannot_poison_the_airtable_roster(self):
+        """The regression test for the 500: ?client=<string> must be ignored."""
+        data._clients_cache["data"] = None
+        fake = FakeAirtable([
+            {"id": "r1", "fields": {"Name": "Acme", "Status": "Active"}},
+        ])
+        try:
+            with mock.patch.object(data, "AirtableClient", lambda: fake):
+                status, body = self.get(
+                    "/api/clients/airtable?client=Adelye&use_cache=0")
+        finally:
+            data._clients_cache["data"] = None
+        self.assertEqual(status, 200, body)
+        out = json.loads(body)
+        self.assertEqual(out["count"], 1)
+        self.assertEqual(out["clients"][0]["name"], "Acme")
+
+    def test_underscored_query_param_is_dropped_too(self):
+        data._clients_cache["data"] = None
+        fake = FakeAirtable([
+            {"id": "r1", "fields": {"Name": "Acme", "Status": "Active"}},
+        ])
+        try:
+            with mock.patch.object(data, "AirtableClient", lambda: fake):
+                status, body = self.get(
+                    "/api/clients/airtable?_client=Adelye&_use_cache=0")
+        finally:
+            data._clients_cache["data"] = None
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["count"], 1)
+
+
+class TestQueryParamGuard(CockpitServerCase):
+    """`?today=` is a clock, not a request param — and the registry is what
+    makes that true for every slot added after this one.
+
+    `today` is a TEST clock-injection slot. It was POSITIONAL on today(),
+    pipeline(), money() and pipeline_facts() — unreachable, because the server
+    only ever forwarded KEYWORD-ONLY params — but keyword-only on today_rows(),
+    clients() and pipeline_rows(), where a URL could set it. The same knob, safe
+    on four routes and exposed on three, purely by how it happened to be
+    declared. `?today=lol` 500'd /api/today/rows out of date.fromisoformat, and
+    on /api/clients it came back 200 with `"as_of": "lol"` — a provenance stamp
+    the screen renders as server truth.
+
+    Fixed in two places on purpose. The readers renamed it `_today` (the
+    `_client` convention above), and server.QUERY_PARAMS turned forwarding into
+    an opt-IN: a param reaches a reader only if someone registered it as user
+    input. The registry is the half that generalises — the next injection slot
+    is unreachable by default, whatever it ends up being called.
+    """
+
+    # the three that were reachable. Each needs whatever else makes it a
+    # valid call, so a refusal cannot be mistaken for the guard working.
+    CLOCK_ROUTES = ("/api/today/rows?which=fresh",
+                    "/api/clients",
+                    "/api/pipeline/rows?stage=triage")
+
+    @staticmethod
+    def _with(route, q):
+        return route + ("&" if "?" in route else "?") + q
+
+    def test_today_cannot_reach_the_three_keyword_only_readers(self):
+        for route in self.CLOCK_ROUTES:
+            plain_status, plain = self.get(route)
+            status, body = self.get(self._with(route, "today=lol"))
+            self.assertEqual(plain_status, 200, plain)
+            self.assertEqual(status, 200, body)      # /api/today/rows was a 500
+            self.assertEqual(body, plain, route)     # the param changed nothing
+            self.assertNotIn("lol", body, route)     # it never reached the payload
+
+    def test_today_cannot_forge_a_valid_looking_clock(self):
+        """The 500 was the loud half of this. The quiet half was a WELL-FORMED
+        date: `?today=2020-01-01` on /api/clients returned 200 and stamped a day
+        the server never derived onto a card the user reads as provenance."""
+        for route in self.CLOCK_ROUTES:
+            status, body = self.get(self._with(route, "today=2020-01-01"))
+            self.assertEqual(status, 200, body)
+            self.assertNotIn("2020-01-01", body, route)
+
+    def test_as_of_is_always_server_derived(self):
+        """/api/pipeline/facts is the control — its `today` is positional, so it
+        was never reachable; /api/clients is the one that leaked."""
+        for route in ("/api/clients", "/api/pipeline/facts"):
+            status, body = self.get(self._with(route, "today=2020-01-01"))
+            self.assertEqual(status, 200, body)
+            out = json.loads(body)
+            if out.get("blocked"):        # doctor RED hides the panel entirely
+                self.assertNotIn("as_of", out, route)
+                continue
+            self.assertIn("as_of", out, route)
+            self.assertNotEqual(out["as_of"], "2020-01-01", route)
+            date.fromisoformat(out["as_of"][:10])   # raises if it is not a date
+
+    def test_every_forwardable_param_is_registered(self):
+        """The guard, stated as a rule. A reader that grows a keyword-only param
+        it MEANS as user input has to name it in server.QUERY_PARAMS — and being
+        made to name it is where "so what validates it?" gets asked. A slot
+        nobody registers is simply unreachable from a URL, which is the safe
+        default the `today` split did not have."""
+        import inspect
+        for path, fn in server.GET_ROUTES.items():
+            for p in inspect.signature(fn).parameters.values():
+                if p.kind != p.KEYWORD_ONLY or p.name.startswith("_"):
+                    continue
+                self.assertIn(
+                    p.name, server.QUERY_PARAMS,
+                    f"{path}: keyword-only param {p.name!r} is not in"
+                    " server.QUERY_PARAMS. Register it (and validate it in the"
+                    " reader) if it is user input; underscore it if it is an"
+                    " injection slot.")
+
+    def test_registry_has_no_dead_entries(self):
+        """…and the rule holds in the other direction, so the registry cannot
+        rot into a list of names no reader accepts any more."""
+        import inspect
+        declared = set()
+        for fn in server.GET_ROUTES.values():
+            declared |= {p.name
+                         for p in inspect.signature(fn).parameters.values()
+                         if p.kind == p.KEYWORD_ONLY}
+        self.assertEqual(set(server.QUERY_PARAMS) - declared, set())
+
+    def test_no_routed_reader_exposes_a_clock_slot(self):
+        """Belt to the registry's braces: the readers themselves must not spell
+        a clock slot in a forwardable way, whichever route it hangs off."""
+        import inspect
+        for path, fn in server.GET_ROUTES.items():
+            names = {p.name for p in inspect.signature(fn).parameters.values()
+                     if p.kind == p.KEYWORD_ONLY}
+            for slot in ("today", "now"):
+                self.assertNotIn(slot, names,
+                                 f"{path}: {slot!r} is a clock, not a request"
+                                 f" param — call it _{slot}")
+
+
+class TestPipelineRowsFilterValidation(CockpitServerCase):
+    """`week` IS user input — the funnel-by-week table sends it — so unlike the
+    `today` clock it gets validated rather than hidden. `?week=lol` reached
+    date.fromisoformat() and came back as a 500 stack-trace repr.
+
+    The envelope is the one this reader already uses for an unknown `stage`, and
+    activity() for a bad `day`: 200 + {"error": ...}, which pipeline.js checks
+    before it touches res.rows and raises as a red toast. UI_BUILD_BRIEF §0 is
+    the reason it is not a silent empty list — a refused filter that renders as
+    0 rows is indistinguishable from a true "nothing matched"."""
+
+    def test_malformed_week_is_a_clean_error_not_a_500(self):
+        status, body = self.get("/api/pipeline/rows?stage=scanned&week=lol")
+        self.assertEqual(status, 200, body)
+        out = json.loads(body)
+        self.assertIn("error", out)
+        self.assertIn("week", out["error"])
+        self.assertIn("lol", out["error"])        # says which value it refused
+        self.assertEqual(out["rows"], [])
+        self.assertIsNone(out["total"])           # not measured, not zero
+
+    def test_malformed_month_window_is_refused(self):
+        # these string-compared their way to zero rows, which reads as "no data"
+        for q in ("frm=lol", "to=lol", "frm=2026-13", "to=2026-6"):
+            status, body = self.get(f"/api/pipeline/rows?stage=jobs&{q}")
+            self.assertEqual(status, 200, body)
+            self.assertIn("error", json.loads(body), q)
+
+    def test_malformed_score_bound_is_refused_not_silently_dropped(self):
+        # it used to be dropped by an int() that swallowed ValueError, which
+        # WIDENED the drill past the chart bar it was launched from
+        for q in ("score_min=lol", "score_max=eight"):
+            status, body = self.get(f"/api/pipeline/rows?stage=jobs&{q}")
+            self.assertEqual(status, 200, body)
+            self.assertIn("error", json.loads(body), q)
+
+    def test_malformed_carded_is_refused(self):
+        status, body = self.get("/api/pipeline/rows?stage=jobs&carded=yes")
+        self.assertEqual(status, 200, body)
+        self.assertIn("error", json.loads(body))
+
+    def test_open_vocabulary_filters_are_not_whitelisted(self):
+        """status/skip/feed/icp are SQL-bound equality filters over vocabularies
+        that grow with the data. "No rows where feed_source='nope'" is the TRUE
+        answer, and a whitelist would go stale and refuse real values."""
+        status, body = self.get("/api/pipeline/rows?stage=jobs&feed=nope")
+        self.assertEqual(status, 200, body)
+        out = json.loads(body)
+        self.assertNotIn("error", out)
+        self.assertEqual(out["rows"], [])
+
+    def test_legitimate_filters_still_work(self):
+        for q in ("stage=scanned&week=2026-06-08",
+                  "stage=jobs&frm=2026-06&to=2026-06",
+                  "stage=jobs&score_min=8&score_max=20&carded=1",
+                  "stage=triage"):
+            status, body = self.get("/api/pipeline/rows?" + q)
+            self.assertEqual(status, 200, body)
+            out = json.loads(body)
+            self.assertNotIn("error", out, q)
+            self.assertIsInstance(out["rows"], list)
+            self.assertIsNotNone(out["total"], q)
 
 
 # ── Client economics (the local ledger view) ──────────────────────────────────
@@ -977,7 +1208,7 @@ class TestPipelineReader(unittest.TestCase):
 
     def test_pipeline_rows_drills(self):
         # traceability: every Pipeline figure drills to its rows
-        out = data.pipeline_rows(self.db_path, stage="triage", today="2026-06-15")
+        out = data.pipeline_rows(self.db_path, stage="triage", _today="2026-06-15")
         self.assertEqual(out["count"], 1)                    # fresh hot 111 only
         self.assertEqual(out["rows"][0]["id"], "2065400000000000111")
         out = data.pipeline_rows(self.db_path, stage="carded")

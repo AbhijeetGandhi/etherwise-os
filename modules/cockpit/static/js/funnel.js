@@ -46,8 +46,16 @@
       { k: "carded", lbl: "Carded to ClickUp", n: carded.length,
         scope: { skip: "__none__", score_min: FLOOR, carded: "1" },
         note: "the scanner puts every scored≥" + FLOOR + " job on the board" },
+      // `skip: "__none__"` is NOT optional here even though it looks redundant.
+      // Hot is derived by narrowing CARDED, and carded carries the hard-floor
+      // exclusion — so a row that is both carded AND hard-rule-skipped (none
+      // exist today; nothing prevents one) would be counted OUT of the band and
+      // yet returned BY its drill. A band whose rows outnumber the band is the
+      // traceability contract broken. Every scope must restate its parent's
+      // predicates, because pipeline_rows() re-derives from filters, not from
+      // the parent's row set.
       { k: "hot", lbl: "of which Hot ≥" + HOT, n: hot.length,
-        scope: { score_min: HOT, carded: "1" },
+        scope: { skip: "__none__", score_min: HOT, carded: "1" },
         note: "of the carded, the ones that cleared the hot bar" },
     ];
 
@@ -59,9 +67,11 @@
       { after: "scored", n: scored.length - carded.length,
         lbl: "scored ≥" + FLOOR + " but never carded (shadow era / expired)",
         scope: { skip: "__none__", score_min: FLOOR, carded: "0" } },
+      // same rule as the Hot step above: this drop is a slice of CARDED, so it
+      // must restate carded's hard-floor exclusion or its drill can out-count it
       { after: "carded", n: carded.length - hot.length,
         lbl: "carded but scored " + FLOOR + "–" + (HOT - 1) + " — not hot",
-        scope: { score_min: FLOOR, score_max: HOT, carded: "1" } },
+        scope: { skip: "__none__", score_min: FLOOR, score_max: HOT, carded: "1" } },
     ];
 
     return { scanned: scanned.length, steps: steps, drops: drops };

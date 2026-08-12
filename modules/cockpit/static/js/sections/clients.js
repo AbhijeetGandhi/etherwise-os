@@ -35,7 +35,7 @@
 "use strict";
 
 import {
-  el, clear, fmt, dash, heading, card, kpi, pill, chip, btn, table,
+  el, append, clear, fmt, dash, heading, card, kpi, pill, chip, btn, table,
   emptyState, notice, toast,
 } from "../ui.js";
 import { openDrill, cols } from "../drill.js";
@@ -220,11 +220,13 @@ export async function render(root, ctx) {
 
     const linked = linkage.contracts_linked, totalC = linkage.contracts_total;
     const withContracts = clients.filter((c) => (c.active_contracts || 0) > 0);
-    kpis.appendChild(kpi({
+    const linkUnmeasured = linked == null || totalC == null;
+    append(kpis, kpi({
       label: "Contracts linked",
-      value: (linked == null || totalC == null)
-        ? el("span", "dash", "—")
+      value: linkUnmeasured
+        ? null
         : el("span", null, [fmt.num(linked), el("small", null, " of " + fmt.num(totalC))]),
+      unmeasured: linkUnmeasured,
       sub: `active/pending contracts matched to a paying client`
         + (linked != null && totalC != null && totalC > linked
           ? ` · ${fmt.num(totalC - linked)} could not be matched to one and are`

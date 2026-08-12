@@ -27,9 +27,13 @@
 
 "use strict";
 
-import { el, clear, esc, icon, skeletonSection, toast, fmt } from "./ui.js";
+import { el, append, clear, esc, icon, skeletonSection, toast, fmt } from "./ui.js";
 import { closeDrill } from "./drill.js";
 import { destroyAll as destroyCharts, THEME_EVENT } from "./charts.js";
+// The nav badge counts what REVIEW contains, so Review owns the definition.
+// The shell imported it rather than re-deriving `queued + held` inline: two
+// copies of "what is waiting on Abhijeet" is exactly how a badge starts lying.
+import { badgeCount as reviewBadgeCount } from "./sections/review.js";
 
 const TOKEN_KEY = "ew_cockpit_token";
 const THEME_KEY = "ew_cockpit_theme";      // "light" | "dark" | absent = system
@@ -208,22 +212,21 @@ async function refreshHealth() {
     const cls = worst === "GREEN" || worst === "PASS" ? "green"
       : worst === "WARN" ? "amber" : worst === "?" ? "" : "red";
     chip.className = "healthchip " + cls;
-    clear(chip).append(
+    append(clear(chip),
       el("span", "dot2"),
-      document.createTextNode(`doctor ${worst}` + (last ? ` · sync ${fmt.dateTime(last).slice(3)}` : "")),
+      `doctor ${worst}` + (last ? ` · sync ${fmt.dateTime(last).slice(3)}` : ""),
     );
     chip.title = `finance-doctor: ${worst}` + (last ? ` · last job ${fmt.dateTime(last)}` : "");
   } catch (e) {
     chip.className = "healthchip";
-    clear(chip).append(el("span", "dot2"), document.createTextNode("health n/a"));
+    append(clear(chip), el("span", "dot2"), "health n/a");
     chip.title = e && e.unauthorized ? "locked — unlock to read system health" : String(e.message || e);
   }
 }
 
 async function refreshBadges() {
   try {
-    const q = await api("/api/queue");
-    navBadges.review = (q.queued_total || 0) + (q.held_total || 0);
+    navBadges.review = reviewBadgeCount(await api("/api/queue"));
   } catch (e) {
     navBadges.review = 0;                 // never invent a count out of an error
   }

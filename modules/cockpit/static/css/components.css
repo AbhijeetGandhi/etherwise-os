@@ -169,7 +169,32 @@ input::placeholder, textarea::placeholder { color: var(--muted-foreground); }
   font-size: var(--text-xs); font-weight: 650; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--muted-foreground);
 }
+/* …unless the "title" is a NAME. "ADÉLYE" is not a stat label. */
+.card h3.card-title.plain {
+  font-size: var(--text-md); font-weight: 600; letter-spacing: -0.01em;
+  text-transform: none; color: var(--foreground);
+}
 .card .card-sub { font-size: var(--text-xs); color: var(--muted-foreground); }
+
+/* a controls strip (filters / sort / a count) at the top of a .card.flush.
+   Its own class, because "the row of controls above a table" is not the same
+   thing as Today's backlog context line — sections were borrowing
+   `.backlog-ctx .field-row` for it, which coupled two unrelated surfaces. */
+.card-controls {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm); color: var(--foreground);
+}
+.card-controls > .input,
+.card-controls > input[type="search"],
+.card-controls > input[type="text"] { flex: 1; min-width: 140px; }
+/* a footnote under a .card.flush table: same gutters, a rule above it */
+.card-foot {
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs); color: var(--muted-foreground); line-height: 1.5;
+}
 
 /* metric inside a card */
 .metric {
@@ -195,8 +220,21 @@ input::placeholder, textarea::placeholder { color: var(--muted-foreground); }
 .kpi:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--accent) 45%, var(--card)); }
 .kpi.static { cursor: default; }
 .kpi.static:hover { border-color: var(--border); background: var(--card); }
-.kpi .lbl { font-size: var(--text-xs); font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted-foreground); }
+/* The uppercase stat-label treatment is OPT-IN (`.caps`, which ui.js kpi()
+   adds by default). A hand-built .kpi whose label is a CLIENT NAME must not
+   shout it — that is what the two inline `text-transform: none` overrides in
+   the sections were working around. */
+.kpi .lbl { font-size: var(--text-xs); font-weight: 650; color: var(--muted-foreground); }
+.kpi .lbl.caps { letter-spacing: 0.04em; text-transform: uppercase; }
+/* a label row: a name plus its pills, on one line. The .tag ("open →") owns
+   the top-right corner, so leave room for it rather than running underneath. */
+.kpi .lbl.lbl-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: var(--text-sm); color: var(--foreground); padding-right: 54px;
+}
 .kpi .val { font-size: var(--text-xl); font-weight: 650; letter-spacing: -0.02em; margin-top: 6px; font-variant-numeric: tabular-nums; }
+/* the §0 rule-1 twin of .metric.dash-value: "—" is not a styled zero */
+.kpi .val.dash-value { color: var(--muted-foreground); font-weight: 500; }
 .kpi .sub2 { font-size: var(--text-xs); color: var(--muted-foreground); margin-top: 4px; line-height: 1.45; }
 .kpi .tag { position: absolute; top: 14px; right: 14px; font-size: var(--text-xs); color: var(--muted-foreground); opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
 .kpi:hover .tag { opacity: 1; }
@@ -487,6 +525,63 @@ details.group[open] > summary::before { content: "▾ "; }
 .brief-html { font-size: var(--text-sm); line-height: 1.6; }
 .brief-html table { font-size: var(--text-xs); }
 .brief-html img { max-width: 100%; }
+
+/* ── Pipeline: the conversion funnel ─────────────────────────────────────────
+   Only the DATA is inline on these (a band's width %, its per-band tint): the
+   layout, the affordances and the dashed drop-off treatment live here so both
+   themes get them and two sections cannot drift apart drawing the same idea. */
+.funnel { display: flex; flex-direction: column; gap: var(--space-2); }
+.funnel-step { padding: 6px 0; }
+.funnel-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.funnel-head .lbl { font-weight: 600; }
+/* the band itself — a real <button>, because every band drills */
+.funnel-bar {
+  display: block; min-width: 3px; height: 20px;
+  border: 0; padding: 0; cursor: pointer;
+  border-radius: var(--radius-sm);
+  background: var(--chart-2);
+  transition: filter var(--dur-fast) var(--ease);
+}
+.funnel-bar.last { background: var(--chart-3); }
+.funnel-bar:hover { filter: brightness(1.08); }
+/* rows that died between two bands: dashed, quieter, still clickable */
+.funnel-drop {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  text-align: left; background: none; font: inherit;
+  font-size: var(--text-xs); color: var(--muted-foreground);
+  border: 1px dashed var(--border); border-radius: var(--radius-sm);
+  padding: 6px 10px; cursor: pointer; margin: 2px 0 6px;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.funnel-drop:hover { border-color: var(--border-strong); background: var(--accent); }
+
+/* ── a stacked composition bar + its legend (Pipeline lead quality) ─────────
+   One bar that partitions a whole. Segment width comes from the data (inline
+   `flex`), everything else is here. */
+.stackbar {
+  display: flex; width: 100%; height: 26px; overflow: hidden;
+  border-radius: var(--radius-sm); background: var(--muted);
+}
+.stackbar-seg { border: 0; padding: 0; min-width: 3px; cursor: pointer; }
+.stackbar-seg:hover { filter: brightness(1.08); }
+.stack-legend {
+  display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+.stack-legend .legend-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 0; font: inherit;
+  font-size: var(--text-xs); color: var(--muted-foreground);
+  padding: 2px 0; cursor: pointer;
+}
+.stack-legend .legend-item:disabled { cursor: default; opacity: 0.75; }
+.stack-legend .legend-item .name { color: var(--foreground); }
+.stack-legend .legend-swatch {
+  width: 9px; height: 9px; border-radius: 2px; display: inline-block; flex: none;
+}
 
 /* ── charts ──────────────────────────────────────────────────────────────── */
 .chartframe { position: relative; width: 100%; }

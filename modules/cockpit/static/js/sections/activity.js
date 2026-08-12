@@ -42,7 +42,7 @@
 "use strict";
 
 import {
-  el, clear, fmt, dash, icon, heading, card, kpi, pill, btn, linkNum,
+  el, append, clear, fmt, dash, icon, heading, card, kpi, pill, btn, linkNum,
   table, emptyState, notice, expander, skeleton,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
@@ -182,9 +182,10 @@ function dayBar(day, ctx) {
       el("span", "muted small", "· " + label + " · IST calendar day"),
     ]),
     el("div", "hstack-tight", [
-      btn("← Previous", () => go(shiftDay(day, -1)), { sm: true }),
+      btn("Previous", () => go(shiftDay(day, -1)), { sm: true, icon: "chevron-left" }),
       picker,
-      btn("Next →", () => go(shiftDay(day, 1)), { sm: true, disabled: day >= today }),
+      btn("Next", () => go(shiftDay(day, 1)),
+        { sm: true, iconRight: "chevron-right", disabled: day >= today }),
       btn("Today", () => go(today), { sm: true, disabled: day === today }),
     ]),
   ]));
@@ -249,9 +250,11 @@ function glanceCards(act, ctx) {
   }));
 
   // 3) REGISTRY — invisible until now; every approval writes a git commit
-  g.appendChild(kpi({
+  const regUnmeasured = !!reg.note || reg.count == null;
+  append(g, kpi({
     label: "Registry changes",
-    value: reg.note ? "—" : dash(reg.count, fmt.num),
+    value: regUnmeasured ? null : fmt.num(reg.count),
+    unmeasured: regUnmeasured,
     stale: !!reg.note,
     sub: reg.note ? reg.note
       : reg.count === 0
@@ -618,7 +621,7 @@ function runLogRegion(act, ctx, focusRun) {
   }, [el("option", { value: "" }, label)].concat(
     values.map((v) => el("option", { value: v }, String(v).replace(/_/g, " ")))));
 
-  const controls = el("div", "backlog-ctx field-row", [
+  const controls = el("div", "card-controls", [
     icon("filter", { size: 14, class: "muted" }),
     sel("All tasks", tasks, (v) => { fTask = v; }),
     sel("All statuses", statuses, (v) => { fStatus = v; }),
@@ -652,7 +655,7 @@ function runLogRegion(act, ctx, focusRun) {
   }
 
   box.append(controls, host,
-    el("div", { class: "muted small", style: { padding: "var(--space-3) var(--space-5)", borderTop: "1px solid var(--border)" } },
+    el("div", "card-foot",
       "Cost is prefixed ≈ because it is INFERRED: claude_usage.run_id has never"
       + " been written, so a model call is matched to a run by task + time"
       + " window. A run with no matched call shows — (not $0), and the spend"
@@ -864,7 +867,9 @@ function runDetail(d, ctx) {
 
   if (u.calls) {
     const rowsShown = (u.rows || []).slice(0, 5);
-    wrap.append(
+    // ui.js append(), not the native one: the last child is `… : null` and
+    // Element.append(null) writes the literal string "null" into the page.
+    append(wrap,
       el("div", { class: "hstack", style: { marginTop: "var(--space-3)" } }, [
         el("span", "muted small",
           `${fmt.num(u.input_tokens)} in / ${fmt.num(u.output_tokens)} out tokens ·`),
@@ -1344,12 +1349,16 @@ function drillFacts(act) {
   openDrill({
     title: "Facts extracted on " + fmt.date(act.day),
     subtitle: `${fmt.num(f.total)} facts across ${fmt.num(f.clients)} clients`,
-    note: `The server returns the TOP ${fmt.num(f.top_n)} clients by fact count,`
-      + ` not the newest — ${fmt.num(rows.length)} of ${fmt.num(f.clients)} clients`
-      + ` are listed, and they account for`
-      + ` ${fmt.num(rows.reduce((s, r) => s + r.n, 0))} of ${fmt.num(f.total)} facts.`,
     rows,
-    total: rows.length,
+    // the TRUE total is the client count; the server cut this list by RANK,
+    // not by time, so capNote replaces the drill's default "newest first".
+    total: f.clients == null ? rows.length : f.clients,
+    capNote: `The server returns the TOP ${fmt.num(f.top_n)} clients by fact`
+      + ` count, not the newest — ${fmt.num(rows.length)} of`
+      + ` ${fmt.num(f.clients)} clients are listed, and they account for`
+      + ` ${fmt.num(rows.reduce((s, r) => s + r.n, 0))} of ${fmt.num(f.total)}`
+      + ` facts. The clients missing from this list are the QUIETEST ones, not`
+      + ` the oldest.`,
     columns: [
       { key: "client", label: "Client" },
       { key: "n", label: "Facts", num: true, render: (r) => fmt.num(r.n) },

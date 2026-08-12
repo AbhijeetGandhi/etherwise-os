@@ -405,11 +405,12 @@ function statCards(d, dossiers, t) {
 
   // 3) FATHOM INGEST
   const f = d.fathom || {};
-  g.appendChild(kpi({
+  append(g, kpi({
     label: "Fathom ingest",
-    value: f.last_poll
-      ? el("span", null, "daily ✓")
-      : el("span", "dash", "not running"),
+    value: f.last_poll ? "daily ✓" : "not running",
+    // no poll has ever completed, so "how fresh is Fathom" is NOT MEASURED —
+    // the tile greys itself rather than reading like a live status.
+    unmeasured: !f.last_poll,
     stale: !f.last_poll,
     sub: f.last_poll
       ? `last pull ${fmt.relative(f.last_poll)}`
@@ -577,7 +578,7 @@ function dossierRegion(dossiers, fr, ctx) {
   ]);
   const allBtn = btn("Show all", () => { showAll = !showAll; paint(); }, { sm: true });
 
-  const controls = el("div", "backlog-ctx field-row", [
+  const controls = el("div", "card-controls", [
     icon("filter", { size: 14, class: "muted" }),
     filterIn, sortSel, allBtn, el("span", "grow"), countLine,
   ]);
@@ -629,20 +630,15 @@ function dossierCard(x, fr, ctx, detail) {
 
   // The pills live IN the label row rather than absolutely positioned: .kpi's
   // own "open →" tag already owns the top-right corner, and a 30-character
-  // client name would have run underneath them.
+  // client name would have run underneath them. `.lbl-row` (components.css)
+  // is that layout, and the absence of `.caps` is deliberate — a client name
+  // is a name, not a stat label, so it is not shouted.
   return el("button", {
     class: "kpi", type: "button",
     attrs: { "aria-label": `open the ${x.client_name || x.client_id} dossier` },
     on: { click: () => openDossier(x, ctx, detail) },
   }, [
-    el("div", {
-      class: "lbl",
-      style: {
-        textTransform: "none", fontSize: "var(--text-sm)", letterSpacing: "0",
-        display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap",
-        color: "var(--foreground)", paddingRight: "54px",
-      },
-    }, [
+    el("div", "lbl lbl-row", [
       el("span", null, x.client_name || x.client_id),
       x.revenue_usd != null ? pill(fmt.usd(x.revenue_usd), "ok") : null,
       stalePill,
@@ -691,7 +687,9 @@ async function openDossier(entry, ctx, host) {
   const c = el("div", "card");
   const head = el("div", "card-head", [
     el("div", "hstack", [
-      el("h3", "card-title", m.client_name || entry.client_name || d.client),
+      // `.plain`: this heading is a CLIENT NAME, so it is not given the
+      // uppercase stat-label treatment the other card titles carry.
+      el("h3", "card-title plain", m.client_name || entry.client_name || d.client),
       entry.revenue_usd != null ? pill(fmt.usd(entry.revenue_usd), "ok") : null,
       entry.stale ? pill(`stale ${entry.stale_days}d`, "warn") : null,
     ]),
