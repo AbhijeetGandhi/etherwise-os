@@ -439,12 +439,20 @@ class TestRules(CoSCase):
         self.assertEqual(c[0]["payload"]["ingested"], 2)
 
     def test_system_failed_run_and_spend(self):
+        # Seed DERIVED from config, not a literal: this used to be a hardcoded
+        # 4.6 chosen against a $5 hard cap, so raising the cap to $8 (2026-08-13)
+        # silently stopped the near-cap card firing and failed here. The rule
+        # under test is "spend >= WARN_FRACTION * cap", so the fixture must move
+        # with the cap.
+        near_cap = config.COS_SPEND_WARN_FRACTION * config.DAILY_HARD_LIMIT_USD \
+            + 0.10
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO runs (task_name,started_at,status) VALUES"
                          " ('upwork_scan','2026-06-22T11:00:00','failed')")
             conn.execute("INSERT INTO claude_usage (called_at,ist_date,task_name,"
                          "model,billing_route,total_cost_usd) VALUES"
-                         " ('x','2026-06-22','cos_sweep','claude-opus-4-8','payg',4.6)")
+                         " ('x','2026-06-22','cos_sweep','claude-opus-4-8','payg',?)",
+                         (near_cap,))
         c = rules.rule_system(self.db_path, dt(hh=12))
         keys = {x["dedup_key"] for x in c}
         self.assertIn("system:run:1", keys)

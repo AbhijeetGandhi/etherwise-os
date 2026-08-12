@@ -61,9 +61,26 @@ BILLING_DEFAULT_ROUTE = os.environ.get("ETHERWISE_BILLING", "payg")  # flip to "
 BILLING_FALLBACK_TO_PAYG = True                   # on credit exhaustion / auth failure
 
 # ── Budget ceilings ──────────────────────────────────────────────────────────
-DAILY_SOFT_LIMIT_USD = 1.50                       # warning
-DAILY_HARD_LIMIT_USD = 5.00                       # ClaudeBudgetExceeded
-MONTHLY_SOFT_LIMIT_USD = 80.00                    # month-to-date WARN (Abhijeet's ~$100/mo target, 2026-07-01); non-blocking anomaly, not a hard cap
+# RAISED 2026-08-13 (soft 1.50->4.00, hard 5.00->8.00; Abhijeet's go). WHY, so
+# nobody lowers these back "to be safe": the DAILY cap was binding while the
+# MONTHLY one was nowhere near. Measured on 2026-08-13 — month-to-date spend
+# $13.73 of the $80 monthly ceiling (17%), yet the $1.50 soft cap tripped on
+# most days and the non-priority effective cap (hard - reserve = $4.00) actually
+# bit on 2026-08-10 at $3.95. Observed 7-day spend $11.44 (~$1.63/day):
+# upwork_scan $4.43 · kb_extract $2.67 · jarvis_loom_classify $2.08 · everything
+# else $2.26. Because BUDGET_PRIORITY_PREFIXES gives the scanner the full cap,
+# the scan spends the day's allowance first and kb_extract runs into the reserve
+# guard with work still queued — that is exactly how kb_daily run #5160
+# (2026-08-12) ended with `"stopped": "budget"` and sources still pending, which
+# is why 382 sources (374 of them Loom, oldest 2024-06-13) sat unextracted for
+# two years. The DAILY numbers are a BURST ceiling for catch-up work; the real
+# sustained governor is MONTHLY_SOFT_LIMIT_USD (unchanged at $80 = ~$2.58/day
+# averaged), so raising the daily lets a backlog drain in one day without
+# licensing $8/day forever. If you want to spend less, lower the MONTHLY cap —
+# lowering the daily one only starves whichever task the scanner runs ahead of.
+DAILY_SOFT_LIMIT_USD = 4.00                       # warning
+DAILY_HARD_LIMIT_USD = 8.00                       # ClaudeBudgetExceeded
+MONTHLY_SOFT_LIMIT_USD = 80.00                    # month-to-date WARN (Abhijeet's ~$100/mo target, 2026-07-01); non-blocking anomaly, not a hard cap. THE binding constraint now — the daily caps above are burst headroom, this is the budget.
 PER_RUN_MAX_USD = 0.50                            # single invocation kill-switch
 PER_RUN_MAX_TOOL_CALLS = 40                       # NemoClaw lesson: die in-run, not at daily cap
 PER_RUN_MAX_OUTPUT_TOKENS = 8_000

@@ -1,6 +1,6 @@
 # Daniel Realty & Investments — Dossier
 
-_Compiled 2026-08-12 05:15 IST · 31 client facts (31 trusted) from 5 sources._
+_Compiled 2026-08-13 05:02 IST · 31 client facts (31 trusted) from 5 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

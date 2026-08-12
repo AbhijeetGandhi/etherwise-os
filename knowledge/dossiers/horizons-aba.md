@@ -1,6 +1,6 @@
 # Horizons ABA — Dossier
 
-_Compiled 2026-08-12 05:15 IST · 5670 client facts (5419 trusted) from 938 sources · 525 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13 05:02 IST · 5670 client facts (5419 trusted) from 938 sources · 525 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
