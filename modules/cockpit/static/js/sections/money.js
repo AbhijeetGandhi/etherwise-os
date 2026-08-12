@@ -184,9 +184,15 @@ export async function render(root, ctx) {
     ["ytd", "YTD", () => [String(thisM || "").slice(0, 4) + "-01", thisM]],
     ["custom", "Custom", null],
   ];
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}"); }
-  catch (e) { saved = {}; }
+  // READ IT EVERY TIME, never once. `explorer()` is rebuilt on every range
+  // change and used to restore its filters from a snapshot taken at page load,
+  // so picking a preset silently reset the bucket/source/search you had chosen
+  // — and then `load()` persisted the reset values over your real preference.
+  const readSaved = () => {
+    try { return JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}"); }
+    catch (e) { return {}; }
+  };
+  const saved = readSaved();
   let range = { preset: saved.preset || "all", from: saved.from || null, to: saved.to || null };
   if (!PRESETS.some(([k]) => k === range.preset)) range = { preset: "all", from: null, to: null };
 
@@ -209,12 +215,20 @@ export async function render(root, ctx) {
   const sumB = (bs, rs) => round2(rs.reduce((s, x) => (bs.includes(x.b) ? s + x.u : s), 0));
 
   function persist(extra) {
-    let cur = {};
-    try { cur = JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}"); }
-    catch (e) { cur = {}; }
     localStorage.setItem(FILTERS_KEY, JSON.stringify(Object.assign(
-      cur, { preset: range.preset, from: range.from, to: range.to }, extra || {})));
+      readSaved(), { preset: range.preset, from: range.from, to: range.to },
+      extra || {})));
   }
+
+  /* the trailing-12 window the server's runway / monthly-profit figures are
+     computed over: `pnl.compute(rows where creation_dt >= max(creation_dt) −
+     365 days)` in cockpit/data.money. Derived from the SAME `as_of` the server
+     reports so the two can never drift apart. */
+  const T12_HI = /^\d{4}-\d{2}-\d{2}$/.test(String(d.as_of || "")) ? d.as_of : null;
+  const T12_LO = T12_HI
+    ? new Date(Date.parse(T12_HI + "T00:00:00Z") - 365 * 864e5)
+      .toISOString().slice(0, 10)
+    : null;
 
   /* ── the live parity check (all-time, to the cent) ──────────────────────── */
   const cliNet = sumB(["revenue", "refund"], rows);
@@ -225,9 +239,21 @@ export async function render(root, ctx) {
 
   /* ── the shared drill: one path for every figure on the page ────────────── */
   /**
-   * drillTx({title, buckets, month, q, source, subtitle, ranged, sortAmount})
+   * drillTx({title, buckets, month, q, source, subtitle, ranged, sortAmount,
+   *          since, until, note})
+   *
    * `ranged` applies the current range on the server-assigned month, which is
    * the same predicate the figure above it was computed with.
+   *
+   * `since`/`until` bound the rows by PAYMENT DATE (`creation_dt`, the row's
+   * `dt`). That is a different key from `ranged`, deliberately: the server's
+   * trailing-12 figures (`monthly_operating_profit_usd`, `runway_months`) are
+   * computed as `pnl.compute(rows where creation_dt >= as_of − 365d)`, on the
+   * payment date and NOT on the pnl_month accrual override. A drill titled
+   * "trailing 12 months" that passed no bound at all returned the whole ledger
+   * — 2,467 rows and $176,046 against a figure whose own arithmetic is
+   * $126,200 ÷ 12. The title was simply false. This endpoint returns every
+   * matching row (it has no cap), so filtering here is exact.
    */
   async function drillTx(spec) {
     const filters = {};
@@ -246,6 +272,13 @@ export async function render(root, ctx) {
     }
     let out = res.rows || [];
     let narrowed = false;
+    let dated = false;
+    if (spec.since || spec.until) {
+      const before = out.length;
+      out = out.filter((x) => (!spec.since || (x.dt || "") >= spec.since)
+        && (!spec.until || (x.dt || "") <= spec.until));
+      dated = out.length !== before;
+    }
     if (spec.ranged && !fixedMonth && !isAll()) {
       const before = out.length;
       out = out.filter((x) => inRange(x.m));
@@ -256,9 +289,18 @@ export async function render(root, ctx) {
     // agree to the cent or the drill says which one to trust.
     const cli = sumU(out);
     const notes = [];
-    if (!narrowed && !spec.q && Math.abs(cli - (res.sum_usd || 0)) >= 0.005) {
+    if (spec.note) notes.push(spec.note);
+    if (!narrowed && !dated && !spec.q
+        && Math.abs(cli - (res.sum_usd || 0)) >= 0.005) {
       notes.push(`The server totals these rows at ${fmt.usd2(res.sum_usd)}`
         + ` (integer minor units) — trust that figure, not the row sum above.`);
+    }
+    if (dated) {
+      notes.push(`Bounded to ${spec.since || "the start of the ledger"} →`
+        + ` ${spec.until || "the end of the ledger"} on each row's PAYMENT date`
+        + ` (creation_dt), which is the same key the server bounds this figure`
+        + ` on — ${fmt.num(res.count)} rows matched the bucket filter over all`
+        + ` time, ${fmt.num(out.length)} of them fall inside the window.`);
     }
     if (narrowed) {
       notes.push(`Narrowed to ${rangeLabel()} on each row's attributed month`
@@ -359,6 +401,16 @@ export async function render(root, ctx) {
   /* ── the body, rebuilt whenever the range changes ───────────────────────── */
 
   function rerender() {
+    // MATERIALISE the preset's window back into `range` before anything reads
+    // it. bounds() was the only place that knew what "Last month" meant; the
+    // month pickers read range.from/range.to directly, so after clicking "Last
+    // month" the KPIs measured 2026-07 while both pickers still showed 2026-06
+    // — and switching to Custom then adopted the pickers' stale window and
+    // quietly applied the wrong one. For "custom" this is a no-op (bounds()
+    // returns range.from/range.to unchanged), so it cannot fight the user.
+    const [bf, bt] = bounds();
+    range.from = bf || null;
+    range.to = bt || null;
     persist();
     drawSeg();
     // destroy() cancels a build that has not happened yet as well as one that
@@ -462,6 +514,30 @@ export async function render(root, ctx) {
     return g;
   }
 
+  /**
+   * The drill spec shared by the two trailing-12 figures (runway and the
+   * monthly operating rate). Both are computed by the server over the SAME
+   * window, so they get the same predicate here, stated in the title — a title
+   * that says "trailing 12 months" over an unbounded read is a lie in the one
+   * place the reader has no way to check.
+   */
+  function t12Spec(title, subtitle) {
+    if (!T12_LO) {
+      return {
+        title: `${title} (window not measured)`, buckets: OPERATING_ALL,
+        subtitle,
+        note: "The ledger reported no usable as_of date, so the trailing-12"
+          + " window could not be reconstructed and these rows are ALL TIME."
+          + " They are not the rows the figure above was computed from — treat"
+          + " the totals below as the whole ledger, not the last twelve months.",
+      };
+    }
+    return {
+      title: `${title} · ${T12_LO} → ${T12_HI}`,
+      buckets: OPERATING_ALL, since: T12_LO, until: T12_HI, subtitle,
+    };
+  }
+
   /* ── KPI row B: brief §4 — computed forever, never once displayed ───────── */
   function kpiRowB(bucketSum, rl) {
     const g = el("div", "grid-4");
@@ -485,21 +561,20 @@ export async function render(root, ctx) {
           + ` is no burn rate to run out of. Runway only exists while losing money.`,
       warn: burning && p.runway_months != null && p.runway_months < 6
         ? `Under six months of runway.` : null,
-      onClick: () => drillTx({
-        title: "Trailing 12 months — every operating row",
-        buckets: OPERATING_ALL,
-        subtitle: "the same rows the runway maths averages over",
-      }),
+      onClick: () => drillTx(t12Spec(
+        "Trailing 12 months — every operating row",
+        "the same rows the runway maths averages over")),
     }));
 
     g.appendChild(kpi({
       label: "Monthly operating profit",
       ...kv(monthlyOp, fmt.usd),
-      sub: "trailing-12 average, the rate the runway is computed at",
-      onClick: () => drillTx({
-        title: "Operating rows — trailing 12 months", buckets: OPERATING_ALL,
-        subtitle: "averaged over twelve months to give the monthly rate",
-      }),
+      sub: `trailing-12 average, the rate the runway is computed at`
+        + (T12_LO ? ` · ${T12_LO} → ${T12_HI}` : ""),
+      onClick: () => drillTx(t12Spec(
+        "Operating rows — trailing 12 months",
+        "these rows are the trailing-12 operating profit; the figure above is"
+        + " that total divided by twelve")),
     }));
 
     const costs = isAll() ? p.operating_costs_usd : sumB(OPERATING_COSTS, scopedRows());
@@ -534,6 +609,11 @@ export async function render(root, ctx) {
     const cn = d.connects || {};
     const thisMonth = cn.this_month_usd, life = cn.lifetime_usd;
 
+    // THE TILE WAS RIGHT AND THE DRILL WAS WRONG. `connects.this_month_usd` is
+    // the sum of Connect Purchase rows attributed to THIS month (0 for 2026-08
+    // — a real zero, no such row has landed). The drill passed no month at all
+    // and answered with the LIFETIME set: 89 rows and −$2,536.27 under a tile
+    // that reads $0. Same predicate now; lifetime keeps its own way in below.
     g.appendChild(kpi({
       label: "Connects spend",
       ...kv(thisMonth, fmt.usd),
@@ -543,9 +623,17 @@ export async function render(root, ctx) {
           + ` CSV import is behind, this month's spend will appear when it lands.`
         : `${thisM} · ${dash(life, fmt.usd)} lifetime`,
       onClick: () => drillTx({
-        title: "Connect purchases — every one on the ledger",
-        q: "Connect Purchase",
-        subtitle: "matched on the transaction type, across all buckets and months",
+        title: `Connect purchases — ${thisM}`,
+        q: "Connect Purchase", month: thisM,
+        subtitle: "matched on the transaction type, on the server's attributed"
+          + " month — the same month and the same match the tile counted",
+        note: thisMonth === 0
+          ? `This is empty because the figure is a real zero, not because the`
+            + ` read failed: no Connect Purchase row is attributed to ${thisM}.`
+            + ` Across every month there are Connect Purchase rows totalling`
+            + ` ${dash(life, fmt.usd2)} — use "every Connect Purchase" below the`
+            + ` tiles for those.`
+          : null,
       }),
     }));
 
@@ -563,7 +651,25 @@ export async function render(root, ctx) {
         subtitle: "reconciled, but with no P&L bucket — excluded from every figure above",
       }),
     }));
-    return g;
+
+    // The LIFETIME connects figure quoted in the tile's sub-line is a different
+    // set from the tile itself, so it gets its own way in rather than hijacking
+    // the tile's drill. (It cannot live inside the tile: a <button> nested in
+    // the kpi <button> is invalid and its click would fire both.)
+    return el("div", "stack-2", [
+      g,
+      el("div", "hstack", [
+        btn(`Show every Connect Purchase (${dash(life, fmt.usd)} lifetime)`,
+          () => drillTx({
+            title: "Connect purchases — every one on the ledger",
+            q: "Connect Purchase", sortAmount: true,
+            subtitle: "matched on the transaction type, across all buckets and"
+              + " months — this is the LIFETIME set, not the tile above",
+          }), { sm: true, icon: "wallet" }),
+        el("span", "muted small",
+          `the tile above counts ${thisM} only; this is every month on the ledger`),
+      ]),
+    ]);
   }
 
   /* ── revenue by month (Chart.js, with the target drawn on) ──────────────── */
@@ -700,14 +806,22 @@ export async function render(root, ctx) {
     ])));
     const tb = el("tbody");
 
+    // THE WHOLE CELL IS THE TARGET. `td.drillable` already carries
+    // `cursor: pointer` and a hover underline across the full cell, but the
+    // handler used to sit on the inner <button> — leaving a measured 183.7px
+    // strip per cell that looked clickable, underlined on hover, and did
+    // nothing. The handler now lives on the td, and the inner <button> is kept
+    // purely so the cell is still reachable and operable from the keyboard: its
+    // activation click bubbles to the td, so either route fires exactly once.
     const cell = (cls, text, onClick) => {
-      const td = el("td", "num drillable " + cls);
-      const b = el("button", {
+      const td = el("td", {
+        class: "num drillable " + cls,
+        on: { click: onClick },
+      });
+      td.appendChild(el("button", {
         class: "linknum", type: "button",
         attrs: { "aria-label": "show the transactions behind " + text },
-        on: { click: onClick },
-      }, text);
-      td.appendChild(b);
+      }, text));
       return td;
     };
 
@@ -903,10 +1017,16 @@ export async function render(root, ctx) {
     [...new Set(rows.map((x) => x.s))].filter(Boolean).sort()
       .forEach((s) => fSource.appendChild(new Option(s, s)));
 
-    if (saved.m && monthsInRange.includes(saved.m)) fMonth.value = saved.m;
-    if (saved.b && srvBuckets[saved.b] !== undefined) fBucket.value = saved.b;
-    if (saved.s) fSource.value = saved.s;
-    if (saved.q) fSearch.value = saved.q;
+    // The CURRENT preference, not the one this page loaded with. rerender()
+    // rebuilds this whole card on every range change, and reading the page-load
+    // snapshot meant that picking a preset reverted your bucket/source/search
+    // and then wrote the reverted values back over them.
+    const pref = readSaved();
+    const keepMonth = pref.m && !monthsInRange.includes(pref.m) ? pref.m : "";
+    if (pref.m && monthsInRange.includes(pref.m)) fMonth.value = pref.m;
+    if (pref.b && srvBuckets[pref.b] !== undefined) fBucket.value = pref.b;
+    if (pref.s) fSource.value = pref.s;
+    if (pref.q) fSearch.value = pref.q;
 
     c.append(
       el("div", "hstack", [fMonth, fBucket, fSource, fSearch, count]),
@@ -918,7 +1038,11 @@ export async function render(root, ctx) {
 
     async function load() {
       const mine = ++seq;
-      persist({ m: fMonth.value, b: fBucket.value, s: fSource.value, q: fSearch.value });
+      // `keepMonth` holds a stored month that this range cannot display. It is
+      // not applied, and it is not destroyed either — leaving the range puts it
+      // back. Everything else is exactly what the controls now say.
+      persist({ m: fMonth.value || keepMonth, b: fBucket.value,
+        s: fSource.value, q: fSearch.value });
       count.textContent = "loading…";
       const filters = {};
       if (fBucket.value) filters.bucket = fBucket.value;

@@ -43,7 +43,8 @@
 
 import {
   el, append, clear, fmt, dash, icon, heading, card, kpi, pill, btn, linkNum,
-  table, emptyState, notice, expander, skeleton,
+  table, emptyState, notice, expander, skeleton, toast, extLink, copyText,
+  iconBtn, describe, withBusy,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
 import { chart, axes } from "../charts.js";
@@ -223,7 +224,9 @@ function glanceCards(act, ctx) {
   const ing = act.ingest || {}, f = act.facts || {}, r = act.runs || {},
     sp = act.spend || {}, reg = act.registry || {};
 
-  // 1) FATHOM — the thing he asked for by name, so it leads.
+  // 1) FATHOM — the thing he asked for by name, so it leads. And it is the one
+  //    figure whose drill FETCHES: /api/activity/sources reconstructs each
+  //    call's story (attribution, facts, dossier, cost, registry).
   const fathom = ing.fathom_transcripts;
   g.appendChild(kpi({
     label: "Fathom transcripts",
@@ -234,8 +237,9 @@ function glanceCards(act, ctx) {
           ? "kb_daily ran today and found no new call to pull"
           : "kb_daily has not run yet on this day")
       : `pulled into the knowledge base · ${dash(ing.extracted, fmt.num)} of `
-        + `${dash(ing.total, fmt.num)} sources today reached extraction`,
-    onClick: () => drillIngest(act),
+        + `${dash(ing.total, fmt.num)} sources today reached extraction`
+        + " · which calls, and how each was attributed →",
+    onClick: (e) => drillSources(ctx, act, "fathom", e),
   }));
 
   // 2) FACTS
@@ -245,8 +249,8 @@ function glanceCards(act, ctx) {
     sub: f.total === 0
       ? "a true zero — nothing was extracted from any source on this day"
       : `across ${dash(f.clients, fmt.num)} client${f.clients === 1 ? "" : "s"}`
-        + ` · yesterday ${fmt.num(f.prev_total)}`,
-    onClick: () => drillFacts(act),
+        + ` · yesterday ${fmt.num(f.prev_total)} · every fact, with its source →`,
+    onClick: (e) => drillFactRows(ctx, act, null, e),
   }));
 
   // 3) REGISTRY — invisible until now; every approval writes a git commit
@@ -306,8 +310,11 @@ function digestCard(act, ctx) {
       ? notice("ok", `${fmt.num(nF)} Fathom call transcript${nF === 1 ? " was" : "s were"}`
         + ` transcribed and added to the knowledge base today.`, {
         children: el("div", { class: "small", style: { marginTop: "4px" } },
-          "Fathom is polled inside the kb_daily task — open that run below to see"
-          + " exactly which calls it saved."),
+          "Fathom is polled inside the kb_daily task. Open each call below for"
+          + " who was on it, which client it was filed under and how that was"
+          + " decided, what came out of it, and what it cost."),
+        action: btn(nF === 1 ? "Show the call" : `Show all ${fmt.num(nF)} calls`,
+          (e) => drillSources(ctx, act, "fathom", e), { sm: true, icon: "arrow-up-right" }),
       })
       : notice("info", "No Fathom transcript came in today.", {
         children: el("div", { class: "small", style: { marginTop: "4px" } },
@@ -322,7 +329,8 @@ function digestCard(act, ctx) {
     .sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${fmt.num(n)} ${k}`).join(" · ");
   box.appendChild(digestLine("inbox", "muted", [
-    linkNum(fmt.num(ing.total), () => drillIngest(act)),
+    linkNum(fmt.num(ing.total), (e) => drillSources(ctx, act, null, e),
+      { label: `show the ${fmt.num(ing.total)} sources ingested on this day` }),
     ing.total === 1 ? " source was ingested" : " sources were ingested",
     typeBits ? " — " + typeBits + "." : ".",
   ],
@@ -334,9 +342,11 @@ function digestCard(act, ctx) {
 
   // ── facts ───────────────────────────────────────────────────────────────
   box.appendChild(digestLine("book-open", "muted", [
-    linkNum(fmt.num(f.total), () => drillFacts(act)),
+    linkNum(fmt.num(f.total), (e) => drillFactRows(ctx, act, null, e),
+      { label: `show every fact extracted on this day` }),
     f.total === 1 ? " fact was extracted across " : " facts were extracted across ",
-    el("b", null, fmt.num(f.clients)),
+    linkNum(fmt.num(f.clients), () => drillFacts(ctx, act),
+      { label: "show the per-client fact counts" }),
     f.clients === 1 ? " client." : " clients.",
   ],
     (f.by_client || []).length
@@ -446,20 +456,36 @@ function trendCard(ctx, day) {
   const stored = parseInt(localStorage.getItem(TREND_KEY), 10);
   let days = [7, 14, 30].includes(stored) ? stored : TREND_DEFAULT;
 
-  const seg = el("div", "segmented", [7, 14, 30].map((n) =>
-    el("button", {
-      class: "segbtn" + (n === days ? " on" : ""), type: "button",
-      attrs: { "aria-pressed": String(n === days) },
-      on: {
-        click: (e) => {
-          days = n;
-          localStorage.setItem(TREND_KEY, String(n));
-          seg.querySelectorAll(".segbtn").forEach((b) => b.classList.remove("on"));
-          e.currentTarget.classList.add("on");
-          load();
-        },
+  // The visual `.on` and `aria-pressed` are set by ONE function. They used to
+  // be set in two places — the class in the click handler, aria-pressed only at
+  // construction — so after the first click the screen said "30d" and the
+  // accessibility tree still said 14d was the pressed one. A stale
+  // aria-pressed is worse than none: it is a confident wrong answer.
+  const seg = el("div", {
+    class: "segmented",
+    attrs: { role: "group", "aria-label": "trend range" },
+  });
+  function paintSeg() {
+    seg.querySelectorAll(".segbtn").forEach((b) => {
+      const on = Number(b.dataset.days) === days;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+    });
+  }
+  [7, 14, 30].forEach((n) => seg.appendChild(el("button", {
+    class: "segbtn", type: "button",
+    dataset: { days: String(n) },
+    attrs: { "aria-pressed": String(n === days), "aria-label": `show ${n} days` },
+    on: {
+      click: () => {
+        days = n;
+        localStorage.setItem(TREND_KEY, String(n));
+        paintSeg();
+        load();
       },
-    }, n + "d")));
+    },
+  }, n + "d")));
+  paintSeg();
 
   host.append(
     el("div", "card-head", [
@@ -1171,11 +1197,18 @@ function runNow(ctx) {
     const b = btn(label, () => ctx.kick(path, body, b), { sm: true });
     row.appendChild(b);
   });
+  // A DISABLED control has to say why it is disabled somewhere a keyboard can
+  // reach. `title` needs a pointer hover, and a disabled <button> is not even
+  // in the tab order in every browser — so the reason is on the page, and
+  // aria-describedby ties the two together for a screen reader.
   const brief = btn("Brief", null, { sm: true, disabled: true });
-  brief.title = "The Chief-of-Staff brief runs on its own schedule (cos_brief_am)."
-    + " There is no allowlisted manual kick for it — re-run it from the run log"
-    + " above if it is in the server's re-run allowlist.";
-  row.appendChild(brief);
+  const briefWhy = el("span", "muted small",
+    "Brief is not kickable: cos_brief_am runs on its own schedule and has no"
+    + " allowlisted manual trigger. Re-run it from the run log above if the"
+    + " server allows it.");
+  brief.title = briefWhy.textContent;
+  describe(brief, briefWhy);
+  row.append(brief);
 
   box.append(
     el("div", "card-head", [
@@ -1183,6 +1216,7 @@ function runNow(ctx) {
       el("span", "card-sub", "allowlisted launchd kicks · nothing here sends anything"),
     ]),
     row,
+    el("div", { style: { marginTop: "var(--space-2)" } }, briefWhy),
   );
   return box;
 }
@@ -1252,27 +1286,71 @@ function healthCards(d) {
     }) : null,
   }));
 
+  // ANOMALIES — the tile figure and the drill rows count DIFFERENT THINGS and
+  // the screen used to hide that. `an.open` is unresolved OCCURRENCES (5);
+  // `an.recent` is INCIDENTS, one row per (task, kind, severity), of which
+  // there were 14. Tile said 5, drill showed 14, and nothing on either side
+  // said why. Both numbers are real and both are useful, so both are now named,
+  // the drill carries an Open column that sums to the tile, and the server's
+  // 40-row cut is admitted via `truncated` (it counts nothing beyond it).
+  const anoms = an.recent || [];
+  const anomOpen = an.open || 0;
+  const active = anoms.filter((a) => !a.recovered);
+  const openInRows = anoms.reduce((s, a) => s + (a.open || 0), 0);
   g.appendChild(kpi({
     label: `Anomalies (${an.window_days || 14}d)`,
-    value: el("span", null, [fmt.num(an.open || 0), el("small", null, " open")]),
-    sub: an.open ? "unresolved operational signals below" : "nothing unresolved ✓",
-    onClick: (an.recent || []).length ? () => openDrill({
+    value: el("span", null, [fmt.num(anomOpen), el("small", null, " open")]),
+    sub: anomOpen
+      ? `${fmt.num(anomOpen)} unresolved occurrence${anomOpen === 1 ? "" : "s"}`
+        + ` across ${fmt.num(active.length)} incident${active.length === 1 ? "" : "s"}`
+        + ` · ${fmt.num(anoms.length)} incidents in the window`
+      : `nothing unresolved ✓ · ${fmt.num(anoms.length)} incident`
+        + `${anoms.length === 1 ? "" : "s"} in the window, all recovered`,
+    onClick: anoms.length ? () => openDrill({
       title: `Anomalies, last ${an.window_days || 14} days`,
-      subtitle: "recovered = the task succeeded after this fired, or every"
-        + " occurrence was explicitly resolved",
-      rows: an.recent,
-      total: (an.recent || []).length,
+      subtitle: `${fmt.num(anomOpen)} unresolved occurrences · `
+        + `${fmt.num(anoms.length)} incidents (${fmt.num(active.length)} active,`
+        + ` ${fmt.num(anoms.length - active.length)} recovered)`,
+      note: "The tile counts unresolved OCCURRENCES; one row here is an"
+        + " INCIDENT — a (task, kind, severity) group, however many times it"
+        + " fired. The Open column is the tile's figure, split across these"
+        + " rows: it sums to " + fmt.num(openInRows)
+        + (openInRows === anomOpen ? "." : ", which is NOT the tile's "
+          + fmt.num(anomOpen) + " — the server capped the group list.")
+        + " Recovered = the task succeeded after this fired, or every"
+        + " occurrence was explicitly resolved.",
+      rows: anoms,
+      total: anoms.length,
+      // the server's query is LIMIT 40 and counts nothing past it, so at 40
+      // rows there is no true total to state — say that rather than imply this
+      // is the whole window.
+      truncated: anoms.length >= 40,
+      capNote: anoms.length >= 40
+        ? "The server returns at most 40 incident groups, newest first, and does"
+          + " not count what it drops — so this is the newest 40, not the whole"
+          + " 14-day window."
+        : null,
       columns: [
         { key: "last", label: "When", render: (a) => fmt.dateTime(a.last) },
         { key: "task_name", label: "Task" },
         { key: "kind", label: "Kind" },
         { key: "severity", label: "Severity" },
-        { key: "n", label: "Count", num: true, render: (a) => fmt.num(a.n) },
+        { key: "n", label: "Fires", num: true, render: (a) => fmt.num(a.n) },
+        {
+          key: "open", label: "Open", num: true,
+          render: (a) => (a.open
+            ? el("b", "neg", fmt.num(a.open))
+            : el("span", "muted", "0")),
+        },
         { key: "state", label: "State", render: (a) => (a.recovered ? "recovered" : "active") },
       ],
       time: (a) => a.last,
       search: (a) => `${a.task_name} ${a.kind} ${a.severity}`,
-      facets: [{ label: "task", allLabel: "All tasks", of: (a) => a.task_name }],
+      facets: [
+        { label: "state", allLabel: "Active + recovered",
+          of: (a) => (a.recovered ? "recovered" : "active") },
+        { label: "task", allLabel: "All tasks", of: (a) => a.task_name },
+      ],
       emptyText: "No anomaly in the window.",
     }) : null,
   }));
@@ -1321,29 +1399,308 @@ function drillRuns(act) {
   });
 }
 
-function drillIngest(act) {
-  const ing = act.ingest || {};
-  const rows = Object.entries(ing.by_source_type || {})
-    .map(([source_type, n]) => ({ source_type, n }))
-    .sort((a, b) => b.n - a.n);
-  openDrill({
-    title: "Sources ingested on " + fmt.date(act.day),
-    subtitle: `${fmt.num(ing.total)} items across ${rows.length} source type`
-      + `${rows.length === 1 ? "" : "s"} · ${fmt.num(ing.extracted)} reached extraction`,
-    note: "One row per SOURCE TYPE, not per item — /api/activity returns the"
-      + " day's ingest as counts, so the individual rows are not available here."
-      + " Open the kb_daily / jarvis_slack runs in the log for the per-run detail.",
-    rows,
-    total: rows.length,
-    columns: [
-      { key: "source_type", label: "Source type" },
-      { key: "n", label: "Items", num: true, render: (r) => fmt.num(r.n) },
-    ],
-    emptyText: "Nothing was ingested on this day.",
+/* ── THE FATHOM DRILL — "which 5, and how did each one get filed?" ────────────
+   Abhijeet's ask, verbatim: "Activity shows that 5 fathom transcripts. Once I
+   click on it I need to see WHICH 5 transcripts were processed and how they
+   were added to the registry and everything."
+
+   This is the only drill in the cockpit that FETCHES. /api/activity returns the
+   day's ingest as COUNTS; the per-call story (participants, duration,
+   attribution, facts, dossier, cost, registry commit) needs its own read. The
+   trigger holds the wait (ui.withBusy) rather than opening an empty panel that
+   would flash "No rows behind this figure" — the one sentence this cockpit must
+   never say when it simply has not looked yet.
+
+   EVERY CLAIM ON A ROW IS LABELLED BY HOW WELL IT IS KNOWN, because the server
+   knows some of this exactly and reconstructs the rest:
+     · facts     facts.source_id, a foreign key. Exact.
+     · attribution  "recorded" only for a mapping-queue approval (the one
+                    timestamped decision in the schema). Everything else is
+                    REPLAYED against today's registry and says so; when the
+                    replay fails, the row says the registry no longer explains
+                    the stored answer instead of inventing an identifier.
+     · cost      claude_usage.purpose spells the source_ref in TEXT. A
+                 convention, not a key — stated on the row.
+     · dossier   a PRESENCE claim, never a timing one: last_compiled_at is
+                 stamped at the compiling run's START, so it is routinely older
+                 than facts written by that same run. */
+
+const ATTR_TONE = { "mapping-queue approval": "ok" };
+
+function attrCell(r) {
+  const a = r.attribution || {};
+  if (a.state !== "attributed") {
+    return el("div", "stack-1", [
+      el("span", "muted", "not attributed"),
+      el("div", "small muted", a.detail || "no reason recorded"),
+    ]);
+  }
+  return el("div", "stack-1", [
+    el("div", "hstack-tight", [
+      el("b", null, r.client_name || r.client_id || "—"),
+      r.client_kind ? pill(r.client_kind, "outline") : null,
+    ]),
+    el("div", "small", [
+      a.how ? pill(a.how, ATTR_TONE[a.how] || "outline") : null,
+      a.matched_on ? el("span", "mono small", " " + a.matched_on) : null,
+    ]),
+    el("div", "small muted", [
+      a.proven
+        ? "recorded decision — "
+        : "replayed against today's registry, not a recorded decision — ",
+      a.detail || "",
+    ]),
+  ]);
+}
+
+function factsCell(r) {
+  const f = r.facts || {};
+  if (!f.n) {
+    const np = r.not_processed;
+    return el("div", "stack-1", [
+      el("span", "dash", "0 facts"),
+      el("div", "small muted", np
+        ? np.reason + (np.run_context ? " — " + np.run_context : "")
+        : "extracted, but this source produced no fact"),
+    ]);
+  }
+  const cats = Object.entries(f.categories || {})
+    .sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(" · ");
+  // where each fact actually LANDED, which is not the same question as how
+  // many there were: a call can produce 18 facts and file none of them.
+  const rt = f.routes || {};
+  const where = [
+    rt.dossier ? `${fmt.num(rt.dossier)} → a dossier` : null,
+    rt.proof_points ? `${fmt.num(rt.proof_points)} → proof-points` : null,
+    rt.nowhere ? `${fmt.num(rt.nowhere)} → nowhere (no client)` : null,
+  ].filter(Boolean).join(" · ");
+  return el("div", "stack-1", [
+    el("b", null, fmt.num(f.n) + (f.n === 1 ? " fact" : " facts")),
+    cats ? el("div", "small muted", cats) : null,
+    where ? el("div", "small" + (rt.nowhere ? " neg" : ""), where) : null,
+    el("div", "small muted", "linked by " + (f.link || "facts.source_id")),
+  ]);
+}
+
+function dossierCell(r) {
+  const d = r.dossier || {};
+  const label = {
+    compiled: "in the dossier",
+    "no-dossier": "no dossier exists",
+    "no-client": "no client to file under",
+    "proof-points": "proof-points, not a dossier",
+    "no-facts": "—",
+  }[d.state] || d.state || "—";
+  return el("div", "stack-1", [
+    d.state === "no-facts" ? el("span", "dash", "—")
+      : el("span", d.state === "compiled" ? "pos" : "muted", label),
+    d.client_id ? el("div", "small mono", d.client_id) : null,
+    d.note ? el("div", "small muted", d.note) : null,
+  ]);
+}
+
+function registryCell(r) {
+  const rc = r.registry_change || {};
+  if (rc.state === "committed") {
+    return el("div", "stack-1", (rc.commits || []).map((c) => el("div", "stack-1", [
+      el("span", "hstack-tight", [
+        el("code", null, c.sha),
+        iconBtn("copy", "Copy commit " + c.sha, () => copyText(c.sha),
+          { ghost: true, size: 12 }),
+      ]),
+      el("div", "small muted", c.subject || ""),
+    ])));
+  }
+  return el("div", "stack-1", [
+    el("span", "dash", "no change"),
+    rc.note ? el("div", "small muted", rc.note) : null,
+  ]);
+}
+
+function callCell(r) {
+  const secs = r.duration_seconds;
+  const bits = [];
+  if (r.occurred_dt) bits.push(fmt.dateTime(r.occurred_dt));
+  bits.push(secs == null ? "duration —" : fmt.duration(secs));
+  return el("div", "stack-1", [
+    el("div", "hstack-tight", [
+      el("b", null, r.title || "(untitled)"),
+      r.status !== "extracted" ? pill(r.status, "warn") : pill("extracted", "ok"),
+    ]),
+    el("div", "small muted", bits.join(" · ")),
+    el("div", "small", [
+      el("span", "mono", r.source_ref),
+      r.url ? " " : null,
+      r.url ? extLink(r.url, "open", { class: "small" }) : null,
+    ]),
+  ]);
+}
+
+function partsCell(r) {
+  const p = r.participants || [];
+  if (!p.length) {
+    return el("div", "stack-1", [
+      el("span", "dash", "—"),
+      el("div", "small muted", r.payload_note || "not recorded"),
+    ]);
+  }
+  return el("div", { class: "small", attrs: { title: p.join(", ") } },
+    p.join(", "));
+}
+
+async function drillSources(ctx, act, type, ev) {
+  const trigger = ev && ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null;
+  await withBusy(trigger, async () => {
+    let res;
+    try {
+      res = await ctx.api("/api/activity/sources?day=" + encodeURIComponent(act.day)
+        + (type ? "&source_type=" + encodeURIComponent(type) : ""));
+    } catch (e) {
+      toast("Could not read the sources for this day: "
+        + String((e && e.message) || e), true);
+      return;
+    }
+    if (res && res.error) { toast(String(res.error), true); return; }
+
+    const rows = res.rows || [];
+    const label = type ? type[0].toUpperCase() + type.slice(1) : "Source";
+    const stops = (res.extract_runs || []).filter((x) => x.stopped);
+    const facts = rows.reduce((s, r) => s + ((r.facts || {}).n || 0), 0);
+    const usd = rows.reduce((s, r) => s + ((r.cost || {}).usd || 0), 0);
+    const attributed = rows.filter((r) => (r.attribution || {}).state === "attributed").length;
+
+    openDrill({
+      wide: true,               // seven columns of story per row, not a list
+      title: `${label}${type ? " calls" : "s"} ingested on ${fmt.date(res.day)}`,
+      subtitle: `${fmt.num(res.total)} ingested · ${fmt.num(attributed)} attributed to a`
+        + ` client · ${fmt.num(facts)} facts extracted from them · `
+        + `${fmt.usd2(usd)} of model spend names them`,
+      note: el("div", "stack-1", [
+        el("div", null, res.note),
+        stops.length
+          ? el("div", "neg", stops.map((s) =>
+            `${s.task} run #${s.run_id} stopped extracting on “${s.stopped}” with `
+            + `${fmt.num(s.pending)} sources still pending.`).join(" "))
+          : null,
+        res.registry_search_note ? el("div", "neg", res.registry_search_note) : null,
+        res.registry_note ? el("div", "neg", res.registry_note) : null,
+        !type && Object.keys(res.day_by_source_type || {}).length
+          ? el("div", "muted", "types this day: " + Object.entries(res.day_by_source_type)
+            .sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(" · "))
+          : null,
+      ]),
+      rows,
+      total: res.total,
+      capNote: res.capped
+        ? `The server returns at most ${fmt.num(res.count)} of this day's`
+          + ` ${fmt.num(res.total)} sources, newest call first. The header count`
+          + ` is the true total.`
+        : null,
+      columns: [
+        { key: "title", label: "Call", render: callCell },
+        { key: "participants", label: "Who was on it", render: partsCell },
+        { key: "client_id", label: "Filed under · how", render: attrCell },
+        { key: "facts", label: "What came out", render: factsCell },
+        { key: "dossier", label: "Dossier", render: dossierCell },
+        {
+          key: "cost", label: "Cost", num: true,
+          render: (r) => (r.cost
+            ? el("span", { title: r.cost.link }, [
+              fmt.usd2(r.cost.usd),
+              el("div", "small muted", `${fmt.num(r.cost.calls)} call`
+                + (r.cost.calls === 1 ? "" : "s")),
+            ])
+            : el("span", { class: "dash", title: r.cost_note || "" }, "—")),
+        },
+        { key: "registry_change", label: "Registry", render: registryCell },
+      ],
+      time: (r) => r.occurred_dt || r.ingested_at,
+      search: (r) => `${r.title || ""} ${r.source_ref} ${(r.participants || []).join(" ")}`
+        + ` ${r.client_name || ""} ${r.client_id || ""} ${r.status}`,
+      facets: [
+        { label: "source type", allLabel: "All source types", of: (r) => r.source_type },
+        {
+          label: "attribution", allLabel: "Attributed + not",
+          of: (r) => ((r.attribution || {}).state === "attributed"
+            ? (r.client_name || r.client_id) : "not attributed"),
+        },
+        { label: "status", allLabel: "All statuses", of: (r) => r.status },
+      ],
+      emptyText: type
+        ? `No ${type} source was ingested on this day.`
+        : "Nothing was ingested on this day.",
+    });
   });
 }
 
-function drillFacts(act) {
+async function drillFactRows(ctx, act, client, ev) {
+  const trigger = ev && ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null;
+  await withBusy(trigger, async () => {
+    let res;
+    try {
+      res = await ctx.api("/api/activity/facts?day=" + encodeURIComponent(act.day)
+        + (client ? "&client=" + encodeURIComponent(client) : ""));
+    } catch (e) {
+      toast("Could not read the facts for this day: "
+        + String((e && e.message) || e), true);
+      return;
+    }
+    if (res && res.error) { toast(String(res.error), true); return; }
+    openDrill({
+      wide: true,               // a fact plus its provenance is a wide row
+      title: "Facts extracted on " + fmt.date(res.day)
+        + (client ? " · " + client : ""),
+      subtitle: `${fmt.num(res.total)} facts, each joined to the source it came`
+        + " from through facts.source_id",
+      note: res.note,
+      rows: res.rows || [],
+      total: res.total,
+      capNote: res.capped
+        ? `The server returns the newest ${fmt.num(res.count)} of`
+          + ` ${fmt.num(res.total)} facts by fact id. The header count is the`
+          + ` true total.`
+        : null,
+      columns: [
+        {
+          key: "client_id", label: "Client",
+          render: (r) => (r.client_id
+            ? el("span", "mono small", r.client_id)
+            : el("span", { class: "dash", title: "scope " + (r.scope || "?") },
+              "unattributed")),
+        },
+        { key: "category", label: "Category" },
+        { key: "confidence", label: "Confidence", render: (r) => pill(r.confidence, "outline") },
+        {
+          key: "fact_text", label: "Fact",
+          render: (r) => el("span", { class: "small", attrs: { title: r.fact_text || "" } },
+            String(r.fact_text || "").slice(0, 220)),
+        },
+        {
+          key: "source_ref", label: "From",
+          render: (r) => (r.source_ref
+            ? el("div", "stack-1", [
+              el("span", "mono small", r.source_ref),
+              r.source_title ? el("div", "small muted", r.source_title) : null,
+            ])
+            : el("span", { class: "dash", title: "facts.source_id points at a row that is gone" },
+              "source row missing")),
+        },
+        { key: "citation", label: "Citation", cls: "mono small" },
+      ],
+      time: (r) => r.created_at,
+      search: (r) => `${r.fact_text || ""} ${r.client_id || ""} ${r.source_ref || ""}`,
+      facets: [
+        { label: "client", allLabel: "All clients",
+          of: (r) => r.client_id || "(unattributed)" },
+        { label: "category", allLabel: "All categories", of: (r) => r.category },
+        { label: "scope", allLabel: "All scopes", of: (r) => r.scope },
+      ],
+      emptyText: "No fact was extracted on this day.",
+    });
+  });
+}
+
+function drillFacts(ctx, act) {
   const f = act.facts || {};
   const rows = f.by_client || [];
   openDrill({
@@ -1361,7 +1718,13 @@ function drillFacts(act) {
       + ` the oldest.`,
     columns: [
       { key: "client", label: "Client" },
-      { key: "n", label: "Facts", num: true, render: (r) => fmt.num(r.n) },
+      {
+        key: "n", label: "Facts", num: true,
+        // and each of THOSE drills to the facts themselves
+        render: (r) => linkNum(fmt.num(r.n),
+          (e) => drillFactRows(ctx, act, r.client, e),
+          { label: `show ${r.client}'s ${fmt.num(r.n)} facts from this day` }),
+      },
     ],
     emptyText: "No fact was extracted on this day.",
   });
@@ -1369,17 +1732,43 @@ function drillFacts(act) {
 
 function drillRegistry(act) {
   const reg = act.registry || {};
+  const parsed = (reg.commits || []).filter((c) => c.change).length;
   openDrill({
     title: "Registry changes on " + fmt.date(act.day),
     subtitle: `audited git commits on ${reg.file} · +${fmt.num(reg.insertions)} `
       + `−${fmt.num(reg.deletions)} lines`,
-    note: "Every approval in Review writes one of these commits. This is the only"
-      + " record that a client was added or an alias learned.",
+    note: "Every approval in Review writes one of these commits. This is the"
+      + " only record that a client was added or an alias learned — nothing in"
+      + " the database holds the sha. `What changed` is read out of the commit"
+      + " SUBJECT, which approve.py writes as"
+      + " “registry: <client> <field> += <value>”; "
+      + (parsed === (reg.commits || []).length
+        ? "every commit here matched that shape."
+        : `${fmt.num((reg.commits || []).length - parsed)} of these were written`
+          + " by hand and do not match it, so they say “hand-written” rather"
+          + " than being forced into a shape they never had."),
     rows: reg.commits || [],
     total: reg.count,
     columns: [
       { key: "at", label: "At", render: (c) => fmt.dateTime(c.at) },
-      { key: "sha", label: "Commit", render: (c) => el("code", null, c.sha) },
+      {
+        key: "sha", label: "Commit",
+        render: (c) => el("span", "hstack-tight", [
+          el("code", null, c.sha),
+          iconBtn("copy", "Copy commit " + c.sha, () => copyText(c.sha),
+            { ghost: true, size: 12 }),
+        ]),
+      },
+      {
+        key: "change", label: "What changed",
+        render: (c) => (c.change
+          ? el("span", "small", [
+            el("span", "mono", c.change.client_id), " ",
+            pill(c.change.field, "outline"), " ",
+            el("b", null, c.change.value),
+          ])
+          : el("span", "muted small", "hand-written commit")),
+      },
       { key: "subject", label: "Subject" },
       { key: "insertions", label: "+", num: true, render: (c) => fmt.num(c.insertions) },
       { key: "deletions", label: "−", num: true, render: (c) => fmt.num(c.deletions) },
@@ -1456,7 +1845,11 @@ function drillUsage(d) {
         + " been written, so this is an inference, not a ledger link"
       : "linked to this run by run_id",
     rows: u.rows || [],
-    total: (u.rows || []).length,
+    // the trigger says "all N calls", so the header must state N — not the page
+    // length. They are the same today (the reader returns every matched row),
+    // but a figure that quietly re-derives itself from the page is how a cap
+    // becomes invisible the day one is added.
+    total: u.calls == null ? (u.rows || []).length : u.calls,
     columns: [
       { key: "called_at", label: "At", render: (r) => fmt.dateTime(r.called_at) },
       { key: "purpose", label: "Purpose" },

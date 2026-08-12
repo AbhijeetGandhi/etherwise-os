@@ -29,7 +29,11 @@ const ROW_CAP = 300;          // rendered rows; the header always states the tru
 let _panel = null, _backdrop = null, _opener = null, _escBound = false;
 
 function mount() {
-  if (_panel) return;
+  // isConnected, not just truthiness: a panel that was removed from the DOM
+  // (a section that cleared document.body's tail, a hot reload) left `_panel`
+  // pointing at a detached node, and every later openDrill() then rendered
+  // into nothing at all — a click that silently does zero.
+  if (_panel && _panel.isConnected && _backdrop && _backdrop.isConnected) return;
   _backdrop = el("div", { class: "drill-backdrop", on: { click: () => closeDrill() } });
   _panel = el("div", {
     class: "drill-panel",
@@ -75,6 +79,12 @@ export function closeDrill() {
  *                        TIME; say so here when it did not (a top-N-by-count
  *                        list is truncated by rank, and calling that "the
  *                        latest N" is a lie about which rows are missing).
+ *   truncated   true     "these rows are a cut, and I do NOT know the true
+ *                        total". `total > rows.length` was the only way to
+ *                        admit a cap, so a reader that caps at 40 and counts
+ *                        nothing beyond it (system.anomalies) had no way to
+ *                        say so and its drill read as the whole truth. Pair it
+ *                        with `capNote` to say what the cut was made ON.
  *
  * OPTIONAL POWER (each one lights up a piece of the panel)
  *   amount(row) → number   enables: header sum, facet sums, biggest-first sort,
@@ -88,6 +98,10 @@ export function closeDrill() {
  *   defaultSort "biggest" | "newest"   (default: biggest when the total is
  *                          negative — i.e. a cost drill — else newest)
  *   emptyText   string     shown when rows is empty
+ *   wide        true       widen the sheet. For drills whose ROW is a story
+ *                          (seven columns of provenance) rather than a record.
+ *                          Opt-in: the default side-sheet width is right for
+ *                          the other twenty drills.
  *   maxFacet    number     pills per strip (default 9)
  *   rowCap      number     rendered rows (default 300)
  *   subtitle    string     small line under the title
@@ -99,7 +113,11 @@ export function openDrill(spec) {
   const rows = spec.rows || [];
   const columns = spec.columns || [];
   const total = spec.total == null ? rows.length : spec.total;
-  const capped = total > rows.length;
+  // `truncated` covers the case `total > rows.length` cannot: the server cut
+  // the list and never counted what it left behind, so there is no true total
+  // to compare against.
+  const unknownTotal = spec.truncated === true && total <= rows.length;
+  const capped = total > rows.length || unknownTotal;
   const cap = spec.rowCap || ROW_CAP;
   const amount = typeof spec.amount === "function" ? spec.amount : null;
   const timeOf = typeof spec.time === "function" ? spec.time : null;
@@ -114,19 +132,24 @@ export function openDrill(spec) {
 
   // ── header ───────────────────────────────────────────────────────────────
   const countBits = [
-    `${fmt.num(total)} row${total === 1 ? "" : "s"}`,
+    unknownTotal
+      ? `${fmt.num(rows.length)} row${rows.length === 1 ? "" : "s"} (the true total is not measured)`
+      : `${fmt.num(total)} row${total === 1 ? "" : "s"}`,
   ];
   if (amount) countBits.push(`these rows sum to ${fmt.usd2(grandSum)}`);
   const countLine = el("span", "count", countBits.join(" · ") + " ");
   if (capped) {
     // "the latest N" is a claim about ORDER. Only make it when the caller has
     // not told us the cut was made some other way.
-    append(countLine, el("span", "capped", spec.capNote
-      ? `— showing ${fmt.num(rows.length)} of them`
-      : `— showing the latest ${fmt.num(rows.length)}`));
+    append(countLine, el("span", "capped", unknownTotal
+      ? "— this list is a cut, not the whole set"
+      : spec.capNote
+        ? `— showing ${fmt.num(rows.length)} of them`
+        : `— showing the latest ${fmt.num(rows.length)}`));
   }
 
   clear(_panel);
+  _panel.classList.toggle("wide", spec.wide === true);
   _panel.appendChild(el("div", "drill-head", [
     el("div", "grow", [
       el("h4", null, spec.title || "Details"),
@@ -273,9 +296,13 @@ export function openDrill(spec) {
     if (capped) {
       append(body, el("div", "drill-cap", spec.capNote
         ? spec.capNote
-        : `The server capped this read at ${fmt.num(rows.length)} of`
-          + ` ${fmt.num(total)} rows, newest first. The count in the header is`
-          + ` the true total; the sum covers only the rows above.`));
+        : unknownTotal
+          ? `The server capped this read at ${fmt.num(rows.length)} rows and did`
+            + ` not count what it left behind, so there is no true total to show`
+            + ` you here — treat this list as a sample, not the whole set.`
+          : `The server capped this read at ${fmt.num(rows.length)} of`
+            + ` ${fmt.num(total)} rows, newest first. The count in the header is`
+            + ` the true total; the sum covers only the rows above.`));
     }
   }
 

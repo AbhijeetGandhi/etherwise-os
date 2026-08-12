@@ -124,19 +124,49 @@ export async function post(path, body) {
   return data;
 }
 
-/** Kick an allowlisted launchd job / rail and report on the button that asked. */
-export async function kick(path, body, button) {
+/**
+ * Kick an allowlisted launchd job / rail and report on the button that asked.
+ *
+ * TWO RULES LEARNED HERE:
+ *  1. The success toast fires AFTER the POST resolves. It used to fire before,
+ *     so a refused kick showed "started" and "failed to start" back to back and
+ *     the first one was a lie that stayed on screen next to the correction.
+ *  2. The toast promises the run log will update, so something has to make that
+ *     true. launchd needs a moment to spawn and the job a moment to write its
+ *     `runs` row, so one delayed re-render is scheduled — the section that
+ *     asked, only if it is still the section on screen. No polling: this is a
+ *     local single-user tool and a background fetch loop costs confusion.
+ */
+const KICK_REFRESH_MS = 6000;
+
+export async function kick(path, body, button, opts = {}) {
   const name = button ? button.textContent : "job";
-  toast(`${name} started — the run log will update shortly`);
-  if (button) { button.disabled = true; button.textContent = "Running…"; }
+  if (button) { button.disabled = true; button.textContent = "Starting…"; }
+  const refresh = typeof opts.refresh === "function" ? opts.refresh : null;
   try {
     const d = await post(path, body);
     if (button) button.textContent = d.ok ? "Started ✓" : "Failed";
-    if (!d.ok) toast(`${name} failed: ${d.error || "see logs"}`, true);
+    if (!d.ok) {
+      toast(`${name} failed: ${d.error || "see logs"}`, true);
+      return d;
+    }
+    toast(refresh
+      ? `${name} started — refreshing this view in ${KICK_REFRESH_MS / 1000}s`
+      : `${name} started`);
+    if (refresh) {
+      const at = currentSection;
+      const mine = renderToken;
+      setTimeout(() => {
+        // only if nothing else has taken over the view in the meantime —
+        // yanking a section out from under someone mid-read is worse than
+        // making them press Refresh.
+        if (currentSection === at && renderToken === mine) refresh();
+      }, KICK_REFRESH_MS);
+    }
     return d;
   } catch (e) {
     if (button) button.textContent = "Failed";
-    toast(`${name} failed to start`, true);
+    toast(`${name} failed to start: ${String((e && e.message) || e)}`, true);
     return { ok: false, error: String(e.message || e) };
   } finally {
     if (button) setTimeout(() => { button.textContent = name; button.disabled = false; }, 2500);
@@ -233,10 +263,55 @@ async function refreshBadges() {
   renderNav(currentSection);
 }
 
+/* ── freshness: an explicit Refresh, and an honest "how old is this?" ─────────
+   A section renders ONCE and then never again on its own. That is the right
+   default for a local single-user tool — a background poll costs nothing but
+   confusion, and half the screens here are things you are reading carefully.
+   But it was also unstated, and a screen that quietly serves a five-minute-old
+   read looks exactly like a screen that is live. Live proof: the page showed 4
+   mapping-queue cards while /api/queue was already returning 5.
+
+   So: say how old the view is, and give one button that makes it new. No
+   polling. `refreshView()` re-runs the SAME section with the SAME params, so a
+   drilled-into day or filter survives it. */
+
+function ageLabel(at) {
+  const secs = Math.floor((Date.now() - at) / 1000);
+  if (secs < 20) return "just now";
+  if (secs < 60) return secs + "s ago";
+  const m = Math.floor(secs / 60);
+  if (m < 60) return m + "m ago";
+  return Math.floor(m / 60) + "h " + (m % 60) + "m ago";
+}
+
+function setStale(at) {
+  const node = document.getElementById("stale");
+  if (!node) return;
+  if (!at) {
+    node.textContent = "loading…";
+    node.className = "staleline";
+    node.removeAttribute("title");
+    return;
+  }
+  const mins = (Date.now() - at) / 60000;
+  node.textContent = "read " + ageLabel(at);
+  // 5 minutes is where "I am looking at now" stops being true for a board that
+  // a launchd job rewrites every few minutes.
+  node.className = "staleline" + (mins >= 5 ? " old" : "");
+  node.title = "This view was read at " + new Date(at).toLocaleTimeString()
+    + " and does not update on its own. Press Refresh (or r) to re-read it.";
+}
+
+export function refreshView() {
+  show(currentSection, currentParams);
+}
+
 /* ── router ───────────────────────────────────────────────────────────────── */
 
 let currentSection = "today";
+let currentParams = null;                  // so Refresh re-runs the SAME view
 let renderToken = 0;                       // guards against a slow render landing late
+let renderedAt = 0;                        // epoch ms of the last successful paint
 
 function parseHash() {
   const raw = (location.hash || "").replace(/^#\/?/, "");
@@ -253,6 +328,7 @@ export function navigate(id, query) {
 async function show(id, params) {
   const sec = byId(id) || SECTIONS[0];
   currentSection = sec.id;
+  currentParams = params || new URLSearchParams();
   const mine = ++renderToken;
 
   closeDrill();
@@ -263,14 +339,19 @@ async function show(id, params) {
 
   const host = document.getElementById("view");
   clear(host).appendChild(skeletonSection());
+  setStale(null);                          // "loading", not "3 minutes old"
 
   const ctx = {
-    api, post, kick,
+    api, post,
     section: sec.id,
     params: params || new URLSearchParams(),
     navigate,
     refresh: () => show(sec.id, params),
   };
+  // kick() re-renders the section that asked, so it needs that section's own
+  // refresh — hence the closure rather than the bare export.
+  ctx.kick = (path, body, button, opts) =>
+    kick(path, body, button, Object.assign({ refresh: ctx.refresh }, opts || {}));
 
   try {
     const mod = await sec.load();
@@ -281,6 +362,8 @@ async function show(id, params) {
     if (mine !== renderToken) return;
     clear(host).appendChild(root);
     document.title = `${sec.label} · Etherwise cockpit`;
+    renderedAt = Date.now();
+    setStale(renderedAt);
   } catch (e) {
     if (mine !== renderToken) return;
     if (e && e.unauthorized) { renderUnlock(host, !!localStorage.getItem(TOKEN_KEY)); return; }
@@ -318,11 +401,19 @@ function boot() {
     show(id || currentSection, params);
   });
 
-  // keyboard: 1–7 jump to a section when nothing is focused in a field
+  const reload = document.getElementById("reloadBtn");
+  reload.addEventListener("click", () => { refreshHealth(); refreshBadges(); refreshView(); });
+
+  // keyboard: 1–7 jump to a section, r re-reads it — when nothing is focused
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const tag = (e.target && e.target.tagName) || "";
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || e.target.isContentEditable) return;
+    if (e.key === "r" || e.key === "R") {
+      e.preventDefault();
+      refreshHealth(); refreshBadges(); refreshView();
+      return;
+    }
     const n = parseInt(e.key, 10);
     if (n >= 1 && n <= SECTIONS.length) navigate(SECTIONS[n - 1].id);
   });
@@ -330,6 +421,9 @@ function boot() {
   refreshHealth();
   refreshBadges();
   setInterval(() => { refreshHealth(); refreshBadges(); }, 5 * 60 * 1000);
+  // the AGE label ticks; the DATA does not. This timer only re-renders a
+  // string that is already true — it fetches nothing.
+  setInterval(() => { if (renderedAt) setStale(renderedAt); }, 30 * 1000);
 
   const { id, params } = parseHash();
   const start = id || localStorage.getItem(LAST_SECTION_KEY) || "today";

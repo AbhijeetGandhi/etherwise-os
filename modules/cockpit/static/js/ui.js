@@ -310,13 +310,72 @@ export function kpi({ label, value, sub, onClick, warn, stale, unmeasured, plain
   return b;
 }
 
-/** A number rendered as a drill trigger. */
+/**
+ * A number rendered as a drill trigger.
+ *
+ * `opts.label` is not decoration. Two figures on the same screen are routinely
+ * the same digit ("0 queued · 0 held"), and the default label collapses both to
+ * "show the rows behind 0" — a screen reader then offers two identical buttons
+ * that do different things. Pass a label whenever the number alone does not say
+ * WHICH figure this is.
+ */
 export function linkNum(text, onClick, opts = {}) {
   return el("button", {
     class: "linknum", type: "button",
     attrs: { "aria-label": opts.label || `show the rows behind ${text}` },
     on: { click: onClick },
   }, String(text));
+}
+
+/**
+ * srOnly("…") — visible to a screen reader, invisible on screen.
+ *
+ * For the explanation a `title` tooltip cannot give: a tooltip needs a pointer
+ * hover, so a keyboard user tabbing onto a DISABLED control gets the label and
+ * nothing else. Pair it with `describe()` below rather than relying on `title`.
+ */
+export function srOnly(text) {
+  return el("span", "sr-only", String(text == null ? "" : text));
+}
+
+/**
+ * describe(control, node) — wire `aria-describedby` between a control and the
+ * node that explains it, minting an id if the node has none. Returns the node
+ * so it can be appended inline.
+ */
+let _descSeq = 0;
+export function describe(control, node) {
+  if (!node.id) node.id = "desc-" + (++_descSeq);
+  const prev = control.getAttribute("aria-describedby");
+  control.setAttribute("aria-describedby", prev ? prev + " " + node.id : node.id);
+  return node;
+}
+
+/**
+ * withBusy(trigger, fn) — run an async click handler with the trigger visibly
+ * and programmatically busy.
+ *
+ * Every figure drills, and some drills have to FETCH their rows first. Opening
+ * an empty drill and refilling it flashes "No rows behind this figure", which
+ * is the one thing this cockpit must never say when it simply has not looked
+ * yet. So the trigger holds the wait instead.
+ */
+export async function withBusy(trigger, fn) {
+  if (trigger) {
+    if (trigger.dataset.busy === "1") return undefined;   // no double-fire
+    trigger.dataset.busy = "1";
+    trigger.classList.add("is-busy");
+    trigger.setAttribute("aria-busy", "true");
+  }
+  try {
+    return await fn();
+  } finally {
+    if (trigger) {
+      delete trigger.dataset.busy;
+      trigger.classList.remove("is-busy");
+      trigger.removeAttribute("aria-busy");
+    }
+  }
 }
 
 /** pill("owed", "info") — tone is any of the .pill modifiers in components.css */

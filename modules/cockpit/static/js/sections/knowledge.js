@@ -204,7 +204,14 @@ function askCard(d, ctx) {
     // attribute, is the guard — Enter can outrun a repaint.
     if (inFlight) return;
     const question = qi.value.trim();
-    if (!question) { toast("Type a question first"); return; }
+    if (!question) {
+      // isError, not the success styling: this is a refusal. And put the
+      // cursor where the fix is — a toast that says "type a question" while
+      // the caret sits nowhere is half an instruction.
+      toast("Type a question first — the librarian needs something to answer.", true);
+      qi.focus();
+      return;
+    }
 
     inFlight = true;
     ask.disabled = true; ask.textContent = "Asking…";
@@ -488,7 +495,24 @@ function searchCard(ctx) {
 
   async function run() {
     const q = si.value.trim();
-    if (!q || busy) return;
+    if (busy) return;
+    if (!q) {
+      // An empty Search used to be a NO-OP: no fetch, no DOM change, no toast,
+      // no focus move. A control that answers a click with absolutely nothing
+      // is indistinguishable from a broken one, so it now says what it needs
+      // and puts the caret there.
+      toast("Type something to search for — the fact index needs a term.", true);
+      clear(res).appendChild(emptyState(
+        "Nothing searched yet.",
+        {
+          icon: "search",
+          detail: "This is an empty BOX, not an empty result: type a"
+            + " distinctive word and press Search. Every scope is covered —"
+            + " client, agency and cross-client facts.",
+        }));
+      si.focus();
+      return;
+    }
     busy = true;
     go.disabled = true;
     clear(res).appendChild(skeleton({ lines: 3 }));

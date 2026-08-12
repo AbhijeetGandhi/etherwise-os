@@ -58,6 +58,35 @@ const pctOf = (n, dn) => (dn ? Math.round((1000 * n) / dn) / 10 : 0);
 const ago = (n) => (n == null ? "never"
   : n === 0 ? "today" : n === 1 ? "yesterday" : `${n}d ago`);
 
+/** the row cap /api/pipeline/rows applies to every stage (data.pipeline_rows) */
+const ROW_CAP = 300;
+
+/** "2026-08-13" + k days, or null if the input is not an ISO day */
+function dAdd(iso, k) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ""))) return null;
+  return new Date(Date.parse(iso + "T00:00:00Z") + k * 864e5)
+    .toISOString().slice(0, 10);
+}
+
+/**
+ * A visually-hidden label INSIDE a graphical button. The funnel bars and the
+ * stackbar segments are `<button>`s whose only content is colour — the number
+ * lives in a sibling span — so their entire accessible name came from an
+ * `aria-label`. Real text content is the more robust name (it survives
+ * translation, it is what a "list all buttons" AT command reads out, and it
+ * does not vanish if the attribute is dropped), so the text goes in the button
+ * and the attribute goes away.
+ */
+function srLabel(text) {
+  return el("span", {
+    style: {
+      position: "absolute", width: "1px", height: "1px", padding: "0",
+      margin: "-1px", overflow: "hidden", clip: "rect(0 0 0 0)",
+      clipPath: "inset(50%)", whiteSpace: "nowrap", border: "0",
+    },
+  }, text);
+}
+
 /** "2026-04" + k months */
 function mAdd(ym, k) {
   let [y, m] = String(ym || "").split("-").map(Number);
@@ -180,7 +209,27 @@ export async function render(root, ctx) {
   ]);
 
   /* the ONE drill path. Every figure on this page goes through it, so every
-     drill states the TRUE server total and admits the 300-row cap. */
+     drill states the TRUE total and admits the 300-row cap.
+     ─────────────────────────────────────────────────────────────────────────
+     Three of this page's figures cannot be expressed as a /api/pipeline/rows
+     query, and the fix for each was previously to just... not scope the drill,
+     which is how a tile reading 188 opened 2,152 rows. Two extra hooks close
+     that, and neither one is allowed to soften what the drill claims:
+
+       figure   the count the TILE arrived at, computed over the complete fact
+                set. When given it becomes the drill's stated total — the true
+                answer — instead of whatever this narrower endpoint could see.
+       narrow   a predicate applied to the returned rows, for a cut the server
+                has no filter for ("hot AND no ICP tier", "within 30 days" when
+                the endpoint only takes whole months). The rows must carry the
+                field being cut on, so the cut is the SAME cut, just performed
+                one hop later.
+
+     When the server truncated BEFORE the narrowing, the rows below are a
+     recency-ordered SAMPLE of the figure and the drill says exactly that. When
+     it did not truncate, the narrowing is exact and must reproduce `figure` —
+     if it does not, the two disagree and the drill says THAT instead of
+     silently showing whichever number it happens to hold. */
   async function openRows(title, params, columns, opts = {}) {
     let res;
     try {
@@ -191,13 +240,47 @@ export async function render(root, ctx) {
       return;
     }
     if (res && res.error) { toast(String(res.error), true); return; }
-    const rows = res.rows || [];
+
+    let rows = res.rows || [];
+    const served = rows.length;
+    const serverTotal = res.total == null ? served : res.total;
+    const truncated = served >= ROW_CAP && serverTotal > served;
+    const notes = [];
+    if (opts.note) notes.push(opts.note);
+    let capNote = opts.capNote || null;
+    let total = opts.figure == null ? serverTotal : opts.figure;
+
+    if (typeof opts.narrow === "function") {
+      rows = rows.filter(opts.narrow);
+      if (opts.narrowNote) notes.push(opts.narrowNote);
+      if (opts.figure == null) total = rows.length;
+      if (truncated) {
+        capNote = `This figure's predicate cannot be sent to the rows endpoint,`
+          + ` so it was asked the closest question it can answer`
+          + ` (${fmt.num(serverTotal)} rows, of which it returns the`
+          + ` ${fmt.num(served)} most recent) and the ${fmt.num(rows.length)}`
+          + ` rows above are the ones inside the figure. The`
+          + ` ${fmt.num(total)} in the header is the true count, taken over`
+          + ` every scanned job; what is missing below is the OLDER members of`
+          + ` that set, not a different kind of row.`;
+      } else if (opts.figure != null && rows.length !== opts.figure) {
+        notes.push(`These ${fmt.num(rows.length)} rows do not reproduce the`
+          + ` figure of ${fmt.num(opts.figure)}. The read was not truncated, so`
+          + ` the tile and the rows genuinely disagree — trust neither until`
+          + ` that is resolved.`);
+      }
+    } else if (opts.figure != null && !truncated && opts.figure !== serverTotal) {
+      notes.push(`The figure above counts ${fmt.num(opts.figure)} and this read`
+        + ` finds ${fmt.num(serverTotal)}. They are not the same set.`);
+    }
+
     openDrill({
       title,
       subtitle: opts.subtitle,
-      note: opts.note,
+      note: notes.length ? notes.join(" ") : null,
+      capNote,
       rows,
-      total: res.total == null ? rows.length : res.total,
+      total,
       columns,
       time: (r) => r.d,
       search: (r) => `${r.title || ""} ${r.id || ""} ${r.client_company || ""}`
@@ -207,24 +290,31 @@ export async function render(root, ctx) {
     });
   }
 
-  root.append(
-    heading("Pipeline",
-      "— every figure is clickable and the rows behind it are the same rows the"
-      + " bar counted · applied comes from the connects rail, never from a guess"),
-    kpiStrip(d, openRows),
-    winRateLine(d),
-  );
-
-  /* ══ the range-scoped half of the page ══════════════════════════════════ */
-
   const jobs = F.jobs || [];
   const HOT = F.hot_threshold || 16;
   const FLOOR = F.score_floor || 8;
   const railSince = F.rail_since;
 
+  // the server's OWN reference day. Every window the KPI strip renders ("last
+  // 7 days", "last 30 days") is measured from this, so the drills that scope
+  // themselves to those windows must be measured from it too — not from the
+  // browser's clock, which is in a different timezone from the IST day the
+  // server counts in.
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(String(F.as_of || "")) ? F.as_of : null;
+
   const thisM = String(F.as_of || "").slice(0, 7)
     || [...new Set(jobs.map((j) => j.m).filter(Boolean))].sort().pop() || "";
   const lastM = mAdd(thisM, -1);
+
+  root.append(
+    heading("Pipeline",
+      "— every figure is clickable and the rows behind it are the same rows the"
+      + " bar counted · applied comes from the connects rail, never from a guess"),
+    kpiStrip(d, openRows, { asOf, thisM }),
+    winRateLine(d),
+  );
+
+  /* ══ the range-scoped half of the page ══════════════════════════════════ */
 
   const PRESETS = [
     ["all", "All time", () => [null, null]],
@@ -334,6 +424,15 @@ export async function render(root, ctx) {
   }
 
   function redraw() {
+    // materialise the preset's window into `range` before anything reads it.
+    // bounds() was the only thing that knew what a preset meant, while the
+    // month pickers below render straight off range.from/range.to — so the
+    // charts and the pickers showed different windows, and switching to Custom
+    // adopted the pickers' stale one. (Same defect as money.js's; fixed there
+    // as item 24.) A no-op for "custom", where bounds() returns these values.
+    const [bf, bt] = bounds();
+    range.from = bf || null;
+    range.to = bt || null;
     localStorage.setItem(FILTERS_KEY, JSON.stringify(range));
     drawSeg();
     myCharts.forEach((h) => { try { h.destroy(); } catch (e) { /* already gone */ } });
@@ -390,17 +489,16 @@ export async function render(root, ctx) {
 
       // only the DATA is inline: how wide this band is and how far down the
       // funnel it sits. Everything else is .funnel-bar in components.css.
+      // the accessible name is real (hidden) TEXT, not an attribute — the bar
+      // itself carries no characters at all
       const bar = el("button", {
         class: "funnel-bar" + (last ? " last" : ""),
         type: "button",
-        attrs: {
-          title: s.note,
-          "aria-label": `show the ${fmt.num(s.n)} rows behind ${s.lbl}`,
-        },
+        attrs: { title: s.note },
         style: { width: w + "%", opacity: String(1 - i * 0.08) },
         on: { click: () => openRows(`${s.lbl} — ${rl}`, scopeQ(s.scope), chartCols,
           { subtitle: s.note, facets: jobFacets }) },
-      });
+      }, srLabel(`show the ${fmt.num(s.n)} rows behind ${s.lbl}`));
 
       append(stack, el("div", "funnel-step", [
         el("div", "funnel-head", [
@@ -419,7 +517,6 @@ export async function render(root, ctx) {
         append(stack, el("button", {
           class: "funnel-drop",
           type: "button",
-          attrs: { "aria-label": `show the ${fmt.num(dp.n)} jobs that ${dp.lbl}` },
           on: { click: () => openRows(`${dp.lbl} — ${rl}`, scopeQ(dp.scope), chartCols,
             { facets: jobFacets }) },
         }, [
@@ -871,13 +968,30 @@ export async function render(root, ctx) {
       { k: "icp_near", lbl: "Near-miss", colour: "var(--chart-2)",
         n: scoredJs.filter((j) => j.t === "icp_near").length, q: { icp: "icp_near" },
         note: "must-haves hold, one qualifier short" },
+      // "(NOT PRIME)" IS PART OF THE COUNT AND MUST BE PART OF THE QUERY. The
+      // segment excludes the ICP and near-miss jobs; `score_min` alone does
+      // not, so the drill used to return the segment PLUS both tiers (260 →
+      // 277). The rows endpoint has no "no ICP tier" filter, so the exclusion
+      // is applied to the returned rows instead — same cut, one hop later —
+      // and `figure` keeps the header on the segment's own count.
       { k: "hot", lbl: `Hot ≥${HOT} (not prime)`, colour: "var(--chart-4)",
         n: scoredJs.filter((j) => j.s >= HOT && !j.t).length, q: { score_min: HOT },
+        narrow: (r) => !r.icp_tier,
+        narrowNote: `The rows endpoint cannot filter on "has no ICP tier", so`
+          + ` the hot rows were read and the ICP and near-miss ones removed`
+          + ` here — the same exclusion the "(not prime)" in this segment's`
+          + ` label already makes.`,
         note: "cleared the bar, not the profile" },
       { k: "rest", lbl: `Scored < ${HOT}`, colour: "var(--chart-1)",
         n: scoredJs.filter((j) => j.s < HOT).length, q: { score_max: HOT },
         note: "below the hot bar" },
     ];
+    /* every segment states its own count as the drill's total, so a segment
+       and its rows can only ever disagree out loud */
+    const tierOpts = (t) => ({
+      subtitle: t.note, facets: jobFacets, figure: t.n,
+      narrow: t.narrow, narrowNote: t.narrowNote,
+    });
     const tot = Math.max(1, scoredJs.length);
 
     const c = el("div", "card");
@@ -896,12 +1010,12 @@ export async function render(root, ctx) {
         type: "button",
         attrs: {
           title: `${t.lbl}: ${fmt.num(t.n)} (${pctOf(t.n, tot)}%) — ${t.note}`,
-          "aria-label": `show the ${fmt.num(t.n)} ${t.lbl} jobs`,
         },
         style: { flex: String(t.n), background: t.colour },
         on: { click: () => openRows(`${t.lbl} — ${rl}`, scopeQ(t.q), chartCols,
-          { subtitle: t.note, facets: jobFacets }) },
-      }));
+          tierOpts(t)) },
+        // a bare coloured block: the name has to be text inside the button
+      }, srLabel(`show the ${fmt.num(t.n)} ${t.lbl} jobs`)));
     });
 
     const legend = el("div", "stack-legend");
@@ -911,7 +1025,7 @@ export async function render(root, ctx) {
         type: "button",
         disabled: !t.n,
         attrs: { title: t.note },
-        on: { click: () => { if (t.n) openRows(`${t.lbl} — ${rl}`, scopeQ(t.q), chartCols, { subtitle: t.note, facets: jobFacets }); } },
+        on: { click: () => { if (t.n) openRows(`${t.lbl} — ${rl}`, scopeQ(t.q), chartCols, tierOpts(t)); } },
       }, [
         el("span", { class: "legend-swatch", style: { background: t.colour } }),
         el("span", "name", t.lbl),
@@ -946,9 +1060,15 @@ export async function render(root, ctx) {
 
 /* ── the KPI strip ────────────────────────────────────────────────────────── */
 
-function kpiStrip(d, openRows) {
+function kpiStrip(d, openRows, when) {
   const c = d.carded || {}, icp = d.icp || {}, a = d.applied || {},
     cr = d.client_replied || {};
+  const asOf = (when || {}).asOf || null;
+  const thisM = (when || {}).thisM || "";
+  // the exact windows the server counted these tiles over (cockpit/data.py:
+  // carded_between(day−6, day) and the ICP cut at day−29)
+  const week7 = dAdd(asOf, -6);
+  const cut30 = dAdd(asOf, -29);
   const g = el("div", "grid-4");
 
   // ── source-health stamp: a degraded scanner must never look live ─────────
@@ -963,19 +1083,37 @@ function kpiStrip(d, openRows) {
 
   // 1) CARDED — the 7-day window, not "today": the scanner runs hourly and he
   //    reads this at 3am, when today is structurally near-zero and says nothing.
+  //    The drill used to pass no window at all: the tile said 188 for seven
+  //    days and opened 2,152 rows for all time. `week=<day−6>` reproduces the
+  //    server's own `BETWEEN day−6 AND day` exactly (pipeline_rows turns a week
+  //    anchor into anchor..anchor+6 on first_scored_at, the same column).
   g.appendChild(kpi({
     label: "Carded to board",
     value: fmt.num(c.week),
     warn: scanWarn,
     sub: `last 7 days · ${fmt.num(c.today)} today · ${fmt.num(c.last_week)} the week before`,
-    onClick: () => openRows("Carded — all recent", { stage: "carded" }, jobCols, {
-      subtitle: "every job the scanner has pushed to the ClickUp board",
-    }),
+    onClick: () => (week7
+      ? openRows(`Carded — last 7 days (${week7} → ${asOf})`,
+        { stage: "carded", week: week7 }, jobCols, {
+          figure: c.week,
+          subtitle: "the jobs the scanner pushed to the ClickUp board in the"
+            + " same seven days the tile counts",
+        })
+      : openRows("Carded — all recent", { stage: "carded" }, jobCols, {
+        subtitle: "every job the scanner has pushed to the ClickUp board",
+        note: "The server reported no usable reference day, so this could not"
+          + " be narrowed to the tile's seven-day window — these rows are ALL"
+          + " TIME and are not the rows the figure above counted.",
+      })),
   }));
 
   // 2) ICP / PRIME — the tier that discriminates now ~80% clear the hot bar.
   //    (This is the KPI that replaced 'to triage', which is structurally 0
   //    since the live ClickUp cutover — see the DROPPED note at the top.)
+  //    The tile counts a ROLLING 30 DAYS; the rows endpoint filters by calendar
+  //    month and cannot express that, so the drill used to open all-time (19
+  //    rows behind a tile reading 2). It now reads the all-time ICP set — which
+  //    is small and never truncated — and applies the tile's own date cut here.
   g.appendChild(kpi({
     label: "ICP / Prime",
     value: fmt.num(icp.last_30),
@@ -984,10 +1122,25 @@ function kpiStrip(d, openRows) {
       + (icp.last_30 === 0
         ? " — a true zero: nothing matched the ICP profile in 30 days"
         : ""),
-    onClick: () => openRows("ICP / Prime leads (all-time)",
-      { stage: "jobs", icp: "icp" }, chartCols, {
-        subtitle: "recomputed from stored fields by bin/icp-backfill",
-      }),
+    onClick: () => (cut30
+      ? openRows(`ICP / Prime — last 30 days (since ${cut30})`,
+        { stage: "jobs", icp: "icp" }, chartCols, {
+          figure: icp.last_30,
+          narrow: (r) => (r.d || "") >= cut30,
+          narrowNote: `The rows endpoint filters by calendar month and this`
+            + ` tile counts a rolling 30 days, so all ${fmt.num(icp.total)}`
+            + ` ICP jobs were read and cut here to first seen on or after`
+            + ` ${cut30} — the same predicate, one hop later.`,
+          subtitle: "recomputed from stored fields by bin/icp-backfill",
+        })
+      : openRows("ICP / Prime leads (all-time)",
+        { stage: "jobs", icp: "icp" }, chartCols, {
+          figure: icp.total,
+          subtitle: "recomputed from stored fields by bin/icp-backfill",
+          note: "The server reported no usable reference day, so these rows"
+            + " could not be cut to the tile's 30-day window — this is the"
+            + " all-time ICP set, not the figure above.",
+        })),
   }));
 
   // 3) APPLIED — three distinct renderings, because "we did not apply" and "we
@@ -1031,16 +1184,40 @@ function kpiStrip(d, openRows) {
 
   // 4) CLIENT REPLIES — the trailing clause is RAIL-derived (server: cr.note),
   //    never a pause assumption.
+  //    THREE NUMBERS FOR ONE FIGURE, until now: the tile read 0 (this month),
+  //    its own sub-line read 81 (all-time) and the drill opened 73 (all-time,
+  //    minus the rooms with no parseable created date). The tile's figure is
+  //    the month, so the drill is the month; the all-time count stays as what
+  //    it always was — context — and the all-time rooms are reachable, listed
+  //    by status, from "Threads by status" at the foot of this page.
   g.appendChild(kpi({
     label: "Client replies",
     value: fmt.num(cr.this_month),
-    sub: `this month · ${fmt.num(cr.total)} all-time · last reply ${ago(cr.days_since)}`
+    sub: `${thisM || "this month"} · ${fmt.num(cr.total)} rooms all-time`
+      + ` · last reply ${ago(cr.days_since)}`
       + (cr.note ? ` — ${cr.note}` : ""),
-    onClick: () => openRows("Client replies (room-sourced proposals)",
-      { stage: "replied" }, threadCols, {
-        subtitle: "proposals we can see because the client opened a room —"
-          + " submissions with no reply are invisible here",
-      }),
+    onClick: () => (thisM
+      ? openRows(`Client replies — ${thisM}`,
+        { stage: "replied", frm: thisM, to: thisM }, threadCols, {
+          figure: cr.this_month,
+          subtitle: "proposal rooms the client opened this month — submissions"
+            + " with no reply are invisible here",
+          note: cr.this_month === 0
+            ? `Empty because the figure is zero, not because the read failed:`
+              + ` no client opened a room in ${thisM}. The`
+              + ` ${fmt.num(cr.total)} all-time rooms named in the tile are a`
+              + ` different set — "Threads by status" at the foot of this page`
+              + ` lists every one of them.`
+            : null,
+          emptyText: `No client opened a proposal room in ${thisM}.`,
+        })
+      : openRows("Client replies (room-sourced proposals)",
+        { stage: "replied" }, threadCols, {
+          subtitle: "proposals we can see because the client opened a room —"
+            + " submissions with no reply are invisible here",
+          note: "No reference month was available, so these rows are ALL TIME"
+            + " and are not the rows the figure above counted.",
+        })),
   }));
 
   return g;
@@ -1123,9 +1300,27 @@ function threadsByStatus(d, openRows) {
   c.appendChild(table({
     columns: [
       { key: "status", label: "Status", render: (r) => pill(r.status, "outline") },
+      // `stage=threads` is the ONE stage that computes no total of its own:
+      // pipeline_rows falls back to `len(rows)`, which its own LIMIT 300 has
+      // already truncated. A status holding more than 300 threads would drill
+      // with no truncation notice at all — 300 rows presented as the whole
+      // answer. The tally in this very row IS the true total, so it is what the
+      // drill states, and the cap is spelled out rather than left to drill.js's
+      // default (which would be silent, because the server "reported" 300 of
+      // 300).
       { key: "n", label: "Threads", num: true,
         render: (r) => linkNum(fmt.num(r.n), () => openRows(`Threads — ${r.status}`,
-          { stage: "threads", status: r.status }, threadCols)) },
+          { stage: "threads", status: r.status }, threadCols, {
+            figure: r.n,
+            subtitle: `every proposal room whose status is ${r.status}`,
+            capNote: r.n > ROW_CAP
+              ? `The threads read is capped at ${fmt.num(ROW_CAP)} rows and`
+                + ` returns no total of its own, so the ${fmt.num(r.n)} in the`
+                + ` header comes from the status tally on this page — the same`
+                + ` count the row you clicked shows. The rows below are the`
+                + ` ${fmt.num(ROW_CAP)} most recently updated of them.`
+              : null,
+          })) },
       { key: "share", label: "Share", num: true,
         render: (r) => el("span", "muted", pctOf(r.n, total) + "%") },
     ],

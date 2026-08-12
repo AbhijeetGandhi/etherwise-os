@@ -27,12 +27,27 @@
 "use strict";
 
 import {
-  el, clear, fmt, dash, icon, heading, metricCard, pill, btn,
+  el, append, clear, fmt, dash, icon, heading, metricCard, pill, btn,
   linkNum, extLink, emptyState, notice, expander, toast, copyText,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
 
 export const meta = { title: "Today", hint: "what to act on right now" };
+
+/**
+ * The singular of each render-time cluster label the server can emit
+ * (`_CLUSTER` in modules/cockpit/data.py). A generic "strip the s" is WRONG
+ * here — it turns "scoring" into "scorin" and "client comms" into "client
+ * comm" — so this is an explicit map and anything not in it is left alone.
+ */
+const CLUSTER_SINGULAR = {
+  "follow-ups": "follow-up", "commitments": "commitment", "dossiers": "dossier",
+  "hot leads": "hot lead", "win outcomes": "win outcome",
+  "escalations": "escalation", "captures": "capture",
+};
+
+const clusterText = (c) => `${c.count} `
+  + (c.count === 1 ? (CLUSTER_SINGULAR[c.label] || c.label) : c.label);
 
 /* ── the drill columns for a hot lead (shared by both backlog figures) ────── */
 const leadCols = [
@@ -111,10 +126,11 @@ function actNow(d, ctx) {
   out.push(heading("Act now",
     `— ${q.length ? `top ${q.length}` : "0"} by urgency`, "h3"));
 
-  // render-time clusters over the atomic set ("5 commitments · 7 follow-ups")
+  // render-time clusters over the atomic set ("5 commitments · 1 follow-up").
+  // The server's labels are plural; a count of 1 takes the singular, or the
+  // line reads "1 commitments" (2026-08-13).
   if (d.clusters && d.clusters.length) {
-    const line = el("div", "q-clusters",
-      d.clusters.map((c) => `${c.count} ${c.label}`).join(" · "));
+    const line = el("div", "q-clusters", d.clusters.map(clusterText).join(" · "));
     if (d.queue_auto_closed) {
       line.append(" · ", el("span", "q-closed", `${d.queue_auto_closed} auto-closed`));
     }
@@ -177,17 +193,7 @@ function queueCard(it, ctx) {
   // the CLIENT is the first thing on the meta line — who this is about
   if (it.client) metaRow.appendChild(el("span", "q-client", [icon("user", { size: 12 }), it.client]));
   if (it.kind === "followup") {
-    metaRow.append(pill("reply owed", "owed"),
-      pill(it.tier, "tier-" + String(it.tier || "unknown").toLowerCase()));
-    if (it.age_days != null) {
-      metaRow.appendChild(el("span", null, fmt.ago(it.age_days) + " since client"));
-    }
-    // a collapsed two-room card ships BOTH drafts — say so, or the second one
-    // is unreachable (the Dhanya / Rocky case)
-    const nd = ((it.detail || {}).drafts || []).length;
-    if (it.threads > 1 || nd > 1) {
-      metaRow.appendChild(pill(`${Math.max(it.threads || 0, nd)} rooms · ${nd} drafts inside`, "outline"));
-    }
+    followupMeta(it, metaRow);
   } else {
     metaRow.append(pill(String(it.nudge_kind || "").replace(/_/g, " "), "outline"),
       el("span", null, it.dept || ""));
@@ -227,6 +233,126 @@ function queueCard(it, ctx) {
 }
 
 /**
+ * The meta line of a FOLLOW-UP card — the one line Abhijeet actually reads.
+ *
+ * This used to hard-code `pill("reply owed")` for every card of this kind and
+ * age it off `threads.latest_message_dt`. The Cradle Company therefore read as
+ * a cold prospect who had ignored us for nine days while it had a signed,
+ * ACTIVE contract and a live Slack conversation. Nothing on the card was true.
+ *
+ * The server now ships the answer instead of leaving it to be inferred
+ * (modules/chief_of_staff/evidence.py + cockpit/data.today):
+ *   it.label       "client comms" | "reply owed" — the RELATIONSHIP, decided
+ *                  from the contracts table, not from the card's kind.
+ *   it.engagement  {state, active, contract_id, status, since, title}
+ *   it.evidence    {ts, channel, ours_ts, ours_channel, channels[], unproven}
+ *   it.age_days    days since their OLDEST unanswered message, cross-channel
+ *
+ * Three things this renders that the old line could not, and must not lose:
+ *   · the CONTRACT, when one is reachable — a contracted client is never
+ *     described as an unanswered prospect;
+ *   · WHICH CHANNEL they last spoke on — "on slack" is the whole difference
+ *     between a 4-day-old conversation and a 9-day-old silence;
+ *   · `evidence.unproven` — 86 of 139 threads carry no registry client, so for
+ *     most cards ONLY Upwork was searched. The card says so. Implying a
+ *     cross-channel lookup that never happened is the same class of lie as the
+ *     one this whole change exists to remove.
+ */
+function followupMeta(it, metaRow) {
+  const ev = it.evidence || {};
+  const eng = it.engagement || {};
+  // it.label is the server's answer. Default only when the field is absent
+  // (an older payload) — never override it.
+  const label = it.label || "reply owed";
+  const comms = label === "client comms";
+
+  append(metaRow,
+    pill(label, comms ? "ok" : "owed"),
+    pill(it.tier, "tier-" + String(it.tier || "unknown").toLowerCase()));
+
+  // ── the relationship, as the contracts table can prove it ────────────────
+  if (eng.contract_id) {
+    const st = eng.active
+      ? `${eng.status || "ACTIVE"}${eng.since ? " since " + eng.since : ""}`
+      : eng.state === "paused" ? "PAUSED"
+        : eng.state === "past" ? "closed"
+          : (eng.status || "");
+    metaRow.appendChild(el("span", {
+      class: "pill " + (eng.active ? "ok" : "outline"),
+      attrs: {
+        title: `contract ${eng.contract_id}`
+          + (eng.title ? ` — ${eng.title}` : "")
+          + (eng.status ? ` · ${eng.status}` : "")
+          + (eng.since ? ` · started ${eng.since}` : ""),
+      },
+    }, `contract ${eng.contract_id}${st ? " · " + st : ""}`));
+  } else {
+    metaRow.appendChild(el("span", {
+      attrs: {
+        title: "no contract row is reachable from this thread. That is NOT"
+          + " proof they are only a prospect — it is the safe default when we"
+          + " cannot prove otherwise.",
+      },
+    }, "no contract on file"));
+  }
+
+  // ── when and WHERE they last spoke ───────────────────────────────────────
+  if (ev.ts) {
+    metaRow.appendChild(el("span", {
+      attrs: { title: `their last message: ${String(ev.ts).replace("T", " ").slice(0, 16)} (${ev.channel || "channel unknown"})` },
+    }, [
+      "last spoke ", el("b", null, fmt.dateShort(ev.ts)),
+      " on ", el("b", null, ev.channel || "an unnamed channel"),
+    ]));
+  } else {
+    metaRow.appendChild(el("span", "dash",
+      "never heard from them on any channel we read"));
+  }
+
+  // the card's CLOCK is a different question from the line above: it runs from
+  // their OLDEST unanswered message, so a person holding two rooms is not aged
+  // off their freshest one. null is "—", never 0.
+  metaRow.appendChild(el("span", {
+    attrs: {
+      title: "measured from the oldest message of theirs we have not answered,"
+        + " across every channel checked — not from the newest row on the"
+        + " Upwork thread, which counted our own replies and Upwork's system"
+        + " rows.",
+    },
+  }, it.age_days == null
+    ? "age not measured"
+    : `oldest ask ${fmt.ago(it.age_days)}`));
+
+  // ── what WE last did, when we can see it ─────────────────────────────────
+  if (ev.ours_ts) {
+    metaRow.appendChild(el("span", "muted",
+      `· last from us ${fmt.dateShort(ev.ours_ts)}`
+      + (ev.ours_channel ? ` on ${ev.ours_channel}` : "")));
+  }
+
+  // ── how far the search actually reached. THIS IS THE HONESTY PILL ────────
+  if (ev.unproven) {
+    metaRow.appendChild(el("span", {
+      class: "pill warn",
+      attrs: { title: String(ev.unproven) },
+    }, "Upwork only — not cross-checked"));
+  } else if ((ev.channels || []).length) {
+    metaRow.appendChild(el("span", {
+      class: "pill outline",
+      attrs: { title: `channels read for this counterparty: ${ev.channels.join(", ")}` },
+    }, `${ev.channels.length} channels checked`));
+  }
+
+  // a collapsed two-room card ships BOTH drafts — say so, or the second one
+  // is unreachable (the Dhanya / Rocky case)
+  const nd = ((it.detail || {}).drafts || []).length;
+  if (it.threads > 1 || nd > 1) {
+    metaRow.appendChild(pill(
+      `${Math.max(it.threads || 0, nd)} rooms · ${nd} drafts inside`, "outline"));
+  }
+}
+
+/**
  * The expanded detail — everything known about the item, so a card answers
  * "what is this and who's it about?" on click.
  */
@@ -238,12 +364,49 @@ function queueDetail(it) {
     inner.appendChild(el("div", "q-kv", [el("span", "k", k), el("span", "v", v)]));
   };
 
+  const ev = it.evidence || {};
+  const eng = it.engagement || {};
+
   kv("Client", dt.client || el("span", "muted", "not linked to a client"));
   kv("Type", dt.kind);
   if (dt.full_text) kv("Detail", dt.full_text);
   if (dt.due) kv("Due", String(dt.due).slice(0, 10));
-  if (dt.idle_days != null) kv("Idle", `${dt.idle_days} days since the client wrote`);
+  // "idle" is now the CROSS-CHANNEL age (evidence.waiting_since), not the age
+  // of the newest Upwork row — the label has to say which, or it re-opens the
+  // exact misread it was changed to fix.
+  if (dt.idle_days != null) {
+    kv("Idle", `${dt.idle_days} days since their oldest unanswered message`
+      + (ev.unproven ? " (Upwork only — see below)"
+        : (ev.channels || []).length ? ` (across ${ev.channels.join(", ")})` : ""));
+  }
   if (dt.tier) kv("Tier", dt.tier);
+  // the relationship, spelled out — a contract id is a fact, not an inference
+  if (eng.contract_id) {
+    kv("Contract", `${eng.contract_id}`
+      + (eng.title ? ` — ${eng.title}` : "")
+      + (eng.status ? ` · ${eng.status}` : "")
+      + (eng.since ? ` · started ${eng.since}` : "")
+      + (eng.active ? " · LIVE, so this is client comms, not a sales chase" : ""));
+  } else if (it.kind === "followup") {
+    kv("Contract", el("span", "muted",
+      "none reachable from this thread — shown on the prospect track because we"
+      + " cannot prove otherwise, not because we proved they are a prospect"));
+  }
+  if (ev.ts) {
+    kv("Last from them", `${String(ev.ts).replace("T", " ").slice(0, 16)}`
+      + ` on ${ev.channel || "an unnamed channel"}`);
+  }
+  if (ev.ours_ts) {
+    kv("Last from us", `${String(ev.ours_ts).replace("T", " ").slice(0, 16)}`
+      + ` on ${ev.ours_channel || "an unnamed channel"}`);
+  }
+  // HOW FAR THE SEARCH REACHED. Never let the card imply more than was read.
+  if (ev.unproven) {
+    kv("Evidence", el("span", "neg", String(ev.unproven)
+      + " — everything above is Upwork-only for this card."));
+  } else if ((ev.channels || []).length) {
+    kv("Evidence", `channels read: ${ev.channels.join(", ")}`);
+  }
   if (dt.source) kv("From", dt.source);          // e.g. the Fathom call cite
   if (dt.job_url) kv("Job", extLink(dt.job_url, "open job"));
 
@@ -421,21 +584,48 @@ function backlog(d, ctx) {
     : heading("Hot leads to work", "— top by ICP then score", "h3"));
 
   const box = el("div", "card flush");
+  const freshDays = b.fresh_days || 10;
+  const since = String(b.accumulated_since || "").slice(0, 10);
 
-  // an honest context line: accumulated vs still-fresh, both drillable
+  // ── ONE figure unless there are genuinely two windows ────────────────────
+  // The server sets the accumulated window to the fresh window whenever
+  // applications are NOT paused (data.py: `acc_lo = paused_since if paused
+  // else fresh_lo`). Both counts then come from the same query over the same
+  // days, and /api/today/rows?which=fresh and ?which=accumulated return
+  // byte-identical rows. Rendering them side by side as "273 since X · 273
+  // still fresh" presented one measurement twice and invited the reader to
+  // conclude that nothing had expired. There is only a second window once a
+  // pause has actually started.
   const ctxLine = el("div", "backlog-ctx");
-  const accBtn = linkNum(fmt.num(b.accumulated || 0),
-    () => openLeadRows(ctx, "accumulated",
-      b.paused ? "Accumulated hot leads since the pause" : "Hot leads in the window"));
-  const freshBtn = linkNum(fmt.num(b.fresh_count || 0),
-    () => openLeadRows(ctx, "fresh", "Fresh hot leads (still live)"));
-  ctxLine.append(
-    accBtn, ` hot leads since ${String(b.accumulated_since || "").slice(0, 10)} · `,
-    freshBtn, ` still fresh (last ${b.fresh_days || 10}d) · `,
-    el("b", null, fmt.num(b.icp || 0)), " ICP · ",
-    document.createTextNode(`${fmt.num(b.icp_near || 0)} near-miss`),
-  );
-  box.appendChild(ctxLine);
+  if (b.paused) {
+    const accBtn = linkNum(fmt.num(b.accumulated || 0),
+      () => openLeadRows(ctx, "accumulated",
+        "Accumulated hot leads since the pause"));
+    const freshBtn = linkNum(fmt.num(b.fresh_count || 0),
+      () => openLeadRows(ctx, "fresh", "Fresh hot leads (still live)"));
+    ctxLine.append(
+      accBtn, ` hot leads have piled up since the pause on ${since} · only `,
+      freshBtn, ` are still inside the ${freshDays}-day fresh window · `,
+      el("b", null, fmt.num(b.icp || 0)), " ICP · ",
+      document.createTextNode(`${fmt.num(b.icp_near || 0)} near-miss`),
+    );
+    box.appendChild(ctxLine);
+  } else {
+    const freshBtn = linkNum(fmt.num(b.fresh_count || 0),
+      () => openLeadRows(ctx, "fresh",
+        `Hot leads scored in the last ${freshDays} days`));
+    ctxLine.append(
+      freshBtn, ` hot leads scored in the last ${freshDays} days`,
+      since ? ` (since ${since})` : "", ` · `,
+      el("b", null, fmt.num(b.icp || 0)), " ICP · ",
+      document.createTextNode(`${fmt.num(b.icp_near || 0)} near-miss`),
+    );
+    box.append(ctxLine, el("div", { class: "muted small", style: { padding: "0 var(--space-5) 8px" } },
+      `Applications are not paused, so there is no backlog window separate from`
+      + ` this one — the accumulated count and the fresh count would be the same`
+      + ` ${freshDays} days and the same rows. One number, not two. A second`
+      + ` figure appears the moment a pause starts and leads begin to age out.`));
+  }
 
   const items = b.items || [];
   if (!items.length) {
@@ -464,13 +654,30 @@ function backlog(d, ctx) {
 
 async function openLeadRows(ctx, which, title) {
   const res = await ctx.api("/api/today/rows?which=" + encodeURIComponent(which));
+  const rows = res.rows || [];
+  const total = res.total == null
+    ? (res.count == null ? rows.length : res.count)
+    : res.total;
   openDrill({
     title,
-    rows: res.rows || [],
-    total: res.total == null ? (res.count == null ? (res.rows || []).length : res.count) : res.total,
+    subtitle: res.since ? `every hot lead first scored on or after ${res.since}` : null,
+    rows,
+    total,
     columns: leadCols,
     time: (r) => r.d,
     search: (r) => `${r.title || ""} ${r.id || ""} ${r.icp_tier || ""}`,
+    // The server caps this read at 300 and orders it ICP tier → score → date
+    // (data.today_rows). Without this the drill would fall back to drill.js's
+    // default "showing the latest 300", which is a claim about ORDER and would
+    // be false — the rows that are missing are the low-scoring ones, not the
+    // old ones. capNote exists precisely to stop that sentence being printed.
+    capNote: total > rows.length
+      ? `The server capped this read at ${fmt.num(rows.length)} of`
+        + ` ${fmt.num(total)} rows and ranked them ICP tier first, then score,`
+        + ` then date — so these are the BEST ${fmt.num(rows.length)}, not the`
+        + ` latest. The missing rows are the weakest ones, not the oldest. The`
+        + ` count in the header is the true total.`
+      : null,
     emptyText: "No rows behind this figure.",
   });
 }

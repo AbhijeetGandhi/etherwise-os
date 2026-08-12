@@ -50,6 +50,12 @@ GET_ROUTES: dict = {
     # (?run_id=N). Both params are KEYWORD-ONLY on the readers — see below.
     "/api/activity": data.activity,
     "/api/activity/run": data.activity_run,
+    # …and the rows behind two of the digest's figures. /sources is the answer
+    # to "WHICH 5 Fathom transcripts, and how was each one attributed": one row
+    # per source ingested that day, with its facts, cost, queue event and any
+    # registry commit it caused. /facts is one row per fact created that day.
+    "/api/activity/sources": data.activity_sources,
+    "/api/activity/facts": data.activity_facts,
 }
 # ── the query-param registry (the guard) ─────────────────────────────────────
 # A URL query param reaches a reader ONLY if its name appears here.
@@ -101,9 +107,16 @@ QUERY_PARAMS: dict = {
     "bucket": "pnl bucket, comma-list",
     "month": "YYYY-MM",
     "source": "ledger source",
-    # /api/activity · /api/activity/run
+    # /api/activity · /api/activity/run · /api/activity/sources · …/facts
     "day": "IST calendar date, YYYY-MM-DD",
     "run_id": "runs.id",
+    # sources.source_type — validated against _SOURCE_TYPE_RE in the reader,
+    # not a whitelist: the vocabulary grows with the rails (fathom, loom, email,
+    # slack, crm, upwork, clickup…) and a frozen list here would start refusing
+    # real types. A syntactically-valid type that matched nothing comes back
+    # with total 0 AND the day's real type counts, so "no data" is never
+    # mistaken for "you asked for a type that does not exist".
+    "source_type": "sources.source_type, e.g. fathom|loom|email|slack",
 }
 
 POST_ROUTES: dict = {

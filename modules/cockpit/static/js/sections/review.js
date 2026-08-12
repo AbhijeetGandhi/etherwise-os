@@ -33,12 +33,44 @@
 "use strict";
 
 import {
-  el, fmt, icon, heading, card, pill, btn, linkNum, extLink,
-  table, emptyState, notice, expander, toast,
+  el, append, fmt, icon, heading, card, pill, btn, linkNum, extLink,
+  table, emptyState, notice, expander, toast, copyText, iconBtn,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
 
 export const meta = { title: "Review", hint: "the things waiting on you" };
+
+/* ── the registry receipt book ────────────────────────────────────────────────
+   An Assign makes a GIT COMMIT against config/clients.yaml. The sha of that
+   commit used to appear in one place only: a 3.8-second toast, fired
+   immediately before ctx.refresh() tore the row it came from off the screen.
+   Blink and the audit receipt for the most consequential action in the cockpit
+   was gone forever — nothing in the DB records it (approve.py returns the sha
+   to its caller and writes it nowhere), so the only other copy is `git log`.
+
+   So every resolve writes a receipt here. localStorage because app.js's section
+   contract allows exactly one form of cross-render state (an `ew_cockpit_*`
+   key) and a receipt must survive the refresh that follows it. */
+const RECEIPTS_KEY = "ew_cockpit_registry_receipts";
+const RECEIPTS_MAX = 30;
+
+function readReceipts() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECEIPTS_KEY) || "[]");
+    return Array.isArray(raw) ? raw.slice(0, RECEIPTS_MAX) : [];
+  } catch (e) {
+    return [];                        // corrupt store must not take Review down
+  }
+}
+
+function addReceipt(entry) {
+  const list = readReceipts();
+  list.unshift(Object.assign({ at: new Date().toISOString() }, entry));
+  try {
+    localStorage.setItem(RECEIPTS_KEY, JSON.stringify(list.slice(0, RECEIPTS_MAX)));
+  } catch (e) { /* quota: the toast is still shown, we just cannot keep it */ }
+  return list;
+}
 
 /**
  * The nav badge number: everything on this screen that is genuinely waiting on
@@ -61,6 +93,7 @@ export async function render(root, ctx) {
     heading("Review", "— every event the system could not attribute on its own"),
     statsCard(d, ctx),
   );
+  append(root, receiptsCard(ctx));
 
   const waiting = badgeCount(d);
   if (!waiting) {
@@ -93,14 +126,22 @@ function statsCard(d, ctx) {
 
   const line = el("div", "hstack", [
     el("b", null, [
-      linkNum(fmt.num(d.queued_total), () => drillQueued(d)), " queued · ",
-      linkNum(fmt.num(d.held_total), () => drillHeld(d)), " held",
+      // The label matters here, not just the digit: on a clear queue these two
+      // are both "0" and the default aria-label made them the SAME button —
+      // "show the rows behind 0", twice, doing different things.
+      linkNum(fmt.num(d.queued_total), () => drillQueued(d),
+        { label: `show the ${fmt.num(d.queued_total)} queued events` }),
+      " queued · ",
+      linkNum(fmt.num(d.held_total), () => drillHeld(d),
+        { label: `show the ${fmt.num(d.held_total)} held events` }),
+      " held",
     ]),
     el("span", "muted", "·"),
     el("span", null, [el("b", null, fmt.num(c.mapped)), " mapped"]),
     el("span", null, [el("b", null, fmt.num(c.excluded)), " excluded"]),
     el("span", "muted", "·"),
-    el("span", null, ["registry ", el("code", null, d.registry_sha || "—")]),
+    el("span", "hstack-tight", ["registry ", shaCode(d.registry_sha,
+      "the clients.yaml revision this queue was read against")]),
   ]);
 
   // the reconciliation verdict of the last sweep: counts that do not reconcile
@@ -127,6 +168,75 @@ function statsCard(d, ctx) {
 
   if (rec) box.appendChild(lastSweepDetail(rec, ctx));
   return box;
+}
+
+/**
+ * A commit/registry sha, with the copy button it needs.
+ *
+ * A sha is a thing you paste into `git show`. Rendering it as text you have to
+ * select by hand — in a monospace run of 12 hex characters, next to other
+ * monospace runs — is a receipt you cannot actually take away with you.
+ */
+function shaCode(sha, why) {
+  if (!sha) return el("span", "dash", "—");
+  const code = el("code", { attrs: { title: why || "" } }, String(sha));
+  const btnEl = iconBtn("copy", `Copy ${sha}`, () => copyText(String(sha)),
+    { ghost: true, size: 13 });
+  return el("span", "hstack-tight", [code, btnEl]);
+}
+
+/**
+ * Every registry write this browser has made, newest first — the receipt book.
+ * It outlives the refresh that follows an approval, which the toast could not.
+ */
+function receiptsCard(ctx) {
+  const list = readReceipts();
+  if (!list.length) return null;
+
+  const rows = list.map((r) => ({
+    at: r.at,
+    action: r.action,
+    client: r.client_name || r.client_id || "—",
+    sha: r.commit,
+    outcome: r.outcome,
+    event: r.event_id,
+  }));
+
+  return card("Registry receipts", [
+    el("div", "muted small",
+      "Every approval you have made in THIS browser, newest first."
+      + " An assign that changed config/clients.yaml carries the git commit it"
+      + " made; verify any of them with "
+      ),
+    el("div", { class: "pre mono", style: { margin: "4px 0 var(--space-3)" } },
+      "git -C ~/Desktop/Etherwise/etherwise-v3 show <sha>"),
+    table({
+      columns: [
+        { key: "at", label: "When", render: (r) => el("span", "muted", fmt.dateTime(r.at)) },
+        { key: "action", label: "Action" },
+        { key: "client", label: "Client" },
+        {
+          key: "sha", label: "Registry commit",
+          render: (r) => (r.sha && !String(r.sha).startsWith("commit-failed")
+            ? shaCode(r.sha, "the audited commit this approval made")
+            : el("span", "muted small", r.outcome || "registry unchanged")),
+        },
+        { key: "event", label: "Event", cls: "mono small" },
+      ],
+      rows,
+      empty: "No approval has been made from this browser.",
+    }),
+    el("div", { class: "hstack", style: { marginTop: "var(--space-3)" } }, [
+      btn("Clear this list", () => {
+        localStorage.removeItem(RECEIPTS_KEY);
+        toast("Receipt list cleared — the git commits themselves are untouched.");
+        ctx.refresh();
+      }, { sm: true }),
+      el("span", "muted small",
+        "This list lives in this browser only. Clearing it removes the"
+        + " convenience copy, never the commits — git is the record."),
+    ]),
+  ], { aside: el("span", "card-sub", `${fmt.num(list.length)} kept · newest ${RECEIPTS_MAX}`) });
 }
 
 /**
@@ -269,43 +379,82 @@ function itemRow(it, defaultClient, d, ctx) {
     }, cl.name))));
 
   const actions = el("div", "q-actions");
+  const ASSIGN_TITLE = "Assign this event to the selected client and teach the"
+    + " registry the sender pattern (audited git commit).";
 
   // Assign is TWO steps on purpose: the first click states what is about to be
   // written, the second does it. A registry commit should not be one stray
   // click away.
-  let armed = false, disarm = null;
-  const assign = btn("Assign", async () => {
-    if (!select.value) { toast("Pick a client first.", true); return; }
-    if (!armed) {
-      armed = true;
+  //
+  // TWO WAYS THAT GUARANTEE USED TO EVAPORATE, both fixed here:
+  //
+  //  * ON A REFUSAL. The old order was `clearTimeout(disarm)` and then await —
+  //    so when the server answered `{error}` the auto-disarm was already
+  //    cancelled and `armed` was still true. The button stayed hot for the rest
+  //    of the session and the very next click committed with NO confirm step.
+  //    Now arming is one function with one exit, disarm happens BEFORE the
+  //    request, and any outcome leaves the button cold.
+  //  * ON A DOUBLE-CLICK. There was no in-flight lock, so two fast clicks on
+  //    the armed button sent two POSTs and made two git commits. `busy` is
+  //    shared by all four controls on the row, because they all resolve the
+  //    same event.
+  let armed = false, disarm = null, busy = false;
+
+  function setArmed(on) {
+    armed = !!on;
+    if (disarm) { clearTimeout(disarm); disarm = null; }
+    if (armed) {
       const name = select.options[select.selectedIndex].text;
       assign.textContent = `Confirm registry write → ${name}`;
       assign.classList.add("danger");
       assign.classList.remove("primary");
       assign.title = "Writes config/clients.yaml and commits it. Click again to confirm.";
-      disarm = setTimeout(() => {
-        armed = false;
-        assign.textContent = "Assign";
-        assign.classList.add("primary");
-        assign.classList.remove("danger");
-      }, 6000);
-      return;
+      disarm = setTimeout(() => setArmed(false), 6000);
+    } else {
+      assign.textContent = "Assign";
+      assign.classList.add("primary");
+      assign.classList.remove("danger");
+      assign.title = ASSIGN_TITLE;
     }
-    if (disarm) clearTimeout(disarm);
-    await resolve(ctx, wrap, it.event_id, "assign", { client_id: select.value });
+  }
+
+  function lock(on) {
+    busy = !!on;
+    [assign, internal, ignore, select].forEach((n) => { n.disabled = !!on; });
+  }
+
+  async function act(action, extra) {
+    if (busy) return;
+    lock(true);
+    try {
+      await resolve(ctx, wrap, it.event_id, action, extra);
+    } finally {
+      // a success ends in ctx.refresh(), which replaces this node — only
+      // re-enable a row that is still on screen.
+      if (wrap.isConnected) lock(false);
+    }
+  }
+
+  const assign = btn("Assign", () => {
+    if (busy) return;
+    if (!select.value) { toast("Pick a client first.", true); select.focus(); return; }
+    if (!armed) { setArmed(true); return; }
+    setArmed(false);                 // disarm BEFORE the write, whatever happens
+    act("assign", { client_id: select.value });
   }, { variant: "primary", sm: true });
-  assign.title = "Assign this event to the selected client and teach the registry"
-    + " the sender pattern (audited git commit).";
+  assign.title = ASSIGN_TITLE;
+  // re-picking the client while armed must re-state what is about to be
+  // written, or the button says one name and the select holds another
+  select.addEventListener("change", () => { if (armed) setArmed(true); });
 
   // "Internal" is its own action, not Ignore-with-a-note: an internal team call
   // is our own work, kept findable under one canonical reason.
-  const internal = btn("Internal call", () =>
-    resolve(ctx, wrap, it.event_id, "internal"), { sm: true });
+  const internal = btn("Internal call", () => act("internal"), { sm: true });
   internal.title = "Etherwise internal — excluded from client dossiers, but"
     + " recorded as internal:team-call rather than discarded";
 
   const ignore = btn("Ignore", () =>
-    resolve(ctx, wrap, it.event_id, "ignore", { reason: "not a client" }), { sm: true });
+    act("ignore", { reason: "not a client" }), { sm: true });
   ignore.title = "Exclude this event as 'not a client'. The registry is not touched.";
 
   actions.append(select, assign, internal, ignore);
@@ -330,27 +479,48 @@ async function resolve(ctx, rowNode, eventId, action, extra) {
     if (res && res.error) {
       busy.remove();
       toast("Resolve failed: " + res.error, true);
-      return;
+      return false;
     }
     // the receipt v1 swallowed into console.log: say whether the registry
-    // actually changed, and quote the commit if it did.
-    const reg = res && res.registry;
-    if (reg && reg.commit) {
-      toast(`Assigned · registry committed ${String(reg.commit).slice(0, 7)}`);
+    // actually changed, and quote the commit if it did. The toast is the
+    // NOTIFICATION; addReceipt() is the copy that survives ctx.refresh().
+    const reg = (res && res.registry) || {};
+    const failed = reg.commit && String(reg.commit).startsWith("commit-failed");
+    let outcome;
+    if (reg.commit && !failed) {
+      outcome = "registry committed";
+      toast(`Assigned · registry committed ${String(reg.commit).slice(0, 7)}`
+        + " — the full sha is in Registry receipts above.");
+    } else if (failed) {
+      outcome = "the registry file changed but git refused: " + reg.commit;
+      toast("Assigned, but the git commit FAILED — see Registry receipts above.", true);
     } else if (action === "assign") {
-      toast(reg && reg.note === "no-pattern"
-        ? "Assigned — no reusable sender pattern, so the registry was not changed"
-        : "Assigned — the registry was not changed");
+      outcome = reg.note === "no-pattern"
+        ? "no reusable sender pattern — registry unchanged"
+        : "registry unchanged (" + (reg.note || "no note") + ")";
+      toast("Assigned — " + outcome);
     } else {
+      outcome = action === "internal" ? "marked internal:team-call" : "excluded";
       toast(action === "internal" ? "Marked internal:team-call" : "Excluded");
     }
+    addReceipt({
+      action,
+      event_id: eventId,
+      client_id: (extra || {}).client_id || null,
+      client_name: res && res.client_id ? res.client_id : (extra || {}).client_id || null,
+      commit: reg.commit || null,
+      outcome,
+      healed: !!(res && res.heal),
+    });
     if (res && res.heal) {
       toast("Recording re-attributed and the dossier recompiled");
     }
     ctx.refresh();
+    return true;
   } catch (e) {
     busy.remove();
     toast("Resolve failed: " + String((e && e.message) || e), true);
+    return false;
   }
 }
 

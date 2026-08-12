@@ -75,6 +75,14 @@
 .healthchip.red .dot2 { background: var(--destructive); }
 .envline { font-size: var(--text-xs); color: var(--muted-foreground); padding: 0 var(--space-2); }
 
+/* how old the view on screen is. Nothing polls; this label is the only reason
+   a five-minute-old read cannot pass for a live one. */
+.staleline {
+  font-size: var(--text-xs); color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.staleline.old { color: var(--warning); }
+
 /* ── buttons ─────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -313,6 +321,11 @@ td.drillable:hover { text-decoration: underline; }
   transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease);
 }
 .drill-panel.show { transform: none; opacity: 1; }
+/* Some drills answer "what happened to each of these", not "list these". The
+   Fathom per-call drill carries seven columns of story per row; at 920px each
+   cell is four words wide and a row is 200px tall, which is a worse answer than
+   no answer. Opt-in (drill.js `wide: true`) so the default stays a side sheet. */
+.drill-panel.wide { width: min(1520px, 97vw); }
 .drill-head {
   display: flex; align-items: flex-start; gap: var(--space-3);
   padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border);
@@ -379,6 +392,29 @@ td.drillable:hover { text-decoration: underline; }
   color: var(--destructive); border-radius: var(--radius); padding: var(--space-4) var(--space-5);
   font-size: var(--text-sm);
 }
+
+/* ── accessibility + async primitives ────────────────────────────────────────
+   .sr-only: read aloud, never painted. The clip-rect form, not
+   `display:none` / `visibility:hidden` / `width:0` — those three remove the
+   node from the accessibility tree too, which is the opposite of the point.
+   Used for the explanation a `title` tooltip cannot give a keyboard user
+   (ui.js srOnly()/describe()). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+/* a trigger whose drill has to fetch its rows first (ui.js withBusy) */
+.is-busy { opacity: 0.6; cursor: progress; }
+.is-busy * { pointer-events: none; }
+
+/* the tightest vertical stack: a headline plus the line that qualifies it,
+   inside one table cell. base.css stops at .stack-2 (8px), which reads as two
+   separate facts rather than one fact and its caveat. */
+.stack-1 { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* a drill row carrying a whole story per cell needs room to breathe and must
+   not force every column to the height of the tallest one-liner */
+.drill-panel td { vertical-align: top; }
 /* doctor RED: Money and Clients render NOTHING but this */
 .blocked {
   border: 1px solid var(--destructive-border); background: var(--destructive-soft);

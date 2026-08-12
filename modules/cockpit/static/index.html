@@ -84,6 +84,16 @@
              class="ico"><use href="#i-panel-left"/></svg>
       </button>
       <span class="spacer"></span>
+      <!-- A section renders once and never again on its own (no polling: this
+           is a local single-user tool). So the age of the read is stated, and
+           this button is the one thing that makes it new. app.js owns both. -->
+      <span id="stale" class="staleline">loading…</span>
+      <button id="reloadBtn" class="btn-icon ghost" type="button"
+              aria-label="Refresh this view (r)" title="Refresh this view (r)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+             class="ico"><use href="#i-refresh-cw"/></svg>
+      </button>
       <span id="health" class="healthchip" title="finance-doctor + last sync"><span class="dot2"></span>…</span>
       <button id="themeToggle" class="btn-icon ghost" type="button"
               aria-label="Toggle theme" title="Toggle theme"></button>

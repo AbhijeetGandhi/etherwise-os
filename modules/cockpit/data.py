@@ -2348,6 +2348,11 @@ _ACTIVITY_TOP_CLIENTS = 8
 _REGISTRY_GIT_TIMEOUT_S = 6      # the git log is the only slow read here
 _REGISTRY_CACHE_TTL_S = 120
 _registry_cache: dict = {}       # day -> (fetched_at, payload)
+# approve._git_commit's subject line, which is the only place the registry says
+# WHAT it learned: "registry: <client_id> <field> += <value>".
+_REGISTRY_SUBJECT_RE = _re.compile(
+    r"^registry:\s+(?P<client>[A-Za-z0-9][\w.-]*)\s+(?P<field>\w+)\s*\+=\s*"
+    r"(?P<value>\S.*)$")
 
 
 def _ist_day(col: str) -> str:
@@ -2436,6 +2441,17 @@ def _registry_changes(day: str) -> dict:
             sha, at, subject = (line.split("\x1f", 2) + ["", ""])[:3]
             current = {"sha": sha[:12], "at": at, "subject": subject,
                        "insertions": 0, "deletions": 0}
+            # approve._git_commit writes the subject as
+            # "registry: <client_id> <field> += <value>", so WHAT changed is
+            # already in the line we have — no second git call to say it.
+            # A hand-written commit ("registry: add RECO Health as a prospect")
+            # simply does not match and stays unparsed rather than being
+            # forced into a shape it never had.
+            m = _REGISTRY_SUBJECT_RE.match(subject or "")
+            current["change"] = ({"client_id": m.group("client"),
+                                  "field": m.group("field"),
+                                  "value": m.group("value").strip()}
+                                 if m else None)
             out["commits"].append(current)
             continue
         parts = line.split("\t")
@@ -2806,4 +2822,703 @@ def activity_run(db_path: Optional[Path] = None, *,
         "shadow": {"total": sum(r["n"] for r in shadow_rows),
                    "rows": shadow_rows},
         "rerunnable": run.get("task_name") in actions.RERUN_JOBS,
+    }
+
+
+# ── Activity drill: the per-SOURCE story behind "5 Fathom transcripts" ───────
+# Abhijeet, verbatim: "Activity shows that 5 fathom transcripts. Once I click on
+# it I need to see WHICH 5 transcripts were processed and how they were added to
+# the registry and everything."
+#
+# This reader's job is keeping PROVABLE apart from REPLAYED, because the most
+# interesting half of that answer is not in the schema.
+#
+#   PROVABLE — a key, not a guess
+#     facts.source_id       a real FK (004_kb.sql, NOT NULL). Every fact names
+#                           the source it came from, so "what came out of this
+#                           call" is exact, not a same-day coincidence.
+#     events.raw_ref        = sources.source_ref for a fathom/loom queue item,
+#                           and events.resolved_by / resolved_at is the ONLY
+#                           timestamped attribution decision anywhere in the DB.
+#     claude_usage.purpose  literally spells "extract <source_ref>" /
+#                           "commitments <source_ref>" (extract.py:108). That is
+#                           a string CONVENTION, not a foreign key, and every
+#                           row that uses it says so.
+#
+#   NOT RECORDED — therefore replayed, and labelled as replayed
+#     WHY a source carries the client_id it carries. ingest.classify() writes
+#     sources.client_id at INSERT and keeps no note of which identifier matched;
+#     fathom_bridge.heal_source() overwrites it later and stamps nothing. So the
+#     "how" is re-derived by running the same two rules again against TODAY's
+#     registry, and every such answer carries proven=False. When the replay does
+#     not reproduce the stored client_id we say exactly that instead of naming a
+#     plausible identifier — the decision was made against an older registry, or
+#     by hand, and the row cannot tell which.
+#
+#   NOT PROVABLE AT ALL, and not faked
+#     "did these facts reach the dossier", as a TIMING claim.
+#     knowledge/daily.run_daily computes `now_iso` at the START of the run and
+#     hands that same string to the compile at the END, so
+#     dossier_index.last_compiled_at is the compiling run's start time and is
+#     routinely EARLIER than facts written by that very run. Ordering off it
+#     would fire a false "not in the dossier yet" on every same-run extract. So
+#     the dossier answer here is a PRESENCE claim (the dossier exists / does
+#     not, and compile_dossier re-reads all of that client's facts every time),
+#     and the note says which claim is being made.
+_ACTIVITY_SOURCE_CAP = 200        # rows per call; the true total is always sent
+_ACTIVITY_FACT_CAP = 400          # ditto for the per-fact drill
+_PAYLOAD_MAX_BYTES = 4_000_000    # a raw payload bigger than this is not opened
+_PAYLOAD_READ_CAP = 60            # raw payloads opened per call
+_SOURCE_TYPE_RE = _re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
+# The only source type whose attribution rules are pure and cheap enough to
+# replay inside a read. Loom goes through a MODEL classifier and email through
+# the sender-domain gate; re-running neither is possible here, and guessing at
+# them would be worse than an honest "not replayable".
+_REPLAY_TYPES = ("fathom",)
+
+
+def _like_escape(s) -> str:
+    """Escape a literal for use inside a LIKE pattern. `_` matches ANY single
+    character in SQL LIKE and source refs are full of them, so an unescaped ref
+    quietly matches other sources' rows."""
+    return (str(s or "").replace("\\", "\\\\")
+            .replace("%", "\\%").replace("_", "\\_"))
+
+
+def _instant(v):
+    """One of this schema's timestamp shapes -> datetime, or None. Used only for
+    arithmetic on two stamps from the SAME payload (recording start/end), so no
+    zone is assumed for a naive value — the subtraction is still correct."""
+    s = str(v or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _payload_extras(source_type: str, raw_path) -> tuple:
+    """(extras, note) from the raw payload the ingester kept on disk.
+
+    The `sources` row holds no participants and no duration — both exist ONLY in
+    the raw JSON — so this opens the file. Bounded three ways (a source-type
+    allowlist, a byte cap, and a per-call file cap in the caller) because a read
+    endpoint that opens arbitrary files is a read endpoint that can hang."""
+    extras = {"participants": [], "url": None, "duration_seconds": None,
+              "recorded_by": None}
+    if source_type != "fathom":
+        return extras, ("participants and duration live only in the raw Fathom"
+                        " payload; a {} source records neither".format(source_type))
+    if not raw_path:
+        return extras, "no raw payload path was recorded for this source"
+    p = Path(raw_path)
+    try:
+        size = p.stat().st_size
+    except OSError:
+        return extras, "the raw payload is no longer on disk ({})".format(p.name)
+    if size > _PAYLOAD_MAX_BYTES:
+        return extras, ("raw payload is {:,} bytes, over the read cap — not"
+                        " opened".format(size))
+    try:
+        payload = json.loads(p.read_text())
+        from modules.knowledge import ingest as _ingest
+        parsed = _ingest.parse_fathom(payload)
+    except Exception as exc:                 # noqa: BLE001 — never 500 a drill
+        return extras, "raw payload could not be read ({})".format(type(exc).__name__)
+    extras["participants"] = list(parsed.get("participants") or [])
+    extras["url"] = parsed.get("url") or payload.get("share_url")
+    rec = payload.get("recorded_by")
+    if isinstance(rec, dict):
+        extras["recorded_by"] = rec.get("name") or rec.get("email")
+    a = _instant(payload.get("recording_start_time"))
+    b = _instant(payload.get("recording_end_time"))
+    if a and b and b >= a and bool(a.tzinfo) == bool(b.tzinfo):
+        extras["duration_seconds"] = int((b - a).total_seconds())
+    return extras, None
+
+
+def _ident_kind(client: dict, value: str) -> str:
+    """Which registry FIELD an identifier came from — "registry alias" and
+    "Fathom name" are different answers to "how did you decide this"."""
+    n = registry.norm(value)
+    if n == registry.norm(client.get("name") or ""):
+        return "registry name"
+    for field, label in (("aliases", "registry alias"),
+                         ("fathom_names", "Fathom name"),
+                         ("emails", "registry email/domain")):
+        if any(n == registry.norm(x) for x in (client.get(field) or [])):
+            return label
+    return "registry identifier"
+
+
+def _replay_attribution(source: dict, participants: list, reg,
+                        client_map: list) -> Optional[dict]:
+    """Re-derive HOW this source came to carry its client_id, by running the two
+    real rules again: ingest.classify() (what runs at INSERT) and then
+    fathom_bridge._match() (what runs when the bridge heals an older row).
+
+    Returns None when neither reproduces the stored client_id — the caller turns
+    that into "the current registry no longer explains this", which is the true
+    answer and not a guess dressed as one."""
+    cid = source.get("client_id")
+    if not cid:
+        return None
+    entry = reg.by_id.get(cid) or {}
+    hay = " ".join(participants or []).lower() + " " + (source.get("title") or "").lower()
+
+    # 1. the INSERT-time rule: substring of any identifier in participants+title
+    try:
+        from modules.knowledge import ingest as _ingest
+        got, _name, ctype = _ingest.classify(participants, source.get("title"),
+                                             client_map)
+    except Exception:                        # noqa: BLE001
+        got, ctype = None, None
+    if got == cid:
+        row = next((c for c in client_map if c["client_id"] == cid), {})
+        hit = next((i for i in row.get("identifiers", [])
+                    if i and i.lower() in hay), None)
+        if hit:
+            return {"rule": "ingest.classify",
+                    "how": _ident_kind(entry, hit),
+                    "matched_on": hit,
+                    "content_type": ctype,
+                    "detail": "the ingester matched {} {!r} against the call's"
+                              " participants and title".format(
+                                  _ident_kind(entry, hit), hit)}
+
+    # 2. the HEAL rule: an exact email/name match on one participant
+    for p in participants or []:
+        got = reg.match_email(p) if "@" in p else reg.match_name(p)
+        if got != cid:
+            continue
+        kind = ("registry email/domain" if "@" in p else _ident_kind(entry, p))
+        return {"rule": "fathom_bridge._match",
+                "how": kind,
+                "matched_on": p,
+                "content_type": None,
+                "detail": "participant {!r} resolves to this client through the"
+                          " registry's {} index".format(p, kind)}
+
+    # 3. the bridge's last resort: a fathom_name token anywhere in the haystack
+    for tok in (entry.get("fathom_names") or []):
+        if tok and tok.lower() in hay:
+            return {"rule": "fathom_bridge._match (fathom_names)",
+                    "how": "Fathom name", "matched_on": tok,
+                    "content_type": None,
+                    "detail": "the Fathom name {!r} appears in the call's title"
+                              " or participants".format(tok)}
+    return None
+
+
+def _registry_commits_matching(day: str, needles: list) -> dict:
+    """Registry commits whose MESSAGE names one of `needles`.
+
+    approve._git_commit writes the event id into the commit BODY ("...evidence:
+    fathom evt:fathom:123 from x@y.com"), which is the only thread from an
+    approved queue item back to the commit it caused. Windowed day-1..day+2
+    because an approval at 23:59 commits on the next calendar day, and degraded
+    (never raised) exactly like _registry_changes."""
+    out = {"commits": [], "note": None}
+    if not needles:
+        return out
+    key = (day, tuple(sorted(needles)))
+    now = time.time()
+    hit = _registry_cache.get(key)
+    if hit and now - hit[0] < _REGISTRY_CACHE_TTL_S:
+        return hit[1]
+    root = Path(config.V3_ROOT)
+    reg_path = Path(config.CLIENTS_REGISTRY)
+    try:
+        rel = str(reg_path.relative_to(root))
+    except ValueError:
+        rel = str(reg_path)
+    try:
+        d0 = date.fromisoformat(day)
+        since, until = (d0 - timedelta(days=1)).isoformat(), \
+            (d0 + timedelta(days=2)).isoformat()
+    except ValueError:
+        since = until = day
+    argv = ["git", "-C", str(root), "log", "--no-merges", "--fixed-strings",
+            "--since=" + since + "T00:00:00+05:30",
+            "--until=" + until + "T23:59:59+05:30",
+            "--format=%H\x1f%cI\x1f%s\x1f%b\x1e"]
+    argv += ["--grep=" + n for n in needles]
+    argv += ["--", rel]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              cwd=str(root), timeout=_REGISTRY_GIT_TIMEOUT_S)
+    except Exception as exc:                 # noqa: BLE001
+        out["note"] = "registry commit search unavailable ({})".format(
+            type(exc).__name__)
+        _registry_cache[key] = (now, out)
+        return out
+    if proc.returncode != 0:
+        out["note"] = "registry commit search unavailable (git exit {})".format(
+            proc.returncode)
+        _registry_cache[key] = (now, out)
+        return out
+    for chunk in (proc.stdout or "").split("\x1e"):
+        if "\x1f" not in chunk:
+            continue
+        sha, at, subject, body = (chunk.strip("\n").split("\x1f", 3) + ["", "", ""])[:4]
+        out["commits"].append({
+            "sha": sha.strip()[:12], "at": at, "subject": subject,
+            "body": (body or "").strip(),
+            "matched": [n for n in needles if n in subject or n in (body or "")],
+        })
+    _registry_cache[key] = (now, out)
+    return out
+
+
+def _extract_stops(conn, day: str) -> list:
+    """The day's runs whose metrics carry an `extract` block. `stopped` is the
+    ONLY recorded reason a source that landed today was never read for facts
+    ("budget", "cap"), and it lives in the run, not on the source row — so it is
+    reported as RUN-level context on the source, never as a per-row fact."""
+    out = []
+    for r in conn.execute(
+            "SELECT id, task_name, metrics_json FROM runs"
+            " WHERE substr(started_at,1,10)=? AND metrics_json LIKE '%extract%'"
+            " ORDER BY id", (day,)):
+        try:
+            ex = (json.loads(r["metrics_json"]) or {}).get("extract")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(ex, dict):
+            continue
+        out.append({"run_id": r["id"], "task": r["task_name"],
+                    "extracted": ex.get("extracted"), "facts": ex.get("facts"),
+                    "stopped": ex.get("stopped"), "pending": ex.get("pending")})
+    return out
+
+
+def activity_sources(db_path: Optional[Path] = None, *,
+                     day: Optional[str] = None,
+                     source_type: Optional[str] = None) -> dict:
+    """The rows behind "N Fathom transcripts" (or any source type) on one day.
+
+    One row per SOURCE ingested on that IST calendar day — the same window and
+    the same filter the digest tile counts, so the drill reconciles with the
+    figure exactly. Both params are KEYWORD-ONLY and both are registered in
+    server.QUERY_PARAMS; a malformed one comes back as {"error": ...} with
+    total=None, never as an empty list (UI_BUILD_BRIEF §0)."""
+    day = (day or _ist_today())[:10]
+    if not _is_iso_day(day):
+        return _bad_filter("day", day, "YYYY-MM-DD")
+    stype = (source_type or "").strip() or None
+    if stype is not None and not _SOURCE_TYPE_RE.match(stype):
+        return _bad_filter("source_type", source_type,
+                           "a source type such as fathom|loom|email|slack|crm")
+
+    conn = _ro(db_path)
+    try:
+        day_types = {r["source_type"]: r["n"] for r in conn.execute(
+            "SELECT source_type, COUNT(*) n FROM sources WHERE "
+            + _ist_day("ingested_at") + "=? GROUP BY source_type", (day,))}
+        where = _ist_day("ingested_at") + "=?"
+        args: list = [day]
+        if stype:
+            where += " AND source_type=?"
+            args.append(stype)
+        total = conn.execute(
+            "SELECT COUNT(*) FROM sources WHERE " + where, args).fetchone()[0]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, source_type, source_ref, client_id, client_name,"
+            " content_type, density, title, occurred_dt, raw_path, status,"
+            " ingested_at FROM sources WHERE " + where
+            + " ORDER BY COALESCE(occurred_dt, ingested_at) DESC, id DESC"
+            " LIMIT ?", args + [_ACTIVITY_SOURCE_CAP])]
+
+        ids = [r["id"] for r in rows]
+        refs = [r["source_ref"] for r in rows if r["source_ref"]]
+        marks = ",".join("?" * len(ids)) or "NULL"
+        ref_marks = ",".join("?" * len(refs)) or "NULL"
+
+        # facts — the FK link, so this is exact
+        facts_by_source: dict = {}
+        if ids:
+            for f in conn.execute(
+                    "SELECT source_id, COALESCE(client_id,'') cid, scope,"
+                    " category, confidence, COUNT(*) n, MIN(created_at) f0,"
+                    " MAX(created_at) f1 FROM facts WHERE source_id IN ("
+                    + marks + ") GROUP BY source_id, cid, scope, category,"
+                    " confidence", ids):
+                e = facts_by_source.setdefault(f["source_id"], {
+                    "n": 0, "clients": {}, "scopes": {}, "categories": {},
+                    "confidence": {}, "first_at": None, "last_at": None,
+                    # where each fact actually GOES. It is a cross-tab of
+                    # (client_id, scope), not either one alone: 16 client-scope
+                    # facts with a NULL client_id and 2 agency ones is "16 went
+                    # nowhere", and reading scope on its own called that
+                    # "proof-points" — the 2 speaking for the 16.
+                    "routes": {"dossier": 0, "proof_points": 0, "nowhere": 0},
+                    "dossier_clients": {}})
+                e["n"] += f["n"]
+                for bucket, key in (("clients", f["cid"] or "(no client)"),
+                                    ("scopes", f["scope"] or "(none)"),
+                                    ("categories", f["category"] or "(none)"),
+                                    ("confidence", f["confidence"] or "(none)")):
+                    e[bucket][key] = e[bucket].get(key, 0) + f["n"]
+                if f["scope"] and f["scope"] != "client":
+                    e["routes"]["proof_points"] += f["n"]
+                elif f["cid"]:
+                    e["routes"]["dossier"] += f["n"]
+                    e["dossier_clients"][f["cid"]] = \
+                        e["dossier_clients"].get(f["cid"], 0) + f["n"]
+                else:
+                    e["routes"]["nowhere"] += f["n"]
+                e["first_at"] = min(x for x in (e["first_at"], f["f0"]) if x)
+                e["last_at"] = max(x for x in (e["last_at"], f["f1"]) if x)
+
+        # mapping-queue events — matched on raw_ref (what fathom_bridge writes)
+        # AND on the canonical id, because the two rails key them differently
+        ev_by_ref: dict = {}
+        if refs:
+            canon = ["evt:{}:{}".format(r["source_type"],
+                                        (r["source_ref"] or "").split("/", 1)[-1])
+                     for r in rows]
+            cmarks = ",".join("?" * len(canon))
+            for e in conn.execute(
+                    "SELECT id, raw_ref, source, native_id, state, client_id,"
+                    " proposed_client_id, proposal_confidence,"
+                    " proposal_evidence, exclude_reason, resolved_by,"
+                    " resolved_at, author, first_seen_at, sweep_run_id"
+                    " FROM events WHERE raw_ref IN (" + ref_marks + ")"
+                    " OR id IN (" + cmarks + ")", refs + canon):
+                e = dict(e)
+                ev_by_ref[e["raw_ref"] or e["id"]] = e
+                ev_by_ref.setdefault(e["id"], e)
+
+        # cost — claude_usage.purpose names the source_ref as a STRING, never a
+        # key. One query per source would be 5 round-trips for a 5-row day; one
+        # OR-chain of escaped LIKEs is a single scan.
+        cost_by_ref: dict = {}
+        if refs:
+            clause = " OR ".join(["purpose LIKE ? ESCAPE '\\'"] * len(refs))
+            pats = ["%" + _like_escape(r) for r in refs]
+            for u in conn.execute(
+                    "SELECT purpose, task_name, called_at, ist_date, model,"
+                    " total_cost_usd, input_tokens, output_tokens, error"
+                    " FROM claude_usage WHERE " + clause + " ORDER BY id", pats):
+                u = dict(u)
+                ref = next((r for r in refs if (u["purpose"] or "").endswith(r)),
+                           None)
+                if ref is None:
+                    continue
+                c = cost_by_ref.setdefault(ref, {"usd": 0.0, "calls": 0, "rows": []})
+                c["usd"] = round(c["usd"] + float(u["total_cost_usd"] or 0), 6)
+                c["calls"] += 1
+                c["rows"].append(u)
+
+        dossiers = {r["client_id"]: dict(r) for r in conn.execute(
+            "SELECT client_id, client_name, dossier_path, fact_count,"
+            " source_count, last_compiled_at FROM dossier_index")}
+        extract_runs = _extract_stops(conn, day)
+    finally:
+        conn.close()
+
+    reg = None
+    client_map: list = []
+    reg_note = None
+    if any(r["source_type"] in _REPLAY_TYPES for r in rows):
+        try:
+            from modules.knowledge import clients as _kbclients
+            reg = registry.load()
+            client_map = _kbclients.load_client_map()
+        except Exception as exc:             # noqa: BLE001
+            reg_note = "the registry could not be loaded ({}), so no attribution" \
+                       " could be replayed".format(type(exc).__name__)
+
+    opened = 0
+    out_rows = []
+    approvals: list = []
+    for r in rows:
+        ref = r["source_ref"]
+        ev = ev_by_ref.get(ref)
+        extras, payload_note = {"participants": [], "url": None,
+                                "duration_seconds": None,
+                                "recorded_by": None}, None
+        if opened < _PAYLOAD_READ_CAP:
+            extras, payload_note = _payload_extras(r["source_type"], r["raw_path"])
+            opened += 1
+        else:
+            payload_note = ("this call's raw payload was not opened — the drill"
+                            " reads at most {} of them".format(_PAYLOAD_READ_CAP))
+
+        # ── how the client was decided ──────────────────────────────────────
+        approved = bool(ev and ev.get("resolved_at") and ev.get("client_id"))
+        if approved:
+            attribution = {
+                "state": "attributed", "proven": True,
+                "how": "mapping-queue approval",
+                "matched_on": ev.get("author"),
+                "rule": "jarvis.approve.resolve",
+                "detail": "{} resolved this to {} on {} — a recorded decision,"
+                          " not an inference".format(
+                              ev.get("resolved_by") or "someone",
+                              ev.get("client_id"), ev.get("resolved_at")),
+            }
+        elif r["client_id"]:
+            replay = (_replay_attribution(r, extras["participants"], reg, client_map)
+                      if reg is not None else None)
+            if replay:
+                attribution = dict(replay, state="attributed", proven=False)
+            else:
+                attribution = {
+                    "state": "attributed", "proven": False, "how": None,
+                    "matched_on": None, "rule": None,
+                    "detail": reg_note or (
+                        "the row says {} but today's registry does not reproduce"
+                        " that match. Nothing records WHY a source was"
+                        " attributed — ingest.classify stamps no reason and"
+                        " heal_source overwrites in place — so this was decided"
+                        " against an earlier registry, or by hand.".format(
+                            r["client_id"])),
+                }
+        else:
+            # `proven` here means "this sentence is a RECORDED state, not
+            # something re-derived". A queued/excluded event IS recorded. "No
+            # identifier matches" is a claim I just computed, so it is not.
+            proven = False
+            if ev and ev.get("state") == "queued":
+                why, proven = ("waiting in the mapping queue for you to pick a"
+                               " client"), True
+            elif ev and ev.get("state") == "excluded":
+                why, proven = "excluded by the sweep ({})".format(
+                    ev.get("exclude_reason") or "no reason recorded"), True
+            elif r["source_type"] not in _REPLAY_TYPES:
+                why = ("not attributed, and this source type's decision path is"
+                       " not replayable here")
+            elif reg is None:
+                why = reg_note or "not attributed; the registry could not be read"
+            elif not extras["participants"]:
+                # do not claim a check that could not happen
+                why = ("not attributed — and the raw payload is not readable"
+                       " ({}), so not even a replay of what was checked is"
+                       " possible".format(payload_note or "no reason recorded"))
+            else:
+                why = ("no registry identifier matches any of this call's"
+                       " participants or its title (replayed against today's"
+                       " registry)")
+            attribution = {"state": "unattributed", "proven": proven, "how": None,
+                           "matched_on": None, "rule": None, "detail": why}
+
+        if approved:
+            approvals.append(ev["id"])
+
+        # ── what came out of it ─────────────────────────────────────────────
+        fx = facts_by_source.get(r["id"])
+        if not fx:
+            dossier = {"state": "no-facts", "client_id": r["client_id"],
+                       "path": None, "fact_count": None,
+                       "last_compiled_at": None,
+                       "note": "no fact was extracted from this source, so"
+                               " there is nothing to file"}
+        else:
+            routes = fx["routes"]
+            extra = []
+            if routes["proof_points"]:
+                extra.append("{} of them are agency / cross-client scope and"
+                             " compile into proof-points.md instead".format(
+                                 routes["proof_points"]))
+            if routes["dossier"] and routes["nowhere"]:
+                extra.append("{} carry no client at all".format(routes["nowhere"]))
+            tail = (" (" + "; ".join(extra) + ")") if extra else ""
+            if routes["dossier"]:
+                cid = max(fx["dossier_clients"], key=lambda k: fx["dossier_clients"][k])
+                doc = dossiers.get(cid)
+                dossier = {
+                    "state": "compiled" if doc else "no-dossier",
+                    "client_id": cid,
+                    "path": (doc or {}).get("dossier_path"),
+                    "fact_count": (doc or {}).get("fact_count"),
+                    "last_compiled_at": (doc or {}).get("last_compiled_at"),
+                    "note": ("compile_dossier re-reads every fact this client"
+                             " has, so these are in it as of the last compile."
+                             " last_compiled_at is stamped at the START of the"
+                             " compiling run, so it cannot be used to prove"
+                             " ordering — this is a presence claim, not a"
+                             " timing one." if doc else
+                             "these facts carry client {} but no dossier has"
+                             " ever been compiled for it — they are in the KB"
+                             " and searchable, but no dossier holds them"
+                             .format(cid)) + tail,
+                }
+            elif routes["nowhere"]:
+                dossier = {"state": "no-client", "client_id": None, "path": None,
+                           "fact_count": None, "last_compiled_at": None,
+                           "note": "{} of these facts are client-scope with no"
+                                   " client attached, so no dossier can hold"
+                                   " them. Attribute the call in Review and"
+                                   " heal_source moves them.".format(
+                                       routes["nowhere"]) + tail}
+            else:
+                dossier = {"state": "proof-points", "client_id": None,
+                           "path": None, "fact_count": None,
+                           "last_compiled_at": None,
+                           "note": "every fact here is agency / cross-client"
+                                   " scope, so they compile into"
+                                   " proof-points.md, not a client dossier"}
+
+        # ── why it was not processed ────────────────────────────────────────
+        not_processed = None
+        if r["status"] != "extracted":
+            stopped = [e for e in extract_runs if e.get("stopped")]
+            not_processed = {
+                "status": r["status"],
+                "reason": {"ingested": "ingested but never read for facts",
+                           "skipped": "the ingester skipped it",
+                           "quarantined": "quarantined"}.get(
+                               r["status"], "status is {!r}".format(r["status"])),
+                "run_context": (
+                    "{} run #{} stopped extracting on {!r} with {} sources still"
+                    " pending — this source is one of that day's unread tail."
+                    " That is RUN-level evidence: the source row itself records"
+                    " no reason.".format(
+                        stopped[0]["task"], stopped[0]["run_id"],
+                        stopped[0]["stopped"], stopped[0].get("pending"))
+                    if stopped else None),
+            }
+
+        cost = cost_by_ref.get(ref)
+        out_rows.append({
+            "source_id": r["id"],
+            "source_type": r["source_type"],
+            "source_ref": ref,
+            "native_id": (ref or "").split("/", 1)[-1],
+            "title": r["title"],
+            "occurred_dt": r["occurred_dt"],
+            "ingested_at": r["ingested_at"],
+            "status": r["status"],
+            "content_type": r["content_type"],
+            "density": r["density"],
+            "url": extras["url"],
+            "recorded_by": extras["recorded_by"],
+            "duration_seconds": extras["duration_seconds"],
+            "participants": extras["participants"],
+            "payload_note": payload_note,
+            "client_id": r["client_id"],
+            "client_name": r["client_name"],
+            "client_kind": (reg.kind(r["client_id"])
+                            if reg is not None and r["client_id"] else None),
+            "attribution": attribution,
+            "queue": ({"event_id": ev["id"], "state": ev["state"],
+                       "author": ev["author"],
+                       "proposed_client_id": ev["proposed_client_id"],
+                       "proposal_confidence": ev["proposal_confidence"],
+                       "proposal_evidence": ev["proposal_evidence"],
+                       "exclude_reason": ev["exclude_reason"],
+                       "resolved_by": ev["resolved_by"],
+                       "resolved_at": ev["resolved_at"]} if ev else None),
+            "queue_note": None if ev else
+            "no mapping-queue event was ever created for this source",
+            "facts": (dict(fx, link="facts.source_id (a foreign key)")
+                      if fx else {"n": 0, "clients": {}, "scopes": {},
+                                  "categories": {}, "confidence": {},
+                                  "first_at": None, "last_at": None,
+                                  "link": "facts.source_id (a foreign key)"}),
+            "dossier": dossier,
+            "cost": (dict(cost, link="claude_usage.purpose names the source_ref"
+                                     " as text — a convention, not a key")
+                     if cost else None),
+            "cost_note": None if cost else
+            "no model call named this source in claude_usage.purpose",
+            "not_processed": not_processed,
+        })
+
+    # ── did any of this change the registry? ────────────────────────────────
+    reg_hits = _registry_commits_matching(day, approvals) if approvals else \
+        {"commits": [], "note": None}
+    by_needle: dict = {}
+    for c in reg_hits["commits"]:
+        for n in c.get("matched") or []:
+            by_needle.setdefault(n, []).append(
+                {k: c[k] for k in ("sha", "at", "subject", "body")})
+    for row in out_rows:
+        q = row.get("queue") or {}
+        eid = q.get("event_id")
+        hits = by_needle.get(eid) if eid else None
+        if hits:
+            row["registry_change"] = {"state": "committed", "commits": hits}
+        elif row["attribution"].get("how") == "mapping-queue approval":
+            row["registry_change"] = {
+                "state": "approved-no-commit", "commits": [],
+                "note": reg_hits["note"] or
+                "this was approved through the queue, but no commit on"
+                " config/clients.yaml names the event — approve.resolve only"
+                " writes the registry when the sender yields a REUSABLE pattern"
+                " (approve.learned_pattern); otherwise it resolves the event and"
+                " leaves the registry alone"}
+        else:
+            row["registry_change"] = {
+                "state": "none", "commits": [],
+                "note": "no mapping-queue approval touched this source, so it"
+                        " caused no registry commit"}
+
+    return {
+        "day": day,
+        "source_type": stype,
+        "total": total,
+        "count": len(out_rows),
+        "capped": total > len(out_rows),
+        "rows": out_rows,
+        "day_by_source_type": day_types,
+        "extract_runs": extract_runs,
+        "registry_search_note": reg_hits["note"],
+        "registry_note": reg_note,
+        "note": "One row per source INGESTED on this IST day — the same window"
+                " the digest tile counts. Fact counts come from facts.source_id"
+                " (a foreign key, exact). Cost comes from claude_usage.purpose"
+                " naming the source_ref in text (a convention, not a key)."
+                " 'How' is REPLAYED against today's registry unless it says"
+                " 'mapping-queue approval', which is the only attribution"
+                " decision the schema timestamps.",
+    }
+
+
+def activity_facts(db_path: Optional[Path] = None, *,
+                   day: Optional[str] = None,
+                   client: Optional[str] = None) -> dict:
+    """Every fact created on `day` (IST), each with the source it came from.
+
+    The rows behind the digest's "N facts extracted": one row per FACT, joined
+    to its source through facts.source_id, so the drill sums to the tile. Note
+    the window is the fact's creation day, which is NOT always its source's
+    ingest day — a backfill extracts today from a call pulled in June."""
+    day = (day or _ist_today())[:10]
+    if not _is_iso_day(day):
+        return _bad_filter("day", day, "YYYY-MM-DD")
+    who = (client or "").strip() or None
+
+    conn = _ro(db_path)
+    try:
+        where = _ist_day("f.created_at") + "=?"
+        args: list = [day]
+        if who:
+            where += " AND COALESCE(f.client_id,'(unattributed)')=?"
+            args.append(who)
+        total = conn.execute(
+            "SELECT COUNT(*) FROM facts f WHERE " + where, args).fetchone()[0]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT f.id, f.client_id, f.category, f.confidence, f.scope,"
+            " f.access_scope, f.fact_text, f.citation, f.created_at,"
+            " f.source_id, s.source_type, s.source_ref, s.title source_title,"
+            " s.occurred_dt FROM facts f LEFT JOIN sources s"
+            " ON s.id = f.source_id WHERE " + where
+            + " ORDER BY f.id DESC LIMIT ?", args + [_ACTIVITY_FACT_CAP])]
+        orphans = sum(1 for r in rows if r["source_ref"] is None)
+    finally:
+        conn.close()
+
+    return {
+        "day": day, "client": who, "total": total, "count": len(rows),
+        "capped": total > len(rows), "rows": rows,
+        "orphans": orphans,
+        "note": "One row per FACT, joined to its source through facts.source_id"
+                " (a foreign key). The window is the fact's CREATION day, not"
+                " its source's ingest day — a backfill can extract today from a"
+                " call pulled months ago."
+                + (" {} of these rows point at a source row that no longer"
+                   " exists.".format(orphans) if orphans else ""),
     }

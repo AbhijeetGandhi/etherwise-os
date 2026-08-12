@@ -218,20 +218,39 @@ export async function render(root, ctx) {
         + " client row below."),
     }));
 
+    /* THE FIGURE AND THE ROWS ARE NOW THE SAME SET.
+       This tile read "20 of 28" — CONTRACTS — and opened 18 rows, because the
+       rows are CLIENTS and two of them carry more than one contract. Nothing
+       reachable from here can list a contract individually: /api/clients
+       returns a per-client `active_contracts` count and no contract identity,
+       so a per-contract drill would have to invent 20 rows out of 18 facts.
+       So the FIGURE moved to what the rows actually are. The 20-of-28 contract
+       linkage keeps its place as the sub-line — it is the number that says 8
+       contracts are still unattributed, and that is worth reading — but it is
+       stated as context, not as a drillable figure that cannot open itself. */
     const linked = linkage.contracts_linked, totalC = linkage.contracts_total;
     const withContracts = clients.filter((c) => (c.active_contracts || 0) > 0);
+    // "not measured" here means the linkage pass did not run at all. Without
+    // that guard a missing linkage block would render 0 clients — a fabricated
+    // zero, the one thing this cockpit may not do.
     const linkUnmeasured = linked == null || totalC == null;
+    const carried = withContracts.reduce((s, c) => s + (c.active_contracts || 0), 0);
     append(kpis, kpi({
-      label: "Contracts linked",
+      label: "Clients with a live contract",
       value: linkUnmeasured
         ? null
-        : el("span", null, [fmt.num(linked), el("small", null, " of " + fmt.num(totalC))]),
+        : el("span", null, [fmt.num(withContracts.length),
+          el("small", null, " of " + fmt.num(clients.length) + " paying")]),
       unmeasured: linkUnmeasured,
-      sub: `active/pending contracts matched to a paying client`
-        + (linked != null && totalC != null && totalC > linked
-          ? ` · ${fmt.num(totalC - linked)} could not be matched to one and are`
-            + ` counted, never guessed at`
-          : ""),
+      sub: linkUnmeasured
+        ? "the contract-linkage pass did not run, so no contract could be"
+          + " matched to a payer — this is not a zero"
+        : `${fmt.num(linked)} of ${fmt.num(totalC)} active/pending contracts`
+          + ` matched a paying client by exact room-name token`
+          + (totalC > linked
+            ? ` · ${fmt.num(totalC - linked)} matched none and are counted,`
+              + ` never guessed at`
+            : ""),
       onClick: () => openDrill({
         title: "Clients with an active or pending contract",
         subtitle: `${fmt.num(withContracts.length)} of ${fmt.num(clients.length)}`
@@ -247,11 +266,16 @@ export async function render(root, ctx) {
           { key: "last", label: "Last payment",
             render: (c) => el("span", "muted", dash(c.last, fmt.date)) },
         ],
-        note: linked != null && totalC != null && totalC > linked
-          ? `${fmt.num(totalC - linked)} of the ${fmt.num(totalC)} active contracts`
-            + ` matched no paying client by an exact room-name token, so they`
-            + ` cannot be listed here — they are counted above and nowhere else.`
-          : null,
+        note: `One row per CLIENT, which is what this figure counts.`
+          + ` The ${fmt.num(carried)} contracts they hold between them are the`
+          + ` ${fmt.num(linked)} linked contracts in the sub-line — some clients`
+          + ` carry more than one, which is why the two numbers differ.`
+          + (linked != null && totalC != null && totalC > linked
+            ? ` The remaining ${fmt.num(totalC - linked)} of ${fmt.num(totalC)}`
+              + ` active contracts matched no paying client by an exact`
+              + ` room-name token, so they belong to no row here — they are`
+              + ` counted in the sub-line and nowhere else.`
+            : ""),
         emptyText: "No contract is linked to a paying client.",
       }),
     }));

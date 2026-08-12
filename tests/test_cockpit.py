@@ -16,7 +16,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from core import config, db
+from core import config, db, registry
 from modules.cockpit import actions, data, server
 
 TOKEN = "test-cockpit-token-123"
@@ -2787,6 +2787,427 @@ class TestActivityServerParams(CockpitServerCase):
         self.assertTrue(json.loads(body)["ok"])
         unauth, _ = self.post("/api/rerun", token=None, body={"task": "kb_daily"})
         self.assertEqual(unauth, 401)
+
+
+class ActivitySourcesCase(ActivityCase):
+    """seed_activity plus the rows the per-source drill exists to explain.
+
+    Deliberately built so every assertion below is about the READER, not about
+    this checkout's config/clients.yaml: the attribution cases that must be
+    exact (an approval, a queued item, an excluded item) are driven entirely
+    from the events table, and the one registry-replay case reads whatever the
+    real registry happens to hold and asserts the SHAPE of the answer."""
+
+    def setUp(self):
+        super().setUp()
+        utc = ACT_DAY + " {}"
+        with db.connect(self.db_path) as conn:
+            # a call resolved through the mapping queue: the ONE attribution
+            # decision the schema timestamps
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, client_name, content_type, title, occurred_dt,"
+                " status, ingested_at) VALUES ('fathom','fathom/q','h-q',"
+                " 'netfly','NETFLY','client-call','Discovery call',?,"
+                " 'extracted',?)", (utc.format("11:00:00"), utc.format("11:05:00")))
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, state, client_id,"
+                " raw_ref, author, subject, resolved_by, resolved_at,"
+                " first_seen_at) VALUES ('evt:fathom:q','fathom','q','mapped',"
+                " 'netfly','fathom/q','ceo@netfly.example','Discovery call',"
+                " 'cockpit-approval',?,?)",
+                (utc.format("11:30:00"), utc.format("11:05:00")))
+            # a call still sitting in the queue
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " title, status, ingested_at) VALUES ('fathom','fathom/queued',"
+                " 'h-qq','Unknown caller','ingested',?)", (utc.format("12:00:00"),))
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, state, raw_ref,"
+                " author, subject, first_seen_at) VALUES"
+                " ('evt:fathom:queued','fathom','queued','queued',"
+                " 'fathom/queued','someone@example.com','Unknown caller',?)",
+                (utc.format("12:00:00"),))
+            # a call the sweep excluded as internal
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " title, status, ingested_at) VALUES ('fathom','fathom/internal',"
+                " 'h-int','Team standup','ingested',?)", (utc.format("13:00:00"),))
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, state, raw_ref,"
+                " subject, exclude_reason, first_seen_at) VALUES"
+                " ('evt:fathom:internal','fathom','internal','excluded',"
+                " 'fathom/internal','Team standup','internal:owner-only',?)",
+                (utc.format("13:00:00"),))
+            # cost, named the way extract.py names it: "extract <source_ref>"
+            conn.execute(
+                "INSERT INTO claude_usage (called_at, ist_date, task_name,"
+                " purpose, model, billing_route, total_cost_usd) VALUES"
+                " (?,?,'kb_extract','extract fathom/a','claude-sonnet-4-6',"
+                " 'payg',0.031)", (ACT_DAY + "T07:02:00+05:30", ACT_DAY))
+            # a run that ran OUT OF BUDGET mid-extract: the only recorded reason
+            # a source that landed today was never read for facts
+            conn.execute(
+                "INSERT INTO runs (id, task_name, started_at, completed_at,"
+                " status, shadow, duration_ms, metrics_json) VALUES"
+                " (9201,'kb_daily',?,?,'completed',1,1000,?)",
+                (ACT_DAY + "T05:15:00+05:30", ACT_DAY + "T05:20:00+05:30",
+                 json.dumps({"extract": {"extracted": 36, "facts": 126,
+                                         "stopped": "budget", "pending": 8}})))
+            # NETFLY has a dossier; adelye deliberately does not
+            conn.execute(
+                "INSERT INTO dossier_index (client_id, client_name,"
+                " dossier_path, fact_count, source_count, last_compiled_at)"
+                " VALUES ('netfly','NETFLY','/k/netfly.md',406,32,"
+                " '2026-07-04 05:15 IST')")
+
+    def srcs(self, **kw):
+        return data.activity_sources(self.db_path, **kw)
+
+
+class TestActivitySourcesDrill(ActivitySourcesCase):
+    """"Activity shows that 5 fathom transcripts. Once I click on it I need to
+    see WHICH 5 transcripts were processed and how they were added to the
+    registry and everything." — the rows behind that figure."""
+
+    def test_the_rows_reconcile_with_the_tile_they_hang_off(self):
+        digest = self.act()
+        out = self.srcs(day=ACT_DAY, source_type="fathom")
+        self.assertEqual(out["total"], digest["ingest"]["fathom_transcripts"])
+        self.assertEqual(out["count"], out["total"])
+        self.assertFalse(out["capped"])
+        # fathom/next is 19:00 UTC = 00:30 IST the NEXT day and must not appear
+        self.assertNotIn("fathom/next", {r["source_ref"] for r in out["rows"]})
+
+    def test_unfiltered_reconciles_with_the_ingest_total(self):
+        digest = self.act()
+        out = self.srcs(day=ACT_DAY)
+        self.assertEqual(out["total"], digest["ingest"]["total"])
+        self.assertEqual(out["day_by_source_type"],
+                         digest["ingest"]["by_source_type"])
+
+    def test_facts_are_the_foreign_key_not_a_same_day_coincidence(self):
+        rows = {r["source_ref"]: r for r in
+                self.srcs(day=ACT_DAY, source_type="fathom")["rows"]}
+        # seed_activity hangs 4 facts (3 adelye + 1 netfly) off fathom/a only
+        self.assertEqual(rows["fathom/a"]["facts"]["n"], 4)
+        self.assertEqual(rows["fathom/b"]["facts"]["n"], 0)
+        self.assertIn("foreign key", rows["fathom/a"]["facts"]["link"])
+        self.assertEqual(rows["fathom/a"]["facts"]["clients"],
+                         {"adelye": 3, "netfly": 1})
+
+    def test_a_mapping_queue_approval_is_the_only_proven_attribution(self):
+        rows = {r["source_ref"]: r for r in
+                self.srcs(day=ACT_DAY, source_type="fathom")["rows"]}
+        approved = rows["fathom/q"]["attribution"]
+        self.assertTrue(approved["proven"])
+        self.assertEqual(approved["how"], "mapping-queue approval")
+        self.assertIn("cockpit-approval", approved["detail"])
+        # everything else attributed is a REPLAY and must say so
+        for ref in ("fathom/a", "fathom/b"):
+            a = rows[ref]["attribution"]
+            self.assertEqual(a["state"], "attributed")
+            self.assertFalse(a["proven"], ref)
+
+    def test_an_unreproducible_attribution_admits_it_instead_of_guessing(self):
+        # fathom/a carries client_id 'adelye' with NO raw payload on disk, so
+        # there are no participants to replay against. The row must say the
+        # registry does not explain it — never invent a matching identifier.
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/a")
+        self.assertFalse(row["attribution"]["proven"])
+        self.assertIsNone(row["attribution"]["matched_on"])
+        self.assertIsNone(row["attribution"]["how"])
+        self.assertIn("does not reproduce", row["attribution"]["detail"])
+
+    def test_a_replayable_match_names_the_identifier_and_the_field(self):
+        """The happy path, driven off whatever the real registry holds: a call
+        whose only participant is a client's registry ALIAS must come back with
+        that alias named, the field it came from, and proven=False."""
+        reg = registry.load()
+        cid = next((c for c in reg.matchable_ids()
+                    if reg.by_id[c].get("aliases")), None)
+        if not cid:
+            self.skipTest("no registry client has an alias in this checkout")
+        alias = reg.by_id[cid]["aliases"][0]
+        raw = self.tmp / "call.json"
+        raw.write_text(json.dumps({
+            "recording_id": 42, "title": "Sync",
+            "recording_start_time": "2026-07-04T09:00:00Z",
+            "recording_end_time": "2026-07-04T09:25:00Z",
+            "url": "https://fathom.video/calls/42",
+            "transcript": [{"speaker": {"display_name": alias},
+                            "text": "hello", "timestamp": "00:00:01"}],
+        }))
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, client_name, title, raw_path, status, ingested_at)"
+                " VALUES ('fathom','fathom/replay','h-rp',?,?,'Sync',?,"
+                " 'extracted',?)",
+                (cid, reg.by_id[cid]["name"], str(raw), ACT_DAY + " 09:30:00"))
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/replay")
+        a = row["attribution"]
+        self.assertEqual(a["state"], "attributed")
+        self.assertFalse(a["proven"])          # replayed, never "recorded"
+        self.assertTrue(a["how"], a)
+        self.assertTrue(a["matched_on"], a)
+        self.assertIn(a["matched_on"].lower(),
+                      (alias.lower(), reg.by_id[cid]["name"].lower()))
+        # and the raw payload gives the two things the sources row cannot
+        self.assertEqual(row["duration_seconds"], 1500)
+        self.assertIn(alias, row["participants"])
+        self.assertIsNone(row["payload_note"])
+
+    def test_a_missing_payload_says_so_rather_than_showing_an_empty_list(self):
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/a")
+        self.assertEqual(row["participants"], [])
+        self.assertIsNone(row["duration_seconds"])
+        self.assertIn("no raw payload path", row["payload_note"])
+
+    def test_a_queued_call_says_it_is_waiting_on_a_human(self):
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/queued")
+        self.assertEqual(row["attribution"]["state"], "unattributed")
+        self.assertIn("mapping queue", row["attribution"]["detail"])
+        self.assertTrue(row["attribution"]["proven"])   # a RECORDED state
+        self.assertEqual(row["queue"]["state"], "queued")
+
+    def test_an_unmatched_call_never_claims_a_check_it_could_not_run(self):
+        """fathom/next has no queue event and no readable payload. "No
+        identifier matched" would be a claim about a comparison that never
+        happened — there were no participants to compare."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " title, raw_path, status, ingested_at) VALUES"
+                " ('fathom','fathom/gone','h-gone','Ghost','/no/such/file.json',"
+                " 'ingested',?)", (ACT_DAY + " 15:00:00",))
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/gone")
+        a = row["attribution"]
+        self.assertEqual(a["state"], "unattributed")
+        self.assertFalse(a["proven"])                   # a DERIVED sentence
+        self.assertIn("not readable", a["detail"])
+        self.assertIn("no longer on disk", row["payload_note"])
+
+    def test_an_excluded_call_carries_the_exclusion_reason(self):
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/internal")
+        self.assertIn("internal:owner-only", row["attribution"]["detail"])
+        self.assertEqual(row["queue"]["exclude_reason"], "internal:owner-only")
+
+    def test_no_queue_event_is_stated_not_left_blank(self):
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/b")
+        self.assertIsNone(row["queue"])
+        self.assertIn("no mapping-queue event", row["queue_note"])
+
+    def test_an_unextracted_source_carries_the_runs_own_stop_reason(self):
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/queued")
+        np = row["not_processed"]
+        self.assertEqual(np["status"], "ingested")
+        self.assertIn("budget", np["run_context"])
+        self.assertIn("RUN-level", np["run_context"])
+        # …and an extracted one claims nothing
+        ok = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                  if r["source_ref"] == "fathom/a")
+        self.assertIsNone(ok["not_processed"])
+
+    def test_cost_is_the_purpose_string_and_the_row_says_so(self):
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/a")
+        self.assertEqual(row["cost"]["calls"], 1)
+        self.assertAlmostEqual(row["cost"]["usd"], 0.031, places=4)
+        self.assertIn("convention, not a key", row["cost"]["link"])
+        # a source no model call names gets a — and a reason, never $0
+        quiet = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                     if r["source_ref"] == "fathom/b")
+        self.assertIsNone(quiet["cost"])
+        self.assertIn("no model call", quiet["cost_note"])
+
+    def test_an_underscore_in_a_ref_cannot_absorb_another_sources_cost(self):
+        """`_` matches ANY character in SQL LIKE. Unescaped, a drill for
+        `fathom/a_b` charged itself with `extract fathom/axb`."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " title, status, ingested_at) VALUES ('fathom','fathom/a_b',"
+                " 'h-us','Underscore','ingested',?)", (ACT_DAY + " 14:00:00",))
+            conn.execute(
+                "INSERT INTO claude_usage (called_at, ist_date, task_name,"
+                " purpose, model, billing_route, total_cost_usd) VALUES"
+                " (?,?,'kb_extract','extract fathom/axb','claude-sonnet-4-6',"
+                " 'payg',9.99)", (ACT_DAY + "T14:01:00+05:30", ACT_DAY))
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/a_b")
+        self.assertIsNone(row["cost"])
+
+    def test_the_dossier_answer_is_presence_never_timing(self):
+        rows = {r["source_ref"]: r for r in
+                self.srcs(day=ACT_DAY, source_type="fathom")["rows"]}
+        # fathom/a's facts are mostly adelye, which has no dossier_index row
+        self.assertEqual(rows["fathom/a"]["dossier"]["state"], "no-dossier")
+        self.assertIn("no dossier has ever been compiled",
+                      rows["fathom/a"]["dossier"]["note"])
+        # a source with no facts claims nothing at all
+        self.assertEqual(rows["fathom/b"]["dossier"]["state"], "no-facts")
+
+    def test_a_handful_of_agency_facts_cannot_speak_for_the_unfiled_majority(self):
+        """LIVE 2026-08-12: a call produced 16 client-scope facts with NO client
+        and 2 agency ones. Routing off `scope` alone called the whole thing
+        "proof-points" — the 2 speaking for the 16. The route is the cross-tab
+        of (client_id, scope), and the headline is where MOST of them went."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " title, status, ingested_at) VALUES ('fathom','fathom/mixed',"
+                " 'h-mx','Mixed','extracted',?)", (ACT_DAY + " 16:00:00",))
+            sid = conn.execute("SELECT id FROM sources WHERE"
+                               " source_ref='fathom/mixed'").fetchone()["id"]
+            for scope, n in (("client", 16), ("agency", 2)):
+                for i in range(n):
+                    conn.execute(
+                        "INSERT INTO facts (source_id, client_id, category,"
+                        " fact_text, citation, confidence, scope, created_at)"
+                        " VALUES (?,NULL,'overview',?,'c','CONFIRMED',?,?)",
+                        (sid, "%s %d" % (scope, i), scope,
+                         ACT_DAY + " 16:05:00"))
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/mixed")
+        self.assertEqual(row["facts"]["routes"],
+                         {"dossier": 0, "proof_points": 2, "nowhere": 16})
+        self.assertEqual(row["dossier"]["state"], "no-client")
+        self.assertIn("16 of these facts", row["dossier"]["note"])
+        self.assertIn("proof-points.md", row["dossier"]["note"])
+
+    def test_a_source_with_no_approval_claims_no_registry_change(self):
+        row = next(r for r in self.srcs(day=ACT_DAY, source_type="fathom")["rows"]
+                   if r["source_ref"] == "fathom/b")
+        self.assertEqual(row["registry_change"]["state"], "none")
+        self.assertEqual(row["registry_change"]["commits"], [])
+
+    def test_an_approval_is_tied_to_the_commit_that_names_its_event(self):
+        body = ("registry: netfly emails += netfly.example\n\nvia mapping-queue"
+                " approval (cockpit-approval); evidence: fathom evt:fathom:q"
+                " from ceo@netfly.example")
+        stdout = "abc123abc123\x1f2026-07-04T11:30:05+05:30\x1f" \
+                 "registry: netfly emails += netfly.example\x1f" + body + "\x1e"
+        with mock.patch.object(data.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=stdout, stderr="")
+            out = self.srcs(day=ACT_DAY, source_type="fathom")
+        row = next(r for r in out["rows"] if r["source_ref"] == "fathom/q")
+        self.assertEqual(row["registry_change"]["state"], "committed")
+        self.assertEqual(row["registry_change"]["commits"][0]["sha"], "abc123abc123")
+
+    def test_git_failure_degrades_and_never_takes_the_drill_down(self):
+        with mock.patch.object(data.subprocess, "run",
+                               side_effect=FileNotFoundError("git")):
+            out = self.srcs(day=ACT_DAY, source_type="fathom")
+        self.assertIn("unavailable", out["registry_search_note"])
+        row = next(r for r in out["rows"] if r["source_ref"] == "fathom/q")
+        self.assertEqual(row["registry_change"]["state"], "approved-no-commit")
+        self.assertTrue(out["rows"])            # the rest of the drill survived
+
+    def test_a_bad_day_is_refused_not_emptied(self):
+        out = self.srcs(day="lol")
+        self.assertIn("error", out)
+        self.assertIn("lol", out["error"])
+        self.assertEqual(out["rows"], [])
+        self.assertIsNone(out["total"])         # not measured, NOT zero
+
+    def test_a_bad_source_type_is_refused_not_emptied(self):
+        out = self.srcs(day=ACT_DAY, source_type="'; DROP TABLE sources--")
+        self.assertIn("error", out)
+        self.assertIsNone(out["total"])
+        # …while a well-formed type that simply matched nothing is a real zero
+        # AND names what DID land, so it cannot be misread as "the read failed"
+        empty = self.srcs(day=ACT_DAY, source_type="slack")
+        self.assertNotIn("error", empty)
+        self.assertEqual(empty["total"], 0)
+        self.assertIn("fathom", empty["day_by_source_type"])
+
+
+class TestActivityFactsDrill(ActivitySourcesCase):
+    def test_rows_sum_to_the_digest_figure(self):
+        digest = self.act()
+        out = data.activity_facts(self.db_path, day=ACT_DAY)
+        self.assertEqual(out["total"], digest["facts"]["total"])
+        self.assertEqual(out["count"], out["total"])
+        self.assertFalse(out["capped"])
+
+    def test_every_fact_names_the_source_it_came_from(self):
+        out = data.activity_facts(self.db_path, day=ACT_DAY)
+        self.assertTrue(out["rows"])
+        for r in out["rows"]:
+            self.assertEqual(r["source_ref"], "fathom/a")
+            self.assertEqual(r["source_type"], "fathom")
+        self.assertEqual(out["orphans"], 0)
+
+    def test_the_client_filter_uses_the_same_key_the_digest_shows(self):
+        digest = self.act()
+        key = digest["facts"]["by_client"][0]["client"]
+        out = data.activity_facts(self.db_path, day=ACT_DAY, client=key)
+        expected = next(c["n"] for c in digest["facts"]["by_client"]
+                        if c["client"] == key)
+        self.assertEqual(out["total"], expected)
+
+    def test_a_bad_day_is_refused_not_emptied(self):
+        out = data.activity_facts(self.db_path, day="2026-13-40")
+        self.assertIn("error", out)
+        self.assertIsNone(out["total"])
+
+
+class TestActivityDrillServerParams(CockpitServerCase):
+    """Both new params have to survive the QUERY_PARAMS guard AND the trip
+    through the URL — a keyword-only param nobody registered is unreachable."""
+
+    def setUp(self):
+        super().setUp()
+        seed_activity(self.db_path)
+        data._registry_cache.clear()
+
+    def tearDown(self):
+        data._registry_cache.clear()
+        super().tearDown()
+
+    def test_params_are_declared_keyword_only(self):
+        import inspect
+        for fn, names in ((data.activity_sources, ("day", "source_type")),
+                          (data.activity_facts, ("day", "client"))):
+            for name in names:
+                p = inspect.signature(fn).parameters[name]
+                self.assertEqual(p.kind, p.KEYWORD_ONLY, f"{fn.__name__}.{name}")
+
+    def test_source_type_reaches_the_reader_over_http(self):
+        status, body = self.get(
+            "/api/activity/sources?day=%s&source_type=fathom" % ACT_DAY)
+        self.assertEqual(status, 200, body)
+        out = json.loads(body)
+        self.assertEqual(out["source_type"], "fathom")
+        self.assertEqual(out["total"], 2)
+        self.assertEqual({r["source_ref"] for r in out["rows"]},
+                         {"fathom/a", "fathom/b"})
+
+    def test_facts_route_answers_over_http(self):
+        status, body = self.get("/api/activity/facts?day=" + ACT_DAY)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["total"], 4)
+
+    def test_a_malformed_source_type_is_a_message_not_a_500(self):
+        status, body = self.get(
+            "/api/activity/sources?day=%s&source_type=NOT%%20A%%20TYPE" % ACT_DAY)
+        self.assertEqual(status, 200, body)
+        self.assertIn("error", json.loads(body))
+
+    def test_db_path_query_cannot_redirect_the_drill(self):
+        status, body = self.get(
+            "/api/activity/sources?db_path=/etc/passwd&day=" + ACT_DAY)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["day"], ACT_DAY)
 
 
 class TestRerunAllowlist(unittest.TestCase):
