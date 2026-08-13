@@ -1,6 +1,6 @@
 # Horizons ABA — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 6196 client facts (5937 trusted) from 977 sources · 525 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13T13:06:41.919776+00:00 · 6196 client facts (5937 trusted) from 979 sources · 525 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -7205,4 +7205,6 @@ _Compiled 2026-08-13 17:22 IST · 6196 client facts (5937 trusted) from 977 sour
 - `email/19f435a7eb774579` · 2026-07-08 · email · New Screening Scheduled – Andrea Vinson
 - `fathom/162759102` · 2026-07-10 · fathom · Intake Issues
 - `fathom/171000338` · 2026-08-06 · fathom · Impromptu Google Meet Meeting
+- `loom/9e1b646e4e724b8b9a9e0ee8f6d2347a` · 2026-08-11 · loom · Fixing Misrouted Draft Notifications in Email Tracker
+- `loom/b7bf25d29d1c44bda9b601a5ecf85c43` · 2026-08-11 · loom · Behavioral Health Dashboards and AI Automation
 - `fathom/172766588` · 2026-08-12 · fathom · Impromptu Google Meet Meeting
