@@ -654,14 +654,23 @@ def _client_key(row: dict, title_map: Optional[dict] = None,
                 id_map: Optional[dict] = None) -> Optional[str]:
     """The canonical client a revenue row belongs to, or None if unattributable.
     Paths, in order of directness:
-      1. Wise rows carry the payer in the description.
+      1. Wise rows carry the payer in the description. Matched on the source
+         PREFIX, not `== 'Wise'`: when the Wise-mail rail replaced the retired
+         CSV export (2026-08-10) it began writing `source='Wise-mail'`, which
+         fell straight past this branch to `assignment_company` (empty on Wise)
+         and landed in `unlinked`. $6,257.78 of live client revenue — Adelye's
+         Aug-7 $682.50 and two Consulting Systems payments — showed as
+         "revenue with no parseable payer" while the dossiers attributed it
+         correctly, so the Clients tab and the Knowledge tab disagreed about
+         the same client on the same screen (2026-08-13). Every Wise-* row
+         carries the payer in exactly this format, so the prefix is the rule.
       2. Upwork API rows carry assignment_company (Upwork's own label).
       3. a job title in the description ('Title · Earnings') -> the contract.
       4. a contract id in the description ('(43495766) NETFLY - hrs') -> the
          contract. Upwork hourly lines name the client this way, not by company.
       5. a bank IMPS remitter that maps to a KNOWN alias.
     Without 3/4, real earnings (Ioannis CSV, NETFLY hourly) sit in unlinked."""
-    if (row.get("source") or "") == "Wise":
+    if (row.get("source") or "").startswith("Wise"):
         k = _canon_client(_wise_payer(row.get("description")))
         if k:
             return k

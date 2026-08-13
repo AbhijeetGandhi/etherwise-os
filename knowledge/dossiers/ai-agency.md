@@ -1,12 +1,13 @@
 # AI Agency — Dossier
 
-_Compiled 2026-08-13 13:36 IST · 1 client facts (1 trusted) from 1 sources._
+_Compiled 2026-08-13 17:22 IST · 2 client facts (2 trusted) from 1 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## The numbers
 
-- Revenue to date: $1,125 across 6 earning transactions (2023-11-16 → 2024-03-04). [CONFIRMED · CRM:transactions]
+- Revenue to date (GROSS, billed): $1,125.00 across 6 revenue transactions (2023-11-16 → 2024-03-04). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $981.00 — gross $1,125.00 less $112.50 Upwork service fees, $31.50 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## Sources
 

@@ -1,6 +1,6 @@
 # Sunil Paul — Dossier
 
-_Compiled 2026-08-13 13:36 IST · 106 client facts (106 trusted) from 8 sources._
+_Compiled 2026-08-13 17:22 IST · 107 client facts (107 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -21,7 +21,8 @@ _Compiled 2026-08-13 13:36 IST · 106 client facts (106 trusted) from 8 sources.
 - Abhijeet estimates 4–5 hours to set up the entire current scope of the gratitude chain workflow. [CONFIRMED · fathom/61317495 @ 00:14:16 – 00:14:22]
 - Current platform costs are effectively zero as the project is operating on free credits. [CONFIRMED · fathom/62084384 @ 00:06:21]
 - Make.com free plan limits active scenarios to 2 at a time; the client needs to upgrade to a Core (paid) plan to keep all scenarios active simultaneously. [CONFIRMED · fathom/61813233 @ 00:01:00 – 00:01:18]
-- Revenue to date: $846 across 3 earning transactions (2025-05-11 → 2025-06-01). [CONFIRMED · CRM:transactions]
+- Revenue to date (GROSS, billed): $845.67 across 3 revenue transactions (2025-05-11 → 2025-06-01). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $760.26 — gross $845.67 less $84.57 Upwork service fees, $0.84 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The client has approximately 10 use cases they want to build out using VAPI, Make.com, and related tools. [CONFIRMED · fathom/61317495 @ 00:15:41 – 00:15:49]
 
 ## People

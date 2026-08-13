@@ -978,6 +978,28 @@ class TestClientEconomics(unittest.TestCase):
         names = [c["name"] for c in out["clients"]]
         self.assertIn("Horizons ABA", names)                 # canonical-mapped
 
+    def test_wise_mail_rows_are_attributed_not_stranded_in_unlinked(self):
+        """The Wise-MAIL rail (2026-08-10, replacing the retired CSV export)
+        writes `source='Wise-mail'`. `_client_key` matched `== 'Wise'`, so those
+        rows skipped the payer parse entirely and fell into `unlinked` — real,
+        current client money ($6,257.78 live) rendered as "revenue with no
+        parseable payer" while the client's dossier attributed it correctly.
+        Two tabs, one client, two answers."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, assignment_company, description,"
+                " amount_minor, amount_base_minor, currency, pnl_bucket,"
+                " creation_dt) VALUES ('wm1','kwm1','Fixed Earning','income',"
+                " 'Wise-mail','','Received money from Adélye Ltd with reference"
+                " INV-2627-041',68250,68250,'USD','revenue',"
+                " '2026-08-07T00:00:00+0000')")
+        out = data.clients(self.db_path)
+        adelye = next(c for c in out["clients"] if c["name"] == "Adelye")
+        self.assertEqual(adelye["revenue_usd"], 15682.5)    # 10k + 5k + 682.50
+        self.assertNotIn("Adelye", [r["payer"] for r in data.client_transactions(
+            self.db_path, client="__unlinked__")["rows"]])
+
     def test_deaccent_folds_the_upwork_double_space(self):
         """_deaccent is the cockpit's identity key. Upwork writes TWO spaces
         ('Tanushant  Sharma', 'Ippon  Technology'); the registry, the dossier

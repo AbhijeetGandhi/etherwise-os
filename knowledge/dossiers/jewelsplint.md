@@ -1,12 +1,13 @@
 # JewelSplint — Dossier
 
-_Compiled 2026-08-13 13:36 IST · 1 client facts (1 trusted) from 1 sources._
+_Compiled 2026-08-13 17:22 IST · 2 client facts (2 trusted) from 1 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## The numbers
 
-- Revenue to date: $2,016 across 8 earning transactions (2024-09-15 → 2024-11-03). [CONFIRMED · CRM:transactions]
+- Revenue to date (GROSS, billed): $2,015.82 across 8 revenue transactions (2024-09-15 → 2024-11-03). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $1,769.49 — gross $2,015.82 less $201.59 Upwork service fees, $44.74 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## Sources
 

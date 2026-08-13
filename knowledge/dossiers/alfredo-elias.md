@@ -1,6 +1,6 @@
 # Alfredo Elias — Dossier
 
-_Compiled 2026-08-13 13:36 IST · 22 client facts (22 trusted) from 3 sources._
+_Compiled 2026-08-13 17:22 IST · 23 client facts (23 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -12,7 +12,8 @@ _Compiled 2026-08-13 13:36 IST · 22 client facts (22 trusted) from 3 sources._
 
 - Alfredo sent four lead lists for upload; only one had been uploaded at the time of the call, and the first message was inadvertently sent to those leads before the no-message instruction was understood. [CONFIRMED · fathom/85765696 @ 00:12:11 - 'I think those are four lists, right? So only one was uploaded...when we upload the next three, those will be in a way that they will go into new lead with the tag of new lead']
 - Contract: GHL Workflow + KPI Automation — status ACTIVE. [CONFIRMED · CRM:contracts/40747534]
-- Revenue to date: $4,989 across 20 earning transactions (2025-06-08 → 2025-10-19). [CONFIRMED · CRM:transactions]
+- Revenue to date (GROSS, billed): $4,988.76 across 20 revenue transactions (2025-06-08 → 2025-10-19). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $4,484.87 — gross $4,988.76 less $498.90 Upwork service fees, $4.99 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The client's GHL pipeline currently contains 4,720 opportunities. [CONFIRMED · fathom/85765696 @ 00:08:48 - 'we have 4,720 opportunities']
 
 ## People

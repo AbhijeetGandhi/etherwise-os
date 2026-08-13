@@ -310,25 +310,163 @@ class TestAssetParse(KBCase):
 
 
 # ── CRM numbers → cited facts (deterministic, no model) ───────────────────────
+def _txn(rid, key, company, subtype, base_minor, dt, type_="Other",
+         desc="work", source="Upwork"):
+    """One ledger row in the shape the P&L reads. `amount_base_minor` is the
+    pinned-USD integer the P&L (and therefore this module) sums; `amount` is the
+    display copy and is deliberately NOT what the facts are built from."""
+    return (rid, type_, subtype, desc, company, base_minor / 100.0, base_minor,
+            dt, key, source)
+
+
+_TXN_SQL = ("INSERT INTO transactions (record_id, type, accounting_subtype,"
+            " description, assignment_company, amount, amount_base_minor,"
+            " creation_dt, canonical_key, source) VALUES (?,?,?,?,?,?,?,?,?,?)")
+
+
 class TestCRM(KBCase):
     def seed(self):
+        """A real Upwork slice: two earnings, the service fee Upwork charged on
+        them, the GST on that fee and the WHT on the earning. Gross $500.00,
+        fee -$50.00, tax -$9.50 -> net $440.50."""
         with db.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT INTO transactions (record_id, type, description,"
-                " assignment_company, amount, creation_dt, canonical_key)"
-                " VALUES ('t1','Hourly Earning','work','Adélye',100.0,"
-                "'2026-01-01','k1'),"
-                " ('t2','Fixed Earning','work','Adélye',400.0,'2026-02-01','k2'),"
-                " ('t3','Connect Purchase','noise','Adélye',-5.0,'2026-02-01','k3')")
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", "Adélye", "Hourly", 10000, "2026-01-01",
+                     type_="Hourly Earning"),
+                _txn("t2", "k2", "Adélye", "Milestone", 40000, "2026-02-01",
+                     type_="Fixed Earning"),
+                _txn("t3", "k3", "Adélye", "Service Fee", -5000, "2026-02-01",
+                     desc="Service Fee"),
+                _txn("t4", "k4", "Adélye", "GST", -900, "2026-02-01",
+                     desc="GST (IN) - Service Fee"),
+                _txn("t5", "k5", "Adélye", "WHT", -50, "2026-02-01",
+                     desc="Withholding Tax (IN)"),
+            ])
 
-    def test_emits_cited_revenue_fact(self):
+    def _money(self, facts):
+        return {("gross" if "GROSS" in f["fact_text"] else "net"): f
+                for f in facts if "Revenue to date" in f["fact_text"]}
+
+    def test_emits_gross_AND_net_as_two_separately_cited_facts(self):
+        """Abhijeet, 2026-08-13: "I want dossier showing both gross and net so
+        prepare it that way." One line stating only gross let a dossier claim
+        $859.49 for a client who received $757.23."""
         self.seed()
-        facts = crm.crm_facts(self.db_path, "adelye", "Adelye", ["adélye"])
-        self.assertTrue(facts)
-        rev = [f for f in facts if "Revenue" in f["fact_text"]][0]
-        self.assertIn("$500", rev["fact_text"])           # 100+400, excludes -5
-        self.assertEqual(rev["confidence"], "CONFIRMED")
-        self.assertEqual(rev["citation"], "CRM:transactions")
+        m = self._money(crm.crm_facts(self.db_path, "adelye", "Adelye", ["adélye"]))
+        self.assertEqual(set(m), {"gross", "net"})
+        self.assertIn("$500.00", m["gross"]["fact_text"])
+        self.assertIn("$440.50", m["net"]["fact_text"])
+        # each names its own bucket set, so neither can be mistaken for the other
+        self.assertEqual(m["gross"]["citation"],
+                         "CRM:transactions[pnl_bucket=revenue]")
+        self.assertEqual(m["net"]["citation"],
+                         "CRM:transactions[pnl_bucket=revenue+refund+"
+                         "platform_fee+tax]")
+        for f in m.values():
+            self.assertEqual(f["confidence"], "CONFIRMED")
+            self.assertEqual(f["category"], "numbers")
+
+    def test_net_is_summed_from_the_ledger_never_a_percentage(self):
+        """The 10% haircut is WRONG for real clients — beglaubigt's contract is
+        on Upwork's old 30% tier ($921.67 gross / $644.24 net). Net must fall
+        out of the fee rows themselves, so a 30% fee produces a 30% delta with
+        no code change."""
+        with db.connect(self.db_path) as conn:
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", "Beglaubigt", "Milestone", 92167, "2026-05-27",
+                     type_="Fixed Earning"),
+                _txn("t2", "k2", "Beglaubigt", "Service Fee", -27650,
+                     "2026-05-27", desc="Service Fee"),
+                _txn("t3", "k3", "Beglaubigt", "WHT", -93, "2026-05-27",
+                     desc="Withholding Tax (IN)"),
+            ])
+        m = self._money(crm.crm_facts(self.db_path, "beglaubigt", "Beglaubigt",
+                                      ["Beglaubigt"]))
+        self.assertIn("$644.24", m["net"]["fact_text"])
+        self.assertNotIn("$829.50", m["net"]["fact_text"])   # what 10% would say
+
+    def test_net_matches_the_pnl_over_the_same_rows(self):
+        """The reconciliation guarantee: the dossier's net is exactly what
+        pnl.compute() — the function bin/finance-pnl and the Money tab call —
+        makes of the same rows. If someone re-implements the bucket map here,
+        this fails."""
+        self.seed()
+        rows = self.rows("SELECT record_id, type, upwork_type, accounting_subtype,"
+                         " category, source, description, pnl_bucket,"
+                         " amount_base_minor, creation_dt FROM transactions")
+        from modules.finance import pnl as _pnl
+        bb = _pnl.compute(rows)["by_bucket_minor"]
+        want = sum(bb.get(b, 0) for b in
+                   ("revenue", "refund", "platform_fee", "tax"))
+        m = self._money(crm.crm_facts(self.db_path, "adelye", "Adelye", ["adélye"]))
+        self.assertEqual(want, 44050)
+        self.assertIn(f"${want / 100:,.2f}", m["net"]["fact_text"])
+
+    def test_refund_reduces_net_and_leaves_gross_alone(self):
+        """tru-health billed $132.75 and was refunded all of it. Gross is still
+        what was billed; net is the true zero, and it says why."""
+        with db.connect(self.db_path) as conn:
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", "Tru H", "Hourly", 13275, "2025-04-20",
+                     type_="Hourly Earning"),
+                _txn("t2", "k2", "Tru H", None, -13275, "2025-04-27",
+                     type_="Refund", desc="Refund"),
+            ])
+        m = self._money(crm.crm_facts(self.db_path, "tru-health", "Tru H",
+                                      ["Tru H"]))
+        self.assertIn("$132.75", m["gross"]["fact_text"])
+        self.assertIn("$0.00", m["net"]["fact_text"])
+        self.assertIn("refunded", m["net"]["fact_text"])
+
+    def test_no_deductions_says_so_rather_than_printing_zeros(self):
+        """No-fabricated-zeros: a client with no fee/tax rows must not render
+        '$0.00 fees, $0.00 tax' — an unmeasured deduction and a real one look
+        identical once both are printed as 0."""
+        with db.connect(self.db_path) as conn:
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", "Hipp Health", "Milestone", 40000,
+                     "2025-09-02", type_="Fixed Earning")])
+        m = self._money(crm.crm_facts(self.db_path, "hipp-health", "Hipp Health",
+                                      ["Hipp Health"]))
+        self.assertIn("$400.00", m["net"]["fact_text"])
+        self.assertNotIn("$0.00", m["net"]["fact_text"])
+        self.assertIn("no fee, tax or refund rows", m["net"]["fact_text"])
+
+    def test_fee_rows_without_any_revenue_emit_no_money_fact(self):
+        """hero-marketing-agency matches two Service Fee rows and no earning.
+        'Net received: -$75.00' would be a lie — that is an orphaned cost row,
+        not something the client paid. Nothing is emitted at all."""
+        with db.connect(self.db_path) as conn:
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", None, "Service Fee", -5000, "2026-03-01",
+                     desc="Service Fee Contract title: Hero GHL landing pages")])
+        facts = crm.crm_facts(self.db_path, "hero-marketing-agency",
+                              "Hero Marketing Agency", ["Hero GHL landing pages"])
+        self.assertEqual([f for f in facts if "Revenue to date" in f["fact_text"]],
+                         [])
+
+    def test_direct_revenue_counts_and_the_upwork_split_stays_visible(self):
+        """Gross is now `pnl_bucket='revenue'` — the Money tab's own definition —
+        so Wise/Stripe/bank income stops being invisible (horizons-aba's dossier
+        said $22,694.76 while the Clients tab said $74,361.76 on the same page).
+        The Upwork share is printed inside the fact so the previous figure is
+        still there to check the new one against."""
+        with db.connect(self.db_path) as conn:
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", "Horizons ABA", "Hourly", 10000, "2026-01-01",
+                     type_="Hourly Earning"),
+                _txn("t2", "k2", None, None, 90000, "2026-02-01",
+                     type_="Other", source="Wise", desc="Received money from"
+                     " Horizons ABA with reference INV-1"),
+            ])
+        with db.connect(self.db_path) as conn:      # Wise rows carry category
+            conn.execute("UPDATE transactions SET category='income'"
+                         " WHERE record_id='t2'")
+        m = self._money(crm.crm_facts(self.db_path, "horizons-aba",
+                                      "Horizons ABA", ["Horizons ABA"]))
+        self.assertIn("$1,000.00", m["gross"]["fact_text"])
+        self.assertIn("Upwork $100.00", m["gross"]["fact_text"])
+        self.assertIn("direct $900.00", m["gross"]["fact_text"])
 
     def test_ingest_crm_idempotent(self):
         self.seed()
@@ -346,16 +484,14 @@ class TestCRM(KBCase):
         cockpit/data.py carries _deaccent)."""
         self.seed()
         facts = crm.crm_facts(self.db_path, "adelye", "Adelye", ["Adelye"])
-        self.assertIn("$500", [f["fact_text"] for f in facts
-                               if "Revenue" in f["fact_text"]][0])
+        self.assertIn("$500.00", self._money(facts)["gross"]["fact_text"])
 
     def _seed_double_space(self):
         with db.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT INTO transactions (record_id, type, description,"
-                " assignment_company, amount, creation_dt, canonical_key)"
-                " VALUES ('t1','Hourly Earning','(39507591) Tanushant  Sharma"
-                " - 1:00 hrs','Tanushant  Sharma',29.5,'2025-01-19','k1')")
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", "Tanushant  Sharma", "Hourly", 2950,
+                     "2025-01-19", type_="Hourly Earning",
+                     desc="(39507591) Tanushant  Sharma - 1:00 hrs")])
             conn.execute(
                 "INSERT INTO contracts (id, title, client_company, upwork_status)"
                 " VALUES ('39507591','Ai automation','Tanushant  Sharma','ACTIVE')")
@@ -371,17 +507,16 @@ class TestCRM(KBCase):
                               "Tanushant Sharma", ["Tanushant Sharma"])
         texts = [f["fact_text"] for f in facts]
         self.assertTrue(any("Contract: Ai automation" in t for t in texts), texts)
-        self.assertTrue(any("Revenue to date: $30" in t for t in texts), texts)
+        self.assertIn("$29.50", self._money(facts)["gross"]["fact_text"])
 
     def _seed_masked(self):
         with db.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT INTO transactions (record_id, type, description,"
-                " assignment_company, amount, creation_dt, canonical_key)"
-                " VALUES ('t1','Fixed Earning','Invoice for AI Engineer',"
-                "'S',450.0,'2025-05-26','k1'),"
-                " ('t2','Fixed Earning','Invoice for Some Other Job',"
-                "'Sunny Systems',900.0,'2025-05-26','k2')")
+            conn.executemany(_TXN_SQL, [
+                _txn("t1", "k1", "S", "Milestone", 45000, "2025-05-26",
+                     type_="Fixed Earning", desc="Invoice for AI Engineer"),
+                _txn("t2", "k2", "Sunny Systems", "Milestone", 90000,
+                     "2025-05-26", type_="Fixed Earning",
+                     desc="Invoice for Some Other Job")])
 
     def test_ledger_label_matches_exactly_not_as_a_substring(self):
         """Upwork masked Saman Shafigh's company down to 'S'. The registry
@@ -392,10 +527,10 @@ class TestCRM(KBCase):
         self._seed_masked()
         facts = crm.crm_facts(self.db_path, "saman-shafigh", "Saman Shafigh",
                               ["Saman Shafigh"], ledger_labels=["S"])
-        rev = [f for f in facts if "Revenue" in f["fact_text"]]
-        self.assertEqual(len(rev), 1)
-        self.assertIn("$450", rev[0]["fact_text"])
-        self.assertIn("1 earning transactions", rev[0]["fact_text"])
+        gross = self._money(facts)["gross"]
+        self.assertIn("$450.00", gross["fact_text"])
+        self.assertIn("1 revenue transaction", gross["fact_text"])
+        self.assertNotIn("$1,350.00", gross["fact_text"])   # Sunny Systems folded in
 
     def test_no_labels_means_the_masked_money_stays_out(self):
         self._seed_masked()

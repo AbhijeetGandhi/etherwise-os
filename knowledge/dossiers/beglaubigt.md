@@ -1,6 +1,6 @@
 # Beglaubigt — Dossier
 
-_Compiled 2026-08-13 13:36 IST · 561 client facts (556 trusted) from 56 sources · 6 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13 17:22 IST · 562 client facts (557 trusted) from 56 sources · 6 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -60,7 +60,8 @@ _Compiled 2026-08-13 13:36 IST · 561 client facts (556 trusted) from 56 sources
 - Ioannis stated that 544 deals were created last week alone, implying a two-month contact count should be around 2,400 — significantly higher than the 431 currently synced to HubSpot/Dialpad. [CONFIRMED · fathom/163246821 @ 00:10:42]
 - Jonas Espeloer calls approximately 70 to 80 people per day as part of the sales process. [CONFIRMED · fathom/145347333 @ 00:09:45]
 - Multiple duplicate deals are being created for the same email address due to automation triggering without deduplication logic. [CONFIRMED · https://www.loom.com/share/7d6ebdcfc5274389a39dfc5a32e36b9a @ 0:05-0:20 and 2:30-3:00]
-- Revenue to date: $922 across 2 earning transactions (2026-05-27 → 2026-06-03). [CONFIRMED · CRM:transactions]
+- Revenue to date (GROSS, billed): $921.67 across 2 revenue transactions (2026-05-27 → 2026-06-03). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $644.24 — gross $921.67 less $276.50 Upwork service fees, $0.93 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - Stripe transaction sync with HubSpot has only 2 missing transactions out of 100; both missing are caused by the same translation products issue. [CONFIRMED · fathom/156935557 @ Yeah, mainly the transactions, like the Stripe transaction, we only have two missing out of 100 now, and those two are because of the same translation products]
 - The Trustpilot review count was hardcoded as 284 in the old email template; the correct current count is 401, and the rating is 4.8. [CONFIRMED · fathom/160649819 @ 00:09:46 / 00:12:11 / 00:21:05]
 - The ad spend per lead is described as close to maximum 1x (ROAS ≈1), with an example figure of ~€88 per lead cited as yielding poor margins given current customer LTV. [CONFIRMED · fathom/145985536 @ 00:18:01 – 'pro Lead, den wir bekommen, der Adspend schon maximal 1, irgendwas ist ... Lass auch nur 88 sein pro Lead, dann ist es trotzdem keine gute Marge']

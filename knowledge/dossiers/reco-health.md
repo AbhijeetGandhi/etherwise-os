@@ -1,6 +1,6 @@
 # RECO Health — Dossier
 
-_Compiled 2026-08-13 13:36 IST · 47 client facts (47 trusted) from 8 sources · 16 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13 17:22 IST · 47 client facts (47 trusted) from 8 sources · 16 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
