@@ -39,6 +39,7 @@ kept — but it is excluded from the client economics roster (`client_ids()`).
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import unicodedata
 from pathlib import Path
@@ -221,9 +222,35 @@ def dumps(obj: Any) -> str:
 
 # ── normalization (accent-insensitive, matches cockpit data.py convention) ───
 def norm(s: str) -> str:
+    """Identity key for a name/alias/email. Accent-insensitive, case-insensitive,
+    and whitespace-insensitive — INCLUDING internal runs.
+
+    The internal collapse was added 2026-08-13. Upwork emits "Tanushant  Sharma"
+    with TWO spaces in `threads.room_name`, `contracts.client_company` AND
+    `transactions.assignment_company`; the registry holds one space. The exact
+    dict lookup missed, the substring fallback missed, and an EXISTING registry
+    client with $757.23 earned across two ACTIVE contracts and 80 messages was
+    filed under nobody. Same bug hid "Ippon  Technology" ($333.53). Whitespace is
+    never identity.
+
+    Blast radius was MEASURED, not asserted, before this shipped
+    (var/agent-scratch/s3/blast.py, 2026-08-13): 17,023 consumer answers across
+    every caller of norm() — the registry email/alias indexes, `match_name`,
+    `clients._match`, `clients.match_counterparty`, `loom_bridge.title_match`
+    and `transcript_match`, `mapping._alnum`, `cockpit._ident_kind` — run over
+    the real corpora both ways. 32 changed, ALL of them None -> a client id;
+    zero hits were lost and zero were re-pointed. No registry name or alias
+    contains a double space, so a collapsed key can only meet a corpus string
+    that was previously unreachable.
+
+    Note this also folds NEWLINES into spaces, which matters for
+    `transcript_match` (it normalizes whole transcripts): a multi-word needle
+    could newly match across a line break. Measured over all 1,180 Loom+Fathom
+    transcripts (505 of which contain a whitespace run): zero changes.
+    """
     d = unicodedata.normalize("NFKD", s or "")
     d = "".join(c for c in d if not unicodedata.combining(c))
-    return d.strip().lower()
+    return re.sub(r"\s+", " ", d).strip().lower()
 
 
 def _domain(addr: str) -> str:

@@ -530,6 +530,26 @@ class TestLinkage(KBCase):
         out = clients.link_threads(self.db_path, cmap)
         self.assertEqual(out["linked"], 0)    # only owner spoke -> no counterparty
 
+    def test_upwork_double_space_still_matches_the_registry(self):
+        """Upwork writes "Tanushant  Sharma" (TWO spaces) into room_name,
+        contracts.client_company AND transactions.assignment_company; the
+        registry holds one. Until registry.norm() collapsed internal whitespace
+        (2026-08-13) this client — $757.23 earned, two ACTIVE contracts, 80
+        messages — matched nothing at all."""
+        cmap = [{"client_id": "tanushant-sharma", "name": "Tanushant Sharma",
+                 "identifiers": ["Tanushant Sharma"]}]
+        self.assertEqual(
+            clients.match_counterparty(["Tanushant  Sharma"], cmap)[0],
+            "tanushant-sharma")
+        self.seed_thread("room_dbl", "Tanushant  Sharma", None,
+                         "Tanushant  Sharma")
+        out = clients.link_threads(self.db_path, cmap)
+        self.assertEqual(out["linked"], 1)
+        self.assertEqual(out["unmatched"], 0)
+        self.assertEqual(
+            self.rows("SELECT client_id FROM threads")[0]["client_id"],
+            "tanushant-sharma")
+
 
 # ── scope routing: client→dossier, agency/cross→proof-points ─────────────────
 class TestScopeRouting(KBCase):

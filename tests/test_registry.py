@@ -149,6 +149,42 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             self._load(SAMPLE + "  -\n    id: x\n    name: X\n    kind: lead\n")
 
+    def test_norm_collapses_internal_whitespace(self):
+        """Upwork emits the DOUBLE space; the registry holds one. Before this,
+        an existing client with $757.23 earned and 80 messages across two ACTIVE
+        contracts was unmatchable (2026-08-13)."""
+        self.assertEqual(registry.norm("Tanushant  Sharma"), "tanushant sharma")
+        self.assertEqual(registry.norm("Tanushant Sharma"), "tanushant sharma")
+        # runs of any length, tabs and newlines all fold to one space
+        self.assertEqual(registry.norm("  Ippon \t\n  Technology  "),
+                         "ippon technology")
+        # and it is still accent-insensitive
+        self.assertEqual(registry.norm("Adélye  Ltd."), "adelye ltd.")
+
+    def test_match_name_survives_a_double_space(self):
+        reg = self._load(SAMPLE)
+        self.assertEqual(reg.match_name("Horizons  ABA"), "horizons-aba")
+        self.assertEqual(reg.match_name("Alexander\tApfel"), "horizons-aba")
+        # a double space must not make two distinct clients collide
+        self.assertIsNone(reg.match_name("Horizons  ABBA"))
+
+    def test_double_space_alias_indexes_to_its_single_space_form(self):
+        """A hand-edit that pastes Upwork's double-spaced name as an ALIAS now
+        collides with the same client's own name instead of creating a second,
+        never-matched key — and a genuine cross-client overlap still raises."""
+        reg = self._load(
+            "clients:\n"
+            "  -\n    id: t\n    name: Tanushant Sharma\n"
+            "    aliases:\n      - \"Tanushant  Sharma\"\n")
+        self.assertEqual(reg.match_name("Tanushant  Sharma"), "t")
+        self.assertEqual(reg.match_name("Tanushant Sharma"), "t")
+        with self.assertRaises(registry.RegistryError):
+            self._load(
+                "clients:\n"
+                "  -\n    id: a\n    name: Tanushant Sharma\n"
+                "  -\n    id: b\n    name: B\n"
+                "    aliases:\n      - \"Tanushant  Sharma\"\n")
+
     def test_cache_invalidation(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "clients.yaml"
