@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from core import db
+from core import db, registry
 from core import claude_gateway as gw
 from modules.knowledge import (kb, ingest, extract, index, crm, dossier,
                                librarian, clients, proof_points, upwork_msgs)
@@ -340,6 +340,76 @@ class TestCRM(KBCase):
         f = self.rows("SELECT COUNT(*) c FROM facts WHERE client_id='adelye'")
         self.assertEqual(f[0]["c"], r1["inserted"])        # not duplicated
 
+    def test_deaccents_the_column_too(self):
+        """norm() folds accents on BOTH sides now, so the plain registry
+        spelling reaches the accented ledger name (the whole reason
+        cockpit/data.py carries _deaccent)."""
+        self.seed()
+        facts = crm.crm_facts(self.db_path, "adelye", "Adelye", ["Adelye"])
+        self.assertIn("$500", [f["fact_text"] for f in facts
+                               if "Revenue" in f["fact_text"]][0])
+
+    def _seed_double_space(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, type, description,"
+                " assignment_company, amount, creation_dt, canonical_key)"
+                " VALUES ('t1','Hourly Earning','(39507591) Tanushant  Sharma"
+                " - 1:00 hrs','Tanushant  Sharma',29.5,'2025-01-19','k1')")
+            conn.execute(
+                "INSERT INTO contracts (id, title, client_company, upwork_status)"
+                " VALUES ('39507591','Ai automation','Tanushant  Sharma','ACTIVE')")
+
+    def test_double_space_in_the_ledger_still_matches(self):
+        """The whitespace bug's SECOND home. registry.norm() was fixed on
+        2026-08-13, but this module compared raw SQL `LIKE '%<id>%'` against the
+        raw column, which norm() never touched — so `%Tanushant Sharma%` still
+        missed 'Tanushant  Sharma' and the dossier compiled to 0 facts while the
+        ledger held two ACTIVE contracts and $757.23 net."""
+        self._seed_double_space()
+        facts = crm.crm_facts(self.db_path, "tanushant-sharma",
+                              "Tanushant Sharma", ["Tanushant Sharma"])
+        texts = [f["fact_text"] for f in facts]
+        self.assertTrue(any("Contract: Ai automation" in t for t in texts), texts)
+        self.assertTrue(any("Revenue to date: $30" in t for t in texts), texts)
+
+    def _seed_masked(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, type, description,"
+                " assignment_company, amount, creation_dt, canonical_key)"
+                " VALUES ('t1','Fixed Earning','Invoice for AI Engineer',"
+                "'S',450.0,'2025-05-26','k1'),"
+                " ('t2','Fixed Earning','Invoice for Some Other Job',"
+                "'Sunny Systems',900.0,'2025-05-26','k2')")
+
+    def test_ledger_label_matches_exactly_not_as_a_substring(self):
+        """Upwork masked Saman Shafigh's company down to 'S'. The registry
+        records that as billing.ledger_label and refuses to make it an alias —
+        a one-character alias would claim everything. Matched here by EXACT
+        equality on the company column, it reaches $450 that was in the ledger
+        and in no dossier; it must NOT drag in 'Sunny Systems'."""
+        self._seed_masked()
+        facts = crm.crm_facts(self.db_path, "saman-shafigh", "Saman Shafigh",
+                              ["Saman Shafigh"], ledger_labels=["S"])
+        rev = [f for f in facts if "Revenue" in f["fact_text"]]
+        self.assertEqual(len(rev), 1)
+        self.assertIn("$450", rev[0]["fact_text"])
+        self.assertIn("1 earning transactions", rev[0]["fact_text"])
+
+    def test_no_labels_means_the_masked_money_stays_out(self):
+        self._seed_masked()
+        facts = crm.crm_facts(self.db_path, "saman-shafigh", "Saman Shafigh",
+                              ["Saman Shafigh"])
+        self.assertEqual(facts, [])
+
+    def test_blank_identifier_does_not_claim_the_whole_ledger(self):
+        """A whitespace-only identifier normalises to '' and `LIKE '%%'` matches
+        every row — one blank alias would hand one client the entire business."""
+        self.seed()
+        self.assertEqual(
+            crm.crm_facts(self.db_path, "ghost", "Ghost", ["  ", "\n"]), [])
+
 
 # ── dossier render is deterministic + cites everything ────────────────────────
 class TestDossier(KBCase):
@@ -419,6 +489,38 @@ class TestDossier(KBCase):
                                       "2026-06-17", dossier_dir=dz)
         self.assertEqual(out["status"], "skipped_empty")        # file guard fired
         self.assertIn("Real fact", (dz / "adelye.md").read_text())
+
+    def test_reattribution_empties_the_losing_dossier(self):
+        """A source moved to another client (jarvis heal / mapping correction)
+        leaves its old client with 0 facts while the KB stays full. That is a
+        REAL emptying, not a transient read: before 2026-08-13 the guard
+        swallowed it and froze dossier_index forever — `optimize-is` claimed 17
+        facts for four days after its only call was unmapped, and those 17 were
+        double-counted against the Knowledge cards."""
+        dz = self.tmp / "dz"
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash, client_id) VALUES"
+                         " ('fathom','fathom/1','h1','adelye'),"
+                         " ('fathom','fathom/2','h2','hermon')")
+            sids = [r["id"] for r in conn.execute("SELECT id FROM sources ORDER BY id")]
+        index.index_facts(self.db_path, sids[0], "adelye", self.FACTS)
+        index.index_facts(self.db_path, sids[1], "hermon", self.FACTS)
+        dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                "2026-06-16", dossier_dir=dz)
+        # the source is re-attributed away from adelye; hermon's facts remain
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE facts SET client_id=NULL WHERE source_id=?",
+                         (sids[0],))
+        out = dossier.compile_dossier(self.db_path, "adelye", "Adelye",
+                                      "2026-06-17", dossier_dir=dz)
+        self.assertEqual(out["status"], "compiled")
+        self.assertEqual(out["facts"], 0)
+        self.assertEqual(out["prev_facts"], 3)
+        idx = self.rows("SELECT fact_count FROM dossier_index WHERE"
+                        " client_id='adelye'")
+        self.assertEqual(idx[0]["fact_count"], 0)          # index tells the truth
+        self.assertNotIn("Uses Make.com", (dz / "adelye.md").read_text())
 
     def test_force_empty_allows_real_emptying(self):
         dz = self.tmp / "dz"
@@ -529,6 +631,21 @@ class TestLinkage(KBCase):
                          owner_only=True)
         out = clients.link_threads(self.db_path, cmap)
         self.assertEqual(out["linked"], 0)    # only owner spoke -> no counterparty
+
+    def test_roster_carries_ledger_labels_but_never_as_identifiers(self):
+        """billing.ledger_label reaches CRM matching through its own key. It
+        must NOT leak into `identifiers`, which are matched as substrings — 'S'
+        as a substring would claim the whole ledger."""
+        reg = registry.loads_registry(
+            "clients:\n  -\n    id: saman-shafigh\n    name: Saman Shafigh\n"
+            "    billing:\n      canonical: Saman Shafigh\n"
+            '      ledger_label: "S"\n'
+            "  -\n    id: adelye\n    name: Adelye\n")
+        with mock.patch.object(registry, "load", return_value=reg):
+            cmap = {c["client_id"]: c for c in clients.load_client_map()}
+        self.assertEqual(cmap["saman-shafigh"]["ledger_labels"], ["S"])
+        self.assertNotIn("S", cmap["saman-shafigh"]["identifiers"])
+        self.assertEqual(cmap["adelye"]["ledger_labels"], [])
 
     def test_upwork_double_space_still_matches_the_registry(self):
         """Upwork writes "Tanushant  Sharma" (TWO spaces) into room_name,

@@ -1,6 +1,6 @@
 # Diat Khan — Dossier
 
-_Compiled 2026-08-13 06:12 IST · 14 client facts (14 trusted) from 4 sources._
+_Compiled 2026-08-13 13:36 IST · 14 client facts (14 trusted) from 4 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

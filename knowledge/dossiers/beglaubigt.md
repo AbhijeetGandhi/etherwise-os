@@ -1,6 +1,6 @@
 # Beglaubigt — Dossier
 
-_Compiled 2026-08-13 06:12 IST · 561 client facts (556 trusted) from 56 sources · 6 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13 13:36 IST · 561 client facts (556 trusted) from 56 sources · 6 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

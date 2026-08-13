@@ -1,6 +1,6 @@
 # Sunil Paul — Dossier
 
-_Compiled 2026-08-13 06:12 IST · 106 client facts (106 trusted) from 8 sources._
+_Compiled 2026-08-13 13:36 IST · 106 client facts (106 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

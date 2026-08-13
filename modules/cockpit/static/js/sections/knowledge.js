@@ -105,6 +105,28 @@ const dossierCols = [
     render: (r) => el("span", "muted", String(r.last_compiled_at || "").slice(0, 10) || "—") },
 ];
 
+// dossierCols, plus the two synthetic BUCKET rows that make the Facts/Sources
+// drills sum to their card (statCards). A bucket is not a client: it renders
+// muted, and the id column carries what the bucket IS instead of a client_id.
+const accountingCols = dossierCols.map((c) => {
+  if (c.key === "client_name") {
+    return { ...c, render: (r) => (r.bucket
+      ? el("em", "muted", r.client_name)
+      : el("strong", null, r.client_name || r.client_id)) };
+  }
+  if (c.key === "client_id") {
+    return { ...c, cls: null, render: (r) => (r.bucket
+      ? el("span", "muted small", r.why)
+      : el("span", "mono", r.client_id)) };
+  }
+  if (c.key === "fact_count" || c.key === "source_count") {
+    return { ...c, render: (r) => (r[c.key] == null
+      ? el("span", { class: "dash", attrs: { title: "this bucket is not counted in this column" } }, "—")
+      : fmt.num(r[c.key])) };
+  }
+  return c;
+});
+
 /* ── render ───────────────────────────────────────────────────────────────── */
 
 export async function render(root, ctx) {
@@ -390,40 +412,67 @@ function fathomCallsNote(f, ctx) {
 function statCards(d, dossiers, t, ctx) {
   const g = el("div", "grid-4");
 
-  // the part of the kb no dossier can account for. dossier_index carries a
-  // fact_count written at COMPILE time; a fact with no client_id belongs to no
-  // dossier at all. Either way the drill below would not sum to this card, so
-  // the gap is stated on the card rather than discovered in the drill.
-  const dossierFacts = dossiers.reduce((s, x) => s + (x.fact_count || 0), 0);
-  const dossierSources = dossiers.reduce((s, x) => s + (x.source_count || 0), 0);
-  const factGap = (t.client_facts || 0) - dossierFacts;
-  const sourceGap = (t.sources || 0) - dossierSources;
+  // Every fact and every source lands in exactly one named bucket, and the
+  // buckets ADD UP to the card. This replaces a vague "N belong to no dossier"
+  // that piled two different things — one a defect, one not — into one number
+  // and left both drills admitting they could not sum:
+  //   in_dossiers   claimed by a compiled dossier
+  //   unattributed  client-scoped, but the SOURCE was never attributed, so
+  //                 there is no dossier for it to be missing FROM
+  //   proof_points  agency + cross-client, excluded from dossiers BY DESIGN
+  //   unaccounted   the residual, which must be 0. Non-zero is a real defect
+  //                 (a client_id with no dossier row, or an index count that
+  //                 has drifted from its facts) and is called one.
+  // The server computes this (data._kb_accounting) so one arithmetic lives in
+  // one place and a test can pin the identity.
+  const acc = d.accounting || { facts: {}, sources: {} };
+  const af = acc.facts || {};
+  const as = acc.sources || {};
+
+  const bucket = (label, why, facts, sources) => ({
+    bucket: true, client_name: label, why, client_id: "",
+    fact_count: facts, source_count: sources,
+    revenue_usd: null, last_compiled_at: null,
+  });
+  const residualNote = (n, what) => (n
+    ? ` ${fmt.num(Math.abs(n))} ${what} ${n > 0 ? "are in NO bucket" : "are"
+      + " counted twice"} — that is a defect, not a definition: a client_id`
+      + " with no dossier row, or an index count that has drifted from the"
+      + " facts behind it. Recompile (bin/kb-backfill compile) and it should"
+      + " go to zero."
+    : "");
 
   // 1) FACTS
+  const factRows = dossiers.concat([
+    bucket("Unattributed — no client yet",
+      "client-scoped facts whose source was never attributed",
+      af.unattributed || 0, null),
+    bucket("Agency & cross-client → proof-points",
+      "no client by design; compiled into the proof-points wiki",
+      af.proof_points || 0, null),
+  ]);
   g.appendChild(kpi({
     label: "Facts",
     value: dash(t.facts, fmt.num),
-    sub: `${fmt.num(t.client_facts)} client · ${fmt.num(t.agency_facts)} agency`
-      + ` · ${fmt.num(t.cross_facts)} cross`
-      + (factGap > 0
-        ? ` · ${fmt.num(factGap)} client facts belong to no dossier`
-        : ""),
+    sub: `${fmt.num(af.in_dossiers)} in dossiers`
+      + ` · ${fmt.num(af.unattributed)} unattributed`
+      + ` · ${fmt.num(af.proof_points)} proof-points`
+      + (af.unaccounted ? ` · ${fmt.num(af.unaccounted)} unaccounted` : ""),
     onClick: () => openDrill({
-      title: "Facts by dossier",
-      subtitle: `${fmt.num(dossierFacts)} of the ${fmt.num(t.client_facts)}`
-        + " client-scoped facts are claimed by a dossier",
-      note: factGap > 0
-        ? `These rows sum to ${fmt.num(dossierFacts)}, NOT to the`
-          + ` ${fmt.num(t.facts)} on the card. ${fmt.num(factGap)} client-scoped`
-          + " facts are not claimed by any dossier — they carry no client_id, or"
-          + " the dossier has not been recompiled since they landed. The"
-          + ` remaining ${fmt.num((t.agency_facts || 0) + (t.cross_facts || 0))}`
-          + " are agency / cross-client facts, which have no client by design"
-          + " and are the proof-points card."
-        : null,
-      rows: dossiers,
-      total: dossiers.length,
-      columns: dossierCols,
+      title: "Every fact, by where it lives",
+      subtitle: `${fmt.num(dossiers.length)} dossiers + 2 buckets`
+        + ` = ${fmt.num(t.facts)} facts`,
+      note: `These rows sum to the ${fmt.num(t.facts)} on the card:`
+        + ` ${fmt.num(af.in_dossiers)} claimed by a dossier,`
+        + ` ${fmt.num(af.unattributed)} client-scoped facts whose SOURCE`
+        + " carries no client_id (there is no dossier for them to be missing"
+        + " from — they are the mapping queue's backlog), and"
+        + ` ${fmt.num(af.proof_points)} agency / cross-client facts, which`
+        + " belong to no single client by design."
+        + residualNote(af.unaccounted, "facts"),
+      rows: factRows,
+      total: factRows.length,
+      columns: accountingCols,
       amount: null,
       search: (r) => `${r.client_name} ${r.client_id}`,
       emptyText: "No dossier has been compiled.",
@@ -431,24 +480,32 @@ function statCards(d, dossiers, t, ctx) {
   }));
 
   // 2) SOURCES
+  const sourceRows = dossiers.concat([
+    bucket("Unattributed — no client yet",
+      "ingested and searchable, but not filed under a client",
+      null, as.unattributed || 0),
+  ]);
   g.appendChild(kpi({
     label: "Sources",
     value: dash(t.sources, fmt.num),
-    sub: "meetings, docs & threads behind the facts"
-      + (sourceGap > 0 ? ` · ${fmt.num(sourceGap)} attached to no dossier` : ""),
+    sub: "meetings, docs & threads behind the facts · "
+      + `${fmt.num(as.in_dossiers)} in dossiers`
+      + ` · ${fmt.num(as.unattributed)} unattributed`
+      + (as.unaccounted ? ` · ${fmt.num(as.unaccounted)} unaccounted` : ""),
     onClick: () => openDrill({
-      title: "Sources by dossier",
-      subtitle: `${fmt.num(dossierSources)} of ${fmt.num(t.sources)} sources are`
-        + " attached to a dossier",
-      note: sourceGap > 0
-        ? `These rows sum to ${fmt.num(dossierSources)}, NOT to the`
-          + ` ${fmt.num(t.sources)} on the card: ${fmt.num(sourceGap)} sources`
-          + " carry no client_id, so no dossier claims them. Open a dossier"
-          + " below for its own sources, with type, title and date."
-        : null,
-      rows: dossiers,
-      total: dossiers.length,
-      columns: dossierCols,
+      title: "Every source, by where it lives",
+      subtitle: `${fmt.num(dossiers.length)} dossiers + 1 bucket`
+        + ` = ${fmt.num(t.sources)} sources`,
+      note: `These rows sum to the ${fmt.num(t.sources)} on the card:`
+        + ` ${fmt.num(as.in_dossiers)} attached to a dossier and`
+        + ` ${fmt.num(as.unattributed)} carrying no client_id. The unattributed`
+        + " ones are ingested and full-text searchable; they are waiting on an"
+        + " attribution, not lost. Open a dossier below for its own sources,"
+        + " with type, title and date."
+        + residualNote(as.unaccounted, "sources"),
+      rows: sourceRows,
+      total: sourceRows.length,
+      columns: accountingCols,
       search: (r) => `${r.client_name} ${r.client_id}`,
       emptyText: "No dossier has been compiled.",
     }),

@@ -54,8 +54,15 @@ def load_client_map(db_path=None) -> List[dict]:
             if k and k not in seen:
                 seen.add(k)
                 uniq.append(i)
+        # billing.ledger_label — the string the MONEY LEDGER carries when Upwork
+        # masked the client ('S', 'no company'). Deliberately NOT an identifier:
+        # identifiers are matched as substrings and a one-character token would
+        # claim everything. crm.crm_facts matches these by EXACT equality on the
+        # company column, which is the only safe way to use them.
+        label = (c.get("billing") or {}).get("ledger_label")
         out.append({"client_id": cid, "name": c["name"], "identifiers": uniq,
                     "kind": reg.kind(cid),
+                    "ledger_labels": [label] if label else [],
                     "upwork_rooms": list(c.get("upwork_rooms", []))})
     return out
 

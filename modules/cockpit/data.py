@@ -443,7 +443,11 @@ def _kb_overview(conn, db_path: Optional[Path] = None) -> dict:
         " (SELECT COUNT(*) FROM sources) sources,"
         " (SELECT COUNT(*) FROM facts WHERE scope='client') client_facts,"
         " (SELECT COUNT(*) FROM facts WHERE scope='agency') agency_facts,"
-        " (SELECT COUNT(*) FROM facts WHERE scope='cross-client') cross_facts"
+        " (SELECT COUNT(*) FROM facts WHERE scope='cross-client') cross_facts,"
+        " (SELECT COUNT(*) FROM facts WHERE scope='client'"
+        "   AND client_id IS NULL) client_facts_unattributed,"
+        " (SELECT COUNT(*) FROM sources WHERE client_id IS NULL)"
+        "   sources_unattributed"
     ).fetchone()
     compiled = [d["last_compiled_at"] for d in dossiers if d["last_compiled_at"]]
     oldest = min(compiled) if compiled else None
@@ -459,10 +463,49 @@ def _kb_overview(conn, db_path: Optional[Path] = None) -> dict:
         "mode": "overview",
         "dossiers": dossiers,
         "totals": dict(totals),
+        "accounting": _kb_accounting(dossiers, totals),
         "freshness": freshness,
         "proof_points": {"agency": totals["agency_facts"],
                          "cross": totals["cross_facts"]},
         "fathom": _fathom_status(conn),
+    }
+
+
+def _kb_accounting(dossiers: list, totals) -> dict:
+    """Split every fact and every source into named, drillable buckets that ADD
+    UP to the Knowledge cards.
+
+    The Facts and Sources cards used to state a vague "N belong to no dossier"
+    and the drills admitted they could not sum. Two different things were piled
+    into that one number and only one of them was a defect:
+
+      in_dossiers   claimed by a compiled dossier (dossier_index).
+      unattributed  scope='client', but the SOURCE was never attributed to a
+                    client, so the fact has no client_id. There is no dossier
+                    for it to be missing from — it is the mapping queue's
+                    backlog, and it is the bulk of what looked like a gap.
+      proof_points  agency + cross-client scope. Excluded from every dossier BY
+                    DESIGN (proof_points.py compiles the wiki instead).
+
+    `unaccounted` is the residual after those three. It should be 0. A non-zero
+    value is a REAL defect and says so: either a client_id on facts that has no
+    dossier_index row, or an index row whose fact_count has drifted from the
+    facts behind it (which is what a frozen `skipped_empty` compile used to
+    leave behind). It is surfaced, never absorbed into a bucket."""
+    in_facts = sum(d["fact_count"] or 0 for d in dossiers)
+    in_sources = sum(d["source_count"] or 0 for d in dossiers)
+    pp = (totals["agency_facts"] or 0) + (totals["cross_facts"] or 0)
+    f_un = totals["client_facts_unattributed"] or 0
+    s_un = totals["sources_unattributed"] or 0
+    return {
+        "facts": {
+            "total": totals["facts"], "in_dossiers": in_facts,
+            "unattributed": f_un, "proof_points": pp,
+            "unaccounted": (totals["facts"] or 0) - in_facts - f_un - pp},
+        "sources": {
+            "total": totals["sources"], "in_dossiers": in_sources,
+            "unattributed": s_un,
+            "unaccounted": (totals["sources"] or 0) - in_sources - s_un},
     }
 
 
@@ -519,13 +562,29 @@ def _from_minor(minor) -> float:
 
 
 def _deaccent(s: str) -> str:
-    """Accent-insensitive key: the ledger spells some names with accents
-    (Upwork/Wise 'Adélye') while the dossier and the merge map do not ('Adelye').
-    Comparing on the stripped form makes the two reconcile without listing every
-    accented spelling."""
+    """Accent- AND whitespace-insensitive key: the ledger spells some names with
+    accents (Upwork/Wise 'Adélye') while the dossier and the merge map do not
+    ('Adelye'), and Upwork writes 'Tanushant  Sharma' / 'Ippon  Technology' with
+    TWO spaces where everything else holds one. Comparing on the folded form
+    makes them reconcile without listing every spelling.
+
+    The internal-whitespace collapse was added 2026-08-13, the same day
+    registry.norm() got it, for the same reason and after the same measurement:
+    this is the cockpit's own identity key (the client-economics merge, the
+    CLIENT_CANONICAL lookup, the room-name contract/owed linkage, and the
+    Knowledge dossier<->revenue cross-link) and it was the LAST place a
+    double-spaced Upwork name could still fail to meet its registry entry.
+    Measured over the live ledger before shipping (var/agent-scratch/s4):
+    the Clients view is byte-identical — same 81 rows, same $292,497.73 total,
+    same unlinked, same 20/28 contract and 2/5 owed linkages — and exactly two
+    answers change, both None -> a real number: Ippon Technology $378.58 and
+    Tanushant Sharma $859.49 now show revenue on their dossier row. No
+    CLIENT_CANONICAL key contains a whitespace run, so a collapsed key can only
+    meet a ledger string that was previously unreachable."""
     import unicodedata
-    return "".join(c for c in unicodedata.normalize("NFKD", s or "")
-                   if not unicodedata.combining(c)).lower().strip()
+    return _re.sub(r"\s+", " ",
+                   "".join(c for c in unicodedata.normalize("NFKD", s or "")
+                           if not unicodedata.combining(c))).strip().lower()
 
 
 def _canon_client(raw: Optional[str]) -> Optional[str]:
@@ -2857,12 +2916,16 @@ def activity_run(db_path: Optional[Path] = None, *,
 #
 #   NOT PROVABLE AT ALL, and not faked
 #     "did these facts reach the dossier", as a TIMING claim.
-#     knowledge/daily.run_daily computes `now_iso` at the START of the run and
-#     hands that same string to the compile at the END, so
-#     dossier_index.last_compiled_at is the compiling run's start time and is
-#     routinely EARLIER than facts written by that very run. Ordering off it
-#     would fire a false "not in the dossier yet" on every same-run extract. So
-#     the dossier answer here is a PRESENCE claim (the dossier exists / does
+#     Two reasons, one of which is now gone. (a) knowledge/daily.run_daily used
+#     to compute `now_iso` at the START of the run and hand that same string to
+#     the compile at the END, so last_compiled_at was the run's START time and
+#     routinely EARLIER than facts written by that very run — FIXED 2026-08-13,
+#     the stamp is now read per client at compile time (daily._stamp). (b) The
+#     units still do not match and that one is NOT fixed: facts.created_at is
+#     UTC (`datetime('now')`), last_compiled_at is an IST wall-clock string with
+#     no seconds and no offset, so any ordering between them is out by 5h30 and
+#     compares a ' ' separator against a 'T' (see CLAUDE.md, nudges.ts_key). So
+#     the dossier answer here stays a PRESENCE claim (the dossier exists / does
 #     not, and compile_dossier re-reads all of that client's facts every time),
 #     and the note says which claim is being made.
 _ACTIVITY_SOURCE_CAP = 200        # rows per call; the true total is always sent

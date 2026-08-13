@@ -31,7 +31,13 @@ Per-client schema (all fields optional except id + name):
                   follow-up label read it via Registry.canonical); it must never
                   be a placeholder. `ledger_label` records the string the money
                   ledger actually carries when Upwork masked the client ('S',
-                  'no company') — documentation, never a matcher.
+                  'no company'). It is never an alias — the alias index matches
+                  substrings and a one-character token would claim everything —
+                  but since 2026-08-13 it IS matched, by EXACT equality on the
+                  ledger's company column only (modules/knowledge/crm.py). Two
+                  clients may not claim the same label; that is a load ERROR,
+                  because a silent pick would put one client's money in two
+                  dossiers.
     scope_notes   free text                              (str)
     kind          "client" (default) | "prospect"        (str)
     no_match      truthy => product/internal, never mapped (str/bool)
@@ -281,6 +287,7 @@ class Registry:
         self._alias_to_id: dict[str, str] = {}
         self._room_to_id: dict[str, str] = {}
         self._slack_team_to_id: dict[str, str] = {}
+        self._ledger_label_to_id: dict[str, str] = {}
         self._validate_and_index()
 
     def _validate_and_index(self) -> None:
@@ -340,6 +347,18 @@ class Registry:
                     raise RegistryError(
                         f"slack team {team!r} claimed by both {owner!r} and {cid!r}")
                 self._slack_team_to_id[team] = cid
+            # a masked-ledger label ('S', 'no company') belongs to exactly one
+            # client. crm.py matches it EXACTLY against the ledger's company
+            # column, so an overlap would credit the same money to two dossiers.
+            label = (c.get("billing") or {}).get("ledger_label")
+            if label:
+                key = norm(label)
+                owner = self._ledger_label_to_id.get(key)
+                if owner and owner != cid:
+                    raise RegistryError(
+                        f"billing.ledger_label {label!r} claimed by both"
+                        f" {owner!r} and {cid!r}")
+                self._ledger_label_to_id[key] = cid
 
     # ── deterministic matchers (used by the map stage) ──────────────────────
     def match_email(self, from_addr: str) -> Optional[str]:

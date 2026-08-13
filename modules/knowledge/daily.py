@@ -98,20 +98,33 @@ def _extract_pending(db_path) -> dict:
             "pending": 0}
 
 
-def _compile(db_path, now_iso: str) -> dict:
+def _stamp() -> str:
+    """The compile timestamp, read WHEN THE COMPILE HAPPENS.
+
+    run_daily used to compute one `now_iso` at the START of the run and hand
+    that same string to the compile at the END. Extraction in between is model
+    work and can run for many minutes, so `dossier_index.last_compiled_at` was
+    routinely EARLIER than facts written by the very run that compiled it — a
+    dossier stamped before the facts it contains. Stamping per client, after
+    that client's CRM facts land, makes the field mean what it says."""
+    return config.now_ist_str() if hasattr(config, "now_ist_str") else \
+        __import__("datetime").datetime.now(config.TZ).strftime(
+            "%Y-%m-%d %H:%M IST")
+
+
+def _compile(db_path) -> dict:
     out = {}
     for c in clients.load_client_map(db_path):
-        crm.ingest_crm(db_path, c["client_id"], c["name"], c["identifiers"])
+        crm.ingest_crm(db_path, c["client_id"], c["name"], c["identifiers"],
+                       c.get("ledger_labels"))
         out[c["client_id"]] = dossier.compile_dossier(
-            db_path, c["client_id"], c["name"], now_iso)["facts"]
-    pp = proof_points.compile_proof_points(db_path, now_iso)
+            db_path, c["client_id"], c["name"], _stamp())["facts"]
+    pp = proof_points.compile_proof_points(db_path, _stamp())
     return {"dossiers": out, "proof_points": pp}
 
 
 def run_daily(ctx) -> dict:
     dbp = ctx.db_path or config.DB_PATH
-    now_iso = config.now_ist_str() if hasattr(config, "now_ist_str") else \
-        __import__("datetime").datetime.now(config.TZ).strftime("%Y-%m-%d %H:%M IST")
     result = {
         "fathom": _poll_fathom(ctx),
         "email": _poll_email(ctx),
@@ -125,7 +138,7 @@ def run_daily(ctx) -> dict:
         "link_threads": clients.link_threads(dbp),
         "extract": _extract_pending(dbp),
     }
-    result["compile"] = _compile(dbp, now_iso)
+    result["compile"] = _compile(dbp)
     return result
 
 

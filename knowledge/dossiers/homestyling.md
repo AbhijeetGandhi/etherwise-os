@@ -1,6 +1,6 @@
 # Homestyling — Dossier
 
-_Compiled 2026-08-13 06:12 IST · 16 client facts (15 trusted) from 4 sources · 62 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13 13:36 IST · 16 client facts (15 trusted) from 4 sources · 62 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

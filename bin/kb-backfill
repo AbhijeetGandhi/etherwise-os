@@ -141,16 +141,23 @@ def phase_extract(which, *, limit=None, attributed=False, model_key=None):
 
 
 def phase_compile():
-    now = _ist_now()
+    # the stamp is read PER CLIENT, when that client's compile happens — a
+    # single `now` taken before the loop makes last_compiled_at older than the
+    # facts the same pass wrote (see knowledge/daily._stamp).
     cmap = clients.load_client_map(config.DB_PATH)
     for c in cmap:
         crm.ingest_crm(config.DB_PATH, c["client_id"], c["name"],
-                       c["identifiers"])
+                       c["identifiers"], c.get("ledger_labels"))
         out = dossier.compile_dossier(config.DB_PATH, c["client_id"],
-                                      c["name"], now)
-        print(f"  dossier {c['client_id']}: {out['facts']} facts")
+                                      c["name"], _ist_now())
+        note = ""
+        if out["status"] != "compiled":
+            note = f"  [{out['status']}, index still says {out['prev_facts']}]"
+        elif out.get("prev_facts") not in (None, out["facts"]):
+            note = f"  [was {out['prev_facts']}]"
+        print(f"  dossier {c['client_id']}: {out['facts']} facts{note}")
     print("  proof-points:",
-          proof_points.compile_proof_points(config.DB_PATH, now))
+          proof_points.compile_proof_points(config.DB_PATH, _ist_now()))
 
 
 def _flag(name, default=None):

@@ -1,6 +1,6 @@
 # NETFLY — Dossier
 
-_Compiled 2026-08-13 06:12 IST · 527 client facts (518 trusted) from 44 sources · 65 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13 13:36 IST · 527 client facts (518 trusted) from 44 sources · 65 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

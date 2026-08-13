@@ -149,6 +149,29 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             self._load(SAMPLE + "  -\n    id: x\n    name: X\n    kind: lead\n")
 
+    def test_duplicate_ledger_label_rejected(self):
+        """billing.ledger_label became a MATCHER on 2026-08-13 (exact equality
+        on the ledger's company column, modules/knowledge/crm.py). Two clients
+        claiming 'no company' would put the same money in two dossiers, so it
+        is a load error like every other identity claim — never a silent pick."""
+        bad = (SAMPLE
+               + "  -\n    id: a\n    name: A\n    billing:\n"
+                 '      ledger_label: "no company"\n'
+               + "  -\n    id: b\n    name: B\n    billing:\n"
+                 '      ledger_label: "No  Company"\n')     # same after norm()
+        with self.assertRaises(registry.RegistryError):
+            self._load(bad)
+
+    def test_distinct_ledger_labels_load(self):
+        ok = (SAMPLE
+              + "  -\n    id: a\n    name: A\n    billing:\n"
+                '      ledger_label: "S"\n'
+              + "  -\n    id: b\n    name: B\n    billing:\n"
+                '      ledger_label: "no company"\n')
+        reg = self._load(ok)
+        self.assertEqual(reg._ledger_label_to_id,
+                         {"s": "a", "no company": "b"})
+
     def test_norm_collapses_internal_whitespace(self):
         """Upwork emits the DOUBLE space; the registry holds one. Before this,
         an existing client with $757.23 earned and 80 messages across two ACTIVE

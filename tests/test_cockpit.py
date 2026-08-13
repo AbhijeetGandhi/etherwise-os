@@ -978,6 +978,17 @@ class TestClientEconomics(unittest.TestCase):
         names = [c["name"] for c in out["clients"]]
         self.assertIn("Horizons ABA", names)                 # canonical-mapped
 
+    def test_deaccent_folds_the_upwork_double_space(self):
+        """_deaccent is the cockpit's identity key. Upwork writes TWO spaces
+        ('Tanushant  Sharma', 'Ippon  Technology'); the registry, the dossier
+        index and CLIENT_CANONICAL all hold one. Until 2026-08-13 this was the
+        last place the two could not meet, so those clients' dossier rows read
+        '—' revenue next to a dossier stating the money."""
+        self.assertEqual(data._deaccent("Tanushant  Sharma"), "tanushant sharma")
+        self.assertEqual(data._deaccent("Adélye \t\n Ltd"), "adelye ltd")
+        # a canonical merge must survive the fold
+        self.assertEqual(data._canon_client("Adélye  Ltd."), "Adelye")
+
     def test_same_client_across_eras_merges_upwork_and_wise(self):
         # Alexander Apfel (Upwork, earlier) and Horizons ABA (Wise, now) are one
         # client (Abhijeet, 2026-07-30) — both map to the dossier name
@@ -1823,6 +1834,43 @@ class TestKnowledgeReader(unittest.TestCase):
         self.assertEqual(out["proof_points"], {"agency": 1, "cross": 1})
         self.assertEqual(out["fathom"]["cursor"], "2026-06-10T00:00:00Z")
         self.assertEqual(out["dossiers"][0]["client_id"], "adelye")
+
+    def test_accounting_buckets_add_up_to_the_cards(self):
+        """The Facts/Sources cards used to state a vague "N belong to no
+        dossier" and their drills admitted they could not sum. Every fact and
+        every source now lands in exactly one named bucket and the buckets ADD
+        UP; `unaccounted` is the residual and must be 0 on a healthy kb."""
+        self._seed_kb()          # 1 client + 1 agency + 1 cross fact, 1 source
+        with db.connect(self.db_path) as conn:
+            # an UNATTRIBUTED source: ingested, client-scoped facts, no client
+            conn.execute("INSERT INTO sources (source_type, source_ref,"
+                         " content_hash) VALUES ('loom','loom/9','h9')")
+            sid = conn.execute("SELECT id FROM sources WHERE source_ref="
+                               "'loom/9'").fetchone()["id"]
+            for i in range(4):
+                conn.execute(
+                    "INSERT INTO facts (source_id, category, fact_text,"
+                    " citation, confidence, scope) VALUES (?,?,?,?,?,'client')",
+                    (sid, "stack", f"orphan {i}", "loom/9 @ 1", "CONFIRMED"))
+        acc = data.knowledge(self.db_path)["accounting"]
+        self.assertEqual(acc["facts"], {
+            "total": 7, "in_dossiers": 1, "unattributed": 4,
+            "proof_points": 2, "unaccounted": 0})
+        self.assertEqual(acc["sources"], {
+            "total": 2, "in_dossiers": 1, "unattributed": 1, "unaccounted": 0})
+
+    def test_accounting_surfaces_a_drifted_index_instead_of_hiding_it(self):
+        """A dossier_index row whose fact_count no longer matches the facts
+        behind it (what a frozen `skipped_empty` compile used to leave: 17 facts
+        for a client whose only call had been unmapped) must show up as
+        `unaccounted`, not be absorbed into a bucket."""
+        self._seed_kb()
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE dossier_index SET fact_count=18 WHERE"
+                         " client_id='adelye'")
+        acc = data.knowledge(self.db_path)["accounting"]
+        self.assertEqual(acc["facts"]["in_dossiers"], 18)
+        self.assertEqual(acc["facts"]["unaccounted"], -17)
 
     def test_fathom_status_reads_kb_daily_not_a_phantom_task(self):
         # the poll runs INSIDE kb_daily; reading a 'fathom_poll' task reported
