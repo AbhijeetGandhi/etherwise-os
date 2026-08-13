@@ -26,7 +26,12 @@ Per-client schema (all fields optional except id + name):
     upwork_rooms  Upwork room ids                        (list[str])
     fathom_names  title/participant match fragments      (list[str])
     clickup       ClickUp space/folder ref               (str)
-    billing       {rail, canonical}                      (dict)
+    billing       {rail, canonical, ledger_label}        (dict)
+                  `canonical` is the DISPLAY name (cockpit card labels + the CoS
+                  follow-up label read it via Registry.canonical); it must never
+                  be a placeholder. `ledger_label` records the string the money
+                  ledger actually carries when Upwork masked the client ('S',
+                  'no company') — documentation, never a matcher.
     scope_notes   free text                              (str)
     kind          "client" (default) | "prospect"        (str)
     no_match      truthy => product/internal, never mapped (str/bool)

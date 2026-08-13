@@ -44,6 +44,17 @@ clients:
       canonical: Alfredo Elias
     scope_notes: "SECA Texas — Upwork contract 40747534 (GHL Workflow + KPI Automation, ACTIVE)"
   -
+    id: amanda-thomas
+    name: Amanda Thomas
+    aliases:
+      - Amanda Thomas, Amanda T
+      - Amanda T
+    upwork_rooms:
+      - room_b77ee451e7fd56cbb3a898b15effe2bf
+    billing:
+      canonical: Amanda Thomas
+    scope_notes: "Upwork contract 44145310 (Airtable Configuration and Automation, HOURLY, ACTIVE from 2026-07-23). 41 messages, live. Not yet in the transaction ledger — the Upwork rail's newest row is 2026-06-03, so $0 here means NOT MEASURED, never no money."
+  -
     id: amine-hjiaj
     name: Amine Hjiaj
     billing:
@@ -193,6 +204,19 @@ clients:
     billing:
       canonical: Design Lab
   -
+    id: dhanya-sangolli
+    name: Dhanya Sangolli
+    aliases:
+      - Dhanya Sangolli, Dhanya S
+      - Dhanya S
+    upwork_rooms:
+      - room_1f5d0e3d4bb2e1c2d26c98246c99fe9c
+      - room_999337f3d5c38a633a3ee4327b69142a
+      - room_8666286c4fb7f204218f5cdd0a382372
+    billing:
+      canonical: Dhanya Sangolli
+    scope_notes: "AI Voice Coach (Vapi/Sheets/Twilio/Zapier). Upwork contract 44043381 (HOURLY, closed after one day) immediately replaced by 44052042 (FIXED, ACTIVE from 2026-07-08) — a contract-type switch, not two clients. Three rooms, 191 messages. Not yet in the transaction ledger (rail newest 2026-06-03): $0 = NOT MEASURED."
+  -
     id: diat-khan
     name: Diat Khan
     aliases:
@@ -319,6 +343,17 @@ clients:
     billing:
       canonical: Ippon Technology
   -
+    id: irene-buht
+    name: Irene Buht
+    aliases:
+      - Irene Buht, no company
+    upwork_rooms:
+      - room_c9775733f08e146073b4595c89f09a8a
+    billing:
+      canonical: Irene Buht
+      ledger_label: "no company"
+    scope_notes: "Upwork contract 40620438 ('call agent for Lou', FIXED, 2025-05-18 to 2025-08-30, ENDED). $490.00 gross / $440.50 net across 12 rows. Upwork emitted the PLACEHOLDER 'no company' as assignment_company — recorded as billing.ledger_label, deliberately NOT an alias (the alias index does free-text matching and 'no company' would claim unrelated rows) and deliberately NOT billing.canonical (that is the card DISPLAY name)."
+  -
     id: james-taylor
     name: James Taylor
     billing:
@@ -357,6 +392,17 @@ clients:
     name: Morten Kremmer
     billing:
       canonical: Morten Kremmer
+  -
+    id: mustafa-ahmed
+    name: Mustafa Ahmed
+    aliases:
+      - Mustafa Ahmed, Mustafa A
+      - Mustafa A
+    upwork_rooms:
+      - room_1f72c2d8db8fcd4484255a952a6fb5b8
+    billing:
+      canonical: Mustafa Ahmed
+    scope_notes: "Upwork contract 43986743 (AI automation architect — Airtable + Make.com + GoHighLevel + Evoto, FIXED, ACTIVE from 2026-06-29). 176 messages, the largest conversation in the system, live this week. Not yet in the transaction ledger (rail newest 2026-06-03): $0 = NOT MEASURED."
   -
     id: nalu-group
     name: Nalu Group
@@ -468,6 +514,15 @@ clients:
     billing:
       canonical: Renutech Ltd
   -
+    id: rocky-choy
+    name: Rocky Choy
+    upwork_rooms:
+      - room_9535c1f84a5e81fefa268323052f3ba0
+      - room_9f027313573312c22dab33512dfa0ae2
+    billing:
+      canonical: Rocky Choy
+    scope_notes: "Upwork contract 43941050 (Make.com: Calendly to Google Calendar, HOURLY, 2026-06-23 to 2026-07-23, CLOSED). 99 messages. The main thread is awaiting_reply_from=Abhijeet on a closed contract — check whether that is a real unanswered message or a stale flag."
+  -
     id: romain-de-braekeleer
     name: Romain De Braekeleer
     billing:
@@ -479,6 +534,17 @@ clients:
       - Pete Reese
     billing:
       canonical: Sale Pros Corp
+  -
+    id: saman-shafigh
+    name: Saman Shafigh
+    aliases:
+      - Saman Shafigh, S
+    upwork_rooms:
+      - room_8f3f06cf43c80c951c1fecb09aecb1d5
+    billing:
+      canonical: Saman Shafigh
+      ledger_label: "S"
+    scope_notes: "Upwork contract 40430519 (AI Engineer — Conversational Pathways, FIXED, 2025-04-27 to 2025-07-18, ENDED). $450.00 gross / $404.55 net across 3 rows. Client side had two people: Saman S. and Max S. Upwork TRUNCATED assignment_company to 'S' — recorded as billing.ledger_label, deliberately NOT an alias (a one-character token would match inside anything) and deliberately NOT billing.canonical (that is the card DISPLAY name)."
   -
     id: servicepeople
     name: Servicepeople
