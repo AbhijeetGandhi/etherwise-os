@@ -1,6 +1,6 @@
 # The Cradle Company — Dossier
 
-_Compiled 2026-08-14 04:43 IST · 142 client facts (139 trusted) from 11 sources · 1 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-14 05:16 IST · 142 client facts (139 trusted) from 11 sources · 1 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

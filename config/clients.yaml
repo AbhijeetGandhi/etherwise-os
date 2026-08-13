@@ -80,6 +80,8 @@ clients:
       - ioannis p
       - Felix Adrian
       - Thomas Charlier
+      - Jackson Ly
+    scope_notes: "Jackson Ly is beglaubigt-side, confirmed by Abhijeet 2026-08-14 and by his address jackson@beglaubigt.de (proof-points, email/19f5fd156893e978). He is on 18 attributed beglaubigt calls. ONE call disagrees and is NOT resolved by this alias: fathom/163477950 (src 1832, 2026-07-14) is filed under netfly by fathom_classifier:high, a MODEL verdict, although its only external speaker is Jackson and it says 'i messaged yannis about that' (Yannis = Ioannis Pirigkos) while walking a HubSpot-to-Dialpad automation. Left alone deliberately: re-pointing an already-attributed source moves 14 facts between dossiers and is Abhijeet's call, not a rule's."
     clickup: beglaubigt.de
     slack:
       workspace: Beglaubigt.de
@@ -284,6 +286,7 @@ clients:
       - Jaap Meijvogel
       - Jaap Meyvogel
       - Gairo Juliana
+      - Matthijs van der Plas
     clickup: Hermon
     billing:
       canonical: Hermon
@@ -525,6 +528,8 @@ clients:
       - deel
       - dilip n malave
       - dilip malave
+      - Tatiana Reboredo
+    scope_notes: "Tatiana Reboredo is an employee at Remotual (Abhijeet, 2026-08-14). No email or domain evidence exists for her in the corpus, so this alias rests on his statement plus the fit: her two calls (2025-05-20, 2025-11-03) fall inside Remotual's paid window (2024-08-27 to 2026-01-16, 24,952.63 USD gross) and she briefs Abhijeet on work for Remotual's own end-clients, which is the shape of a staffing/agency client. She is claimed by no other client anywhere in the corpus."
     clickup: remotual
     billing:
       canonical: Remotual
