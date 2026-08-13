@@ -1,6 +1,6 @@
 # Diat Khan — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 36 client facts (35 trusted) from 6 sources._
+_Compiled 2026-08-14 00:15 IST · 36 client facts (35 trusted) from 6 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -14,7 +14,7 @@ _Compiled 2026-08-13 17:22 IST · 36 client facts (35 trusted) from 6 sources._
 - Contract: AI Agent Engineer — status CLOSED. [CONFIRMED · CRM:contracts/40883094]
 - Make.com affiliate partner program requires $2,000 per month in affiliate income as a prerequisite for the partner program; the team discussed this as a potential path to reduce operational costs by shifting client automations under an affiliate account. [CONFIRMED · fathom/141917008 @ [00:23:28] 'affiliate income should be $2,000 per month' and [00:24:01] '2000 dollars bada amount hai']
 - Revenue to date (GROSS, billed): $496.30 across 2 revenue transactions (2025-12-19 → 2026-03-17). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $496.30 — the same as gross; the ledger carries no fee, tax or refund rows for this client. [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (NET, received after Upwork fees and tax): $475.40 — gross $496.30 less $20.90 Upwork service fees. [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## People
 

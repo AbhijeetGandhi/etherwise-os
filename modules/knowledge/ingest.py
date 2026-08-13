@@ -34,9 +34,11 @@ def parse_fathom(payload: dict) -> dict:
     """Fathom meeting JSON -> normalized source dict. Handles BOTH the live API
     poller shape AND the historical export (asset zip). Transcript segments may
     carry a `timestamp` (citation anchors); `speaker` may be a string (export)
-    or an object {display_name, matched_calendar_invitee_email} (API). The live
-    API leaves `participants` empty, so transcript speakers (names + matched
-    emails) seed classification instead."""
+    or an object {display_name, matched_calendar_invitee_email} (API).
+
+    `participants` is the UNION of the explicit invitee list and the transcript
+    speakers — see the comment at the union below; it is the single most
+    expensive line in this module's history."""
     rid = str(payload.get("recording_id") or payload.get("id") or "")
     tx = payload.get("transcript") or []
     lines, spoken = [], set()
@@ -57,7 +59,29 @@ def parse_fathom(payload: dict) -> dict:
         text = "\n".join(lines)
     else:
         text = str(tx)
-    # participants: explicit list (name/email) wins; else transcript speakers
+    # participants: the explicit list UNION the transcript speakers. NEVER `or`.
+    #
+    # THIS WAS `or` UNTIL 2026-08-14 AND IT COST 114 CLIENT CALLS. Read it again:
+    # `{x for x in parts if x} or spoken` is not a fallback for an EMPTY explicit
+    # list, it is a fallback for a FALSY one — and a Fathom EXPORT payload always
+    # carries `participants: [{"name": "Abhijeet Gandhi"}]`, the person who owns
+    # the recording. One truthy element, so `spoken` was never even evaluated and
+    # every OTHER human who actually spoke on the call was discarded.
+    #
+    # Measured on the live corpus before the fix: 357 of 617 Fathom payloads are
+    # that export shape, and 298 of 617 sources had at least one speaker missing
+    # from `participants` — i.e. the classifier never saw the name it needed. The
+    # damage is not "some calls stayed unmapped", it is that the residue then went
+    # to an LLM which was shown a participant list of ONE INTERNAL PERSON and a
+    # title of "Impromptu Google Meet Meeting", and reasonably concluded
+    # internal-product. 114 real client calls were EXCLUDED on that basis.
+    #
+    # Union, not "explicit wins": the two sources are complementary, not ranked.
+    # calendar invitees carry emails (domain -> client, the strongest signal) and
+    # include people who never spoke; transcript speakers carry the names of
+    # people who joined via someone else's device and appear in no invite. Taking
+    # either one alone loses real attribution signal. `spoken` holds names AND
+    # matched invitee emails (see the loop above), so the union is a set of both.
     parts = []
     for p in (payload.get("participants") or []):
         if isinstance(p, dict):
@@ -67,7 +91,7 @@ def parse_fathom(payload: dict) -> dict:
                 parts.append(str(email).strip())
         elif p:
             parts.append(str(p).strip())
-    participants = sorted({x for x in parts if x} or spoken)
+    participants = sorted({x for x in parts if x} | spoken)
     return {
         "source_type": "fathom",
         "source_ref": f"fathom/{rid}",

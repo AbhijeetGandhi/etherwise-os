@@ -24,7 +24,9 @@ from modules.knowledge import dossier, ingest
 _FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com",
              "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com",
              "aol.com", "live.com", "msn.com"}
-_INTERNAL = ("etherwise.io",)
+# NB: there is deliberately no local `_INTERNAL = ("etherwise.io",)` here any
+# more. "Are these people us?" is answered in exactly one place —
+# config.is_internal_person / config.INTERNAL_PEOPLE / config.OWNER_IDENTITIES.
 
 
 def _rid(source_ref: str) -> str:
@@ -57,16 +59,25 @@ def _match(reg, participants: list[str], title: str) -> Optional[str]:
 
 
 def _external_signal(participants: list[str]) -> Optional[str]:
-    """The first external client participant email — skips our own people (an
-    owner-only call is internal, not a client signal), else None."""
+    """The first external client participant — skips our own people (a call whose
+    only other party is one of US is internal, not a client signal), else None.
+
+    Addresses first: an email is a strictly better queue author than a bare name
+    because it carries a domain the registry can learn from. A NAME is only
+    returned when no external address exists at all — before 2026-08-14 this
+    function looked at emails ONLY, so a call whose external party appeared purely
+    as a transcript speaker produced no signal and was silently skipped as
+    internal. `config.is_internal_person` answers both halves from ONE roster
+    (see the INTERNAL_PEOPLE note in core/config.py)."""
+    names = []
     for p in participants:
+        if config.is_internal_person(p):
+            continue
         if "@" in p:
-            a = p.lower()
-            dom = a.rsplit("@", 1)[-1]
-            if a in config.OWNER_IDENTITIES or dom in _INTERNAL:
-                continue
             return p
-    return None
+        if p.strip():
+            names.append(p.strip())
+    return names[0] if names else None
 
 
 def heal_source(db_path, source_ref: str, client_id: str, client_name: str,
@@ -138,38 +149,91 @@ def sync_unmapped(db_path, reg=None, *, limit: int = 50, queue_cap: int = 40,
             "queued": queued, "skipped": skipped}
 
 
-def recheck_queued(db_path, reg=None, *,
+RECHECK_STATES = ("queued",)
+
+
+def recheck_events(db_path, reg=None, *, states: tuple = RECHECK_STATES,
                    read_participants: Callable = _read_participants,
                    dossier_dir: Optional[Path] = None,
+                   queue_cap: Optional[int] = None,
+                   dry_run: bool = False,
                    now_iso: Optional[str] = None) -> dict:
-    """Re-evaluate queued Fathom events with the current registry + owner rules.
-    A registry match heals; a real external client (behind an owner) keeps it
-    queued with the corrected author; an owner-only call is excluded (internal)."""
+    """Re-evaluate decided Fathom events against the CURRENT registry + owner
+    rules. A registry match heals; a real external party (behind an owner) becomes
+    queued with the corrected author; a call whose only other party is one of us is
+    excluded as internal.
+
+    `states` exists because a verdict is only as good as the evidence it was
+    reached on, and 189 of the 195 unattributed Fathom sources carried an
+    `excluded` event — 114 of them `fathom-kind:internal-product`, decided by a
+    model that was handed a participant list of ONE INTERNAL PERSON because of the
+    `or`/`|` bug in ingest.parse_fathom. Those verdicts are not decisions to
+    respect, they are damage; re-running them against real speakers is the repair.
+    Default stays ('queued',) so the daily job's behaviour is unchanged — the
+    unfreeze is an explicit, auditable `--recheck-all`.
+
+    `queue_cap` bounds how many rows may be MOVED INTO the queue in one pass (a
+    mapping queue of 150 is not a queue, it is a wall — measured on the IMAP rail,
+    which hit 94 and became unusable). Rows over the cap keep their current state
+    and are counted in `queue_capped`, so nothing is silently dropped. Healing is
+    never capped: it is deterministic and free.
+
+    NOTHING here is auto-attributed by a model. Every heal is a registry
+    name/email/domain match; everything ambiguous goes to a human.
+    """
     reg = reg or registry.load()
+    qs = ",".join("?" * len(states))
     with db.connect(db_path) as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT e.id, e.raw_ref, s.raw_path, s.title FROM events e"
+            "SELECT e.id, e.raw_ref, e.state, e.exclude_reason, s.raw_path,"
+            " s.title, s.client_id FROM events e"
             " LEFT JOIN sources s ON s.source_ref = e.raw_ref"
-            " WHERE e.source='fathom' AND e.state='queued'")]
-    healed = requeued = excluded = 0
+            f" WHERE e.source='fathom' AND e.state IN ({qs})"
+            " ORDER BY s.occurred_dt DESC", tuple(states))]
+    healed = requeued = excluded = capped = already = 0
+    by_client: dict = {}
+    from_reason: dict = {}
     for e in rows:
+        if e["client_id"]:            # source already attributed -> nothing owed
+            already += 1
+            continue
         parts, _ = read_participants(e["raw_path"] or "")
         cid = _match(reg, parts, e["title"] or "")
         if cid:
-            heal_source(db_path, e["raw_ref"], cid, reg.by_id[cid]["name"],
-                        now_iso=now_iso, dossier_dir=dossier_dir)
-            with db.connect(db_path) as conn:
-                events.set_mapped(conn, e["id"], cid)
+            if not dry_run:
+                heal_source(db_path, e["raw_ref"], cid, reg.by_id[cid]["name"],
+                            now_iso=now_iso, dossier_dir=dossier_dir)
+                with db.connect(db_path) as conn:
+                    events.set_mapped(conn, e["id"], cid)
             healed += 1
+            by_client[cid] = by_client.get(cid, 0) + 1
+            r = e["exclude_reason"] or e["state"]
+            from_reason[r] = from_reason.get(r, 0) + 1
             continue
         signal = _external_signal(parts)
-        with db.connect(db_path) as conn:
-            if signal:
-                conn.execute("UPDATE events SET author=?, updated_at="
-                             "datetime('now') WHERE id=?", (signal, e["id"]))
-                requeued += 1
-            else:
-                events.set_excluded(conn, e["id"], "internal:owner-only")
-                excluded += 1
-    return {"rechecked": len(rows), "healed": healed,
-            "requeued": requeued, "excluded": excluded}
+        if signal:
+            if queue_cap is not None and requeued >= queue_cap:
+                capped += 1
+                continue
+            if not dry_run:
+                with db.connect(db_path) as conn:
+                    conn.execute(
+                        "UPDATE events SET state='queued', author=?,"
+                        " exclude_reason=NULL, updated_at=datetime('now')"
+                        " WHERE id=?", (signal, e["id"]))
+            requeued += 1
+        else:
+            if not dry_run:
+                with db.connect(db_path) as conn:
+                    events.set_excluded(conn, e["id"], "internal:owner-only")
+            excluded += 1
+    return {"rechecked": len(rows), "states": list(states), "healed": healed,
+            "requeued": requeued, "excluded": excluded,
+            "queue_capped": capped, "already_attributed": already,
+            "dry_run": dry_run, "healed_by_client": by_client,
+            "healed_from": from_reason}
+
+
+def recheck_queued(db_path, reg=None, **kw) -> dict:
+    """The daily recheck: queued Fathom events only (unchanged behaviour)."""
+    return recheck_events(db_path, reg, states=("queued",), **kw)

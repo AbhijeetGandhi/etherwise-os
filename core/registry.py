@@ -325,9 +325,22 @@ class Registry:
                     raise RegistryError(
                         f"email {e!r} claimed by both {owner!r} and {cid!r}")
                 self._email_to_id[key] = cid
-            # aliases + the canonical name must not collide across clients
+            # aliases + the canonical name must not collide across clients, and
+            # may never be one of OUR OWN people. An Etherwise name in a client's
+            # alias list would file every internal working session under that
+            # client and — because an identifier is matched as a substring — claim
+            # every other client's calls he sat on too. Alphons Jaimon was
+            # proposed as an alias for horizons-aba AND cmf-publishing in the same
+            # mining pass (2026-08-13) because he speaks on both; he is ours. This
+            # is a load ERROR, not a warning: a wrong attribution is permanent
+            # (link_threads never overwrites a non-null client_id).
             for a in [name, *c["aliases"]]:
                 key = norm(a)
+                if config.is_internal_person(a):
+                    raise RegistryError(
+                        f"alias/name {a!r} on {cid!r} is an Etherwise person"
+                        f" (config.INTERNAL_PEOPLE) — one of us can never be a"
+                        f" client identifier")
                 owner = self._alias_to_id.get(key)
                 if owner and owner != cid:
                     raise RegistryError(

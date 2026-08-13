@@ -442,11 +442,63 @@ JARVIS_SLACK_POLL_TIMEOUT_SECONDS = 40
 # is that measurement plus headroom; a conversation that paints fast still exits
 # early, so only genuinely empty conversations pay the ceiling.
 JARVIS_SLACK_CONV_POLL_TIMEOUT_SECONDS = 22
+# ── OUR SIDE — the humans who ARE Etherwise (2026-08-14) ─────────────────────
+# ONE list, because "is this person us?" is asked by four different consumers and
+# each of them used to answer it from its own private constant:
+#   * slack_rail.parse_message  — outbound vs inbound  (JARVIS_SLACK_SELF_AUTHORS)
+#   * fathom_bridge._external_signal — is this call a CLIENT signal or internal?
+#     (it only ever checked EMAILS, so a teammate who appears by NAME slipped past)
+#   * registry._validate_and_index — one of us may never become a client identifier
+#   * mail rails — SELF_SENDERS / SELF_SENDER_DOMAINS (address-based, unchanged)
+#
+# What a second list costs, measured: Alphons Jaimon is an Etherwise contractor.
+# He appears on 12 Fathom calls; on exactly ONE of them (src 712) Fathom captured
+# his address, alphons@etherwise.io, and that call was correctly read as internal.
+# On the other 11 he is a bare transcript SPEAKER, so every name-blind check saw
+# an unrecognised human on a call and treated him as external client signal. The
+# roster miner then proposed him as an alias for TWO different clients at once.
+#
+# Matched EXACTLY on the normalised full name — never as a substring. "abhijeet"
+# is in here as a bare token precisely because Slack renders him that way; a
+# substring rule would let it claim "Abhijeet Sharma", a stranger.
+#
+# ADD A TEAMMATE HERE AND NOWHERE ELSE. Source of truth for who is on payroll:
+# ../Payroll/employees.json (contractors are not in it — this list is wider).
+INTERNAL_PEOPLE = (
+    "abhijeet gandhi",
+    "abhijeet",
+    "jay pokharna",          # E001
+    "shruti dhumne",         # E002
+    "yogita soma",           # E003
+    "alphons jaimon",        # contractor (confirmed by Abhijeet 2026-08-13);
+                             # alphons@etherwise.io appears on src 712
+)
 # Our own display names inside CLIENT workspaces: a message from one of these is
 # OURS -> tagged direction='outbound' (captured, never dropped) so the follow-up
 # logic can tell we already replied. Matched case-insensitively on the full name.
 # Slack's own is_me DOM cue wins when present; this is the name-based fallback.
-JARVIS_SLACK_SELF_AUTHORS = ("abhijeet gandhi", "abhijeet")
+# DERIVED, not a second list: until 2026-08-14 it held only Abhijeet's two names,
+# so a teammate answering a client in Slack read as the CLIENT talking.
+JARVIS_SLACK_SELF_AUTHORS = INTERNAL_PEOPLE
+
+
+def is_internal_person(who: str) -> bool:
+    """True if this participant string is one of US — by NAME (exact, normalised)
+    or by ADDRESS (OWNER_IDENTITIES / an @etherwise.io address).
+
+    The single answer to "is this person us?". `registry.norm` is imported lazily
+    because registry imports config; calling it (rather than mirroring lower()/
+    strip() here) is what stops this check from drifting away from the identity
+    spine's own notion of sameness — norm() gained accent-folding and internal
+    whitespace collapse in 2026-08 and a hand-rolled copy would still be stale.
+    """
+    from core import registry                     # lazy: registry imports config
+    a = (who or "").strip().lower()
+    if not a:
+        return False
+    if "@" in a:
+        return a in OWNER_IDENTITIES or a.rsplit("@", 1)[-1] in SELF_SENDER_DOMAINS
+    return registry.norm(a) in {registry.norm(p) for p in INTERNAL_PEOPLE}
 # ── EXTRACT stage (J2 §4.3 stage 3) — the READER, staging-only ───────────────
 # Per-CLIENT bundle (not per-event), so cost scales with active clients, not
 # mail volume. Hard per-run ceiling so a busy day can never run away; overflow
@@ -477,10 +529,12 @@ SELF_SENDERS = (
     "etherwise bot",                # the automation display name (From header)
 )
 SELF_SENDER_DOMAINS = ("etherwise.io",)   # any @etherwise.io sender is internal
-# Owner/team identities — the humans who are US, not clients. A call/email where
-# the only outside party is an owner is internal, never a client signal (the
-# Fathom bridge skips them; the email rail treats them as self-noise). Extend as
-# team members' personal addresses surface.
+# Owner/team identities — the humans who are US, not clients, BY ADDRESS. A
+# call/email where the only outside party is an owner is internal, never a client
+# signal (the Fathom bridge skips them; the email rail treats them as self-noise).
+# Extend as team members' personal addresses surface.
+# The NAME-side companion is INTERNAL_PEOPLE above; `is_internal_person()` asks
+# both, and is what every consumer should call rather than reading either tuple.
 OWNER_IDENTITIES = (
     "contact@etherwise.io",
     "abhijeetgandhi02@gmail.com",   # Abhijeet (personal)

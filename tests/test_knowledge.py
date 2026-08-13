@@ -298,6 +298,57 @@ class TestAssetParse(KBCase):
         self.assertIn("sam@adelye.com", parsed["participants"])  # seeds classify
         self.assertIn("Sam", parsed["participants"])
 
+    def test_export_shape_keeps_transcript_speakers(self):
+        """THE REGRESSION. A Fathom EXPORT payload always carries a non-empty
+        `participants` — the recording's owner, one internal person. The union
+        used to be `{...} or spoken`, so that one truthy element made Python
+        discard `spoken` entirely and every other human on the call vanished.
+
+        357 of 617 live payloads are this shape; 298 sources lost a speaker; the
+        residue then reached an LLM that saw ONE internal name and a title of
+        'Impromptu Google Meet Meeting' and excluded 114 real client calls as
+        internal-product. If this test fails, that is what broke.
+
+        `participants` present MUST NOT suppress the speakers.
+        """
+        payload = {
+            "recording_id": 4242, "title": "Impromptu Google Meet Meeting",
+            "date": "2026-04-01T10:00:00Z",
+            # exactly what the export writes: the owner, and only the owner
+            "participants": [{"name": "Abhijeet Gandhi"}],
+            "transcript": [
+                {"timestamp": "00:00:05", "speaker": "Alexander Apfel",
+                 "text": "The BCBA scheduling is wrong."},
+                {"timestamp": "00:01:10", "speaker": "Abhijeet Gandhi",
+                 "text": "On it."}],
+        }
+        parsed = ingest.parse_fathom(payload)
+        self.assertIn("Abhijeet Gandhi", parsed["participants"])   # invitee kept
+        self.assertIn("Alexander Apfel", parsed["participants"])   # speaker kept
+        # and the classifier can therefore still reach the client
+        self.assertEqual(
+            ingest.classify(parsed["participants"], parsed["title"],
+                            CLIENT_MAP)[0], "recHorizons")
+
+    def test_export_shape_keeps_speaker_emails(self):
+        """The union is over names AND matched invitee emails — a domain is the
+        strongest signal there is, and it too was being discarded."""
+        payload = {
+            "recording_id": 4243, "title": "Impromptu Zoom Meeting",
+            "date": "2026-04-02T10:00:00Z",
+            "participants": ["Abhijeet Gandhi"],          # bare-string shape
+            "transcript": [
+                {"speaker": {"display_name": "Abel",
+                             "matched_calendar_invitee_email": "abel@hermon.io"},
+                 "text": "Portal update."}],
+        }
+        parsed = ingest.parse_fathom(payload)
+        self.assertIn("abel@hermon.io", parsed["participants"])
+        self.assertIn("Abhijeet Gandhi", parsed["participants"])
+        self.assertEqual(
+            ingest.classify(parsed["participants"], parsed["title"],
+                            CLIENT_MAP)[0], "recHermon")
+
     def test_asset_classifies_by_email_domain(self):
         client_map = [{"client_id": "endura", "name": "Endura Solutions",
                        "identifiers": ["endurasolutions.com.au", "endura"]}]

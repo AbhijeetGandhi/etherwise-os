@@ -1,6 +1,6 @@
 # Diskover Data — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 103 client facts (100 trusted) from 24 sources · 5 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-14 00:15 IST · 103 client facts (100 trusted) from 24 sources · 5 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

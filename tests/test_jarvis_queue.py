@@ -356,6 +356,108 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((r["state"], r["exclude_reason"]),
                          ("excluded", "internal:owner-only"))
 
+    def _mk(self, ref, title, state, reason=None):
+        with db.connect(self.dbp) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, content_type, density, title, occurred_dt, raw_path,"
+                " status) VALUES ('fathom',?,?,NULL,'unknown',0.5,?,'2026-07-01',"
+                "?,'ingested')", (ref, "h" + ref, title, ref))
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, author, subject,"
+                " state, exclude_reason, raw_ref) VALUES (?,'fathom',?,NULL,?,?,?,?)",
+                (f"evt:fathom:{ref}", ref, title, state, reason, ref))
+
+    def test_recheck_all_unfreezes_a_wrong_exclusion(self):
+        """The unfreeze (2026-08-14). An `excluded` verdict is only as good as the
+        evidence it was reached on, and 189 Fathom exclusions — 114 of them
+        `fathom-kind:internal-product` — were decided by a model handed a
+        participant list that the ingest bug had emptied of every speaker.
+
+        `--recheck` alone can never reach them: it looks at state='queued'.
+        With real speakers restored, a registry match must HEAL the source; a
+        stranger must go to the QUEUE for a human, never be auto-attributed."""
+        self._mk("fathom/X", "call x", "excluded", "fathom-kind:internal-product")
+        self._mk("fathom/Y", "call y", "excluded", "fathom:unattributable")
+        self._mk("fathom/Z", "call z", "excluded", "fathom-kind:internal-product")
+        self.parts.update({
+            "fathom/X": (["diskover team"], "u"),        # registry match -> heal
+            "fathom/Y": (["stranger@bigco.com"], "u"),   # external -> queue
+            "fathom/Z": (["Abhijeet Gandhi"], "u"),      # only us -> stays internal
+        })
+        # the daily recheck does NOT touch them
+        quiet = fathom_bridge.recheck_queued(
+            self.dbp, self.reg, read_participants=self._read,
+            dossier_dir=self.dossiers)
+        self.assertEqual(quiet["rechecked"], 0)
+
+        res = fathom_bridge.recheck_events(
+            self.dbp, self.reg, states=("queued", "excluded"),
+            read_participants=self._read, dossier_dir=self.dossiers,
+            now_iso="2026-08-14T00:00:00")
+        self.assertEqual(res["healed"], 1)
+        self.assertEqual(res["requeued"], 1)
+        self.assertEqual(res["excluded"], 1)
+        self.assertEqual(res["healed_from"],
+                         {"fathom-kind:internal-product": 1})
+        with db.connect(self.dbp) as conn:
+            rows = {r["raw_ref"]: (r["state"], r["client_id"], r["author"])
+                    for r in conn.execute(
+                        "SELECT raw_ref, state, client_id, author FROM events")}
+            src = {r["source_ref"]: r["client_id"] for r in conn.execute(
+                "SELECT source_ref, client_id FROM sources")}
+        self.assertEqual(rows["fathom/X"][:2], ("mapped", "diskover-data"))
+        self.assertEqual(src["fathom/X"], "diskover-data")     # source healed too
+        self.assertEqual(rows["fathom/Y"], ("queued", None, "stranger@bigco.com"))
+        self.assertIsNone(src["fathom/Y"])                     # NEVER auto-attributed
+        self.assertEqual(rows["fathom/Z"][0], "excluded")
+        self.assertIsNone(src["fathom/Z"])
+
+    def test_recheck_all_dry_run_writes_nothing(self):
+        self._mk("fathom/X", "call x", "excluded", "fathom-kind:internal-product")
+        self.parts["fathom/X"] = (["diskover team"], "u")
+        res = fathom_bridge.recheck_events(
+            self.dbp, self.reg, states=("queued", "excluded"),
+            read_participants=self._read, dossier_dir=self.dossiers, dry_run=True)
+        self.assertEqual(res["healed"], 1)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state FROM events WHERE"
+                             " id='evt:fathom:fathom/X'").fetchone()
+            s = conn.execute("SELECT client_id FROM sources WHERE"
+                             " source_ref='fathom/X'").fetchone()
+        self.assertEqual(r["state"], "excluded")
+        self.assertIsNone(s["client_id"])
+
+    def test_recheck_all_queue_cap_never_floods_the_queue(self):
+        """A mapping queue of 150 is a wall, not a queue (the IMAP rail hit 94 and
+        became unusable). Rows over the cap keep their state and are COUNTED."""
+        for i in range(3):
+            self._mk(f"fathom/S{i}", f"s{i}", "excluded", "fathom:unattributable")
+            self.parts[f"fathom/S{i}"] = ([f"s{i}@bigco.com"], "u")
+        res = fathom_bridge.recheck_events(
+            self.dbp, self.reg, states=("excluded",), queue_cap=2,
+            read_participants=self._read, dossier_dir=self.dossiers)
+        self.assertEqual(res["requeued"], 2)
+        self.assertEqual(res["queue_capped"], 1)
+        with db.connect(self.dbp) as conn:
+            n = conn.execute("SELECT COUNT(*) FROM events WHERE"
+                             " state='queued'").fetchone()[0]
+        self.assertEqual(n, 2)
+
+    def test_external_signal_falls_back_to_an_unknown_NAME(self):
+        """A stranger who only ever appears as a transcript speaker IS external
+        signal. Before 2026-08-14 this looked at addresses only, so such a call
+        produced None and was filed as internal — indistinguishable from a call
+        where the only other party really was one of us."""
+        self.assertEqual(fathom_bridge._external_signal(
+            ["Abhijeet Gandhi", "Michael Gandia"]), "Michael Gandia")
+        # an ADDRESS still wins over a name: it carries a domain to learn from
+        self.assertEqual(fathom_bridge._external_signal(
+            ["Michael Gandia", "mg@cmf.com"]), "mg@cmf.com")
+        # our own contractor by NAME is not a client signal
+        self.assertIsNone(fathom_bridge._external_signal(
+            ["Abhijeet Gandhi", "Alphons Jaimon"]))
+
     def test_sync_classifies(self):
         res = fathom_bridge.sync_unmapped(
             self.dbp, self.reg, read_participants=self._read,

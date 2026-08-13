@@ -1,6 +1,6 @@
 # Daniel Realty & Investments — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 32 client facts (32 trusted) from 5 sources._
+_Compiled 2026-08-14 00:15 IST · 32 client facts (32 trusted) from 5 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -13,8 +13,8 @@ _Compiled 2026-08-13 17:22 IST · 32 client facts (32 trusted) from 5 sources._
 
 - Contract: Automation and scripting for Make, Airtable and third party  clicksend connection — status ACTIVE. [CONFIRMED · CRM:contracts/43601563]
 - Contract: Automation and scripting for Make, Airtable and third party connections — status PAUSED. [CONFIRMED · CRM:contracts/42481834]
-- Revenue to date (GROSS, billed): $687.91 across 8 revenue transactions (2025-12-28 → 2026-03-29). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $593.42 — gross $687.91 less $93.80 Upwork service fees, $0.69 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $937.91 across 9 revenue transactions (2025-12-28 → 2026-05-12). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $818.17 — gross $937.91 less $118.80 Upwork service fees, $0.94 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## Architecture & systems
 

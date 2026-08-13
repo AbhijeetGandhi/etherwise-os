@@ -122,6 +122,49 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             self._load(bad)
 
+    def test_our_own_person_rejected_as_an_alias(self):
+        """One of US may never be a client identifier (2026-08-14).
+
+        Alphons Jaimon is an Etherwise contractor who speaks on 12 Fathom calls
+        across two different clients. The roster miner proposed him as an alias
+        for BOTH horizons-aba and cmf-publishing in one pass: he is on their
+        calls, so by name-frequency he looks like their person. Accepting either
+        would file every internal working session under that client and, because
+        an identifier is substring-matched, claim the other client's calls too.
+        A wrong attribution is permanent, so this is a load ERROR."""
+        bad = (SAMPLE + "  -\n    id: x\n    name: X\n"
+               "    aliases:\n      - Alphons Jaimon\n")
+        with self.assertRaises(registry.RegistryError) as e:
+            self._load(bad)
+        self.assertIn("Etherwise person", str(e.exception))
+
+    def test_our_own_person_rejected_as_a_client_name(self):
+        with self.assertRaises(registry.RegistryError):
+            self._load(SAMPLE + "  -\n    id: y\n    name: Yogita Soma\n")
+
+    def test_internal_person_check_is_exact_not_substring(self):
+        """'abhijeet' is in INTERNAL_PEOPLE as a bare token because Slack renders
+        him that way. If the check were a substring it would reject a client
+        genuinely named 'Abhijeet Sharma' — and, worse, silently swallow that
+        stranger's Slack messages as ours."""
+        from core import config
+        self.assertTrue(config.is_internal_person("Abhijeet Gandhi"))
+        self.assertTrue(config.is_internal_person("  ALPHONS   JAIMON "))
+        self.assertTrue(config.is_internal_person("alphons@etherwise.io"))
+        self.assertTrue(config.is_internal_person("abhijeetgandhi02@gmail.com"))
+        self.assertFalse(config.is_internal_person("Abhijeet Sharma"))
+        self.assertFalse(config.is_internal_person("Alphons Jaimonsson"))
+        self.assertFalse(config.is_internal_person("abel@hermon.io"))
+        self.assertFalse(config.is_internal_person(""))
+        reg = self._load(SAMPLE + "  -\n    id: z\n    name: Abhijeet Sharma\n")
+        self.assertEqual(reg.match_name("Abhijeet Sharma"), "z")
+
+    def test_slack_self_authors_is_the_same_roster(self):
+        """Not a copy. A teammate added to INTERNAL_PEOPLE and forgotten in the
+        Slack list would read as the CLIENT talking in that client's workspace."""
+        from core import config
+        self.assertIs(config.JARVIS_SLACK_SELF_AUTHORS, config.INTERNAL_PEOPLE)
+
     def test_no_match_entry_registered_but_not_matchable(self):
         text = (SAMPLE + "  -\n    id: phonicflow\n    name: PhonicFlow\n"
                 "    aliases:\n      - PhonicFlow\n    no_match: true\n")

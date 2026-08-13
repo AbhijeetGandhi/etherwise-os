@@ -1,6 +1,6 @@
 # Brendan Jansen — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 21 client facts (21 trusted) from 2 sources._
+_Compiled 2026-08-14 00:15 IST · 23 client facts (23 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -10,6 +10,8 @@ _Compiled 2026-08-13 17:22 IST · 21 client facts (21 trusted) from 2 sources._
 - An early version of the contact-scraping automation cost $1 per 20 contacts scraped (i.e. ~$25 per 100 jobs / 2,000 contacts). [CONFIRMED · fathom/98594850 @ 00:16:36]
 - Contract: AI Cold Outreach agent — status CLOSED. [CONFIRMED · CRM:contracts/41233897]
 - Contract: VAPI AI agent — status CLOSED. [CONFIRMED · CRM:contracts/40856821]
+- Revenue to date (GROSS, billed): $150.00 across 1 revenue transaction (2025-09-29 → 2025-09-29). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $120.00 — gross $150.00 less $30.00 Upwork service fees. [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - Sending 6,000 emails with personalized videos was estimated to cost approximately 2,000 euros at the evaluated Kling API pricing. [CONFIRMED · fathom/98594850 @ 00:05:22]
 - Switching from VideoGen API to the Kling direct API was estimated to take approximately 3–4 hours of rebuild work. [CONFIRMED · fathom/98594850 @ 00:02:52]
 - The client's target email volume by end of year is 6,000–7,000 emails. [CONFIRMED · fathom/98594850 @ 00:15:32]

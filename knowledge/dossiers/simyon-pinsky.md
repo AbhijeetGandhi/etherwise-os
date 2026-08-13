@@ -1,6 +1,6 @@
 # Simyon Pinsky — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 19 client facts (19 trusted) from 2 sources._
+_Compiled 2026-08-14 00:15 IST · 19 client facts (19 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

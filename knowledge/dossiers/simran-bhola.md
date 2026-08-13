@@ -1,6 +1,6 @@
 # Simran Bhola — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 20 client facts (20 trusted) from 2 sources._
+_Compiled 2026-08-14 00:15 IST · 20 client facts (20 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

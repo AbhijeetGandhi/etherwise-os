@@ -1,6 +1,6 @@
 # NETFLY — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 633 client facts (622 trusted) from 51 sources · 65 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-14 00:15 IST · 633 client facts (622 trusted) from 51 sources · 65 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -94,8 +94,8 @@ _Compiled 2026-08-13 17:22 IST · 633 client facts (622 trusted) from 51 sources
 - No logs exist for July 25 at the time of this call. [CONFIRMED · https://www.loom.com/share/520bc5f2758f419a9f4b46afc7943ebc @ 0:00 - 'no logs for 25']
 - On July 24, there were 20 rows in the logging system, representing 20 leads who replied to messages sent that day. [CONFIRMED · https://www.loom.com/share/520bc5f2758f419a9f4b46afc7943ebc @ 0:00-0:15 - 'there are only 20 rows for 24' and '20 leads replied to our message']
 - Processing ~5,000 historical contacts in Make.com would consume approximately 50,000 Make credits, estimated at ~$150 (15,000 credits ≈ $50). [CONFIRMED · fathom/163477950 @ 00:12:30 / 00:13:01 - 15,000 credits is like $50 worth of credits... roughly 50,000 credits]
-- Revenue to date (GROSS, billed): $3,557.25 across 7 revenue transactions (2026-05-03 → 2026-06-19) — Upwork $2,760.75, direct $796.50. [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $3,198.76 — gross $3,557.25 less $355.73 Upwork service fees, $2.76 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $4,792.50 across 11 revenue transactions (2026-05-03 → 2026-07-17). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $4,309.23 — gross $4,792.50 less $479.27 Upwork service fees, $4.00 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - Setting up improved logging with conversation reframing by send-date would require 2-3 hours of development. [CONFIRMED · https://www.loom.com/share/520bc5f2758f419a9f4b46afc7943ebc @ 5:15-5:20 - 'we'll need to spend, like, 2-3 hours to set up these new set of logs']
 - The agency currently has at least three active clients, with a fourth potential client also mentioned as having been recently contacted. [CONFIRMED · fathom/143045470 @ 00:24:00]
 - The client's contacts system uses a database structure where leads begin as contacts, may become opportunities, and can be marked as lost or deleted [CONFIRMED · https://www.loom.com/share/f509183ecba94252b71ccaa67a9459dd @ 'contact is like your database', 'when you mark any leads as lost, those contacts will automatically be deleted']

@@ -26,12 +26,24 @@ def main() -> int:
     ap.add_argument("--queue-cap", type=int, default=40)
     ap.add_argument("--recheck", action="store_true",
                     help="re-evaluate already-queued Fathom events (owner rules)")
+    ap.add_argument("--recheck-all", action="store_true",
+                    help="ALSO re-evaluate EXCLUDED events. Use after a change to "
+                         "the registry or to how participants are parsed: an "
+                         "exclusion is only as good as the evidence behind it, "
+                         "and 189 of them were decided on a participant list that "
+                         "was missing every transcript speaker (2026-08-14).")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="measure what --recheck/--recheck-all would do, write nothing")
     args = ap.parse_args()
 
     def task(ctx):
         dbp = ctx.db_path or config.DB_PATH
+        if args.recheck_all:
+            return fathom_bridge.recheck_events(
+                dbp, states=("queued", "excluded"), queue_cap=args.queue_cap,
+                dry_run=args.dry_run)
         if args.recheck:
-            return fathom_bridge.recheck_queued(dbp)
+            return fathom_bridge.recheck_queued(dbp, dry_run=args.dry_run)
         return fathom_bridge.sync_unmapped(
             dbp, limit=args.limit, queue_cap=args.queue_cap, run_id=ctx.run_id)
 

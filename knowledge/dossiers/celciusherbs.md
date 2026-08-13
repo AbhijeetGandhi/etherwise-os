@@ -1,6 +1,6 @@
 # celciusherbs — Dossier
 
-_Compiled 2026-08-13 17:22 IST · 18 client facts (17 trusted) from 2 sources._
+_Compiled 2026-08-14 00:15 IST · 18 client facts (17 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -14,8 +14,8 @@ _Compiled 2026-08-13 17:22 IST · 18 client facts (17 trusted) from 2 sources._
 
 - Client has approximately 100 products and approximately 1,000 SEO keywords they want to target. [CONFIRMED · fathom/143011671 @ We like 100 products, and then we have quite a bit of SEO, so we probably have like 1,000 keywords that we want to do SEO on]
 - Contract: Design code for website front end — status ACTIVE. [CONFIRMED · CRM:contracts/43562664]
-- Revenue to date (GROSS, billed): $424.67 across 2 revenue transactions (2026-05-27 → 2026-06-03). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $354.48 — gross $424.67 less $69.77 Upwork service fees, $0.42 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $1,584.92 across 6 revenue transactions (2026-05-20 → 2026-06-17). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $1,452.69 — gross $1,584.92 less $131.19 Upwork service fees, $1.04 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## Architecture & systems
 

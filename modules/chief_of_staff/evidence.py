@@ -34,11 +34,15 @@ upwork  `messages` keyed by thread_id. `direction` is USABLE but stored in
 slack   `events` where source='slack'. client_id is DETERMINISTIC (the client
         workspace IS the client, via registry slack.team_id) and `ts` is a real
         ISO instant. `direction` is set from Slack's own is_me cue or
-        `config.JARVIS_SLACK_SELF_AUTHORS`. CAVEAT, stated not hidden: that
-        list holds only Abhijeet's names, so a TEAMMATE's message in a client
-        workspace is tagged 'inbound'. That biases toward SHOWING a card, never
-        hiding one, which is the safe direction — but it is why a Slack inbound
-        alone is not treated as proof of anything except "activity".
+        `config.JARVIS_SLACK_SELF_AUTHORS`, which since 2026-08-14 is the whole
+        `config.INTERNAL_PEOPLE` roster, not just Abhijeet's two names. Until
+        then a TEAMMATE answering a client in that client's own workspace was
+        tagged 'inbound' — read as the CLIENT talking, which both re-showed a
+        card that was already handled and moved "when did they last speak"
+        forward on OUR message. The old miss biased toward SHOWING a card, never
+        hiding one, so the correction can now hide one; that is intended, and it
+        is why the roster is ONE list — a teammate missing from it re-creates the
+        bug silently. A Slack inbound is still only proof of "activity".
 email   `events` where source='email' and state='mapped'. client_id from the
         registry domain match. `direction` is NULL because the mail rails
         capture RECEIVED mail only (migration 022 says so explicitly), so a
