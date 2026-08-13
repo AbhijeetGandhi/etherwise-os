@@ -42,6 +42,36 @@ class StructuralTests(unittest.TestCase):
         for s in ("newsletter@chessbase.com", "x@hdfcfund.com", "x@axismf.com"):
             self.assertEqual(cls(s)["verdict"], SR.EXCLUDE, s)
 
+    def test_plus_tag_is_the_sender_saying_what_the_mail_is(self):
+        """`nick+news@leftclick.ai` — the sender chose the tag. It generalises to
+        every marketer using the convention, which no domain list does."""
+        for s in ("nick+news@leftclick.ai", "a+newsletter@brand-new-vendor.io",
+                  "x+promo@somewhere.com"):
+            v = cls(s)
+            self.assertEqual(v["verdict"], SR.EXCLUDE, s)
+            self.assertTrue(v["rule"].startswith("plus-tag:"), v)
+
+    def test_an_ordinary_plus_address_is_untouched(self):
+        # a client writing from first+last@ must not be swept up
+        self.assertEqual(cls("jane+acme@some-unknown-agency.com")["verdict"],
+                         SR.ASK)
+
+    def test_the_held_backlog_senders_are_all_decided(self):
+        """Every distinct sender that was sitting in `held` on 2026-08-14 — 58
+        rows the Review badge was asking a human to look at, not one of them a
+        client. If a rule change ever un-decides one of these, this fails."""
+        for s in ("information@mailers.hdfcbank.bank.in", "support@mail.vapi.ai",
+                  "team@mail.clickup.com", "store+92972187970@t.shopifyemail.com",
+                  "guest@choose.etihadguest.com", "green_bss@bigshareonline.com",
+                  "gogreen@cdslindia.co.in", "announcements@stablemoney.in",
+                  "info@getdigit.in", "mailers@bseindia.in", "grant@tella.tv",
+                  "mail@depositphotos.com", "nick+news@leftclick.ai",
+                  "ian@mail.chatarv.ai", "upwork@t.upwork.com",
+                  "shop@fashioncollections.tatacliq.com",
+                  "Coursera@m.learn.coursera.org", "info@members.netflix.com",
+                  "announce@m.parallels.com", "events@send.zapier.com"):
+            self.assertEqual(cls(s)["verdict"], SR.EXCLUDE, s)
+
     def test_a_real_business_domain_is_still_a_question(self):
         v = cls("jane@some-unknown-agency.com")
         self.assertEqual(v["verdict"], SR.ASK)

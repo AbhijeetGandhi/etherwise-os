@@ -155,6 +155,16 @@ def classify(sender: str, *, reg=None, rules: Optional[dict] = None,
     if local and local in set(rules.get("noreply_locals") or []):
         return {"verdict": EXCLUDE, "reason": f"noise:sender:{local}",
                 "rule": "noreply-local"}
+    # plus-addressed tag: `nick+news@leftclick.ai`. The SENDER chose the tag to
+    # say what the mail is, which makes it a stronger and far more general
+    # signal than any domain list — it catches every marketer who uses the
+    # convention, including ones nobody has seen yet. A client writing from
+    # `first+last@` is unaffected: only the listed tags fire.
+    if "+" in local:
+        tag = local.split("+", 1)[1].strip()
+        if tag and tag in set(rules.get("plus_tags") or []):
+            return {"verdict": EXCLUDE, "reason": f"noise:sender:{tag}",
+                    "rule": f"plus-tag:{tag}"}
 
     # 4. named categories (exact domain, or a parent domain we know)
     for cat, spec in (rules.get("categories") or {}).items():

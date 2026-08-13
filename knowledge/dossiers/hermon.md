@@ -1,6 +1,6 @@
 # Hermon — Dossier
 
-_Compiled 2026-08-14 00:15 IST · 1576 client facts (1537 trusted) from 167 sources · 109 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sources · 109 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

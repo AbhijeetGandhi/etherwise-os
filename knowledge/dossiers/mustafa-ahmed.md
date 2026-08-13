@@ -1,18 +1,21 @@
 # Mustafa Ahmed — Dossier
 
-_Compiled 2026-08-14 00:15 IST · 77 client facts (76 trusted) from 6 sources._
+_Compiled 2026-08-14 01:12 IST · 109 client facts (108 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## Overview
 
+- Abhijeet Gandhi recently started working with Dr. Ahmed to consolidate scattered marketing and lead data, with the goal of showing how much is being spent on ads, how many leads are coming from each platform, and optimizing ad spend accordingly. [CONFIRMED · fathom/165897411 @ my goal was just to put that all together in a way that he can see how much money we are spending on ad, how much leads we are getting from which platform]
 - Client (Mustafa Ahmed) runs a medical/aesthetic practice and wants to automate tracking of leads, consultations, bookings, revenue, and expenses, as well as implement AI tools including ManyChat for DMs and a before-and-after photo enhancement tool. [CONFIRMED · fathom/158862212 @ 00:00:59]
 - The agency is working on a data infrastructure and dashboard project for a medical/bariatric practice client (Mustafa Ahmed), pulling leads, procedures, and revenue data into Airtable and building a reporting dashboard on top of it. [CONFIRMED · fathom/169787214 @ 00:00:48]
+- The project scope is a two-to-three week engagement to build a business intelligence and lead management system for the client, giving them visibility into where they are spending money and what revenue is flowing in. [CONFIRMED · fathom/151680240 @ 00:01:36 – 'here's what we are targeting two to three weeks … you need to know where things are at, where you are spending money and how much flow is coming in']
 
 ## The numbers
 
 - Agency runs more than 300 automations within their own Make.com organization, demonstrating platform scale capability. [CONFIRMED · fathom/159260924 @ 00:04:54 – 'we have organization where we are running like more than 300 automations. Like we have built 300 automations. There is no issue with it.']
 - Contract: AI automation architect(Airtable + make.com + Gohigh level + Evoto — status ACTIVE. [CONFIRMED · CRM:contracts/43986743]
+- Dr. Ahmed is running exactly three Google Ads campaigns: Tummy Tuck, Liposuction, and Breast Implants. No Meta ads are running. [CONFIRMED · fathom/165897411 @ we have three Google ad campaigns, tummy tuck, liposuction, and breast implants… No meta ads]
 - In July, approximately $68k was collected with an additional $106k in payments still in process, totalling roughly $174k in procedures billed for that month. [CONFIRMED · fathom/169787214 @ 00:07:18]
 - In May 2026 (as shown on the dashboard), total procedure value recorded was approximately $178k, with payments collected over subsequent months. [CONFIRMED · fathom/169787214 @ 00:05:39]
 - Over the last 90 days, total cash collected shows approximately $390,000 (client's words: '390 that we collected in the last three months'). [CONFIRMED · fathom/169787214 @ 00:04:57]
@@ -20,9 +23,12 @@ _Compiled 2026-08-14 00:15 IST · 77 client facts (76 trusted) from 6 sources._
 - Project is structured as three milestone phases at $1,500 each, totalling $4,500. [CONFIRMED · fathom/158862212 @ 00:13:22 — 'three milestone of $1,500 each, which was like three weekly payments of $1,500 and three phases']
 - Revenue to date (GROSS, billed): $1,500.00 across 1 revenue transaction (2026-07-30 → 2026-07-30). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
 - Revenue to date (NET, received after Upwork fees and tax): $1,348.50 — gross $1,500.00 less $150.00 Upwork service fees, $1.50 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- The client has eight people on their team. [CONFIRMED · fathom/151680240 @ 00:07:14 – 'I have eight people that work for me']
+- The client is currently spending approximately $4,000 per month on Meta Ads plus additional ad management fees, generating roughly one surgery per month from that spend, resulting in only breaking even. [CONFIRMED · fathom/151680240 @ 00:03:42 – 'I spend, say, $4,000 plus the ad management … I typically get one surge. That one surgery just pays the expense']
 
 ## People
 
+- Abhijeet Gandhi is the data/automation consultant working with Dr. Ahmed. William Shaw is from the agency that manages Dr. Ahmed's Google Ads and website. [CONFIRMED · fathom/165897411 @ 00:00:14 / 00:06:06]
 - Client contact is Mustafa Ahmed; agency contact (contractor) is Abhijeet Gandhi. [CONFIRMED · fathom/158862212 @ 00:00:03]
 - Client contact is Mustafa Ahmed; agency contact on the call is Abhijeet Gandhi, who also has a teammate being granted access. [CONFIRMED · fathom/170225462 @ 00:00:08]
 - MarketMade is the client's external website and marketing company; they manage the website and Google Ads and were historically responsible for sending leads into Prosper. [CONFIRMED · fathom/163315168 @ 00:05:40 – 00:05:55]
@@ -35,15 +41,23 @@ _Compiled 2026-08-14 00:15 IST · 77 client facts (76 trusted) from 6 sources._
 - Agency's approach favors no-code/low-code platforms like Make.com over building custom platforms, citing time savings and existing integration capabilities. [CONFIRMED · fathom/159260924 @ 00:05:04 – 'When he says like a custom platform, that's going to be a totally different build... while make.com already does that, for example. So, you know, we say a lot of time there.']
 - Before Recura, all leads came from a website/marketing company (MarketMade) which sent them directly to Prosper. [CONFIRMED · fathom/163315168 @ 00:05:18 – 00:05:40]
 - Goal is to make Airtable the single source of truth for all leads, including attribution data (which ad source drove each lead to the website/form). [CONFIRMED · fathom/163315168 @ we want to get like the airtight people to become a one source of truth... we still need to know from which source they came to website]
+- Lead data from Prosper is being aggregated into an Airtable by Abhijeet Gandhi for reporting and attribution purposes. [CONFIRMED · fathom/165897411 @ every lead that gets into the Prosper, I'm adding it into the A table because this is where we are aggregating data]
 - Lead sources into Prosper include: (1) website form submissions, (2) Google Ads (via Recura and/or MarketMade), and (3) Unbounce landing pages (likely Facebook ads, expected to go away next month). Recura only receives Google Ads leads, not Unbounce leads. [CONFIRMED · fathom/163315168 @ 00:09:18 – 00:09:53]
+- Leads are pushed into Prosper via a webhook/API endpoint (lead created event); there is no native integration configuration visible inside Prosper — the website backend calls the lead created API directly. [CONFIRMED · fathom/165897411 @ the way it is set up is that there is this endpoint where it says send data to us… calling the lead created API]
 - Recura does not currently offer API access; it was recently acquired by another company whose integration priorities have changed, blocking a Recura-Prosper sync. [CONFIRMED · fathom/163315168 @ we cannot set up that they are not able to set up the API access... They got acquired by some other company, and now they mentioned that their priority is to set up things for them]
+- The Ad Spend table will show monthly spend per channel, ROI per channel, and leads generated per channel, enabling decisions on which channels to continue, double down on, or shut off. [CONFIRMED · fathom/151680240 @ 00:03:18 – 'ad spend table … how much we are spending per month on ads, and what is the ROI for every ad spend']
 - The Airtable Prosper leads table captures: first name, source channel, lead status, created date, last name, email, phone number, opted-in services, and notes. [CONFIRMED · fathom/163315168 @ 00:01:02]
+- The Leads table will capture every lead from every channel (Google Ads, Meta Ads, referrals, etc.) with fields for current stage, pipeline status, and invoice payment status. [CONFIRMED · fathom/151680240 @ 00:02:54 – 'every lead that come in from every different channel … what is their current stage, have they paid their invoice']
 - The Procedures table records completed procedures from Prosper, categorized by type (terminal, surgical, free), linked to the corresponding lead and revenue record. [CONFIRMED · fathom/169787214 @ 00:03:09]
 - The Prosper Leads table captures all inbound leads including source channel (e.g. Google Ads, website contact form, website service form) and procedure interest. [CONFIRMED · fathom/169787214 @ 00:01:04]
 - The Revenue table tracks payments linked to leads, showing procedure, revenue amount, total amount, amount due, and payment status (e.g. outstanding, partial payment). [CONFIRMED · fathom/169787214 @ 00:02:36]
+- The agency decided that GoHighLevel is not needed because Prosper already covers the required CRM/reputation management features; the decision is to maximize use of Prosper instead. [CONFIRMED · fathom/151680240 @ 00:02:16 – 'we don't need GoHighLevel. We just need to make sure that we are using Prosper to its fullest because it has things like reputation management']
 - The agency is setting up ManyChat automation for the client to handle Instagram comments and direct messages, with AI to answer queries and capture lead contact information (name, email, phone). [CONFIRMED · fathom/169787214 @ 00:10:37]
 - The client's Instagram account has two-factor authentication enabled via an authenticator app (not email or SMS), requiring a backup code or authenticator OTP for the agency to log in. [CONFIRMED · fathom/169787214 @ 00:14:19]
+- The core data model will be built in Airtable with four tables: Leads, Ad Spend, Procedures, and Revenue. [CONFIRMED · fathom/151680240 @ 00:02:46 – 'the Airtable model is mainly going to be like four different tables … leads … ad spend table … procedures … revenue']
+- Three lead sources are currently identified in Prosper via the 'How did you find us?' form field: (1) Google Ads, (2) Main Site Contact (organic/website contact form), and (3) LVBS General Services (source unknown to both parties). [CONFIRMED · fathom/165897411 @ these are the three unique values that we are receiving, like main site contact, Google ads… LVBS General Services]
 - Three new Airtable tables were created for the client: Prosper Leads, Revenue, and Procedures. [CONFIRMED · fathom/169787214 @ 00:00:59]
+- UTM parameters on leads arriving in Prosper are coming in empty, preventing campaign-level attribution. Abhijeet requested that campaign ID, ad ID, and Google Click ID be passed through with each lead. [CONFIRMED · fathom/165897411 @ UTM parameters are like still empty here… the two things that come right off my head is going to be the campaign ID and the ad ID… Google Click ID as well]
 - When a new lead submits a website form, Recura immediately calls or texts the patient automatically; Prosper also sends an automated text within ~2 minutes of lead creation — both use different phone numbers, so a patient may receive messages from two different numbers. [CONFIRMED · fathom/163315168 @ 00:11:30 – 00:12:07]
 
 ## Stack & tools
@@ -65,18 +79,30 @@ _Compiled 2026-08-14 00:15 IST · 77 client facts (76 trusted) from 6 sources._
 - Client's CRM is Prosper. Agency needs to be granted access via a shared agency email. [CONFIRMED · fathom/159260924 @ 00:03:38 – 'That's my CRM. I need to email him.']
 - Client's marketing channels are Google Ads and Instagram boosting (promotional posts with special pricing); Facebook ads are being discontinued next month. [CONFIRMED · fathom/163315168 @ 00:14:06 – 00:14:23]
 - Core tool stack planned for this client: Make.com (automation), Airtable (database and dashboards), ManyChat (DM automation), and QuickBooks (financial integration). [CONFIRMED · fathom/158862212 @ 00:02:39 / 00:13:46]
+- Dr. Ahmed's leads flow into two CRM/practice management systems simultaneously: Prosper and Recura. Every lead receives duplicate SMS outreach — one from Prosper and one from Recura. [CONFIRMED · fathom/165897411 @ every lead that we have is coming into Recura as well as Prosper… every lead is getting like two SMS at the same time]
+- Google Ads, Meta Ads, and TikTok Ads all have APIs and will be integrated directly into the Airtable Ad Spend table. [CONFIRMED · fathom/151680240 @ 00:09:13 – 'Google Ads, MetaAds, TikTok Ads, everything has APIs … integrated with AirTables, AdSendTable']
 - ManyChat integration is in progress for this client. [CONFIRMED · fathom/170225462 @ 00:01:33 – 'we are already making a progress on the ManyChat integration']
+- ManyChat will be used to handle DMs from Instagram, TikTok, and Facebook, and will be integrated with make.com and Airtable. [CONFIRMED · fathom/151680240 @ 00:08:19 – 'ManyChat is gonna be something that we set up for … all the Instagram and the TikTok … Facebook … DMs that come in']
 - Primary data source for the client's revenue and leads pipeline is Prosper (practice management platform). QuickBooks was evaluated but dropped due to poor data quality. [CONFIRMED · fathom/169787214 @ 00:09:00]
 - Prosper and Airtable are now connected; all leads coming into Prosper are also synced to Airtable. [CONFIRMED · fathom/163315168 @ the good news is the Prosper and the Airtable is now connected. All the leads that come to the Prosper are now coming to the Airtable as well.]
+- Prosper has a public API and its API documentation has already been reviewed; it will be connected to Airtable via make.com with no manual intervention required. [CONFIRMED · fathom/151680240 @ 00:08:00 – 'Prosper has a really good API, I already checked their API documentation, so we can integrate both Prosper and Airtable through make.com']
 - Prosper has a well-documented API that allows pulling images programmatically; Evoto does not appear to have a public API, but the agency will contact Evoto support to confirm. [CONFIRMED · fathom/163315168 @ the problem is not the Prosper, like we can obviously pull the images from the Prosper because Prosper has a really good API access. But the problem is with Evoto, I don't see if they have like an API documentation yet]
+- Prosper is the client's EMR/practice management platform and also includes reputation management (post-procedure review requests) and patient SMS communication features, though not all features are currently activated. [CONFIRMED · fathom/151680240 @ 00:02:05 – 'Prosper … is probably not just an EMR … reputation management, where you can ask for the reviews after you have done a procedure']
 - QuickBooks has not been actively maintained for the last six months and reconciliation is being done from January; it was removed as a data source from the dashboard because of inaccurate data. [CONFIRMED · fathom/169787214 @ 00:08:19]
+- Recura (a lead platform used by the client) has no API, making integration challenging; two options are being evaluated: (1) daily manual export/upload by a team member, or (2) a browser agent that automatically exports and uploads data. [CONFIRMED · fathom/151680240 @ 00:06:13 – 'the Recura platform … doesn't have any API … either it's going to be some sort of a manual export upload or maybe build a browser agent']
 - The AI for the ManyChat/Instagram setup will be given a knowledge base built from the client's website content and a price range document the client agreed to provide. [CONFIRMED · fathom/169787214 @ 00:11:50]
+- The agency uses GoHighLevel in-house and for its clients generally. [CONFIRMED · fathom/165897411 @ that's the one that we use in-house and for our clients]
+- The integration stack includes Prosper (EMR/practice management), Airtable, make.com, and ManyChat. [CONFIRMED · fathom/151680240 @ 00:08:49 – 'ManyChat has integration with make.com, so it can be connected with Airtable and everything else']
+- William Shaw's agency set up a GoHighLevel CRM for Dr. Ahmed, configured with three campaign views (Breast Implants, Tummy Tuck, Liposuction) so leads can be browsed per campaign. [CONFIRMED · fathom/165897411 @ we gave him a CRM from GoHighLevel… his CRM is set up in a way where it breaks up is three campaigns per campaign]
 - The agency referenced a prior AI Q&A setup done for 'Reqira' (or 'Quora') as a reference point for structuring the ManyChat AI conversation flow for the client. [_INFERRED_ · fathom/169787214 @ 00:11:03]
 
 ## Timeline
 
 - Historical data backfilled into Airtable covers the past 90 days from the point of build. [CONFIRMED · fathom/169787214 @ 00:03:03]
 - Initial phase (first 1–2 weeks) focuses on data integration and dashboard setup without AI; AI features (e.g. automated follow-ups, ManyChat) are introduced in subsequent phases. [CONFIRMED · fathom/158862212 @ 00:02:59 / 00:04:06]
+- Week 1: Set up all tool accesses (ManyChat, make.com, Prosper, Airtable), get the Prosper-Airtable connection live, and determine the Recura sync method (manual vs. automated). [CONFIRMED · fathom/151680240 @ 00:12:53 – 'week one is going to be … all the access set up … the Prosper connection is live with the Airtable … the Recura sync method … we have a clear decision on that']
+- Week 2: Integrate all ad spend accounts (Meta, Google, TikTok) and sync Prosper leads and revenue data into Airtable. [CONFIRMED · fathom/151680240 @ 00:13:30 – 'week two is doing all the ad spend integration … all the ad accounts … the Prosper's lead and the revenue sync everything's gonna come into the Airtable']
+- Week 3: Build the Airtable dashboard giving the client a real-time and historical view of business performance (current month vs. last month). [CONFIRMED · fathom/151680240 @ 00:13:50 – 'week three is … all the dashboard … once we have all the data … the dashboard that you can look at and immediately get a view of how we are doing this month last month']
 
 ## Commitments
 
@@ -99,17 +125,25 @@ _Compiled 2026-08-14 00:15 IST · 77 client facts (76 trusted) from 6 sources._
 - Mustafa (client) committed to emailing June and July invoices to the agency team today. [CONFIRMED · fathom/170225462 @ 00:01:13 – 'I'm going to email you the invoices for people for June and July']
 - Mustafa (client) committed to introducing Abhijeet (agency) to the marketing person (MarketMade contact) via email introduction so Abhijeet can discuss lead source attribution. [CONFIRMED · fathom/163315168 @ I will send him and you email at the same time so I can introduce you to him.]
 - Mustafa (client) committed to sending the pricing list (price ranges) to the agency today. [CONFIRMED · fathom/170225462 @ 00:01:44 – 'I will have it sent out to you today too']
+- William Shaw committed to forwarding UTM/campaign ID parameter requirements to the Google Ads Manager and to adding Abhijeet Gandhi to Dr. Ahmed's GoHighLevel account. [CONFIRMED · fathom/165897411 @ I can also give it to him and then I'll let you know what he says… I just asked for you to be added to his account]
 
 ## Other
 
 - A separate operations/office-organisation consultant had advised the client to fix business processes before implementing AI, estimating a 1–2 year remediation timeline; client decided to proceed with AI implementation in parallel. [CONFIRMED · fathom/158862212 @ 00:00:22 / 00:00:42]
 - If needed data is not found in Prosper, agency will contact Prosper's support team to resolve data questions. [CONFIRMED · fathom/170225462 @ 00:02:25 – 'If we don't find the data we need, I'll message the support team']
+- The agency is sourcing this client through Upwork; a formal contract has not yet been started as of this call, preventing the agency from sharing contact details via the platform. [CONFIRMED · fathom/151680240 @ 00:12:29 – 'I can't write down my email in the Upwork right now because we don't have a contract started']
+- The client already has an existing Airtable instance with procedure data entered and intends to give the agency access to it rather than starting from scratch. [CONFIRMED · fathom/151680240 @ 00:14:02 – 'Would you be able to go into my Airtable AI … I put in all the things in there, like what kind of procedures I do']
+- The client is considering discontinuing Meta Ads because the ROI is break-even at best when time and effort are factored in. [CONFIRMED · fathom/151680240 @ 00:03:59 – 'I think I'm going to get rid of meta ads because they're worthless. I'm spending all that money, and then I'm hoping to get that money back']
+- The client manually solicits Google reviews by verbally screening patients post-surgery and handing satisfied patients a QR code in the room; they deliberately did not enable Prosper's automated review request feature to avoid negative reviews being sent automatically. [CONFIRMED · fathom/151680240 @ 00:10:04 – 'I go into the room … are you happy with your surgery … I give them a QR code … fill it out for me. So I do it manually myself']
+- Unbounce was mentioned by a teammate as a tool potentially used for Dr. Ahmed's campaigns, but neither Abhijeet Gandhi nor William Shaw could confirm it is actually in use. [CONFIRMED · fathom/165897411 @ they know they were trying to use it like Unbounce, I don't know even if we are using that tool or not… That doesn't ring a bell for me]
 
 ## Sources
 
 - `crm/mustafa-ahmed` · — · crm · CRM numbers — Mustafa Ahmed
+- `fathom/151680240` · 2026-06-02 · fathom · Impromptu Zoom Meeting
 - `fathom/158862212` · 2026-06-28 · fathom · Impromptu Zoom Meeting
 - `fathom/159260924` · 2026-06-29 · fathom · Impromptu Zoom Meeting
 - `fathom/163315168` · 2026-07-13 · fathom · Impromptu Zoom Meeting
+- `fathom/165897411` · 2026-07-21 · fathom · Abhijeet <> Williams
 - `fathom/169787214` · 2026-08-03 · fathom · Impromptu Zoom Meeting
 - `fathom/170225462` · 2026-08-04 · fathom · Impromptu Zoom Meeting

@@ -3,11 +3,26 @@
 
     PYTHONPATH=. python3 bin/jarvis-triage-queue --dry-run
     PYTHONPATH=. python3 bin/jarvis-triage-queue --apply
+    PYTHONPATH=. python3 bin/jarvis-triage-queue --states queued,held --apply
 
 Every auto-exclusion records the RULE that produced it, so a wrong call can be
 found and reversed by rule rather than one row at a time. Whatever is left is the
 short list genuinely worth Abhijeet's attention — and once he answers one, it
 goes into learned-mappings.json and never appears again.
+
+HELD IS IN SCOPE, from 2026-08-14. This ran over `queued` only, and `held` --
+"collected, no confident proposal yet" -- accumulated 58 rows that the Review
+screen counts in its badge and asks a human to look at. All 58 were bank alerts,
+IPO advices, SaaS marketing and airline promos; not one was a client. A state
+whose entire population is noise is not a state a human should be shown, and the
+rules that decide `queued` decide `held` identically -- they read the SENDER,
+which does not care what state the row is parked in.
+
+A row that already carries `proposed_client_id` is NEVER auto-excluded here, in
+any state. A proposal is a decision awaiting confirmation; these rules exist for
+rows about which nothing has been concluded. Without that line the RECO x
+Etherwise meeting invite (proposed reco-health, arriving via read.ai's bulk
+subdomain) would have been swept away as vendor mail.
 """
 from __future__ import annotations
 
@@ -26,15 +41,22 @@ from modules.jarvis import sender_rules as SR              # noqa: E402
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--states", default="queued,held",
+                    help="event states to triage (default queued,held)")
     args = ap.parse_args()
+
+    states = tuple(s.strip() for s in args.states.split(",") if s.strip())
+    assert all(s in ("queued", "held") for s in states), args.states
 
     reg = registry.load()
     rules, learned = SR.load_rules(), SR.load_learned()
 
     with db.connect(config.DB_PATH) as conn:
+        qs = ",".join("?" * len(states))
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, source, author, subject, proposed_client_id,"
-            "       substr(text,1,400) AS head FROM events WHERE state='queued'")]
+            "SELECT id, source, state, author, subject, proposed_client_id,"
+            f"       substr(text,1,400) AS head FROM events WHERE state IN ({qs})",
+            states)]
 
         excl, ask, mapped = [], [], []
         by_rule = Counter()
@@ -52,14 +74,19 @@ def main() -> int:
             v = SR.classify(r["author"], reg=reg, rules=rules, learned=learned,
                             display_name=name)
             by_rule[v["rule"]] += 1
-            if v["verdict"] == SR.EXCLUDE:
+            if r["proposed_client_id"] and v["verdict"] != r["proposed_client_id"]:
+                # a decision already exists — see the module docstring
+                ask.append((r, {"verdict": SR.ASK, "rule": "has-proposal",
+                                "reason": f"already proposed "
+                                          f"{r['proposed_client_id']}"}))
+            elif v["verdict"] == SR.EXCLUDE:
                 excl.append((r, v))
             elif v["verdict"] == SR.ASK:
                 ask.append((r, v))
             else:
                 mapped.append((r, v))
 
-        print(f"queued events: {len(rows)}")
+        print(f"events in {list(states)}: {len(rows)}")
         print(f"  auto-exclude : {len(excl)}")
         print(f"  auto-map     : {len(mapped)}")
         print(f"  still ASK    : {len(ask)}")
@@ -77,7 +104,8 @@ def main() -> int:
             for r, v in mapped:
                 print(f"   {SR.domain_of(r['author']):32} -> {v['verdict']}")
 
-        real_asks = [(r, v) for r, v in ask if v["rule"] != "no-sender"]
+        real_asks = [(r, v) for r, v in ask
+                     if v["rule"] not in ("no-sender", "has-proposal")]
         print(f"\n=== NEEDS ABHIJEET ({len(real_asks)}) ===")
         grouped = defaultdict(list)
         for r, v in real_asks:
@@ -86,10 +114,14 @@ def main() -> int:
             r, v = items[0]
             print(f"   {dom:32} x{len(items):<3} {v['reason']}")
             print(f"      e.g. {(r['subject'] or '')[:70]}")
-        skipped = len(ask) - len(real_asks)
-        if skipped:
-            print(f"\n   ({skipped} queued rows have no sender — loom/fathom,"
-                  f" owned by the content classifier, untouched here)")
+        nosender = sum(1 for _r, v in ask if v["rule"] == "no-sender")
+        proposed = sum(1 for _r, v in ask if v["rule"] == "has-proposal")
+        if nosender:
+            print(f"\n   ({nosender} rows have no sender — loom/fathom, owned by"
+                  f" the content classifier, untouched here)")
+        if proposed:
+            print(f"   ({proposed} rows already carry a proposal — a decision to"
+                  f" confirm, never auto-excluded here)")
 
         if not args.apply:
             print("\nDRY RUN — nothing written. Re-run with --apply.")

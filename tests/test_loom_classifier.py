@@ -420,6 +420,233 @@ class ReclassifyQueuedTests(unittest.TestCase, PinHealOnHigh):
         self.assertEqual(self._event("q3")["client_id"], "hermon")
 
 
+class ReclassifyQueuedFathomTests(unittest.TestCase, PinHealOnHigh):
+    """The SAME path, pointed at the Fathom corpus (2026-08-14).
+
+    62 Fathom calls were queued by the unfreeze with `proposed_client_id` NULL —
+    they asked Abhijeet to read a transcript rather than confirm a decision. This
+    path already knew how to turn a queued row into a decision; it was hardcoded
+    to source='loom'. These tests pin the generalisation and the two free passes
+    that now run before any model call."""
+
+    # a client whose GIVEN name alone is not a `_needles` needle — so the
+    # deterministic transcript match cannot fire and the speaker guard is what
+    # is actually under test (this is also the live shape: 'Dhanya').
+    REG = REG_YAML + """\
+  -
+    id: dhanya-sangolli
+    name: Dhanya Sangolli
+    billing:
+      canonical: Dhanya Sangolli
+"""
+
+    def setUp(self):
+        self.setUpPin(True)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.dbp = self.root / "t.db"
+        db.migrate(self.dbp)
+        rp = self.root / "clients.yaml"
+        rp.write_text(self.REG)
+        self.reg = registry.load(rp, force=True)
+        self.dossiers = self.root / "dossiers"
+        self.raws = self.root / "raw"
+        self.raws.mkdir()
+
+    def tearDown(self):
+        self.tearDownPin()
+        self.tmp.cleanup()
+
+    def _queued_fathom(self, rid, title, segments):
+        raw = self.raws / f"{rid}.json"
+        raw.write_text(json.dumps({"recording_id": rid, "title": title,
+                                   "participants": [{"name": "Abhijeet Gandhi"}],
+                                   "transcript": segments}))
+        ref = f"fathom/{rid}"
+        with db.connect(self.dbp) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, content_type, title, occurred_dt, raw_path, status)"
+                " VALUES ('fathom',?,?,NULL,'unknown',?,'2026-06-01T00:00:00Z',?,"
+                " 'extracted')", (ref, f"h{rid}", title, str(raw)))
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, subject, state,"
+                " raw_ref) VALUES (?, 'fathom', ?, ?, 'queued', ?)",
+                (events.canonical_id("fathom", rid), rid, title, ref))
+        return rid
+
+    def _run(self, responder, **kw):
+        ctx = FakeCtx(self.dbp, responder)
+        kw.setdefault("fingerprints", [])
+        kw.setdefault("dossier_dir", self.dossiers)
+        kw.setdefault("source_type", "fathom")
+        return loom_classifier.reclassify_queued(ctx, reg=self.reg, **kw), ctx
+
+    def _event(self, rid):
+        with db.connect(self.dbp) as conn:
+            return dict(conn.execute(
+                "SELECT state, client_id, exclude_reason, proposed_client_id,"
+                " proposal_evidence FROM events WHERE id=?",
+                (events.canonical_id("fathom", rid),)).fetchone())
+
+    def test_hindi_call_is_closed_as_internal_without_a_model_call(self):
+        """Abhijeet's own rule, given by hand: 'all the calls which included
+        hindi language you need to mark them as internal'. It outranks the
+        model — he gave it as a fact about his calls, not as a hint."""
+        self._queued_fathom("f1", "Impromptu Zoom Meeting", [
+            {"speaker": "Jay Pokharna", "text": "हां भाई ठीक है चलो देखते हैं"},
+            {"speaker": "Abhijeet Gandhi", "text": "ठीक है"}])
+        m, ctx = self._run(_kind("client-work", pid="adelye", conf=0.99))
+        self.assertEqual(m["rule_excluded"], 1)
+        self.assertEqual(len(ctx.claude_calls), 0)          # $0
+        self.assertEqual(self._event("f1")["exclude_reason"],
+                         "fathom-kind:internal-language")
+
+    def test_yogita_wins_even_over_a_confident_model(self):
+        """'if yogita was part of the call then it was 99% of the time for
+        hermon' — and she is detected as a SPEAKER, not a mention."""
+        self._queued_fathom("f2", "Impromptu Zoom Meeting", [
+            {"speaker": "Yogita Soma", "text": "the coach salary run"},
+            {"speaker": "Abhijeet Gandhi", "text": "ok"}])
+        m, ctx = self._run(_kind("client-work", pid="adelye", conf=0.99))
+        self.assertEqual(m["rule_healed"], 1)
+        self.assertEqual(len(ctx.claude_calls), 0)
+        self.assertEqual(self._event("f2")["client_id"], "hermon")
+
+    def test_the_model_sees_the_speakers_as_evidence_not_as_prose(self):
+        seen = {}
+
+        def responder(title, transcript):
+            return {"kind": "internal-product", "proposed_client_id": None,
+                    "confidence": 0.9, "evidence": "internal"}
+
+        self._queued_fathom("f3", "Impromptu Zoom Meeting", [
+            {"speaker": {"display_name": "Ingrid Bauer",
+                         "matched_calendar_invitee_email": "i@example.de"},
+             "text": "the dashboard"},
+            {"speaker": "iPhone", "text": "hello"}])
+        _m, ctx = self._run(responder)
+        payload = json.loads(ctx.claude_calls[0]["user_content"])
+        sig = payload["loom"]["signals"]
+        self.assertEqual(sig["external_speakers"], ["Ingrid Bauer"])
+        self.assertEqual(sig["invitee_email_domains"], ["example.de"])
+        self.assertEqual(sig["non_person_labels"], ["iPhone"])
+
+    def test_a_client_speaking_overrides_an_internal_verdict(self):
+        """'internal-product' means our own tool, no client subject. A named
+        client audibly in the room falsifies that — five hermon calls were
+        sitting on exactly this verdict with Jaap Meijvogel talking on them."""
+        self._queued_fathom("f4", "Impromptu Zoom Meeting", [
+            {"speaker": "Dhanya", "text": "the voice agent"},
+            {"speaker": "Abhijeet Gandhi", "text": "ok"}])
+        m, _ = self._run(_kind("internal-product"))
+        self.assertEqual(m["speaker_guard"], 1)
+        ev = self._event("f4")
+        self.assertEqual((ev["state"], ev["proposed_client_id"]),
+                         ("queued", "dhanya-sangolli"))
+
+    def test_a_conflicting_speaker_demotes_an_auto_map(self):
+        """A wrong client_id is permanent, so a contradiction is never broken by
+        confidence — it becomes a queued proposal with both readings written."""
+        self._queued_fathom("f6", "Impromptu Zoom Meeting", [
+            {"speaker": "Dhanya", "text": "the voice agent"},
+            {"speaker": "Abhijeet Gandhi", "text": "ok"}])
+        m, _ = self._run(_kind("client-work", pid="adelye", conf=0.95,
+                               ev="course automation"))
+        self.assertEqual(m["speaker_guard"], 1)
+        ev = self._event("f6")
+        self.assertEqual((ev["state"], ev["proposed_client_id"]),
+                         ("queued", "dhanya-sangolli"))
+        self.assertIn("CONFLICT", ev["proposal_evidence"])
+
+    def test_exclusions_now_carry_the_phrase_that_produced_them(self):
+        """An exclusion_reason is a bucket; it says nothing about the call that
+        went into it. That is the state 114 rows were found in."""
+        self._queued_fathom("f5", "Impromptu Zoom Meeting", [
+            {"speaker": "Someone Unknown", "text": "shopping"}])
+        self._run(_kind("personal-noise", ev="grocery order, no client"))
+        ev = self._event("f5")
+        self.assertEqual(ev["exclude_reason"], "fathom-kind:personal-noise")
+        self.assertIn("grocery order", ev["proposal_evidence"])
+
+
+class GuardExcludedTests(unittest.TestCase):
+    """The $0 retroactive half: a verdict is only as good as the evidence behind
+    it, and no model is needed to notice a client was in the room."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.dbp = self.root / "t.db"
+        db.migrate(self.dbp)
+        rp = self.root / "clients.yaml"
+        rp.write_text(REG_YAML)
+        self.reg = registry.load(rp, force=True)
+        self.raws = self.root / "raw"
+        self.raws.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _excluded(self, rid, speaker, source_client=None):
+        raw = self.raws / f"{rid}.json"
+        raw.write_text(json.dumps(
+            {"recording_id": rid, "title": "Impromptu Zoom Meeting",
+             "participants": [{"name": "Abhijeet Gandhi"}],
+             "transcript": [{"speaker": speaker, "text": "hi"}]}))
+        ref = f"fathom/{rid}"
+        with db.connect(self.dbp) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, content_type, title, occurred_dt, raw_path, status)"
+                " VALUES ('fathom',?,?,?,'unknown','t','2026-06-01T00:00:00Z',?,"
+                " 'extracted')", (ref, f"h{rid}", source_client, str(raw)))
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, state, raw_ref,"
+                " exclude_reason) VALUES (?, 'fathom', ?, 'excluded', ?,"
+                " 'fathom-kind:internal-product')",
+                (events.canonical_id("fathom", rid), rid, ref))
+
+    def test_reopens_an_internal_verdict_with_a_client_in_the_room(self):
+        self._excluded("g1", "Hermon")
+        ctx = FakeCtx(self.dbp, _kind("internal-product"))
+        m = loom_classifier.guard_excluded(ctx, reg=self.reg,
+                                           source_type="fathom")
+        self.assertEqual(m["requeued"], 1)
+        self.assertEqual(len(ctx.claude_calls), 0)          # $0
+        with db.connect(self.dbp) as conn:
+            r = dict(conn.execute(
+                "SELECT state, proposed_client_id p FROM events WHERE id=?",
+                (events.canonical_id("fathom", "g1"),)).fetchone())
+        self.assertEqual((r["state"], r["p"]), ("queued", "hermon"))
+
+    def test_leaves_alone_a_call_whose_source_is_already_attributed(self):
+        """Four of the five found live already carried sources.client_id=hermon.
+        Re-queuing those asks a human to decide something already decided —
+        the exact defect this whole pass exists to remove."""
+        self._excluded("g2", "Hermon", source_client="hermon")
+        m = loom_classifier.guard_excluded(FakeCtx(self.dbp, _kind("x")),
+                                           reg=self.reg, source_type="fathom")
+        self.assertEqual(m["requeued"], 0)
+
+    def test_no_speaker_hint_is_left_excluded(self):
+        self._excluded("g3", "Somebody Else")
+        m = loom_classifier.guard_excluded(FakeCtx(self.dbp, _kind("x")),
+                                           reg=self.reg, source_type="fathom")
+        self.assertEqual(m["requeued"], 0)
+
+    def test_dry_run_writes_nothing(self):
+        self._excluded("g4", "Hermon")
+        m = loom_classifier.guard_excluded(FakeCtx(self.dbp, _kind("x")),
+                                           reg=self.reg, source_type="fathom",
+                                           dry_run=True)
+        self.assertEqual(m["requeued"], 1)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state FROM events WHERE id=?",
+                             (events.canonical_id("fathom", "g4"),)).fetchone()
+        self.assertEqual(r["state"], "excluded")
+
+
 class FingerprintDisambiguationTests(unittest.TestCase):
     """Horizons vs Adelye both do 'course automation' — the committed fingerprint
     asset must carry the vocabulary that separates them (RBT/BCBA is Horizons;

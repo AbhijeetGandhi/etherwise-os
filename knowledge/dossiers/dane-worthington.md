@@ -1,6 +1,6 @@
 # Dane Worthington — Dossier
 
-_Compiled 2026-08-14 00:15 IST · 35 client facts (35 trusted) from 3 sources._
+_Compiled 2026-08-14 01:12 IST · 35 client facts (35 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

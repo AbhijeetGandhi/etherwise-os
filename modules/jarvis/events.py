@@ -102,11 +102,20 @@ def resolve(conn: sqlite3.Connection, eid: str, client_id: str, by: str) -> None
         (client_id, by, eid))
 
 
-def ignore(conn: sqlite3.Connection, eid: str, reason: str, by: str) -> None:
+def ignore(conn: sqlite3.Connection, eid: str, reason: str, by: str,
+           evidence: Optional[str] = None) -> None:
+    """`evidence` keeps WHY next to WHAT. `exclude_reason` is a category
+    ('fathom-kind:internal-product'); it says which bucket the row went into and
+    nothing about the call that put it there. That is precisely the state the
+    2026-08-14 post-mortem found 114 rows in: correctly-labelled exclusions that
+    nobody could audit without re-reading the transcript, so nobody did. A
+    classifier that writes its deciding phrase here makes a wrong verdict
+    findable by reading, not by re-spending."""
     conn.execute(
         "UPDATE events SET state='excluded', exclude_reason=?, resolved_by=?,"
+        " proposal_evidence=COALESCE(?, proposal_evidence),"
         " resolved_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
-        (reason, by, eid))
+        (reason, by, evidence, eid))
 
 
 def queued_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:

@@ -1,63 +1,986 @@
 {
-  "_note": "Per-client domain-vocabulary fingerprints for the Loom KIND+vocab classifier (QUEUE-12). The classifier attributes an UNNAMED Loom to a client by matching this vocabulary, NOT the client name. Hand-seeded (source='seed') from the dossier overviews on 2026-08-09; refresh/extend with `PYTHONPATH=. python3 bin/jarvis-loom-fingerprints` (writes source='llm'). Reviewable + hand-editable; a client absent here is simply not vocab-attributable, which is safe.",
+  "_note": "Built by bin/jarvis-loom-fingerprints; reviewable + hand-editable. A client absent here is not vocab-attributable (safe).",
   "clients": [
-    {
-      "client_id": "horizons-aba",
-      "name": "Horizons ABA",
-      "domain": "ABA (Applied Behavior Analysis) therapy practice operations",
-      "stack": ["Central Reach", "Google Docs", "Google Sheets", "Gmail", "Fingertrack"],
-      "terms": ["ABA therapy", "BCBA", "RBT", "BT", "registered behavior technician", "RBT course", "RBT training", "session cancellation", "session times", "addendum notes", "supervision", "EOB", "treatment plan", "payer", "technician check-in"],
-      "systems": ["Treatment Plan Reviewer", "Technician Check-In workflow", "session-cancellation automation", "payroll export", "Gmail labeling tool", "therapist scheduling UI"],
-      "people": ["Alexander Apfel", "Taylor"],
-      "source": "seed"
-    },
     {
       "client_id": "adelye",
       "name": "Adelye",
       "domain": "transport/driver compliance training and course administration (FORS / CPC / transport certification courses — NOT healthcare/ABA/RBT training)",
-      "stack": ["GoCanvas", "Make", "email"],
-      "terms": ["FORS", "CPC", "transport certification course", "driver compliance training", "digital register", "course registration", "certificates", "DFAT defect check", "attendance", "compliance"],
-      "systems": ["digital register automation", "certificate generation", "defect (DFAT) check automation"],
-      "people": ["Chris Cave"],
+      "stack": [
+        "GoCanvas",
+        "Make",
+        "email"
+      ],
+      "terms": [
+        "FORS",
+        "CPC",
+        "transport certification course",
+        "driver compliance training",
+        "digital register",
+        "course registration",
+        "certificates",
+        "DFAT defect check",
+        "attendance",
+        "compliance"
+      ],
+      "systems": [
+        "digital register automation",
+        "certificate generation",
+        "defect (DFAT) check automation"
+      ],
+      "people": [
+        "Chris Cave"
+      ],
       "source": "seed"
+    },
+    {
+      "client_id": "alfredo-elias",
+      "name": "Alfredo Elias",
+      "domain": "Lead generation with physical mailer sequencing and text follow-up",
+      "stack": [
+        "GoHighLevel",
+        "Google Sheets",
+        "Google Drive",
+        "Google Calendar"
+      ],
+      "terms": [
+        "mailer-first workflow",
+        "lead tag",
+        "pipeline stage",
+        "bulk contact movement",
+        "opportunity export",
+        "task notification",
+        "reference field",
+        "lead messaging pipeline"
+      ],
+      "people": [
+        "Alfredo",
+        "Chloe Souchere"
+      ],
+      "systems": [
+        "New Lead upload workflow (no auto-message)",
+        "Reply-disabled safety gate",
+        "Task notification to Gmail/Calendar",
+        "Bulk pipeline stage change via Contacts filter",
+        "Lead export from Opportunities tab"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "amanda-thomas",
+      "name": "Amanda Thomas",
+      "domain": "marketing operations and content workflow automation",
+      "stack": [
+        "Airtable",
+        "Make.com",
+        "Zapier",
+        "HubSpot",
+        "Salesforce",
+        "WordPress",
+        "Sprout Social",
+        "Zoom"
+      ],
+      "terms": [
+        "approval workflow",
+        "campaign nesting",
+        "webinar template",
+        "content catalog",
+        "blog production",
+        "resource library tags",
+        "tag governance",
+        "status pipeline"
+      ],
+      "people": [
+        "Natalie",
+        "Josh",
+        "Natasha",
+        "Dakota"
+      ],
+      "systems": [
+        "Airtable approval dashboard with grouped-by-owner view",
+        "campaign initialization automation",
+        "Airtable-to-WordPress publish button",
+        "webinar registrant Zoom-to-Airtable sync",
+        "custom interface layer with hierarchical grouping",
+        "multi-level parent-child campaign nesting",
+        "status pipeline standardization",
+        "Sprout Social approval cost avoidance via Airtable"
+      ],
+      "source": "llm"
     },
     {
       "client_id": "beglaubigt",
       "name": "Beglaubigt",
       "domain": "German notarisation / authority (Behoerde) document registration",
-      "stack": ["HubSpot", "Make", "n8n", "email"],
-      "terms": ["notarisation", "beglaubigt", "Behoerde", "authority registration", "provider invoices", "outreach pipeline", "B2B providers"],
-      "systems": ["automated email outreach pipeline", "provider invoicing", "Make-to-n8n migration"],
-      "people": ["Ioannis Pirigkos"],
+      "stack": [
+        "HubSpot",
+        "Make",
+        "n8n",
+        "email"
+      ],
+      "terms": [
+        "notarisation",
+        "beglaubigt",
+        "Behoerde",
+        "authority registration",
+        "provider invoices",
+        "outreach pipeline",
+        "B2B providers"
+      ],
+      "systems": [
+        "automated email outreach pipeline",
+        "provider invoicing",
+        "Make-to-n8n migration"
+      ],
+      "people": [
+        "Ioannis Pirigkos"
+      ],
       "source": "seed"
+    },
+    {
+      "client_id": "brendan-jansen",
+      "name": "Brendan Jansen",
+      "domain": "AI-powered cold email outreach with personalized video",
+      "stack": [
+        "VideoGen API",
+        "Kling 2.5",
+        "Sora",
+        "Wise"
+      ],
+      "terms": [
+        "job scraping",
+        "contact extraction",
+        "personalized video generation",
+        "cold outreach",
+        "email pipeline",
+        "lead generation automation",
+        "year-end targets"
+      ],
+      "people": [
+        "Abhijeet Gandhi",
+        "Mikey"
+      ],
+      "systems": [
+        "Contact scraping automation",
+        "Video generation and email outreach pipeline"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "celciusherbs",
+      "name": "celciusherbs",
+      "domain": "E-commerce herbal products SEO automation",
+      "stack": [
+        "Shopify",
+        "Claude Design",
+        "Claude Code",
+        "Astro",
+        "Firecrawl",
+        "NanoBanana 2",
+        "Perplexity"
+      ],
+      "terms": [
+        "herbal products",
+        "pets category",
+        "humans category",
+        "SEO keywords",
+        "product pages",
+        "blog automation",
+        "competitor analysis",
+        "product images"
+      ],
+      "people": [
+        "Abhijeet"
+      ],
+      "systems": [
+        "SEO-optimized code generation pipeline",
+        "automated blog post creation system",
+        "product page design automation",
+        "competitor analysis scraper",
+        "web UI for content input and output"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "clara",
+      "name": "Clara",
+      "domain": "Voice agent automation for lead qualification and appointment booking",
+      "stack": [
+        "Vapi",
+        "Retell",
+        "Zapier",
+        "n8n",
+        "Bland",
+        "Twilio",
+        "GoHighLevel",
+        "Google Calendar"
+      ],
+      "terms": [
+        "voice agent",
+        "lead qualification",
+        "outbound calls",
+        "appointment booking",
+        "call escalation",
+        "CRM integration",
+        "phone verification",
+        "inbound call handling"
+      ],
+      "people": [
+        "Abhijeet Gandhi",
+        "David Jeffries",
+        "Graham"
+      ],
+      "systems": [
+        "Real estate outbound lead qualification agent (700-800 calls/day)",
+        "Appointment booking voice agent with calendar integration",
+        "GoHighLevel CRM data integration",
+        "Customer support voice agent",
+        "Sales training voice agent",
+        "Call escalation to human agent"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "cmf-publishing",
+      "name": "CMF Publishing",
+      "domain": "AI-powered marketing automation and trading systems",
+      "stack": [
+        "Sora 2",
+        "Claude",
+        "Supabase",
+        "Render",
+        "AWS",
+        "Make",
+        "TradingView",
+        "Stripe"
+      ],
+      "terms": [
+        "backtesting",
+        "candle progression",
+        "VSL tracking",
+        "funnel pages",
+        "ad attribution",
+        "video stitching",
+        "hook generation",
+        "price alerts"
+      ],
+      "people": [
+        "Michael Gandia",
+        "Abhijeet Gandhi",
+        "Shruti Dhumne",
+        "Jay Pokharna",
+        "Alphonse Jaimon",
+        "Eid",
+        "Michelle",
+        "DJ"
+      ],
+      "systems": [
+        "Automatic Ads video generation",
+        "Radar analytics dashboard",
+        "Alpha Agents trading platform",
+        "Delphi Agents",
+        "OfferClaw Claude workspace",
+        "Chrome extension chart analyzer",
+        "Django 2 onboarding AI",
+        "funnel simulation loop"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "college-life",
+      "name": "College Life",
+      "domain": "membership / community records bulk data operations",
+      "stack": [
+        "Make"
+      ],
+      "terms": [
+        "bulk scenario",
+        "member records",
+        "Former status",
+        "membership filter",
+        "record limit"
+      ],
+      "systems": [
+        "bulk member-processing scenario",
+        "membership status sync"
+      ],
+      "people": [],
+      "source": "seed"
+    },
+    {
+      "client_id": "dane-worthington",
+      "name": "Dane Worthington",
+      "domain": "AI voice agent system for correctional facilities",
+      "stack": [
+        "VAPI",
+        "Salesforce",
+        "Make",
+        "Coefficient",
+        "Google Sheets",
+        "Twilio",
+        "OpenAI",
+        "Airtable"
+      ],
+      "terms": [
+        "COID",
+        "participant email mapping",
+        "call transcript summary",
+        "service entry object",
+        "collect calls",
+        "FCC whitelisting",
+        "prison telecom provider",
+        "on-call recording disclosure"
+      ],
+      "people": [
+        "Abhijeet"
+      ],
+      "systems": [
+        "WAPI call summary prompt to Google Sheet",
+        "participant-facing email summary automation",
+        "Salesforce API service entry creation post-call",
+        "COID-to-email lookup via Google Sheet",
+        "voice agent three-layer pipeline (speech-to-text, LLM, text-to-speech)"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "daniel-realty-investments",
+      "name": "Daniel Realty & Investments",
+      "domain": "Real estate bulk SMS automation and contact management",
+      "stack": [
+        "Make",
+        "Airtable",
+        "ClickSend"
+      ],
+      "terms": [
+        "bulk SMS",
+        "phone line type filtering",
+        "SMS status tracking",
+        "landline exclusion",
+        "mobile filtering",
+        "inbound opt-out detection",
+        "outbound delivery monitoring",
+        "priority-based number selection"
+      ],
+      "people": [],
+      "systems": [
+        "Bulk SMS Send flow with multi-record selection",
+        "Inbound message monitoring with stop request detection",
+        "Outbound message monitoring with delivery status tracking",
+        "SMS status column management across nine phone number fields",
+        "Phone line type filtering automation"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "diat-khan",
+      "name": "Diat Khan",
+      "domain": "contact merging and invoice automation platform",
+      "stack": [
+        "Make.com",
+        "Airtable",
+        "ClickSend",
+        "Assembly AI",
+        "Google Drive",
+        "HubSpot API"
+      ],
+      "terms": [
+        "contact merge",
+        "phone number matching",
+        "call disposition",
+        "webhook URL",
+        "Fort Knox",
+        "inter-company invoices",
+        "SMS validation",
+        "meeting link slug"
+      ],
+      "people": [
+        "John Dicard"
+      ],
+      "systems": [
+        "contact merge by phone automation",
+        "ClickSend SMS validation flow",
+        "Kuo QR messaging automation",
+        "Auto Generate Invoices",
+        "Assembly AI transcription integration",
+        "Freedo and call SMS automation",
+        "Fort Knox invoice generation"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "diskover-data",
+      "name": "Diskover Data",
+      "domain": "B2B SaaS marketing operations and campaign automation",
+      "stack": [
+        "Airtable",
+        "HubSpot",
+        "Salesforce",
+        "WordPress",
+        "Sprout Social",
+        "Zoom",
+        "Google Analytics",
+        "Slack"
+      ],
+      "terms": [
+        "top-of-funnel analytics",
+        "MQL-to-SQL conversion",
+        "webinar registration",
+        "approval workflow",
+        "nested campaign architecture",
+        "nurture sequences",
+        "integrations campaigns",
+        "production items"
+      ],
+      "people": [
+        "Amanda Thomas",
+        "Joshua Ichiriu",
+        "Natasha Travis",
+        "Nathalie Sampson"
+      ],
+      "systems": [
+        "Weekly TOF update email report",
+        "Slack social/blog post notifications",
+        "Sprout Social analytics automation",
+        "Zoom-Airtable webinar registration integration",
+        "Customer Connect webinar template",
+        "Approval dashboard with workflow status",
+        "Campaign nested structure with drag-and-drop"
+      ],
+      "source": "llm"
     },
     {
       "client_id": "endura",
       "name": "Endura",
       "domain": "email and SMS marketing follow-up automation",
-      "stack": ["Make", "email", "SMS"],
-      "terms": ["follow-up email automation", "email and SMS marketing", "campaign"],
-      "systems": ["follow-up email automation", "email/SMS marketing pipeline"],
-      "people": ["Andrew", "Sharon Chan"],
+      "stack": [
+        "Make",
+        "email",
+        "SMS"
+      ],
+      "terms": [
+        "follow-up email automation",
+        "email and SMS marketing",
+        "campaign"
+      ],
+      "systems": [
+        "follow-up email automation",
+        "email/SMS marketing pipeline"
+      ],
+      "people": [
+        "Andrew",
+        "Sharon Chan"
+      ],
       "source": "seed"
+    },
+    {
+      "client_id": "hermon",
+      "name": "Hermon",
+      "domain": "UGC coaching operations and coach payroll",
+      "stack": [
+        "Make",
+        "Google Sheets"
+      ],
+      "terms": [
+        "UGC coach",
+        "coach salary",
+        "active coach",
+        "build-out credentials",
+        "build-out session"
+      ],
+      "systems": [
+        "coach salary automation",
+        "build-out credentials workflow"
+      ],
+      "people": [
+        "Yav"
+      ],
+      "source": "seed"
+    },
+    {
+      "client_id": "hero-marketing-agency",
+      "name": "Hero Marketing Agency",
+      "domain": "marketing agency ads and conversion landing pages",
+      "stack": [
+        "landing page",
+        "ad platforms"
+      ],
+      "terms": [
+        "ad campaigns",
+        "conversion landing page",
+        "Masterclass",
+        "home service businesses",
+        "design review"
+      ],
+      "systems": [
+        "conversion-driven landing page",
+        "ad campaign automation"
+      ],
+      "people": [
+        "Joshua"
+      ],
+      "source": "seed"
+    },
+    {
+      "client_id": "hipp-health",
+      "name": "HIPP Health",
+      "domain": "payroll-provider integration and employee ID mapping",
+      "stack": [
+        "Fingercheck",
+        "Paycom",
+        "Epsom"
+      ],
+      "terms": [
+        "payroll provider integration",
+        "employee ID mapping",
+        "HIP-ID mapping",
+        "Fingercheck",
+        "Paycom",
+        "Epsom"
+      ],
+      "systems": [
+        "HIP-to-Fingercheck automation",
+        "Paycom payroll automation",
+        "Epsom payroll integration"
+      ],
+      "people": [
+        "Muneeza"
+      ],
+      "source": "seed"
+    },
+    {
+      "client_id": "homestyling",
+      "name": "Homestyling",
+      "domain": "dual-business home styling and incorporation services with Meta lead automation",
+      "stack": [
+        "Make",
+        "Airtable",
+        "HubSpot",
+        "Brevo",
+        "Meta Conversions API",
+        "Fortnox",
+        "ClickUp",
+        "GoHighLevel"
+      ],
+      "terms": [
+        "Meta lead form",
+        "qualify lead webhook",
+        "checkout completed",
+        "case ID",
+        "company ID",
+        "incorporation",
+        "notarization",
+        "Homestyling KOPT"
+      ],
+      "people": [
+        "Abhijeet Gandhi",
+        "Jay Pokharna"
+      ],
+      "systems": [
+        "Meta Lead to SMS and chatbot trigger (5000+ runs/month)",
+        "Qualify lead webhook to HubSpot deal creation",
+        "Checkout completed matching and Meta CAPI conversion event",
+        "Home styling 9-step project workflow with invoice generation and Google Drive su",
+        "Airtable-based lead status automation for MetaConversions API",
+        "ClickUp lead priority escalation (3 unanswered calls = medium, 6 = low)",
+        "Fortnox invoice creation with email send and conditional FNF/Factoring flow",
+        "InReader scenario exclusion filter for Homestyling leads"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "horizons-aba",
+      "name": "Horizons ABA",
+      "domain": "ABA (Applied Behavior Analysis) therapy practice operations",
+      "stack": [
+        "Central Reach",
+        "Google Docs",
+        "Google Sheets",
+        "Gmail",
+        "Fingertrack"
+      ],
+      "terms": [
+        "ABA therapy",
+        "BCBA",
+        "RBT",
+        "BT",
+        "registered behavior technician",
+        "RBT course",
+        "RBT training",
+        "session cancellation",
+        "session times",
+        "addendum notes",
+        "supervision",
+        "EOB",
+        "treatment plan",
+        "payer",
+        "technician check-in"
+      ],
+      "systems": [
+        "Treatment Plan Reviewer",
+        "Technician Check-In workflow",
+        "session-cancellation automation",
+        "payroll export",
+        "Gmail labeling tool",
+        "therapist scheduling UI"
+      ],
+      "people": [
+        "Alexander Apfel",
+        "Taylor"
+      ],
+      "source": "seed"
+    },
+    {
+      "client_id": "mustafa-ahmed",
+      "name": "Mustafa Ahmed",
+      "domain": "Medical/aesthetic practice automation and revenue tracking",
+      "stack": [
+        "Make.com",
+        "Airtable",
+        "ManyChat",
+        "Prosper CRM",
+        "Recura",
+        "Evoto",
+        "OpenRouter",
+        "QuickBooks"
+      ],
+      "terms": [
+        "leads",
+        "procedures",
+        "revenue tracking",
+        "payment status",
+        "before-and-after photos",
+        "patient consultation",
+        "bariatric",
+        "Google Ads"
+      ],
+      "people": [
+        "Abhijeet Gandhi",
+        "Serena",
+        "MarketMade contact"
+      ],
+      "systems": [
+        "Prosper-Airtable sync",
+        "ManyChat Instagram automation",
+        "Revenue dashboard",
+        "Procedures tracking table",
+        "Lead attribution pipeline",
+        "AI photo enhancement workflow"
+      ],
+      "source": "llm"
     },
     {
       "client_id": "netfly",
       "name": "NetFly",
       "domain": "outbound sales call operations and dialer reporting",
-      "stack": ["GoHighLevel", "GHL", "Kixie", "Zapier", "Google Sheets", "webhooks"],
-      "terms": ["call outcome tagging", "dialer", "call transcription", "outcome column", "lead routing", "reporting"],
-      "systems": ["call-outcome tagging automation", "dialer reporting pipeline"],
+      "stack": [
+        "GoHighLevel",
+        "GHL",
+        "Kixie",
+        "Zapier",
+        "Google Sheets",
+        "webhooks"
+      ],
+      "terms": [
+        "call outcome tagging",
+        "dialer",
+        "call transcription",
+        "outcome column",
+        "lead routing",
+        "reporting"
+      ],
+      "systems": [
+        "call-outcome tagging automation",
+        "dialer reporting pipeline"
+      ],
       "people": [],
       "source": "seed"
+    },
+    {
+      "client_id": "optimize-is",
+      "name": "Optimize IS",
+      "domain": "clinical healthcare automation with HubSpot email campaigns",
+      "stack": [
+        "HubSpot",
+        "Make",
+        "ClickUp",
+        "Claude desktop"
+      ],
+      "terms": [
+        "clinical director",
+        "ticket management",
+        "business days email cadence",
+        "data store queue",
+        "bulk email",
+        "case ID search",
+        "Sales Professional access",
+        "deal workflow"
+      ],
+      "people": [
+        "Mia Kara",
+        "Sachin",
+        "Alex",
+        "Jessica",
+        "Jay Pokharna",
+        "Abhijeet Gandhi",
+        "Juliet"
+      ],
+      "systems": [
+        "weekend email queuing to Monday flush",
+        "HubSpot ticket close and create workflow",
+        "bulk email campaign automation",
+        "conditional HubSpot search with AND logic",
+        "multi-account email sending setup"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "patrick-nesbitt",
+      "name": "Patrick Nesbitt",
+      "domain": "Hospitality lead generation and sales automation for timeshare/hotel properties",
+      "stack": [
+        "Airtable",
+        "GoHighLevel",
+        "ManyChat",
+        "Make"
+      ],
+      "terms": [
+        "timeshare",
+        "lead capture",
+        "check-out date",
+        "recurring guest",
+        "sales funnel stage",
+        "network marketing",
+        "hotel property",
+        "prospecting 2.0"
+      ],
+      "people": [
+        "Abhijeet Gandhi",
+        "Diego Azcarraga",
+        "Ishan Vats",
+        "Rafael"
+      ],
+      "systems": [
+        "Raminta Sala Adventas physical meeting room tool",
+        "centralized lead database with hotel-specific views",
+        "automated lead removal on check-out date",
+        "WhatsApp chatbot and marketing automation workflows",
+        "recurring customer identification system"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "reco-health",
+      "name": "RECO Health",
+      "domain": "Behavioral health revenue cycle management automation",
+      "stack": [
+        "CollaborateMD",
+        "Kipu EMR",
+        "Salesforce"
+      ],
+      "terms": [
+        "insurance verification",
+        "authorization expiration",
+        "denials management",
+        "claims scrubbing",
+        "concurrent reviews",
+        "therapist productivity",
+        "occupancy",
+        "payer performance"
+      ],
+      "people": [
+        "Brian Greenblott",
+        "Erika Boodhoo"
+      ],
+      "systems": [
+        "real-time executive KPI dashboard",
+        "claims status aggregation",
+        "insurance eligibility automation",
+        "authorization tracking system"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "renutech-ltd",
+      "name": "Renutech Ltd",
+      "domain": "SEO keyword scraping by location",
+      "stack": [
+        "scraper",
+        "Google Sheets"
+      ],
+      "terms": [
+        "SEO keyword data",
+        "city/location bulk",
+        "population-range cities",
+        "scraper",
+        "keyword generation"
+      ],
+      "systems": [
+        "location-based SEO keyword scraper"
+      ],
+      "people": [
+        "Stephen Whitehouse",
+        "Arisha"
+      ],
+      "source": "seed"
+    },
+    {
+      "client_id": "sale-pros-corp",
+      "name": "Sale Pros Corp",
+      "domain": "AI voice agents and marketing metrics automation for lead generation",
+      "stack": [
+        "Make.com",
+        "HubSpot",
+        "Airtable",
+        "HighLevel",
+        "Vapi",
+        "Google Sheets",
+        "OpenAI",
+        "Deepgram"
+      ],
+      "terms": [
+        "CPM",
+        "CPC",
+        "CTR",
+        "CPL",
+        "CPTS",
+        "CPQL",
+        "CPBC",
+        "CPSU"
+      ],
+      "people": [
+        "Abdul"
+      ],
+      "systems": [
+        "Gmail to HubSpot automation with email extraction",
+        "HubSpot workflow for email-sourced lead creation",
+        "AI voice assistant routing by business hours and client status",
+        "Call transcript note automation with chargeability module",
+        "Marketing metrics formula table in Airtable",
+        "Multi-form submission system across state pages",
+        "Dynamic assistant assignment from HighLevel contacts"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "simran-bhola",
+      "name": "Simran Bhola",
+      "domain": "AI voice analysis scoring tool for retail outlets",
+      "stack": [
+        "Make.com",
+        "OpenAI Whisper",
+        "MSG 9.1 OTP"
+      ],
+      "terms": [
+        "audio transcription",
+        "score band",
+        "chemist code",
+        "retailer outlet",
+        "discount code",
+        "mic error fallback",
+        "OTP verification",
+        "JSON schema integration"
+      ],
+      "people": [
+        "Simran Bhola",
+        "Abhijeet Gandhi"
+      ],
+      "systems": [
+        "voice recording UI with animation",
+        "AI scoring automation with three-band classification",
+        "discount code generation per score band",
+        "CRM integration for outlet metrics tracking",
+        "phone OTP verification via MSG 9.1",
+        "microphone detection and error handling"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "simyon-pinsky",
+      "name": "Simyon Pinsky",
+      "domain": "outbound calling and SMS trade show campaign",
+      "stack": [
+        "Make.com",
+        "VAPI",
+        "Instantly",
+        "Excel/CSV"
+      ],
+      "terms": [
+        "outbound calling",
+        "SMS follow-up",
+        "trade show",
+        "AI qualifier",
+        "call batch",
+        "call transcript",
+        "call recording",
+        "warm-up inbox"
+      ],
+      "people": [
+        "Abhijeet"
+      ],
+      "systems": [
+        "VAPI-based AI outbound calling with human transfer",
+        "Instantly email sequence with phonicflow.ai domain",
+        "Make.com automation for call-to-Excel workflow with SMS fallback"
+      ],
+      "source": "llm"
+    },
+    {
+      "client_id": "sunil-paul",
+      "name": "Sunil Paul",
+      "domain": "AI voice agent platform with viral feedback loops",
+      "stack": [
+        "VAPI",
+        "Make.com",
+        "Twilio",
+        "Google Sheets",
+        "OpenAI",
+        "Airtable"
+      ],
+      "terms": [
+        "gratitude chain",
+        "voice agent",
+        "SMS reply workflow",
+        "referral contacts",
+        "streak milestone",
+        "assistant override",
+        "VAPI tool",
+        "inbound SMS webhook"
+      ],
+      "people": [
+        "Tenni Theurer",
+        "Sunil Paul",
+        "Abhijeet Gandhi"
+      ],
+      "systems": [
+        "Gratitude Chain daily voice call system",
+        "SMS invite and reply handling",
+        "VAPI-to-Make.com integration for outbound calls",
+        "Call transcript parsing with OpenAI",
+        "Streak tracking and milestone SMS",
+        "Invite reminder automation",
+        "Multi-scenario orchestration in Make.com"
+      ],
+      "source": "llm"
     },
     {
       "client_id": "the-cradle-company",
       "name": "The Cradle Company",
       "domain": "caregiver / nursing recruiting and candidate matching",
-      "stack": ["Airtable", "AI agent"],
-      "terms": ["caregiver recruiting", "candidate matching", "nursing background", "open roles", "recruiting agent"],
-      "systems": ["DAO recruiting agent", "Airtable candidate query + outreach agent"],
+      "stack": [
+        "Airtable",
+        "AI agent"
+      ],
+      "terms": [
+        "caregiver recruiting",
+        "candidate matching",
+        "nursing background",
+        "open roles",
+        "recruiting agent"
+      ],
+      "systems": [
+        "DAO recruiting agent",
+        "Airtable candidate query + outreach agent"
+      ],
       "people": [],
       "source": "seed"
     },
@@ -65,61 +988,163 @@
       "client_id": "the-medical-kitchen",
       "name": "The Medical Kitchen",
       "domain": "outbound AI voice agent for bilingual medical intake",
-      "stack": ["Vapi", "Google Sheets", "voice AI"],
-      "terms": ["voice agent", "bilingual intake", "English/Spanish", "medical intake", "allergens", "food intolerance", "questionnaire"],
-      "systems": ["outbound AI voice intake agent", "Vapi calling pipeline"],
+      "stack": [
+        "Vapi",
+        "Google Sheets",
+        "voice AI"
+      ],
+      "terms": [
+        "voice agent",
+        "bilingual intake",
+        "English/Spanish",
+        "medical intake",
+        "allergens",
+        "food intolerance",
+        "questionnaire"
+      ],
+      "systems": [
+        "outbound AI voice intake agent",
+        "Vapi calling pipeline"
+      ],
       "people": [],
       "source": "seed"
     },
     {
-      "client_id": "hipp-health",
-      "name": "HIPP Health",
-      "domain": "payroll-provider integration and employee ID mapping",
-      "stack": ["Fingercheck", "Paycom", "Epsom"],
-      "terms": ["payroll provider integration", "employee ID mapping", "HIP-ID mapping", "Fingercheck", "Paycom", "Epsom"],
-      "systems": ["HIP-to-Fingercheck automation", "Paycom payroll automation", "Epsom payroll integration"],
-      "people": ["Muneeza"],
-      "source": "seed"
-    },
-    {
-      "client_id": "college-life",
-      "name": "College Life",
-      "domain": "membership / community records bulk data operations",
-      "stack": ["Make"],
-      "terms": ["bulk scenario", "member records", "Former status", "membership filter", "record limit"],
-      "systems": ["bulk member-processing scenario", "membership status sync"],
+      "client_id": "vantage",
+      "name": "VANTAGE",
+      "domain": "Lead scraping and SMS outreach automation via CRM",
+      "stack": [
+        "Make.com",
+        "GoHighLevel",
+        "Google Sheets",
+        "API file scraper"
+      ],
+      "terms": [
+        "opportunity pipeline",
+        "contact creation",
+        "appointment booking bot",
+        "SMS messaging analytics",
+        "conversation AI",
+        "pipeline stages",
+        "daily scraper",
+        "phone number configuration"
+      ],
       "people": [],
-      "source": "seed"
+      "systems": [
+        "API file scraper (daily ~100 records to Google Sheet)",
+        "Make.com automation workflow (scraper → sheet → GHL contacts)",
+        "GoHighLevel opportunity creation on contact trigger",
+        "Appointment booking conversation AI bot with dynamic personalization",
+        "SMS messaging with tiered limits (100→250 messages/day)",
+        "Opportunity status updater post-booking"
+      ],
+      "source": "llm"
     },
     {
-      "client_id": "hermon",
-      "name": "Hermon",
-      "domain": "UGC coaching operations and coach payroll",
-      "stack": ["Make", "Google Sheets"],
-      "terms": ["UGC coach", "coach salary", "active coach", "build-out credentials", "build-out session"],
-      "systems": ["coach salary automation", "build-out credentials workflow"],
-      "people": ["Yav"],
-      "source": "seed"
+      "client_id": "viraj-pangam",
+      "name": "Viraj Pangam",
+      "domain": "Foreign Direct Investment (FDI) signal detection and market research automation for India-US trade",
+      "stack": [
+        "Google Sheets",
+        "OpenAI GPT",
+        "Crunchbase API",
+        "LinkedIn",
+        "Feedly",
+        "Phantom Buster",
+        "AP5",
+        "Make or n8n"
+      ],
+      "terms": [
+        "FDI signals",
+        "manufacturing expansion",
+        "pharmaceutical companies",
+        "revenue signals",
+        "US sales presence",
+        "press monitoring",
+        "sector-specific journals",
+        "RSS feeds"
+      ],
+      "people": [
+        "Abhijeet Gandhi",
+        "Viraj Pangam"
+      ],
+      "systems": [
+        "FDI signal-detection pipeline",
+        "LinkedIn expansion monitoring bot",
+        "Sector journal RSS aggregation and classification",
+        "Market research report generator",
+        "Multi-source company research automation",
+        "Weekly top-signals delivery system"
+      ],
+      "source": "llm"
     },
     {
-      "client_id": "renutech-ltd",
-      "name": "Renutech Ltd",
-      "domain": "SEO keyword scraping by location",
-      "stack": ["scraper", "Google Sheets"],
-      "terms": ["SEO keyword data", "city/location bulk", "population-range cities", "scraper", "keyword generation"],
-      "systems": ["location-based SEO keyword scraper"],
-      "people": ["Stephen Whitehouse", "Arisha"],
-      "source": "seed"
+      "client_id": "visa-gate",
+      "name": "Visa Gate GmbH",
+      "domain": "Austrian motorway vignette bulk purchasing automation",
+      "stack": [
+        "Python",
+        "Selenium WebDriver",
+        "Oxylabs rotating proxies",
+        "CAPTCHA-solving service",
+        "AutoPay platform",
+        "Email integration",
+        "CRM logging"
+      ],
+      "terms": [
+        "motorway vignette",
+        "Austrian tolling",
+        "AutoPay",
+        "headless CMS",
+        "reCAPTCHA v2",
+        "IP rotation",
+        "queuing system",
+        "anti-bot detection"
+      ],
+      "people": [
+        "Abhijeet Gandhi",
+        "Raphael Mahir",
+        "Martin"
+      ],
+      "systems": [
+        "web scraper bot for vignette purchases",
+        "email-triggered order queuing system",
+        "IP-rotating proxy layer",
+        "CAPTCHA bypass automation",
+        "purchase data logging to CRM"
+      ],
+      "source": "llm"
     },
     {
-      "client_id": "hero-marketing-agency",
-      "name": "Hero Marketing Agency",
-      "domain": "marketing agency ads and conversion landing pages",
-      "stack": ["landing page", "ad platforms"],
-      "terms": ["ad campaigns", "conversion landing page", "Masterclass", "home service businesses", "design review"],
-      "systems": ["conversion-driven landing page", "ad campaign automation"],
-      "people": ["Joshua"],
-      "source": "seed"
+      "client_id": "vitaliy-kahanets",
+      "name": "Vitaliy Kahanets",
+      "domain": "wholesale real estate acquisition with AI call review automation",
+      "stack": [
+        "GoHighLevel",
+        "Make.com",
+        "OpenAI ChatGPT API",
+        "Zapier"
+      ],
+      "terms": [
+        "acquisition agent",
+        "lead memory",
+        "hot/nurture/dead classification",
+        "motivation score",
+        "acquisition score",
+        "call transcript",
+        "post-call automation",
+        "rep coaching feedback"
+      ],
+      "people": [
+        "Abhijeet Gandhi"
+      ],
+      "systems": [
+        "AI post-call review system with lead evaluation and agent coaching",
+        "automated lead memory updater from call transcripts",
+        "multi-step recommended action generator with SMS copy-paste templates",
+        "three-stage ChatGPT workflow for custom field extraction, review generation, and"
+      ],
+      "source": "llm"
     }
   ]
 }

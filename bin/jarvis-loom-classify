@@ -42,19 +42,35 @@ def main() -> int:
     ap.add_argument("--heal-mapped", action="store_true",
                     help="backfill: heal the KB for events already mapped to a "
                          "client whose source is still unattributed (no LLM spend)")
+    ap.add_argument("--guard-excluded", action="store_true",
+                    help="re-open EXCLUDED events on which a registered client "
+                         "demonstrably speaks (no LLM spend). An 'internal' "
+                         "verdict is falsified by a client being in the room.")
     ap.add_argument("--source-type", choices=("loom", "fathom"), default="loom",
                     help="corpus to operate on (default loom)")
+    ap.add_argument("--transcript-words", type=int, default=None,
+                    dest="transcript_words",
+                    help="words of transcript sent per call (default "
+                         "config.JARVIS_LOOM_TRANSCRIPT_WORDS). A Fathom CALL is "
+                         "several times longer than a Loom narration and its "
+                         "client vocabulary is not front-loaded, so judging one "
+                         "on its first 1500 words is judging a fragment.")
     args = ap.parse_args()
 
     def task(ctx):
+        if args.guard_excluded:
+            return loom_classifier.guard_excluded(
+                ctx, source_type=args.source_type, dry_run=args.dry_run)
         if args.heal_mapped:
             return loom_classifier.heal_mapped(ctx, source_type=args.source_type)
         if args.reclassify_queued:
             return loom_classifier.reclassify_queued(
-                ctx, max_calls=args.max_calls, dry_run=args.dry_run)
+                ctx, source_type=args.source_type, max_calls=args.max_calls,
+                transcript_words=args.transcript_words, dry_run=args.dry_run)
         return loom_classifier.classify_unmapped(
             ctx, source_type=args.source_type, limit=args.limit,
-            max_calls=args.max_calls, dry_run=args.dry_run)
+            max_calls=args.max_calls, transcript_words=args.transcript_words,
+            dry_run=args.dry_run)
 
     result = runner.run_task("jarvis_loom_classify", task, module="system")
     print(json.dumps({"status": result.status, "metrics": result.metrics}))

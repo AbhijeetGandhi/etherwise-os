@@ -13,6 +13,7 @@ participant signal (those would flood the queue, not inform it).
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -27,6 +28,54 @@ _FREEMAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com",
 # NB: there is deliberately no local `_INTERNAL = ("etherwise.io",)` here any
 # more. "Are these people us?" is answered in exactly one place —
 # config.is_internal_person / config.INTERNAL_PEOPLE / config.OWNER_IDENTITIES.
+
+# ── "is this speaker label even a person?" ───────────────────────────────────
+# Video tools put WHATEVER the participant typed into the join box on the
+# transcript line, and a meaningful share of it is not a name: a device
+# ("iPhone", "Galaxy S21"), an initialism ("AP"), a single letter ("j"), a desk
+# ("Admin CS", "Conference Room 2"). Measured on the live queue 2026-08-14: 5 of
+# the 62 queued Fathom calls had one of these as their ONLY external signal.
+#
+# Two things go wrong if they are treated as people, and both are permanent:
+#   * `_external_signal` makes the junk string the event's AUTHOR, and the
+#     cockpit's assign path then offers to write it into clients.yaml as an
+#     ALIAS. "iPhone" as an alias of a client would match every later call where
+#     anybody dials in from a phone.
+#   * a queue row whose entire question is "who is 'j'?" cannot be answered by
+#     the human either, so it sits there forever making the badge bigger.
+# Structural only — never a denylist of specific strings, which would not
+# generalise past the five we happen to have seen.
+_JUNK_LABEL = re.compile(
+    r"^(?:i-?(?:phone|pad|mac)|mac(?:book)?|android|galaxy|pixel|sm-\w+|"
+    r"redmi|oneplus|huawei|windows|linux|desktop|laptop|tablet|phone|"
+    r"user|guest|admin|owner|host|moderator|participant|attendee|caller|"
+    r"call-?in\s*user|unknown(?:\s+speaker)?|speaker\s*\d*|voice\s*\d*|"
+    r"meeting\s*room|conference\s*room|room\s*\d+|boardroom|"
+    r"anonymous|test|recorder|notetaker|bot)\b", re.I)
+_JUNK_MIN_LEN = 3            # "j", "AP" — an initialism is not an identity
+FOLD_MIN_LEN = 6             # matches cockpit's _REVIEW_HINT_MIN_LEN, on purpose
+
+
+def alnum_key(s: Optional[str]) -> str:
+    """registry.norm() with punctuation and spacing thrown away too — the WEAK
+    key. Deliberately weaker than anything the attribution rails may heal on;
+    see `loom_classifier.folded_identity_match` for the one place it is used."""
+    return re.sub(r"[^a-z0-9]", "", registry.norm(s or ""))
+
+
+def is_junk_label(name: Optional[str]) -> bool:
+    """True when a transcript speaker label is a device/role/initial, not a human
+    identity. See the _JUNK_LABEL note above for why this is not a denylist."""
+    a = (name or "").strip()
+    if len(a) < _JUNK_MIN_LEN:
+        return True
+    if not re.search(r"[aeiouy]", a, re.I):     # 'AP', 'JK', 'MRB' — initials
+        return True
+    if a.isdigit() or _JUNK_LABEL.match(a):
+        return True
+    # "Abhijeet's iPhone" / "Jay's iPad" — a device, whoever owns it
+    return bool(re.search(r"['’]s\s+(?:i-?(?:phone|pad|mac)|mac|android|"
+                          r"galaxy|pixel|laptop|desktop|phone)\b", a, re.I))
 
 
 def _rid(source_ref: str) -> str:
@@ -68,16 +117,23 @@ def _external_signal(participants: list[str]) -> Optional[str]:
     function looked at emails ONLY, so a call whose external party appeared purely
     as a transcript speaker produced no signal and was silently skipped as
     internal. `config.is_internal_person` answers both halves from ONE roster
-    (see the INTERNAL_PEOPLE note in core/config.py)."""
-    names = []
+    (see the INTERNAL_PEOPLE note in core/config.py).
+
+    A junk device/role label ("iPhone", "AP", "j") is ranked LAST rather than
+    dropped: it is still true that somebody external was on the call, so the call
+    is not internal — but the label must not become the author of a queue row,
+    because the assign path offers the author to clients.yaml as an alias."""
+    names, weak = [], []
     for p in participants:
         if config.is_internal_person(p):
             continue
         if "@" in p:
             return p
-        if p.strip():
-            names.append(p.strip())
-    return names[0] if names else None
+        p = p.strip()
+        if not p:
+            continue
+        (weak if is_junk_label(p) else names).append(p)
+    return (names or weak or [None])[0]
 
 
 def heal_source(db_path, source_ref: str, client_id: str, client_name: str,

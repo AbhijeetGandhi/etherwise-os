@@ -6,9 +6,14 @@
   "bulk_subdomains": [
     "mailers", "marketing", "updates", "news", "newsletter", "info", "em1",
     "em", "e", "custcomm", "digital", "notifications", "notify", "mailer",
-    "campaigns", "email", "reply", "go", "click", "track", "promo"
+    "campaigns", "email", "reply", "go", "click", "track", "promo",
+    "mail", "t", "m", "send", "members", "learn"
   ],
-  "_bulk_subdomains_note": "A first label used purely to send bulk mail. 'mailers.hdfcbank.bank.in', 'digital.axisbankmail.bank.in', 'custcomm.icici.bank.in', 'marketing.goindigo.in', 'updates.easemytrip.com', 'em1.cloudflare.com', 'info.clickup.com' are all this shape. A real client writes from their bare domain.",
+  "_bulk_subdomains_note": "A first label used purely to send bulk mail. 'mailers.hdfcbank.bank.in', 'digital.axisbankmail.bank.in', 'custcomm.icici.bank.in', 'marketing.goindigo.in', 'updates.easemytrip.com', 'em1.cloudflare.com', 'info.clickup.com' are all this shape. A real client writes from their bare domain. Added 2026-08-14 from the 58 rows sitting in `held`: 'mail.' (mail.clickup.com, mail.vapi.ai, mail.chatarv.ai), 't.' (t.shopifyemail.com, t.upwork.com), 'm.' (m.parallels.com), 'send.' (send.zapier.com), 'members.' (members.netflix.com), 'learn.' (m.learn.coursera.org). A client's own domain still wins: the registry check runs BEFORE this one.",
+
+  "plus_tags": ["news", "newsletter", "marketing", "promo", "promotions",
+                "offers", "updates", "digest", "deals"],
+  "_plus_tags_note": "The tag half of a plus-addressed sender ('nick+news@leftclick.ai'). The sender chose that tag to say what the mail IS, which makes it the most honest structural signal on the message — and it generalises to every marketer who uses the convention, which no domain list does.",
 
   "noreply_locals": [
     "noreply", "no-reply", "donotreply", "do-not-reply", "notifications",
@@ -36,8 +41,12 @@
       "reason": "noise:sender:investment-promo",
       "domains": ["hdfcfund.com", "axismf.com", "icicipruamc.com",
                   "sbimf.com", "nipponindiamf.com", "zerodha.com",
-                  "groww.in", "camsonline.com", "kfintech.com"],
-      "_note": "Abhijeet named hdfcfund.com and axismf.com explicitly as bank/AMC promotional mail."
+                  "groww.in", "camsonline.com", "kfintech.com",
+                  "bseindia.in", "bseindia.com", "nseindia.com",
+                  "cdslindia.co.in", "nsdl.co.in", "bigshareonline.com",
+                  "linkintime.co.in", "mfcentral.com", "stablemoney.in",
+                  "getdigit.in"],
+      "_note": "Abhijeet named hdfcfund.com and axismf.com explicitly as bank/AMC promotional mail. Extended 2026-08-14 with the exchange/depository/registrar senders found in `held` — IPO allotment advices, annual reports and corporate-action mail. Statutory rather than promotional, but equally not a client."
     },
     "saas_vendor": {
       "reason": "noise:sender:vendor",
@@ -48,20 +57,25 @@
                   "github.com", "notion.so", "slack.com", "airtable.com",
                   "make.com", "zapier.com", "openai.com", "anthropic.com",
                   "google.com", "microsoft.com", "apple.com", "vercel.com",
-                  "stripe.com", "loom.com", "fathom.video"],
+                  "stripe.com", "loom.com", "fathom.video",
+                  "vapi.ai", "tella.tv", "depositphotos.com", "shopifyemail.com",
+                  "shopify.com", "canva.com", "figma.com", "elevenlabs.io"],
       "_note": "Tools Etherwise USES. Not clients, and not promotional either — a distinct reason so spend/vendor analysis can find them later."
     },
     "travel": {
       "reason": "noise:sender:promotional",
       "domains": ["goindigo.in", "marketing.goindigo.in", "easemytrip.com",
                   "updates.easemytrip.com", "makemytrip.com", "cleartrip.com",
-                  "airindia.com", "booking.com", "agoda.com", "irctc.co.in"]
+                  "airindia.com", "booking.com", "agoda.com", "irctc.co.in",
+                  "etihadguest.com", "etihad.com", "emirates.com",
+                  "qatarairways.com", "vistara.com", "spicejet.com"]
     },
     "ecommerce": {
       "reason": "noise:sender:promotional",
       "domains": ["amazon.com", "amazon.in", "flipkart.com", "myntra.com",
                   "swiggy.in", "zomato.com", "motorola-mail.com",
-                  "motorola.com", "apple.com"]
+                  "motorola.com", "apple.com", "tatacliq.com", "ajio.com",
+                  "nykaa.com", "lego.com"]
     },
     "personal_interest": {
       "reason": "noise:sender:personal-interest",
