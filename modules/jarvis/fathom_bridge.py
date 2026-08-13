@@ -55,6 +55,10 @@ _JUNK_LABEL = re.compile(
 _JUNK_MIN_LEN = 3            # "j", "AP" — an initialism is not an identity
 FOLD_MIN_LEN = 6             # matches cockpit's _REVIEW_HINT_MIN_LEN, on purpose
 
+# `sources.content_type` values that state something PERMANENT about the row's
+# content and must survive a re-attribution — see heal_source.
+TERMINAL_CONTENT_TYPES = ("loom:no-transcript",)
+
 
 def alnum_key(s: Optional[str]) -> str:
     """registry.norm() with punctuation and spacing thrown away too — the WEAK
@@ -140,7 +144,16 @@ def heal_source(db_path, source_ref: str, client_id: str, client_name: str,
                 *, now_iso: Optional[str] = None,
                 dossier_dir: Optional[Path] = None) -> dict:
     """Reattribute an unmapped Fathom source + its facts to a client, then
-    recompile that client's dossier. Idempotent; only touches unmapped rows."""
+    recompile that client's dossier. Idempotent; only touches unmapped rows.
+
+    `content_type` is set to 'client-call' EXCEPT where it already carries a
+    TERMINAL marker. `loom:no-transcript` is the one that exists: the fetcher
+    writes it on evidence that Loom will never produce a transcript for that
+    recording, and it is the only record anywhere that the row is empty by
+    nature rather than unprocessed. A Loom whose TITLE names a client (the
+    deterministic pass reaches those without reading a word) is genuinely that
+    client's -- both facts are true, and overwriting the marker to record the
+    attribution would trade a true fact for a true fact."""
     now_iso = now_iso or datetime.now(timezone.utc).isoformat()
     with db.connect(db_path) as conn:
         rows = conn.execute("SELECT id FROM sources WHERE source_ref=?",
@@ -149,10 +162,13 @@ def heal_source(db_path, source_ref: str, client_id: str, client_name: str,
         facts = 0
         if sids:
             qs = ",".join("?" * len(sids))
+            marks = ",".join("?" * len(TERMINAL_CONTENT_TYPES))
             conn.execute(
                 f"UPDATE sources SET client_id=?, client_name=?,"
-                f" content_type='client-call' WHERE id IN ({qs})",
-                (client_id, client_name, *sids))
+                f" content_type=CASE WHEN content_type IN ({marks})"
+                f" THEN content_type ELSE 'client-call' END"
+                f" WHERE id IN ({qs})",
+                (client_id, client_name, *TERMINAL_CONTENT_TYPES, *sids))
             cur = conn.execute(
                 f"UPDATE facts SET client_id=?, scope='client'"
                 f" WHERE source_id IN ({qs})", (client_id, *sids))
@@ -234,18 +250,26 @@ def recheck_events(db_path, reg=None, *, states: tuple = RECHECK_STATES,
     and are counted in `queue_capped`, so nothing is silently dropped. Healing is
     never capped: it is deterministic and free.
 
+    A verdict ABHIJEET reached himself is NEVER re-examined here
+    (`events.is_human_decision`). The argument above -- "a verdict is only as
+    good as the evidence it was reached on" -- is an argument about RULES
+    re-reading their own output. It does not extend to his: he read the call.
+    Skipped rows are counted in `founder_decided`, never silently dropped.
+
     NOTHING here is auto-attributed by a model. Every heal is a registry
     name/email/domain match; everything ambiguous goes to a human.
     """
     reg = reg or registry.load()
     qs = ",".join("?" * len(states))
     with db.connect(db_path) as conn:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT e.id, e.raw_ref, e.state, e.exclude_reason, s.raw_path,"
-            " s.title, s.client_id FROM events e"
+        all_rows = [dict(r) for r in conn.execute(
+            "SELECT e.id, e.raw_ref, e.state, e.exclude_reason, e.resolved_by,"
+            " s.raw_path, s.title, s.client_id FROM events e"
             " LEFT JOIN sources s ON s.source_ref = e.raw_ref"
             f" WHERE e.source='fathom' AND e.state IN ({qs})"
             " ORDER BY s.occurred_dt DESC", tuple(states))]
+    rows = [r for r in all_rows if not events.is_human_decision(r["resolved_by"])]
+    founder_decided = len(all_rows) - len(rows)
     healed = requeued = excluded = capped = already = 0
     by_client: dict = {}
     from_reason: dict = {}
@@ -286,6 +310,7 @@ def recheck_events(db_path, reg=None, *, states: tuple = RECHECK_STATES,
     return {"rechecked": len(rows), "states": list(states), "healed": healed,
             "requeued": requeued, "excluded": excluded,
             "queue_capped": capped, "already_attributed": already,
+            "founder_decided": founder_decided,
             "dry_run": dry_run, "healed_by_client": by_client,
             "healed_from": from_reason}
 

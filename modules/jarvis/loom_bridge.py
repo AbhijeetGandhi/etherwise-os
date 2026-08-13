@@ -92,6 +92,16 @@ def _needles(c: dict) -> list[tuple[str, bool]]:
     for f in c.get("fathom_names") or []:
         add(f)
     for e in c.get("emails") or []:
+        # A FREEMAIL ROOT IS NOT A BRAND. A client registered on a personal
+        # address contributed the needle 'gmail', which then counts every time
+        # anybody on any call says the word — 5 times in one 2,644-word call,
+        # measured 2026-08-14. It survived only because THREE clients happened
+        # to share it, so the match was ambiguous and returned None. With one
+        # such client it is a deterministic heal of an unrelated call onto them,
+        # and a wrong client_id is permanent. `_FREEMAIL` is the one list.
+        dom = (e.split("@", 1)[-1] if "@" in e else e).strip().lower()
+        if dom in fathom_bridge._FREEMAIL:
+            continue
         add(_domain_root(e))
     return out
 

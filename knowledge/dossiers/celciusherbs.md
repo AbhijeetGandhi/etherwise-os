@@ -1,6 +1,6 @@
 # celciusherbs — Dossier
 
-_Compiled 2026-08-14 01:12 IST · 18 client facts (17 trusted) from 2 sources._
+_Compiled 2026-08-14 04:43 IST · 18 client facts (17 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

@@ -1,6 +1,6 @@
 # Optimize IS — Dossier
 
-_Compiled 2026-08-14 01:12 IST · 19 client facts (19 trusted) from 3 sources._
+_Compiled 2026-08-14 04:43 IST · 19 client facts (19 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

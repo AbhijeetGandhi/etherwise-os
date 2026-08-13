@@ -305,20 +305,28 @@ def guard_excluded(ctx, reg=None, *, source_type: str = "fathom",
     the knowledge is in the dossier and the stale `excluded` event costs nothing.
     Re-queuing those would put four rows in front of a human to decide something
     that is already decided, which is the exact defect this whole pass exists to
-    remove."""
+    remove.
+
+    Bounded a second way, and this one is a hard line: a verdict ABHIJEET reached
+    himself is never re-examined (`events.is_human_decision`). The speaker guard
+    is a rule, the rule can be wrong, and it is wrong more cheaply than he is --
+    a call he personally marked 'not a client' being re-queued with a machine's
+    proposal on it is the system telling him his answer did not count. Skipped
+    rows are COUNTED (`founder_decided_skipped`), never silently dropped."""
     reg = reg or registry.load()
     db_path = ctx.db_path or config.DB_PATH
     signal_reader = _SIGNAL_READERS.get(source_type)
     if signal_reader is None:
         raise runner.TaskSkip(f"no speaker signals for {source_type}")
     with db.connect(db_path) as conn:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT e.id, e.exclude_reason, s.raw_path FROM events e"
+        all_rows = [dict(r) for r in conn.execute(
+            "SELECT e.id, e.exclude_reason, e.resolved_by, s.raw_path FROM events e"
             " JOIN sources s ON s.source_ref = e.raw_ref"
             " WHERE e.source=? AND e.state='excluded' AND s.client_id IS NULL",
             (source_type,))]
+    rows = [r for r in all_rows if not events.is_human_decision(r["resolved_by"])]
     m = {"source_type": source_type, "scanned": len(rows), "requeued": 0,
-         "dry_run": dry_run}
+         "founder_decided_skipped": len(all_rows) - len(rows), "dry_run": dry_run}
     moved = []
     for e in rows:
         sig = signal_reader(_load_payload(e["raw_path"]))

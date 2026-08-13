@@ -12,9 +12,30 @@ from typing import Optional
 
 STATES = ("mapped", "queued", "held", "excluded")
 
+# Every `resolved_by` written by a HUMAN pressing a button in the cockpit. The
+# UI passes 'cockpit-approval' (mapping queue) and 'cockpit-thread-review'
+# (thread screen); 'hand' is a direct sqlite correction.
+HUMAN_RESOLVER_PREFIXES = ("cockpit-", "hand")
+
 
 def canonical_id(source: str, native_id: str) -> str:
     return f"evt:{source}:{native_id}"
+
+
+def is_human_decision(resolved_by: Optional[str]) -> bool:
+    """True when this row's verdict was reached by Abhijeet, not by a rule or a
+    model.
+
+    THE POINT: a retroactive rule may re-examine its own past verdicts, and
+    should -- an exclusion is only as good as the evidence behind it. It may
+    NEVER re-examine his. A rule that re-opens a call he personally marked 'not
+    a client' has decided that its evidence outranks his judgement, which is
+    backwards, and the symptom is a row he already answered reappearing on the
+    Review board with a machine's opinion attached. `resolved_by` is the only
+    column that records who decided, so it is the only thing this can key on;
+    a rule/model verdict leaves it NULL or names the classifier."""
+    r = (resolved_by or "").strip().lower()
+    return bool(r) and r.startswith(HUMAN_RESOLVER_PREFIXES)
 
 
 def store_event(conn: sqlite3.Connection, ev: dict, run_id: Optional[int]) -> str:

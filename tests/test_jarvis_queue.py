@@ -356,7 +356,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((r["state"], r["exclude_reason"]),
                          ("excluded", "internal:owner-only"))
 
-    def _mk(self, ref, title, state, reason=None):
+    def _mk(self, ref, title, state, reason=None, resolved_by=None):
         with db.connect(self.dbp) as conn:
             conn.execute(
                 "INSERT INTO sources (source_type, source_ref, content_hash,"
@@ -365,8 +365,9 @@ class BridgeTests(unittest.TestCase):
                 "?,'ingested')", (ref, "h" + ref, title, ref))
             conn.execute(
                 "INSERT INTO events (id, source, native_id, author, subject,"
-                " state, exclude_reason, raw_ref) VALUES (?,'fathom',?,NULL,?,?,?,?)",
-                (f"evt:fathom:{ref}", ref, title, state, reason, ref))
+                " state, exclude_reason, raw_ref, resolved_by)"
+                " VALUES (?,'fathom',?,NULL,?,?,?,?,?)",
+                (f"evt:fathom:{ref}", ref, title, state, reason, ref, resolved_by))
 
     def test_recheck_all_unfreezes_a_wrong_exclusion(self):
         """The unfreeze (2026-08-14). An `excluded` verdict is only as good as the
@@ -443,6 +444,62 @@ class BridgeTests(unittest.TestCase):
             n = conn.execute("SELECT COUNT(*) FROM events WHERE"
                              " state='queued'").fetchone()[0]
         self.assertEqual(n, 2)
+
+    def test_recheck_all_never_re_examines_the_founders_own_verdict(self):
+        """`--recheck-all` exists because a RULE's verdict is only as good as the
+        evidence it was reached on. That argument does not extend to Abhijeet's:
+        he read the call. A row he excluded from the cockpit keeps its state,
+        keeps its reason, and is counted in `founder_decided` — otherwise a rule
+        hands him back, with a machine's opinion on it, the exact row he just
+        answered."""
+        self._mk("fathom/H", "call h", "excluded", "not a client",
+                 resolved_by="cockpit-approval")
+        self.parts["fathom/H"] = (["diskover team"], "u")   # would otherwise HEAL
+        res = fathom_bridge.recheck_events(
+            self.dbp, self.reg, states=("queued", "excluded"),
+            read_participants=self._read, dossier_dir=self.dossiers)
+        self.assertEqual(res["healed"], 0)
+        self.assertEqual(res["founder_decided"], 1)
+        self.assertEqual(res["rechecked"], 0)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state, exclude_reason FROM events WHERE"
+                             " id='evt:fathom:fathom/H'").fetchone()
+            s = conn.execute("SELECT client_id FROM sources WHERE"
+                             " source_ref='fathom/H'").fetchone()
+        self.assertEqual((r["state"], r["exclude_reason"]),
+                         ("excluded", "not a client"))
+        self.assertIsNone(s["client_id"])
+
+    def test_heal_source_preserves_the_no_transcript_marker(self):
+        """`loom:no-transcript` is the only record that a row is empty BY NATURE
+        rather than unprocessed (loom_fetch writes it on evidence). A Loom whose
+        title names a client is genuinely that client's — both facts are true,
+        and the heal must not trade one for the other."""
+        with db.connect(self.dbp) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, content_type, title, occurred_dt, status) VALUES"
+                " ('loom','loom/nt','hnt',NULL,'loom:no-transcript',"
+                " 'Diskover - Session Management','2026-07-01','skipped')")
+        fathom_bridge.heal_source(self.dbp, "loom/nt", "diskover-data",
+                                  "Diskover Data", now_iso="2026-08-14T00:00:00",
+                                  dossier_dir=self.dossiers)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT client_id, content_type, status FROM sources"
+                             " WHERE source_ref='loom/nt'").fetchone()
+        self.assertEqual(r["client_id"], "diskover-data")
+        self.assertEqual(r["content_type"], "loom:no-transcript")
+        self.assertEqual(r["status"], "skipped")     # still skipped for the fetcher
+
+    def test_heal_source_still_sets_client_call_on_a_normal_row(self):
+        self._mk("fathom/N", "call n", "excluded", "fathom:unattributable")
+        fathom_bridge.heal_source(self.dbp, "fathom/N", "diskover-data",
+                                  "Diskover Data", now_iso="2026-08-14T00:00:00",
+                                  dossier_dir=self.dossiers)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT content_type FROM sources WHERE"
+                             " source_ref='fathom/N'").fetchone()
+        self.assertEqual(r["content_type"], "client-call")
 
     def test_external_signal_falls_back_to_an_unknown_NAME(self):
         """A stranger who only ever appears as a transcript speaker IS external

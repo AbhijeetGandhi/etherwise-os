@@ -92,6 +92,12 @@ class LoomBridgeTests(unittest.TestCase):
         self.tmp.cleanup()
 
     # ── fixtures ─────────────────────────────────────────────────────────────
+    def _write_reg(self, text):
+        self._n += 1
+        p = self.root / f"reg{self._n}.yaml"
+        p.write_text(text)
+        return p
+
     def _loom(self, vid, title, transcript, occurred="2026-04-01T12:00:00.000Z",
               client_id=None):
         raw = self.raws / f"{vid}.json"
@@ -164,6 +170,40 @@ class LoomBridgeTests(unittest.TestCase):
         m, _ = self._sync()
         self.assertEqual(m["auto_healed"], 1)
         self.assertEqual(self._client_of(ref), "horizons-aba")
+
+    def test_a_freemail_root_is_never_a_client_needle(self):
+        """Measured 2026-08-14: three registry clients sit on personal addresses,
+        so 'gmail' was a needle for each, and it counted 5 times in one ordinary
+        2,644-word call. It cost nothing only because THREE clients shared it and
+        the ambiguity returned None. With one such client the same transcript is
+        a deterministic heal onto a stranger, and a wrong client_id is permanent."""
+        reg = registry.load(self._write_reg("""\
+clients:
+  -
+    id: solo
+    name: Solo
+    emails:
+      - solo.person@gmail.com
+    billing:
+      canonical: Solo
+"""), force=True)
+        needles = {n for n, _ in loom_bridge._needles(reg.by_id["solo"])}
+        self.assertNotIn("gmail", needles)
+        self.assertIsNone(loom_bridge.transcript_match(
+            reg, "I sent it to his gmail and he replied from gmail again."))
+        # a real company domain is still a needle
+        reg2 = registry.load(self._write_reg("""\
+clients:
+  -
+    id: acme
+    name: Acme
+    emails:
+      - billing@acmeworks.io
+    billing:
+      canonical: Acme
+"""), force=True)
+        self.assertIn("acmeworks", {n for n, _ in
+                                    loom_bridge._needles(reg2.by_id["acme"])})
 
     def test_weak_tool_mention_does_not_heal(self):
         # a passing tool-name mention is NOT a client signal -> residue -> queued

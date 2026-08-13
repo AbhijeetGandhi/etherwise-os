@@ -1,6 +1,6 @@
 # CMF Publishing — Dossier
 
-_Compiled 2026-08-14 01:12 IST · 508 client facts (505 trusted) from 36 sources._
+_Compiled 2026-08-14 04:43 IST · 508 client facts (505 trusted) from 36 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

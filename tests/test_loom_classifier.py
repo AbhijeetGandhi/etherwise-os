@@ -588,7 +588,7 @@ class GuardExcludedTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _excluded(self, rid, speaker, source_client=None):
+    def _excluded(self, rid, speaker, source_client=None, resolved_by=None):
         raw = self.raws / f"{rid}.json"
         raw.write_text(json.dumps(
             {"recording_id": rid, "title": "Impromptu Zoom Meeting",
@@ -603,9 +603,9 @@ class GuardExcludedTests(unittest.TestCase):
                 " 'extracted')", (ref, f"h{rid}", source_client, str(raw)))
             conn.execute(
                 "INSERT INTO events (id, source, native_id, state, raw_ref,"
-                " exclude_reason) VALUES (?, 'fathom', ?, 'excluded', ?,"
-                " 'fathom-kind:internal-product')",
-                (events.canonical_id("fathom", rid), rid, ref))
+                " exclude_reason, resolved_by) VALUES (?, 'fathom', ?,"
+                " 'excluded', ?, 'fathom-kind:internal-product', ?)",
+                (events.canonical_id("fathom", rid), rid, ref, resolved_by))
 
     def test_reopens_an_internal_verdict_with_a_client_in_the_room(self):
         self._excluded("g1", "Hermon")
@@ -645,6 +645,29 @@ class GuardExcludedTests(unittest.TestCase):
             r = conn.execute("SELECT state FROM events WHERE id=?",
                              (events.canonical_id("fathom", "g4"),)).fetchone()
         self.assertEqual(r["state"], "excluded")
+
+    def test_never_overturns_a_verdict_the_founder_reached_himself(self):
+        """Same row, same speaker, same hint as the reopen test — the ONLY
+        difference is that Abhijeet excluded it from the cockpit. His judgement
+        outranks the rule, and the skip is counted rather than silent."""
+        self._excluded("g5", "Hermon", resolved_by="cockpit-approval")
+        m = loom_classifier.guard_excluded(FakeCtx(self.dbp, _kind("x")),
+                                           reg=self.reg, source_type="fathom")
+        self.assertEqual(m["requeued"], 0)
+        self.assertEqual(m["founder_decided_skipped"], 1)
+        self.assertEqual(m["scanned"], 0)
+        with db.connect(self.dbp) as conn:
+            r = conn.execute("SELECT state FROM events WHERE id=?",
+                             (events.canonical_id("fathom", "g5"),)).fetchone()
+        self.assertEqual(r["state"], "excluded")
+
+    def test_a_machine_verdict_is_still_re_examined(self):
+        """The guard must not become a blanket freeze: a classifier's own
+        exclusion is exactly what this path exists to falsify."""
+        self._excluded("g6", "Hermon", resolved_by="fathom_classifier")
+        m = loom_classifier.guard_excluded(FakeCtx(self.dbp, _kind("x")),
+                                           reg=self.reg, source_type="fathom")
+        self.assertEqual((m["requeued"], m["founder_decided_skipped"]), (1, 0))
 
 
 class FingerprintDisambiguationTests(unittest.TestCase):

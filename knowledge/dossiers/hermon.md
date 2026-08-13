@@ -1,6 +1,6 @@
 # Hermon — Dossier
 
-_Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sources · 109 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-14 04:43 IST · 1584 client facts (1545 trusted) from 168 sources · 109 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -39,6 +39,7 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - Fendro/TFP program student access is meant to expire six months after their event (event date cited as 28 December), putting expiry around late May/June. [CONFIRMED · fathom/150592050 @ 00:18:36 – 'the event was like the 28th of December… the six months is coming up in a couple days']
 - For Hibo, the default program is 'Hebrew Fundament' (referred to as 'Ebo Fundament' in context), stored in the settings table as the default program record ID. [CONFIRMED · fathom/96863100 @ 00:02:41]
 - Freedom Academy and Closer ID are clients using the agency's own software called Herman, not Airtable, so their dashboard syncs are not relevant. [CONFIRMED · fathom/155365113 @ 00:02:39 – 'Freedom Academy and the Closer ID, those are clients that are using our own software, which is Herman, and they're not using Airtable']
+- Jaap, Gairo Juliana, and Abhijeet Gandhi worked together on a finance dashboard project deployed on Vercel. [CONFIRMED · fathom/165589866 @ On a project together for a finance dashboard]
 - Leads interface was confirmed as done; appointments, settings, payments, and team interfaces were identified as outstanding or needing connection. [CONFIRMED · fathom/135132440 @ 00:00:37]
 - Millennial Commerce needs to showcase revenue performance based on A table revenue stats, but the implementation approach is unclear. [CONFIRMED · https://www.loom.com/share/3bd9834db5894df1bd967215bfdd39dd @ 'it also says, like, you know, the revenue performance based on the A table revenue stats. I am not sure how to, like, showcase that']
 - Millennial Commerce's old CRM had an overview of student performance in each market with a complete view of the number of students in the market. [CONFIRMED · https://www.loom.com/share/3bd9834db5894df1bd967215bfdd39dd @ 'for the Millennial Commerce, and in the description- it says in the old CRM, we had an overview of the other student performance in each market']
@@ -227,6 +228,7 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - Dennis had his profit share updated; George was removed from the team. Patrick and Nick Burns are new additions to be set up. [CONFIRMED · fathom/116953817 @ 00:09:54 / 'we have removed like updated the profit shares of the Dennis and then removed the George... Patrick one, it's new']
 - Elisabeth (or Luana/Lone) is the Millionaire Commerce team member who submitted the TFP/Fendro student access ticket. [CONFIRMED · fathom/150592050 @ 00:23:39 – 'Elisabeth is the one that inserted this ticket' / 00:23:48 – 'it's Lone, I believe']
 - Elisabeth and Tymon are identified as the likely persons who created the blocked Google account. Abel sent a Slack message to find out who has the credentials. [CONFIRMED · fathom/155054415 @ 00:14:00]
+- Gairo Juliana needed access to log into the finance dashboard but had lost or did not know the password. [CONFIRMED · fathom/165589866 @ 00:00:00]
 - Gino is a client-side stakeholder who needs to be consulted to confirm salary/guidance coach logic and dashboard changes before end of January. [CONFIRMED · fathom/116953817 @ 00:10:14 / 'important to check with Gino before end of Jan']
 - Gino is a contact at Millionaire Commerce who Abel needs to verify the $500 UGC coach salary automation logic with. [CONFIRMED · fathom/117348729 @ [00:00:40] Abel Jansen: I'll check with Gino from Marina Commerce to see if this is the correct way to do it.]
 - Gino is an internal stakeholder at Millionaire Commerce who Abel Jansen needs to consult regarding whether to add driver license/passport number fields to the onboarding form. [CONFIRMED · fathom/150592050 @ 00:11:30 – 'let me discuss this with Gino']
@@ -249,6 +251,7 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - Matthijs is a team member or contact who signed up for the Skool community as a test account. [CONFIRMED · fathom/137810839 @ 00:03:36 – 'Matthijs, he basically signed up for the Skoll community']
 - Meeting participants are Abhijeet Gandhi and Yogita Soma. [CONFIRMED · fathom/124378316 @ 00:12:07]
 - Nick Burns needs to be added to the Airtable team section with the position of 'setter manager'; he was not previously in the team table. [CONFIRMED · fathom/116953817 @ 00:10:57 / 'You can just add him... as a setter manager, I guess that's a position inside of Airtable.']
+- Only one user (Gairo/Fathom-side) uses the dashboard password to log in; it is not shared among many people. [CONFIRMED · fathom/165589866 @ 00:07:52]
 - Participants in the call are Abhijeet Gandhi and Yogita Soma. [CONFIRMED · fathom/133955544 @ [00:00:00] Abhijeet Gandhi ... [00:00:22] Yogita Soma]
 - Participants in the call include Abhijeet Gandhi and Yogita Soma. [CONFIRMED · fathom/161881774 @ 00:00:00]
 - Participants on the call are Abhijeet Gandhi and Yogita Soma. [CONFIRMED · fathom/133273486 @ 00:13:17]
@@ -957,6 +960,7 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - Ticket 1987 relates to a bug where lead qualification status is not visible in a downstream system because the field was not mapped during record creation. [CONFIRMED · fathom/127765469 @ 00:03:22 – 'ticket number 1-9-8-7 currently the leads qualifications status is not visible in a double because this field was not mapped above We didn't make during the record creation']
 - To avoid high Make.com credit consumption for the one-time back-fill, the team decided to consider running a local script using the ActiveCampaign API instead of a Make.com automation. [CONFIRMED · fathom/137810839 @ 00:06:52 – 'maybe we can write a script to do that' / 00:07:08 – 'if it's just one-time script, I can run it through my local as well']
 - To improve matching of Calendly bookings to Airtable records, the team plans to pre-fill the student's email in the Calendly booking link via a URL parameter (e.g. ?email=), reducing the chance of a wrong email being entered and improving automation reliability. [CONFIRMED · fathom/123962575 @ 00:10:17]
+- To reset the dashboard login, the team edited the DASH_PASS environment variable value directly in Vercel settings and then redeployed the project; the new password was active after redeployment (completed in under a couple of minutes). [CONFIRMED · fathom/165589866 @ 00:08:03]
 - Total payments field is expected to be directly populated/filled in the dashboard. [CONFIRMED · fathom/135132440 @ 00:01:30]
 - Traffic sources are linked to two record types: applications (Typeform) and appointments — no other tables are connected to traffic sources. [CONFIRMED · fathom/96863100 @ 00:04:43]
 - Treatment plan documents are built using Google Slides with placeholders that get populated with client data and then converted to PDF. [CONFIRMED · fathom/112703077 @ I remember the treatment plan, which was all the Google slide. So, you all set placeholders, right? ... the other thing we want to do is to convert the file first to PDF]
@@ -1173,6 +1177,8 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - The domain is managed in SquareSpace and requires a subdomain to be created there before Vercel deployment can be connected; an authenticator code from Jeremy is needed to create the subdomain. [CONFIRMED · fathom/155054415 @ 00:01:04]
 - The e-signature / contract-signed automation is built in Zapier and uses a PandaDoc signed watcher, with Slack connected for notifications. [CONFIRMED · fathom/144905321 @ 00:15:07 – 'So we were about thing about the e-signature contract, that means it's in Automation Relatable... also found out that there Panadoc, a signed watcher, which is in Zapier']
 - The e-signature platform being used supports API access and templates with placeholders for document generation. [CONFIRMED · fathom/155434605 @ 00:15:12 – 'Signatures or Platform, they give a cloud, they say they should secret to defuse for API... already using templates for the same']
+- The finance dashboard app uses a Vercel environment variable named 'DASH_PASS' (dash underscore pass) to store the login password. [CONFIRMED · fathom/165589866 @ 00:01:28]
+- The finance dashboard is deployed on Vercel, with the repository linked via GitHub authentication. [CONFIRMED · fathom/165589866 @ 00:00:13]
 - The internal platform's front-end revamp work is assigned to 'Cloud' (a team member or tool). [CONFIRMED · fathom/171248736 @ 00:05:19 – 'it's Cloud who is doing it']
 - The only supported method to send SMS through the agency's Airtable-based setup is via Twilio (or an existing SMS provider the client already uses). [CONFIRMED · fathom/114806195 @ 00:02:16 – 'the only way to send out SMS through our table is through Twilio, right?']
 - The platform is currently hosted on Vercel and the codebase is in a Git repository. [CONFIRMED · fathom/147983101 @ 00:02:35 – 'It's now just a Git repo and it's launched on Versal']
@@ -1182,6 +1188,7 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - The project involves a Zapier automation that connects a Typeform (with fields including first name, last name, phone, and email) to a Google Spreadsheet called 'All Calls Opt-In Tracker' (also referred to as 'All Calls Tracker'). [CONFIRMED · fathom/137640139 @ [00:07:18] / [00:07:47] / [00:23:24]]
 - The project involves automation built using Zapier and Make (make.com), with at least one active automation checked in both tools during this session. [CONFIRMED · fathom/134398743 @ 00:06:05 – 'I had editable, Zapier, etc. Make also checked.']
 - The project is being deployed using Vercel, with the repository connected via the Vercel dashboard. [CONFIRMED · fathom/155054415 @ 00:01:31]
+- The project repository contains a .env file (hidden file) that also holds credentials; the file is typically hidden and requires Command+Shift+. to reveal on macOS. [CONFIRMED · fathom/165589866 @ 00:03:43]
 - The project uses Airtable as a backend/calendar table for managing call scheduling and student data. [CONFIRMED · fathom/119008045 @ 00:13:55 - 'This the Airtable calendar, right?']
 - The project uses Calendly for scheduling calls, with students required to select a reason for the call as part of the booking form. [CONFIRMED · fathom/119008045 @ 00:14:33 - 'Calendly' and 00:14:21 - 'This field must be filled in by the student. Reason for this call.']
 - The project uses Make.com (make.com) for automation, including handling Calendly appointment events. [CONFIRMED · fathom/119008045 @ 00:14:07 - 'if we go to make.com, search, appointment']
@@ -1485,6 +1492,7 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - An addendum needs to be added to the e-signature contract templates for a client referred to as 'Zero to Hero' (ZTS). [CONFIRMED · fathom/110799432 @ 00:00:25]
 - An email reply-to address issue was identified: the reply-to field in outgoing emails is set to 'support@cashwave.com' (or a variant), but replies result in an address-not-found error, indicating the reply-to domain/address is misconfigured. [CONFIRMED · fathom/135708347 @ [00:17:14] Yogita Soma: So here you see, reply to support.cashwave.com and here you see is going to be supported.]
 - Automation builds for a client (referred to as 'FanBusiness'/'Fanbase/Commas') failed — 3 builds had failed due to a payload change in the Fanbase (COMMAS) platform webhook. [CONFIRMED · fathom/165926014 @ [00:00:29] Yogita Soma: 'the automation FanBusiness has not yet done, these 3 builds have been... when I checked automation, these 3 builds have failed.']
+- Claude (AI) was suggested and used as a tool to interpret a screenshot of Vercel environment variables and help identify the correct variable and commands needed. [CONFIRMED · fathom/165589866 @ 00:05:33]
 - Client brand guide implementation on the frontend is on the to-do list to improve the platform's UI. [CONFIRMED · fathom/147983101 @ 00:16:52 – 'making sure like the brand guide that they have... needs to be implemented so it looks a little bit better as well on the frontend']
 - Clients who completed the core program but are continuing in an extension phase were being discussed in context of Fathom call review. [CONFIRMED · fathom/137410319 @ 00:13:02 - 'So we were just about Fathom, Abhijeet Gandhi, So about clients who completed the core program but are continuing in the extension phase.']
 - Contract template names in Google Drive include categories such as 'Closer' and 'Setter' templates. [CONFIRMED · fathom/122232018 @ 00:03:53 – 'Closer, Setter, and the other templates']
@@ -1769,6 +1777,7 @@ _Compiled 2026-08-14 01:12 IST · 1576 client facts (1537 trusted) from 167 sour
 - `fathom/163059147` · 2026-07-13 · fathom · Impromptu Google Meet Meeting
 - `fathom/163298220` · 2026-07-13 · fathom · Impromptu Google Meet Meeting
 - `fathom/163896281` · 2026-07-15 · fathom · Impromptu Google Meet Meeting
+- `fathom/165589866` · 2026-07-21 · fathom · Impromptu Zoom Meeting
 - `fathom/165926014` · 2026-07-21 · fathom · Impromptu Google Meet Meeting
 - `fathom/166892206` · 2026-07-24 · fathom · Impromptu Google Meet Meeting
 - `fathom/168494732` · 2026-07-29 · fathom · Impromptu Google Meet Meeting
