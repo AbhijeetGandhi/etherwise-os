@@ -71,6 +71,34 @@ def _kind(kind, pid=None, conf=0.9, ev="signal"):
 
 
 # ── pure functions (no DB) ───────────────────────────────────────────────────
+class PinHealOnHigh:
+    """Pin JARVIS_LOOM_HEAL_ON_HIGH for a test class.
+
+    The ledger-only assertions below describe ONE BRANCH of that flag, not the
+    shipped default. They used to read the live config, so flipping the default
+    to True on 2026-08-13 broke three of them and would have looked like a
+    regression in the classifier rather than what it was — a test coupled to a
+    setting. Pin it, exactly as the CRM mirror tests pin SHADOW_MODE, so the
+    suite says the same thing whichever way the flag is set."""
+
+    def setUpPin(self, value: bool) -> None:
+        self._heal_orig = config.JARVIS_LOOM_HEAL_ON_HIGH
+        config.JARVIS_LOOM_HEAL_ON_HIGH = value
+
+    def tearDownPin(self) -> None:
+        config.JARVIS_LOOM_HEAL_ON_HIGH = self._heal_orig
+
+
+class ShippedDefaultTests(unittest.TestCase):
+    def test_heal_on_high_is_on(self):
+        """Abhijeet's call, 2026-08-13. With this False the classifier produced
+        no KB value at all: its high-confidence maps left sources.client_id NULL,
+        and a Loom fact with a NULL client_id reaches proof-points and the search
+        corpus but never the dossier of the client it is about. Reverting this
+        should require deleting a test, not editing one line of config."""
+        self.assertTrue(config.JARVIS_LOOM_HEAL_ON_HIGH)
+
+
 class RouteTests(unittest.TestCase):
     HIGH, MED = 0.80, 0.50
 
@@ -144,8 +172,9 @@ class PureHelperTests(unittest.TestCase):
 
 
 # ── the run (temp DB) ────────────────────────────────────────────────────────
-class ClassifyRunTests(unittest.TestCase):
+class ClassifyRunTests(unittest.TestCase, PinHealOnHigh):
     def setUp(self):
+        self.setUpPin(False)          # these assert the LEDGER-ONLY branch
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.dbp = self.root / "t.db"
@@ -159,6 +188,7 @@ class ClassifyRunTests(unittest.TestCase):
         self._n = 0
 
     def tearDown(self):
+        self.tearDownPin()
         self.tmp.cleanup()
 
     def _loom(self, vid, title, transcript, occurred="2026-04-01T12:00:00.000Z",
@@ -314,8 +344,9 @@ class ClassifyRunTests(unittest.TestCase):
 
 
 # ── reclassify the existing queued backlog ───────────────────────────────────
-class ReclassifyQueuedTests(unittest.TestCase):
+class ReclassifyQueuedTests(unittest.TestCase, PinHealOnHigh):
     def setUp(self):
+        self.setUpPin(False)          # these assert the LEDGER-ONLY branch
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.dbp = self.root / "t.db"
@@ -328,6 +359,7 @@ class ReclassifyQueuedTests(unittest.TestCase):
         self.raws.mkdir()
 
     def tearDown(self):
+        self.tearDownPin()
         self.tmp.cleanup()
 
     def _queued_loom(self, vid, title, transcript, proposed="horizons-aba"):
@@ -527,12 +559,13 @@ class HealMappedTests(unittest.TestCase):
 
 
 # ── the classifier generalised to the Fathom residue (QUEUE-23 / QUEUE-22) ────
-class FathomClassifyTests(unittest.TestCase):
+class FathomClassifyTests(unittest.TestCase, PinHealOnHigh):
     """The SAME classifier over source_type='fathom' -- the owner-only/internal
     calls the deterministic bridge skipped. Reads the Fathom transcript, KIND-gates,
     attributes by the same vocabulary, and labels the ledger 'fathom'."""
 
     def setUp(self):
+        self.setUpPin(False)          # these assert the LEDGER-ONLY branch
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.dbp = self.root / "t.db"
@@ -546,6 +579,7 @@ class FathomClassifyTests(unittest.TestCase):
         self._n = 0
 
     def tearDown(self):
+        self.tearDownPin()
         self.tmp.cleanup()
 
     def _fathom(self, rid, title, transcript_text):

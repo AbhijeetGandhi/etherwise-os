@@ -326,11 +326,31 @@ JARVIS_LOOM_KIND_MED = 0.50         # MED <= confidence < HIGH -> queue w/ evide
 JARVIS_LOOM_CLASSIFY_MAX = 200      # per-run ceiling on Haiku classify calls
 JARVIS_LOOM_TRANSCRIPT_WORDS = 1500 # transcript truncated to first N words (signal
                                     # is front-loaded; caps cost + injection surface)
-JARVIS_LOOM_HEAL_ON_HIGH = False    # SAFE DEFAULT: high-conf is a ledger-only
-                                    # provisional map, facts gated. Flip True to let
-                                    # a high-conf inference do the FULL dossier heal
-                                    # (reattribute facts + recompile) -- grants the
-                                    # model authority over the KB; Abhijeet's call.
+JARVIS_LOOM_HEAL_ON_HIGH = True     # ABHIJEET'S CALL, MADE 2026-08-13 (was False).
+# What it does: at CLASSIFY TIME, a >=HIGH-confidence client-work result stops
+# being a ledger-only provisional map and additionally runs `heal_source` --
+# sets sources.client_id/client_name and re-attributes that source's facts to
+# the client, then recompiles the dossier. The event row is still written first
+# and still carries resolved_by='loom_classifier:high', so the inference stays
+# labelled machine-made and reversible; what changes is that it now reaches the
+# KB instead of stopping at the ledger.
+# WHY it was flipped: with it False the classifier produced NO KB value at all.
+# Its high-confidence maps left sources.client_id NULL, and a Loom fact with a
+# NULL client_id lands in proof-points and the search corpus but NEVER in the
+# dossier of the client it is actually about. Loom walkthroughs are Abhijeet
+# narrating the systems he shipped -- the richest "what we actually deliver"
+# evidence in the business -- and all of it was landing everywhere except the
+# one place a client conversation would use it.
+# WHAT IT DOES NOT CHANGE: medium confidence still queues for a human, low /
+# unknown / non-client kinds are still excluded, and every promoted fact still
+# has to pass kb.validate_fact's citation requirement and the shared noise gate.
+# The model still cannot invent a client id -- a hallucinated one is dropped to
+# null against reg.matchable_ids() before routing.
+# NOTE the flag only bites at classify time. Recordings classified BEFORE the
+# flip are healed by the separate, LLM-free, idempotent backfill:
+#   PYTHONPATH=. python3 bin/jarvis-loom-classify --heal-mapped
+# (loom_classifier.heal_mapped -> the same heal_source). Run 2026-08-13 for the
+# 34 maps this session's classify pass produced.
 LOOM_FINGERPRINTS_PATH = V3_ROOT / "assets" / "loom-fingerprints.json"
 # ── Loom FETCH rail (2026-08-10) — pull NEW recordings from loom.com ──────────
 # The manual index export (assets/loom-video-index.json) froze 2026-04-08; with no

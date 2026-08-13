@@ -1,6 +1,6 @@
 # Hero Marketing Agency — Dossier
 
-_Compiled 2026-08-13 05:02 IST · 66 client facts (66 trusted) from 7 sources · 28 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-13 06:12 IST · 66 client facts (66 trusted) from 7 sources · 28 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
