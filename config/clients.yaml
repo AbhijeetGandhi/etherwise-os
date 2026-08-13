@@ -48,7 +48,7 @@ clients:
     id: amanda-thomas
     name: Amanda Thomas
     aliases:
-      - Amanda Thomas, Amanda T
+      - "Amanda Thomas, Amanda T"
       - Amanda T
     upwork_rooms:
       - room_b77ee451e7fd56cbb3a898b15effe2bf
@@ -150,12 +150,9 @@ clients:
       - michaelxavierga
       - cmf publishing llc
       - Charles Michaels Firm
-      # 2026-08-10: he signs calendar mail as the formal "Michael", which matched
-      # nothing and pushed a resolvable row into the mapping queue.
       - Michael Gandia
       - Michael Gandia (CMF Publishing LLC)
     emails:
-      # personal address — a FULL address, so it claims him and not gmail.com
       - mikegandia@gmail.com
     slack:
       workspace: Charles Michaels Firm
@@ -209,7 +206,7 @@ clients:
     id: dhanya-sangolli
     name: Dhanya Sangolli
     aliases:
-      - Dhanya Sangolli, Dhanya S
+      - "Dhanya Sangolli, Dhanya S"
       - Dhanya S
     upwork_rooms:
       - room_1f5d0e3d4bb2e1c2d26c98246c99fe9c
@@ -229,6 +226,8 @@ clients:
     billing:
       canonical: Diat Khan
     clickup: Remote Office (Diat)
+    upwork_rooms:
+      - room_9a4971f73c06dc60727b3a7389300207
   -
     id: diskover-data
     name: Diskover Data
@@ -364,12 +363,12 @@ clients:
     id: irene-buht
     name: Irene Buht
     aliases:
-      - Irene Buht, no company
+      - "Irene Buht, no company"
     upwork_rooms:
       - room_c9775733f08e146073b4595c89f09a8a
     billing:
       canonical: Irene Buht
-      ledger_label: "no company"
+      ledger_label: no company
     scope_notes: "Upwork contract 40620438 ('call agent for Lou', FIXED, 2025-05-18 to 2025-08-30, ENDED). $490.00 gross / $440.50 net across 12 rows. Upwork emitted the PLACEHOLDER 'no company' as assignment_company — recorded as billing.ledger_label, deliberately NOT an alias (the alias index does free-text matching and 'no company' would claim unrelated rows) and deliberately NOT billing.canonical (that is the card DISPLAY name)."
   -
     id: james-taylor
@@ -414,7 +413,7 @@ clients:
     id: mustafa-ahmed
     name: Mustafa Ahmed
     aliases:
-      - Mustafa Ahmed, Mustafa A
+      - "Mustafa Ahmed, Mustafa A"
       - Mustafa A
     upwork_rooms:
       - room_1f72c2d8db8fcd4484255a952a6fb5b8
@@ -559,12 +558,12 @@ clients:
     id: saman-shafigh
     name: Saman Shafigh
     aliases:
-      - Saman Shafigh, S
+      - "Saman Shafigh, S"
     upwork_rooms:
       - room_8f3f06cf43c80c951c1fecb09aecb1d5
     billing:
       canonical: Saman Shafigh
-      ledger_label: "S"
+      ledger_label: S
     scope_notes: "Upwork contract 40430519 (AI Engineer — Conversational Pathways, FIXED, 2025-04-27 to 2025-07-18, ENDED). $450.00 gross / $404.55 net across 3 rows. Client side had two people: Saman S. and Max S. Upwork TRUNCATED assignment_company to 'S' — recorded as billing.ledger_label, deliberately NOT an alias (a one-character token would match inside anything) and deliberately NOT billing.canonical (that is the card DISPLAY name)."
   -
     id: servicepeople
