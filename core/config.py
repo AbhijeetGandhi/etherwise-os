@@ -262,6 +262,20 @@ RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a h
 # attributed here unless a Payments export names a different customer for that
 # payment id (Abhijeet, 2026-07-30). Set to None once Stripe has >1 client and
 # the Payments export is dropped alongside balance_history for real attribution.
+#
+# UNVERIFIED — READ THIS BEFORE QUOTING THE NUMBER (2026-08-13). No Payments
+# export has ever been dropped in finance-inbox/stripe/ (only balance_history,
+# which carries NO customer column), so 100% of the Stripe revenue on the
+# Clients tab — 3 rows, $574.39, Jul 2/16/30 2026 — is attributed by THIS
+# CONSTANT and by nothing the ledger observed. Two facts sit against it: every
+# one of those payments carries Fee 0.00, which is not what a live Stripe card
+# charge looks like; and Abhijeet said on 2026-08-13 "there is no stripe client
+# revenue at all", though he was speaking about the EUR Beglaubigt.de receipts,
+# which are a DIFFERENT Stripe account (EUR, zero-value, product testing — see
+# payment_mail_rail.ZERO_VALUE_STATE). Left exactly as it is on purpose:
+# re-attributing money on an inference is the failure this whole file guards
+# against. Needs one sentence from Abhijeet, then either a Payments export or
+# STRIPE_DEFAULT_CLIENT = None.
 STRIPE_DEFAULT_CLIENT = "Optimize IS"
 
 # ── Finance payment-mail rail (2026-08-09) ───────────────────────────────────

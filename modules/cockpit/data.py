@@ -650,6 +650,91 @@ def _upwork_label(description: Optional[str]) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
+def _contract_client(raw: Optional[str]) -> Optional[str]:
+    """The canonical client for a `contracts.client_company` label.
+
+    That column is a DIFFERENT namespace from `transactions.assignment_company`:
+    Upwork composes it as '<contact person>, <company>' — 'Chris Cave, Adélye',
+    'Ioannis Pirigkos, Ioannis P', 'Haleema  Umair, NETFLY'. Handed to
+    `_canon_client` the whole composite becomes the client NAME, so the same
+    client appeared on the Clients tab twice: 'NETFLY' $2,760.75 (the rows where
+    Upwork filled assignment_company) AND 'Haleema  Umair, NETFLY' $2,031.75
+    (the rows only the contract bridge reaches). Abhijeet, 2026-08-13: "netfly
+    and haleema umair is the same client".
+
+    Resolution order, each step deterministic and refusing rather than guessing:
+      1. CLIENT_CANONICAL on the composite and on the suffix-stripped core — the
+         curated merges win (this is what already carries 'ioannis pirigkos,
+         ioannis p' -> Beglaubigt);
+      2. ONLY IF THE LABEL IS A COMPOSITE (contains ','): the registry's
+         name/alias index, first on the whole label — so listing the exact
+         ledger composite in clients.yaml is enough to bind it — then on each
+         comma-part. Exactly ONE distinct client id -> that client. Zero, or two
+         different clients, -> fall through: a label naming two clients is not
+         evidence for either;
+      3. `_canon_client` (unchanged behaviour) for everything else.
+
+    THE COMMA IS THE WHOLE BOUNDARY, and it is load-bearing (measured
+    2026-08-13, var/agent-scratch/s5). Resolving a SINGLE-name contract label
+    through the registry looked tidier and was strictly worse: 'Tomas Eklund'
+    became 'Homestyling' and 'Rick K' became 'celciusherbs' on the rows the
+    contract bridge reaches, while the rows Upwork labelled directly kept the
+    raw name — SPLITTING one client into two rows on the Clients tab, the exact
+    failure this function exists to end. A composite cannot split anything,
+    because a composite is never a name any other path produces."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    core = _CO_SUFFIX.sub("", s).strip()
+    for key in (_deaccent(core), _deaccent(s)):
+        if key in config.CLIENT_CANONICAL:
+            return config.CLIENT_CANONICAL[key]
+    if "," in s:
+        try:
+            reg = registry.load()
+        except Exception:                                 # noqa: BLE001
+            reg = None
+        if reg is not None:
+            cid = reg.match_name(s)
+            if not cid:
+                ids = {reg.match_name(p) for p in s.split(",") if p.strip()}
+                ids.discard(None)
+                cid = ids.pop() if len(ids) == 1 else None
+            name = reg.canonical(cid) if cid else None
+            if name:
+                return name
+    return _canon_client(s)
+
+
+def _ledger_label_client(raw: Optional[str]) -> Optional[str]:
+    """The client that owns a MASKED ledger company string, or None.
+
+    When Upwork will not name the client it writes a placeholder into
+    `assignment_company` — 'no company', 'S' (a one-letter truncation). The
+    registry records these as `billing.ledger_label`, deliberately NOT as
+    aliases (the alias index does substring matching and 'S' would claim half
+    the ledger) and with a uniqueness check, so exactly one client can own one.
+    Reading it here is what makes the Clients tab agree with the dossier, which
+    has consulted `ledger_label` since it was introduced: irene-buht's four
+    masked earnings were $75.00 on the tab and $490.00 on her dossier, on the
+    same screen, because three of them are titled 'VAPI/retell/bland Voice
+    Agent Development for Driving School' — a job with no synced contract, so
+    no bridge could reach it and it became its own phantom client.
+
+    Measured over the live ledger before shipping (2026-08-13): 'no company'
+    matches 12 rows, ALL irene-buht's two jobs; 'S' matches 3 rows, ALL
+    saman-shafigh's. No other client has a row carrying either label."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        reg = registry.load()
+    except Exception:                                     # noqa: BLE001
+        return None
+    cid = reg.match_ledger_label(s)
+    return reg.canonical(cid) if cid else None
+
+
 def _client_key(row: dict, title_map: Optional[dict] = None,
                 id_map: Optional[dict] = None) -> Optional[str]:
     """The canonical client a revenue row belongs to, or None if unattributable.
@@ -664,41 +749,73 @@ def _client_key(row: dict, title_map: Optional[dict] = None,
          correctly, so the Clients tab and the Knowledge tab disagreed about
          the same client on the same screen (2026-08-13). Every Wise-* row
          carries the payer in exactly this format, so the prefix is the rule.
-      2. Upwork API rows carry assignment_company (Upwork's own label).
+      2. Upwork API rows carry assignment_company (Upwork's own label) — UNLESS
+         that string is itself a known CONTRACT TITLE (see below). A MASKED
+         label ('no company', 'S') resolves via the registry's
+         `billing.ledger_label` index instead (`_ledger_label_client`).
       3. a job title in the description ('Title · Earnings') -> the contract.
       4. a contract id in the description ('(43495766) NETFLY - hrs') -> the
          contract. Upwork hourly lines name the client this way, not by company.
       5. a bank IMPS remitter that maps to a KNOWN alias.
-    Without 3/4, real earnings (Ioannis CSV, NETFLY hourly) sit in unlinked."""
-    if (row.get("source") or "").startswith("Wise"):
+      6. last resort: the job title as a LABEL, so masked Upwork earnings are
+         never nameless (Abhijeet, 2026-07-30) — but only after the title has
+         been offered to the contract bridge, because a title we CAN resolve to
+         a client is not a last resort.
+    Without 3/4, real earnings (Ioannis CSV, NETFLY hourly) sit in unlinked.
+
+    A TITLE IS NOT A COMPANY (2026-08-13). Some legacy Upwork rows carry the JOB
+    TITLE in `assignment_company` ('Ai Automations sales outbound & Inbound',
+    'Postal forwarding service', 'Hero GHL landing pages'). Step 2 accepted them
+    and minted a client named after the job — five phantom clients holding
+    $2,214.91, of which $1,324.16 was Beglaubigt's own contract 43406906 sitting
+    beside its other 12 weeks. So step 2 now skips a string that IS a contract
+    title and lets the title bridge resolve it. Deterministic: the string is an
+    exact (deaccented) key of `contracts.title`, not a fuzzy resemblance.
+
+    THE SOURCE GATE IS NOT THE PROVENANCE (2026-08-13). Step 6 keyed on
+    `source LIKE 'Upwork%'`, but 17 live rows carry `source IS NULL` — a legacy
+    batch whose `canonical_key` is nonetheless `upwork:<record id>`. The
+    canonical namespace is the row's real identity, so it gates step 6 too."""
+    src = row.get("source") or ""
+    ac = row.get("assignment_company")
+    ac_is_title = bool(title_map) and _deaccent(ac or "") in (title_map or {})
+    if src.startswith("Wise"):
         k = _canon_client(_wise_payer(row.get("description")))
         if k:
             return k
-    else:
-        k = _canon_client(row.get("assignment_company"))
+    elif not ac_is_title:
+        k = _canon_client(ac)
+        if k:
+            return k
+        k = _ledger_label_client(ac)
         if k:
             return k
     desc = row.get("description") or ""
     if title_map:
         jt = _job_title(desc)
-        if jt and jt in title_map:
-            return _canon_client(title_map[jt])
+        key = _deaccent(jt or "")
+        if not key or key not in title_map:
+            key = _deaccent(ac or "") if ac_is_title else ""
+        if key and key in title_map:
+            return _contract_client(title_map[key])
     if id_map:
         m = _CONTRACT_ID_RE.match(desc.strip())
         if m and m.group(1) in id_map:
-            return _canon_client(id_map[m.group(1)])
+            return _contract_client(id_map[m.group(1)])
     # bank credit (IMPS/NEFT) whose remitter maps to a KNOWN client alias.
     # Requires an explicit CLIENT_CANONICAL hit — never the raw payer, so
     # processor names never become junk clients.
-    if (row.get("source") or "") in _BANK_SOURCES:
+    if src in _BANK_SOURCES:
         payer = _bank_payer(row.get("description"))
         if payer and _deaccent(payer) in config.CLIENT_CANONICAL:
             return config.CLIENT_CANONICAL[_deaccent(payer)]
     # LAST resort for Upwork earnings Upwork masked the client on: label by the
     # job title itself so it is never nameless (Abhijeet, 2026-07-30).
-    if (row.get("source") or "").startswith("Upwork"):
+    if src.startswith("Upwork") or _is_upwork_row(row):
         lbl = _upwork_label(desc)
         if lbl:
+            if title_map and _deaccent(lbl) in title_map:
+                return _contract_client(title_map[_deaccent(lbl)])
             return _canon_client(lbl) or lbl
     return None
 
@@ -706,17 +823,42 @@ def _client_key(row: dict, title_map: Optional[dict] = None,
 _CONTRACT_ID_RE = _re.compile(r"^\((\d+)\)")
 
 
+def _is_upwork_row(row: dict) -> bool:
+    """Is this an Upwork row, judged by its own identity rather than by the
+    `source` column? 17 legacy rows (record_id 'personal:<id>', source_file
+    'upwork-personal-*.csv') were inserted before the sync set `source`, so the
+    column is NULL on them while `canonical_key` is 'upwork:<record id>'. The
+    canonical namespace is minted by the Upwork path and by nothing else."""
+    return (row.get("canonical_key") or "").startswith("upwork:")
+
+
+def _source_label(row: dict) -> str:
+    """The source to SHOW. `—` (not measured), never a bare null: the drill
+    rendered a literal 'None' pill for the 17 source-NULL rows, on exactly the
+    clients whose attribution was in question (rule 1 of UI_BUILD_BRIEF §0 —
+    `—` means not measured, and an unmeasured thing is never rendered as a
+    value). The underlying NULLs are a data defect fixed separately by
+    scripts/backfill_upwork_source.py; this keeps the contract honest if one
+    ever reappears."""
+    return row.get("source") or "—"
+
+
 def _contract_maps(conn) -> tuple:
     """(title_map, id_map) -> client identity. Upwork earnings name the client
     two ways: by job title ('Title · Earnings for ...') and by contract id
     ('(43495766) NETFLY - 8:00 hrs @ ...'). Both bridge to a synced contract
-    that carries the client_company."""
+    that carries the client_company.
+
+    title_map is keyed on the DEACCENTED title for the same reason `_deaccent`
+    exists at all: Upwork writes the same title with different whitespace and
+    accents in `contracts.title` and in the earning description, and an exact
+    byte match silently drops the bridge."""
     title_map, id_map = {}, {}
     for r in conn.execute(
             "SELECT id, title, client_company FROM contracts"
             " WHERE COALESCE(client_company,'') != ''"):
         if r["title"]:
-            title_map[r["title"]] = r["client_company"]
+            title_map[_deaccent(r["title"])] = r["client_company"]
         id_map[str(r["id"])] = r["client_company"]
     return title_map, id_map
 
@@ -751,7 +893,7 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
     try:
         rev_rows = [dict(r) for r in conn.execute(
             "SELECT source, description, assignment_company, amount_base_minor,"
-            " substr(creation_dt,1,10) AS d FROM transactions"
+            " canonical_key, substr(creation_dt,1,10) AS d FROM transactions"
             " WHERE pnl_bucket='revenue' AND canonical_key IS NOT NULL")]
         # active contracts + owed replies, linked by a DETERMINISTIC token match
         # to a revenue client (never a fuzzy guess) — unmatched surfaced, not faked
@@ -781,7 +923,7 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
         a["revenue_minor"] += r["amount_base_minor"] or 0
         a["payments"] += 1
         a["channels"].add("Upwork" if (r["source"] or "").startswith("Upwork")
-                          else r["source"] or "?")
+                          or _is_upwork_row(r) else _source_label(r))
         d = r["d"]
         if d:
             a["first"] = min(a["first"], d) if a["first"] else d
@@ -853,7 +995,7 @@ def client_transactions(db_path: Optional[Path] = None, *,
     try:
         rev = [dict(r) for r in conn.execute(
             "SELECT source, description, assignment_company, amount_base_minor,"
-            " substr(creation_dt,1,10) AS dt FROM transactions"
+            " canonical_key, substr(creation_dt,1,10) AS dt FROM transactions"
             " WHERE pnl_bucket='revenue' AND canonical_key IS NOT NULL"
             " ORDER BY creation_dt DESC")]
         title_map, id_map = _contract_maps(conn)
@@ -866,7 +1008,7 @@ def client_transactions(db_path: Optional[Path] = None, *,
         if not hit:
             continue
         total += r["amount_base_minor"] or 0
-        rows.append({"dt": r["dt"], "source": r["source"],
+        rows.append({"dt": r["dt"], "source": _source_label(r),
                      "payer": _wise_payer(r["description"])
                               or r["assignment_company"] or "—",
                      "desc": (r["description"] or "")[:80],

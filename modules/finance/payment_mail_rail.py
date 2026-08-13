@@ -21,6 +21,11 @@ read-only IMAP substrate (select(readonly=True), BODY.PEEK, SEARCH/FETCH only) s
 the two readers cannot diverge. Parsing, attribution, reconcile, staleness and AR
 are all PURE over their inputs (no socket, no clock) — fixtures cover them with no
 network; the transport is the only injectable side.
+
+STATES: provisional -> confirmed (its ledger twin landed) | zero_value (a
+notification for a ZERO amount, which is not a payment — see ZERO_VALUE below) |
+superseded. `provisional` is the only OPEN state; everything else is terminal and
+is excluded from staleness, the mapping queue and the stale-unmatched anomaly.
 """
 from __future__ import annotations
 
@@ -457,9 +462,32 @@ def collect(inbox: str, cursor: Optional[str], *, max_items: int,
 
 
 # ── DAL ────────────────────────────────────────────────────────────────────────
+# The only OPEN state. Everything else is terminal: reconcile never revisits it,
+# staleness never counts it, the mapping queue never asks a human about it.
+OPEN_STATE = "provisional"
+# A notification reporting a ZERO amount is not a payment and can never acquire a
+# ledger twin, so as 'provisional' it is stale by construction and stays stale
+# forever. Live case (2026-08-13): three EUR 0.00 Stripe receipts from
+# Beglaubigt.de, dated 2026-06-09/11/22, which had been the sole reason the
+# payment-mail rail read DEGRADED. Abhijeet: "stripe payments you see of 0 dollar
+# are testing that we do for beglaubigt product".
+#
+# THE RULE IS THE AMOUNT, NOT THE PROVIDER — deliberately. "Ignore Stripe" would
+# also swallow the first REAL Stripe payment, silently, forever. A real payment
+# has amount_minor != 0, so it still becomes `provisional`, still reconciles
+# against the ledger, and still escalates loudly if the import never arrives.
+ZERO_VALUE_STATE = "zero_value"
+
+
+def _initial_state(amount_minor) -> str:
+    return ZERO_VALUE_STATE if int(amount_minor or 0) == 0 else OPEN_STATE
+
+
 def upsert_provisional(conn, p: dict, *, reg=None) -> bool:
     """Idempotent by canonical_key. Attributes the payer -> client_id here.
-    Returns True on a fresh insert, False if the row already existed (no-op)."""
+    Returns True on a fresh insert, False if the row already existed (no-op).
+    A zero-amount notification is stored (the evidence is kept, with its
+    permalink) but lands directly in the terminal ZERO_VALUE_STATE."""
     ck = p["canonical_key"]
     if conn.execute("SELECT 1 FROM provisional_payments WHERE canonical_key=?",
                     (ck,)).fetchone():
@@ -468,10 +496,11 @@ def upsert_provisional(conn, p: dict, *, reg=None) -> bool:
     conn.execute(
         "INSERT INTO provisional_payments (canonical_key, provider, payer,"
         " client_id, amount_minor, currency, paid_date, provider_ref,"
-        " native_id, permalink, raw_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        " native_id, permalink, raw_ref, state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (ck, p["provider"], p.get("payer"), client_id, p["amount_minor"],
          p["currency"], p.get("paid_date"), p.get("provider_ref"),
-         p["native_id"], p.get("permalink"), p.get("raw_ref")))
+         p["native_id"], p.get("permalink"), p.get("raw_ref"),
+         _initial_state(p["amount_minor"])))
     return True
 
 
@@ -508,16 +537,32 @@ def reconcile(conn, *, window_days: Optional[int] = None,
               now: Optional[datetime] = None) -> dict:
     """Flip every provisional row whose real ledger twin has landed to 'confirmed'.
     NEVER writes `transactions`. Idempotent (only touches state='provisional').
-    Returns {confirmed, unmatched, stale_unmatched} — stale_unmatched are older
-    than window_days with no twin (surfaced loudly by the caller)."""
+    Returns {confirmed, unmatched, stale_unmatched, zero_value} —
+    stale_unmatched are older than window_days with no twin (surfaced loudly by
+    the caller); zero_value are non-payment notifications retired this run.
+
+    The zero-amount sweep lives HERE as well as at insert so rows written before
+    the rule existed self-heal on the next scheduled run — no manual migration,
+    and re-running it is a no-op."""
     window_days = config.PAYMENT_MAIL_RECONCILE_WINDOW_DAYS if window_days is None else window_days
     tolerance_minor = (config.PAYMENT_MAIL_AMOUNT_TOLERANCE_MINOR
                        if tolerance_minor is None else tolerance_minor)
     now = now or datetime.now(config.TZ)
     today = now.date()
-    confirmed, unmatched, stale = 0, [], []
+    confirmed, unmatched, stale, zero_value = 0, [], [], []
     for r in [dict(x) for x in conn.execute(
-            "SELECT * FROM provisional_payments WHERE state='provisional'")]:
+            "SELECT * FROM provisional_payments WHERE state=?", (OPEN_STATE,))]:
+        if int(r.get("amount_minor") or 0) == 0:
+            conn.execute(
+                "UPDATE provisional_payments SET state=?, updated_at=?"
+                " WHERE canonical_key=?",
+                (ZERO_VALUE_STATE, now.isoformat(timespec="seconds"),
+                 r["canonical_key"]))
+            zero_value.append({"canonical_key": r["canonical_key"],
+                               "provider": r.get("provider"),
+                               "payer": r.get("payer"),
+                               "paid_date": r.get("paid_date")})
+            continue
         twin = _ledger_twin(conn, r, window_days=window_days,
                             tolerance_minor=tolerance_minor)
         if twin:
@@ -537,7 +582,7 @@ def reconcile(conn, *, window_days: Optional[int] = None,
                               "paid_date": r["paid_date"],
                               "amount_usd": _usd(r)})
     return {"confirmed": confirmed, "unmatched": unmatched,
-            "stale_unmatched": stale}
+            "stale_unmatched": stale, "zero_value": zero_value}
 
 
 # ── staleness (the point of the whole thing) ──────────────────────────────────
@@ -560,8 +605,8 @@ def staleness(conn) -> dict:
     ledger_newest = ledger_row["d"] if ledger_row else None
     provs = [dict(r) for r in conn.execute(
         "SELECT canonical_key, client_id, payer, paid_date, amount_minor, currency"
-        " FROM provisional_payments WHERE state!='confirmed' AND paid_date IS NOT NULL"
-        " ORDER BY paid_date DESC")]
+        " FROM provisional_payments WHERE state=? AND paid_date IS NOT NULL"
+        " ORDER BY paid_date DESC", (OPEN_STATE,))]
     if not provs:
         return {"stale": False, "count": 0, "ledger_newest": ledger_newest,
                 "email_newest": None, "most_recent": None, "unimported": [],
@@ -588,11 +633,12 @@ def staleness(conn) -> dict:
 
 def mapping_queue(conn) -> list[dict]:
     """Provisional payments whose payer did not attribute to a client — surfaced
-    for a human to map, never guessed."""
+    for a human to map, never guessed. OPEN rows only: a terminal row (confirmed
+    or zero_value) is not a question anyone can still answer usefully."""
     return [dict(r) for r in conn.execute(
         "SELECT canonical_key, provider, payer, amount_minor, currency, paid_date"
-        " FROM provisional_payments WHERE client_id IS NULL AND state!='confirmed'"
-        " ORDER BY paid_date DESC")]
+        " FROM provisional_payments WHERE client_id IS NULL AND state=?"
+        " ORDER BY paid_date DESC", (OPEN_STATE,))]
 
 
 # ── AR view (overdue) ─────────────────────────────────────────────────────────

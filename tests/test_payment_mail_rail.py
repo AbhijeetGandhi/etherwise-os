@@ -252,6 +252,50 @@ class Reconcile(_DBCase):
         self.assertEqual(len(rec["stale_unmatched"]), 1)
         self.assertEqual(rec["stale_unmatched"][0]["client_id"], "adelye")
 
+    def test_zero_amount_notification_is_retired_not_stale_forever(self):
+        # three EUR 0.00 Stripe receipts from Beglaubigt.de were the ONLY reason
+        # this rail read DEGRADED: a zero can never acquire a ledger twin, so as
+        # 'provisional' it is stale by construction, for ever. Abhijeet: those
+        # are product testing, not payments.
+        rail.upsert_provisional(self.conn, self._prov(
+            "stripe-email:z", "Beglaubigt.de", 0, cur="EUR",
+            date_="2026-06-09", provider="stripe"))
+        rec = rail.reconcile(self.conn, now=datetime(2026, 8, 12, tzinfo=config.TZ))
+        self.assertEqual(len(rec["stale_unmatched"]), 0)
+        self.assertEqual(len(rec["zero_value"]), 0)      # already terminal at insert
+        row = self.conn.execute("SELECT state FROM provisional_payments"
+                                " WHERE canonical_key='stripe-email:z'").fetchone()
+        self.assertEqual(row["state"], "zero_value")
+        self.assertFalse(rail.staleness(self.conn)["stale"])
+        self.assertEqual(rail.mapping_queue(self.conn), [])
+
+    def test_reconcile_sweeps_pre_existing_zero_rows(self):
+        # rows written before the rule existed self-heal on the next run
+        rail.upsert_provisional(self.conn, self._prov(
+            "stripe-email:z2", "Beglaubigt.de", 0, cur="EUR",
+            date_="2026-06-09", provider="stripe"))
+        self.conn.execute("UPDATE provisional_payments SET state='provisional'")
+        rec = rail.reconcile(self.conn, now=datetime(2026, 8, 12, tzinfo=config.TZ))
+        self.assertEqual(len(rec["zero_value"]), 1)
+        self.assertEqual(len(rec["stale_unmatched"]), 0)
+        again = rail.reconcile(self.conn, now=datetime(2026, 8, 12, tzinfo=config.TZ))
+        self.assertEqual(len(again["zero_value"]), 0)    # idempotent
+
+    def test_a_real_stripe_payment_is_still_tracked_and_escalates(self):
+        # the rule is the AMOUNT, not the provider — "ignore Stripe" would
+        # swallow the first real Stripe payment silently. This one must behave
+        # exactly like a Wise payment: provisional, then loudly stale.
+        rail.upsert_provisional(self.conn, self._prov(
+            "stripe-email:real", "Optimize IS", 120000, cur="USD",
+            date_="2026-07-01", provider="stripe"))
+        row = self.conn.execute("SELECT state FROM provisional_payments"
+                                " WHERE canonical_key='stripe-email:real'").fetchone()
+        self.assertEqual(row["state"], "provisional")
+        rec = rail.reconcile(self.conn, now=datetime(2026, 8, 12, tzinfo=config.TZ))
+        self.assertEqual(len(rec["stale_unmatched"]), 1)
+        self.assertEqual(rec["stale_unmatched"][0]["canonical_key"],
+                         "stripe-email:real")
+
     def test_reconcile_idempotent(self):
         rail.upsert_provisional(self.conn, self._prov("wise-email:f", "Adélye Ltd.", 350000,
                                                       date_="2026-08-07"))

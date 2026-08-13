@@ -397,6 +397,14 @@ class Registry:
     def match_name(self, text: str) -> Optional[str]:
         return self._alias_to_id.get(norm(text))
 
+    def match_ledger_label(self, label: str) -> Optional[str]:
+        """A MASKED ledger company string ('S', 'no company') -> its client.
+        EXACT (normalised) match only, never a substring — that is the whole
+        point of keeping these out of the alias index: 'S' as a substring would
+        claim half the ledger. `_validate_and_index` already guarantees one
+        owner per label, so this can never split a payment between clients."""
+        return self._ledger_label_to_id.get(norm(label))
+
     def canonical(self, client_id: str) -> Optional[str]:
         c = self.by_id.get(client_id)
         if not c:

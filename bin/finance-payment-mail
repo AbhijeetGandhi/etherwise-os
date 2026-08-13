@@ -136,12 +136,16 @@ def apply_run() -> int:
             ctx.anomaly("finance_payment_mail_unmatched", "warn",
                         {"stale_unmatched": rec["stale_unmatched"]})
         ctx.log(f"payment-mail: parsed {inserted} new, quarantined {quarantined},"
-                f" confirmed {rec['confirmed']}, unmapped {unmapped},"
+                f" confirmed {rec['confirmed']},"
+                f" zero-value {len(rec['zero_value'])}, unmapped {unmapped},"
                 f" ledger-stale={stale['stale']} ({stale['count']} ahead)")
         return {"inserted": inserted, "quarantined": quarantined,
                 "confirmed": rec["confirmed"],
                 "unmatched": len(rec["unmatched"]),
                 "stale_unmatched": len(rec["stale_unmatched"]),
+                # non-payment notifications retired this run (zero amount) —
+                # counted, never silently dropped
+                "zero_value": len(rec["zero_value"]),
                 "unmapped": unmapped, "ledger_stale": stale["stale"],
                 "email_ahead": stale["count"]}
 
@@ -157,6 +161,7 @@ def reconcile_only() -> int:
     print(json.dumps({"confirmed": rec["confirmed"],
                       "unmatched": len(rec["unmatched"]),
                       "stale_unmatched": rec["stale_unmatched"],
+                      "zero_value": rec["zero_value"],
                       "ledger_stale": stale["stale"],
                       "most_recent": stale["most_recent"]}, default=str))
     return 0

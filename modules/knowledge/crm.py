@@ -88,13 +88,46 @@ attributes and the registry cannot (below). **Zero rows are claimed by two
 clients.** The Upwork/direct split is printed inside the fact so the previous
 figure stays visible and the change is auditable rather than silent.
 
+THE CONTRACT BRIDGE (2026-08-13) — and a diagnosis that was wrong twice
+-----------------------------------------------------------------------
+This file used to say: "beglaubigt: the Money tab shows $5,885.85, this matcher
+reaches $921.67. The missing $4,964.18 is Stripe revenue whose ledger rows carry
+no string any beglaubigt identifier matches."
+
+Both halves were false, and the second attempt at it was false in the opposite
+direction (it concluded the Money tab was over-counting by ~$4,964 and that the
+extra rows belonged to someone else). What the ledger actually holds:
+
+  * there is not one Stripe row for beglaubigt. Every Stripe row in the ledger
+    (3 revenue, $574.39) carries assignment_company='Optimize IS'. Abhijeet:
+    "for beglaubigt we don't have any stripe payment, all the payment is through
+    upwork";
+  * the 13 rows this matcher could not see are Upwork contract 43406906,
+    `client_company='Ioannis Pirigkos, Ioannis P'` — the SAME contract as the two
+    it could see. They are 13 further weeks of one weekly hourly contract, and
+    the 15 rows together are 15 CONSECUTIVE, non-overlapping weeks (Apr 13 →
+    Jul 26 2026) totalling $7,210.01. Nothing was double-counted and nothing
+    belonged to anyone else;
+  * they were invisible because an Upwork weekly earning line names NEITHER the
+    client NOR any alias — it names the CONTRACT, by title or by id. So the
+    identifier match had nothing to bite on and both audits reached for a story
+    instead of the contract.
+
+The fix is the contract bridge in `crm_facts`: the contracts a client owns are
+already matched here by identifier, so their rows are reachable by contract id
+and by title. That is evidence, not a guess, and it is the same bridge
+modules/cockpit/data._client_key uses — which is what makes the two agree.
+
 WHAT STILL DOES NOT RECONCILE — stated, not smoothed over
 ---------------------------------------------------------
-  * beglaubigt: the Money tab shows $5,885.85, this matcher reaches $921.67.
-    The missing $4,964.18 is Stripe revenue whose ledger rows carry no string
-    any beglaubigt identifier matches. UNDER-counted here, and left that way —
-    inventing an identifier to close a number is how a wrong attribution
-    becomes permanent.
+  * servicepeople: this matcher reaches $1,013.75, the Clients tab shows
+    $900.00. Both contracts are labelled 'Raphael Mahir, Servicepeople' and the
+    registry holds THREE entries for what is plausibly one client —
+    `servicepeople`, `raphael-mahir`, and `visa-gate` (whose scope_notes already
+    say "standalone client 'raphael-mahir' may be the same person — merge is
+    Abhijeet's call"). The tab refuses to resolve a composite that names two
+    registry clients, which is the correct refusal; the number closes when the
+    registry merge is decided, not before.
   * platform_fee: $10,581.29 of the ledger's $20,210.60 is client-attributable.
     The rest is Upwork membership/Connects and bank-side Upwork POS charges —
     real costs, but costs of the AGENCY, not of any one client. They belong in
@@ -178,10 +211,16 @@ def crm_facts(db_path, client_id: str, client_name: str,
             cpreds.append("kbnorm(client_company) = ?")
             cargs.append(lbl)
         cclause = " OR ".join(f"({p})" for p in cpreds)
+        contract_ids: List[str] = []
+        contract_titles: List[str] = []
         for c in conn.execute(
                 f"SELECT id, title, job_title, upwork_status, hourly_rate"
                 f" FROM contracts WHERE {cclause}", cargs):
             c = dict(c)
+            contract_ids.append(str(c["id"]))
+            for t in (c["title"], c["job_title"]):
+                if t and registry.norm(t):
+                    contract_titles.append(registry.norm(t))
             rate = f" at ${c['hourly_rate']}/hr" if c["hourly_rate"] else ""
             facts.append({
                 "category": "numbers",
@@ -203,6 +242,23 @@ def crm_facts(db_path, client_id: str, client_name: str,
         for lbl in labels:
             tpreds.append("kbnorm(assignment_company) = ?")
             targs.append(lbl)
+        # THE CONTRACT BRIDGE — the same one modules/cockpit/data._client_key
+        # uses, and the reason this matcher used to disagree with the Money tab.
+        # Upwork's weekly earning lines name NEITHER the client nor any alias:
+        # they carry the CONTRACT — either as an id prefix ('(43495766) NETFLY -
+        # 6:40 hrs') or as the job title ('<title> · Earnings for Jul 20-26'),
+        # and some legacy rows put the title in assignment_company. Beglaubigt's
+        # dossier reached $921.67 of a real $7,210.01 because 13 of its 15 weekly
+        # rows are titled, not named. We already know WHICH contracts are this
+        # client's (matched above by identifier) — reaching their rows is
+        # therefore evidence, not a guess.
+        for cid in contract_ids:
+            tpreds.append("description LIKE ?")
+            targs.append(f"%{cid}%")
+        for t in contract_titles:
+            tpreds.append("kbnorm(description) = ? OR kbnorm(description) LIKE ?"
+                          " OR kbnorm(assignment_company) = ?")
+            targs.extend([t, f"{t} ·%", t])
         tclause = " OR ".join(f"({p})" for p in tpreds)
         rows = [dict(r) for r in conn.execute(
             f"SELECT {_PNL_COLS} FROM transactions"

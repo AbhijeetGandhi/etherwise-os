@@ -1111,9 +1111,59 @@ class TestClientEconomics(unittest.TestCase):
                 " 32400,32400,'USD','revenue','2026-06-12T00:00:00+0000')")
         out = data.clients(self.db_path)
         names = [c["name"] for c in out["clients"]]
-        self.assertIn("Haleema Umair, NETFLY", names)   # attributed via contract id
-        c = next(x for x in out["clients"] if x["name"] == "Haleema Umair, NETFLY")
+        # the contract label is Upwork's '<person>, <company>' COMPOSITE, which
+        # is not a client name: it resolves through the registry to NETFLY, so
+        # these rows land on the same row as the ones Upwork labelled 'NETFLY'
+        # directly. Until 2026-08-13 the composite became its own client and the
+        # Clients tab showed NETFLY twice (Abhijeet: "netfly and haleema umair
+        # is the same client").
+        self.assertIn("NETFLY", names)                  # attributed via contract id
+        self.assertNotIn("Haleema Umair, NETFLY", names)
+        c = next(x for x in out["clients"] if x["name"] == "NETFLY")
         self.assertEqual(c["revenue_usd"], 324.0)
+
+    def test_job_title_in_assignment_company_is_not_a_client(self):
+        # some legacy Upwork rows carry the JOB TITLE in assignment_company.
+        # Taken as a company it minted a client named after the job, splitting
+        # the contract's real client across two rows (Beglaubigt lost $1,324.16
+        # to a phantom 'Ai Automations sales outbound & Inbound', 2026-08-13).
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO contracts (id, title, client_company, upwork_status)"
+                " VALUES ('c43406906','Ai Automations sales outbound & Inbound',"
+                "'Ioannis Pirigkos, Ioannis P','ACTIVE')")
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, source, assignment_company, description, amount_minor,"
+                " amount_base_minor, currency, pnl_bucket, creation_dt) VALUES"
+                " ('t1','kt1','Hourly Earning','income','Upwork',"
+                "'Ai Automations sales outbound & Inbound',"
+                "'Ai Automations sales outbound & Inbound · Earnings for May 4-10',"
+                " 38500,38500,'USD','revenue','2026-05-20T00:00:00+0000')")
+        out = data.clients(self.db_path)
+        names = [c["name"] for c in out["clients"]]
+        self.assertNotIn("Ai Automations sales outbound & Inbound", names)
+        beg = next(c for c in out["clients"] if c["name"] == "Beglaubigt")
+        self.assertEqual(beg["revenue_usd"], 385.0)
+
+    def test_drill_never_renders_a_null_source(self):
+        # 17 legacy rows carry source IS NULL; the drill printed a literal
+        # 'None' pill on exactly the clients whose attribution was in question.
+        # `—` means not measured (UI_BUILD_BRIEF §0 rule 1); a null never ships.
+        # The row is still ATTRIBUTED — its canonical_key proves it is Upwork's,
+        # so the last-resort job-title label applies despite the NULL column.
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, description, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt) VALUES"
+                " ('personal:9','upwork:9','Hourly Earning','income',"
+                "'(99999) Widget Works - 2:00 hrs @ $50.00/hr - 06/01/2026',"
+                " 10000,10000,'USD','revenue','2026-06-12T00:00:00+0000')")
+        d = data.client_transactions(self.db_path, client="Widget Works")
+        self.assertEqual(d["count"], 1)
+        self.assertEqual(d["rows"][0]["source"], "—")
+        self.assertEqual(d["sum_usd"], 100.0)
 
     def test_bank_imps_payer_attributes_only_via_known_alias(self):
         # a bank credit whose IMPS remitter maps to a known alias attributes;
@@ -1136,10 +1186,13 @@ class TestClientEconomics(unittest.TestCase):
         self.assertNotIn("VISAPAYMENTSLIM", names)        # processor noise -> unlinked
         self.assertNotIn("MichaelXavierGa", names)
 
-    def test_masked_upwork_client_is_labelled_by_job_title(self):
-        # Upwork masked the client ('no company') -> label by the job title so
-        # it is never 'unlinked' (Abhijeet, 2026-07-30); milestones of one job
-        # merge under the same title
+    def test_masked_upwork_client_resolves_via_registry_ledger_label(self):
+        # Upwork masks some clients as 'no company'. The registry records that
+        # placeholder as irene-buht's `billing.ledger_label` (uniqueness-checked,
+        # deliberately not an alias), so the rows are the CLIENT's, not a job's.
+        # Until 2026-08-13 the tab labelled them by job title, which split one
+        # client across two phantom names and put $490 of dossier revenue on a
+        # $75 tab row.
         with db.connect(self.db_path) as conn:
             for rid, minor in (("i1", 20000), ("i2", 14000)):
                 conn.execute(
@@ -1151,9 +1204,29 @@ class TestClientEconomics(unittest.TestCase):
                     " Milestone',?,?, 'USD','revenue','2025-04-20T00:00:00+0000')",
                     (rid, "k" + rid, minor, minor))
         out = data.clients(self.db_path)
+        names = [x["name"] for x in out["clients"]]
+        self.assertNotIn("Voice Agent for Driving School", names)
+        c = next(x for x in out["clients"] if x["name"] == "Irene Buht")
+        self.assertEqual(c["revenue_usd"], 340.0)          # both milestones merged
+
+    def test_unclaimed_masked_earning_still_falls_back_to_its_job_title(self):
+        # the last resort survives: an Upwork earning with NO company and no
+        # contract to bridge to is still named by what it was for, never
+        # 'unlinked' (Abhijeet, 2026-07-30). Milestones of one job merge.
+        with db.connect(self.db_path) as conn:
+            for rid, minor in (("j1", 20000), ("j2", 14000)):
+                conn.execute(
+                    "INSERT INTO transactions (record_id, canonical_key, type,"
+                    " category, source, description, amount_minor,"
+                    " amount_base_minor, currency, pnl_bucket, creation_dt)"
+                    " VALUES (?,?, 'Fixed Earning','income','Upwork',"
+                    "'Invoice for Voice Agent for Driving School: Milestone',"
+                    "?,?, 'USD','revenue','2025-04-20T00:00:00+0000')",
+                    (rid, "k" + rid, minor, minor))
+        out = data.clients(self.db_path)
         c = next(x for x in out["clients"]
                  if x["name"] == "Voice Agent for Driving School")
-        self.assertEqual(c["revenue_usd"], 340.0)          # both milestones merged
+        self.assertEqual(c["revenue_usd"], 340.0)
 
     def test_unparseable_revenue_goes_to_unlinked_never_a_client(self):
         out = data.clients(self.db_path)
