@@ -651,9 +651,15 @@ SOURCES = (
     # loom_fetch_empty_index: a VALID session returning an empty index is the
     # silent zero — the account has ~590 recordings, so 0 means the fetch broke,
     # not that the corpus is empty. It degrades instead of reporting 'up to date'.
+    # loom_fetch_zero_ingest: the SECOND shape of the same lie (2026-08-13, run
+    # 5391). The index was fine (597) and 34 new recordings were attempted, and
+    # every single one failed — yet the run was `completed` and this source read
+    # `ok`, because the empty-index guard only ever looked at the index. Attempted
+    # > 0 with ingested == 0 is a degraded run whatever the index says.
     {"key": "loom_fetch", "label": "Loom fetch rail (new recordings)",
      "task_name": "loom_fetch", "max_age_hours": 192,   # 8d = weekly + grace
-     "degrade_kinds": ("loom_fetch_logged_out", "loom_fetch_empty_index"),
+     "degrade_kinds": ("loom_fetch_logged_out", "loom_fetch_empty_index",
+                       "loom_fetch_zero_ingest"),
      "critical": False, "backs": "today", "empty_ok": True,
      "launchd_label": "io.etherwise.v3.kb-loom-fetch", "catch_up": True,
      "why": "pulls new Loom walkthroughs (the richest 'what we deliver' evidence)"

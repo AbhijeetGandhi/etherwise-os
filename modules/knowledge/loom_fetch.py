@@ -11,10 +11,18 @@ endpoint and the /share page are gated by Abhijeet's LOGGED-IN loom.com session
 fetch runs SAME-ORIGIN from a loom.com page, and headless CC cannot reach Chrome,
 so the index + share-HTML fetches run INSIDE the scanner's parked Chrome tab
 (reusing feed_bridge.chrome_eval + scan_pipeline, exactly like the Slack rail).
-The transcript itself is a PUBLIC signed CloudFront URL (cdn.loom.com) — no
-session, and a cross-origin browser fetch would hit CORS — so step 3 is a plain
-Python urllib GET. Faithful to the proven three-step method, split by what each
+The transcript itself is a SIGNED CloudFront URL (cdn.loom.com) — it needs no
+loom.com session, and a cross-origin browser fetch would hit CORS — so step 3 is
+a plain Python urllib GET. "Signed" is load-bearing: the URL is only valid WITH
+its `?Policy=…&Key-Pair-Id=…&Signature=…` query, and a pattern that stopped at
+`.json` produced a believable-looking URL that 403s on every fetch (see
+_TRANSCRIPT_URL_RE). Faithful to the proven three-step method, split by what each
 step actually needs.
+
+READ-ONLY on Loom, provably: the only POST is the GraphQL `{ me { my_videos } }`
+QUERY (no mutation), and the share step is a plain GET of /share/<id>. Nothing
+here enables sharing, publishes, renames or deletes a recording — `share_failed`
+counts a failed READ of the share PAGE, not a failed write.
 
 WHY fire-then-poll: chrome_eval returns the last expression SYNCHRONOUSLY, but
 fetch() is async — a Promise cannot be returned through osascript. So each fetch
@@ -56,8 +64,38 @@ POLL_EVERY_SECONDS = 1.0
 # The signed transcript URL, as it appears in the share-page HTML (JSON-escaped
 # slashes and all). Anchored to the CDN host + path so a stray match elsewhere in
 # the HTML cannot be mistaken for it.
+#
+# The `?...` tail is NOT decoration (2026-08-13). cdn.loom.com is a CloudFront
+# distribution with SIGNED URLs: the share page emits
+#   .../transcription/<id>-2.json?Policy=<b64>&Key-Pair-Id=<kid>&Signature=<sig>
+# (~736 chars). The original pattern stopped at `\.json`, silently truncating the
+# credentials, and every GET came back
+#   403 <Code>MissingKey</Code><Message>Missing Key-Pair-Id query parameter or
+#   cookie value</Message>
+# which fetch_transcript_json swallowed into a bare None -> `transcript_failed`.
+# 17 of 17 attempted transcripts died this way on run 5391. The query is OPTIONAL
+# so an unsigned URL (older pages, fixtures) still matches; the character class
+# ends at the JSON string's closing quote.
 _TRANSCRIPT_URL_RE = re.compile(
-    r"https://cdn\.loom\.com/mediametadata/transcription/[A-Za-z0-9]+-\d+\.json")
+    r"https://cdn\.loom\.com/mediametadata/transcription/[A-Za-z0-9]+-\d+\.json"
+    r"(?:\?[^\s\"'\\<>]+)?")
+
+# What the share page says ABOUT the transcript, independent of whether a signed
+# URL was rendered. Both keys live in the page's embedded Apollo cache; only the
+# SLASHES are escaped there, but tolerate escaped quotes too so a future
+# double-encoded payload still parses.
+_TRANSCRIPTION_STATUS_RE = re.compile(
+    r'\\?"transcription_status\\?"\s*:\s*\\?"([A-Za-z0-9_\-]+)\\?"')
+_HAS_TRANSCRIPT_RECORD_RE = re.compile(
+    r'\\?"hasTranscriptRecord\\?"\s*:\s*(true|false)')
+
+# Loom TRIED to transcribe and permanently gave up. Observed live:
+# `transcoding_failure` (17 of the 17 "no_transcript" ids on run 5391, all with
+# processing_start/end timestamps from 2024-2026 — Loom finished failing years
+# ago and will not retry). Matched by substring rather than an enum because the
+# safe direction is asymmetric: a status we do NOT recognise must stay
+# RETRYABLE, never be written off as permanent.
+_TERMINAL_STATUS_RE = re.compile(r"fail|error|unsupported|no_audio|rejected", re.I)
 
 
 class LoomLoggedOut(Exception):
@@ -193,11 +231,54 @@ def parse_index(payload: dict) -> list:
 
 def extract_transcript_url(html: str) -> Optional[str]:
     """Regex the signed CloudFront transcript URL out of the share-page HTML. The
-    HTML carries it JSON-escaped (\\/), so unescape first."""
+    HTML carries it JSON-escaped (\\/), so unescape first. The CloudFront
+    Policy/Key-Pair-Id/Signature query is part of the URL — dropping it turns
+    every GET into a 403 MissingKey."""
     if not html:
         return None
     m = _TRANSCRIPT_URL_RE.search(html.replace("\\/", "/"))
     return m.group(0) if m else None
+
+
+def transcript_state(html: str) -> dict:
+    """What the share page CLAIMS about this recording's transcript.
+
+    A missing signed URL has three very different causes and the old code
+    collapsed all of them into one permanent `no_transcript` exclusion:
+      - Loom holds no transcript record at all (a silent screen capture);
+      - Loom tried and failed forever (`transcoding_failure`);
+      - Loom says `success` but we failed to find the URL — OUR bug, and writing
+        the source off as 'no transcript' would bury it permanently.
+    Returns {'has_record': bool|None, 'status': str|None}; None means the page
+    did not say, which is deliberately NOT the same as False."""
+    if not html:
+        return {"has_record": None, "status": None}
+    flat = html.replace("\\/", "/")
+    sm = _TRANSCRIPTION_STATUS_RE.search(flat)
+    hm = _HAS_TRANSCRIPT_RECORD_RE.search(flat)
+    return {"has_record": (hm.group(1) == "true") if hm else None,
+            "status": sm.group(1) if sm else None}
+
+
+def no_url_verdict(state: dict) -> str:
+    """No signed URL on the page — is that PERMANENT, PENDING or OUR bug?
+
+    'permanent' -> record a skipped source so it stops being offered as new.
+    'pending'   -> leave it alone; it is retried next run at zero cost.
+    'broken'    -> Loom says the transcript succeeded and we still could not
+                   read it. That is an extraction defect and must be counted as
+                   a FAILURE, never silently written off.
+
+    Unknown statuses fall to 'pending' on purpose: a wrong 'permanent' is
+    unrecoverable without --full, a wrong 'pending' costs one share fetch."""
+    st = (state or {}).get("status") or ""
+    if st and _TERMINAL_STATUS_RE.search(st):
+        return "permanent"
+    if st.lower() == "success":
+        return "broken"
+    if not st and (state or {}).get("has_record") is False:
+        return "permanent"          # no transcript record at all, and never was
+    return "pending"
 
 
 def transcript_from_phrases(phrases) -> tuple:
@@ -280,11 +361,36 @@ def _urllib_get(url: str, timeout: float) -> str:
 
 
 def fetch_transcript_json(url: str, http_get: Callable[[str, float], str],
-                          timeout: float) -> Optional[dict]:
+                          timeout: float) -> tuple:
+    """(payload, error_text). The error is RETURNED, not swallowed: this call
+    dying into a bare `None` is why run 5391 could report 17 `transcript_failed`
+    with no way to tell a 403 from a rate limit from a parse error — the whole
+    diagnosis had to be redone by hand against a live share page."""
     try:
-        return json.loads(http_get(url, timeout))
-    except Exception:
-        return None
+        raw = http_get(url, timeout)
+    except Exception as exc:                       # HTTPError/URLError/timeout
+        detail = ""
+        body = getattr(exc, "read", None)
+        if callable(body):                         # HTTPError carries the reason
+            try:
+                detail = " " + body().decode("utf-8", "replace")[:200]
+            except Exception:
+                detail = ""
+        return None, f"{type(exc).__name__}: {exc}{detail}"
+    try:
+        payload = json.loads(raw)
+    except Exception as exc:
+        return None, f"unparseable transcript JSON ({exc}); body[:120]={raw[:120]!r}"
+    if not isinstance(payload, dict) or "phrases" not in payload:
+        keys = list(payload)[:8] if isinstance(payload, dict) else type(payload).__name__
+        return None, f"transcript JSON has no `phrases` key (top-level: {keys})"
+    # An EMPTY phrases list is a successful fetch of a real, empty transcript —
+    # NOT an error. Loom serves `{"phrases":[],"schemaVersion":"1.1.3"}` (38 bytes,
+    # HTTP 200, transcription_status `success`, captions_url null) for a recording
+    # with no speech. Treating that as a fetch failure retried it forever and
+    # buried it in the same bucket as the 403s. The caller decides what an empty
+    # transcript means; this function's job ends at transport + parse.
+    return payload, None
 
 
 # ── DB: incremental diff + no-transcript exclusion ────────────────────────────
@@ -308,7 +414,13 @@ def _record_no_transcript(conn, video: dict) -> None:
     """Mark a loom that has no transcript (and never will) as a permanently
     excluded source so it stops re-appearing as 'new'. A synthetic unique
     content_hash avoids the empty-text UNIQUE collision that would otherwise let
-    only the first no-transcript loom persist."""
+    only the first no-transcript loom persist.
+
+    Only ever called on EVIDENCE — `no_url_verdict() == 'permanent'` (Loom said
+    it gave up) or a fetched transcript with zero phrases (a silent recording).
+    It used to be called on ANY missing URL, so a regex that dropped the
+    CloudFront signature quietly wrote off 17 perfectly good recordings that
+    nothing but a manual `--full` would ever look at again."""
     vid = video["id"]
     ref = f"loom/{vid}"
     if conn.execute("SELECT 1 FROM sources WHERE source_ref=? AND source_type='loom'",
@@ -440,7 +552,14 @@ def run_fetch(ctx, *, eval_fn=None, navigate=None, http_get=None, sleep=None,
         stats = {"index_count": len(index), "known": len(known),
                  "new_candidates": len(candidates), "attempted": len(capped),
                  "ingested": 0, "duplicate": 0, "no_transcript": 0,
-                 "share_failed": 0, "transcript_failed": 0}
+                 "share_failed": 0, "transcript_failed": 0,
+                 # no signed URL and Loom has NOT said it gave up — retried next
+                 # run for free. Kept apart from no_transcript so a temporary
+                 # state can never be written off as permanent (and apart from
+                 # transcript_failed so it does not read as a broken fetch).
+                 "transcript_pending": 0}
+        no_transcript_reasons: dict = {}
+        fail_reasons: dict = {}
 
         for v in capped:
             vid = v["id"]
@@ -451,15 +570,55 @@ def run_fetch(ctx, *, eval_fn=None, navigate=None, http_get=None, sleep=None,
                 continue
             turl = extract_transcript_url(html)
             if not turl:
+                # No signed URL. WHY decides what we do — see no_url_verdict.
+                state = transcript_state(html)
+                verdict = no_url_verdict(state)
+                why = state.get("status") or (
+                    "no-transcript-record" if state.get("has_record") is False
+                    else "unknown")
+                if verdict == "permanent":
+                    stats["no_transcript"] += 1
+                    no_transcript_reasons[why] = no_transcript_reasons.get(why, 0) + 1
+                    ctx.log(f"loom {vid}: loom holds no transcript ({why}) —"
+                            f" recording permanently skipped")
+                    if not dry_run:
+                        with db.connect(dbp) as conn:
+                            _record_no_transcript(conn, v)
+                elif verdict == "broken":
+                    # Loom says the transcript SUCCEEDED and we still could not
+                    # find the URL: our extraction, not Loom's silence.
+                    stats["transcript_failed"] += 1
+                    fail_reasons["url-not-found-despite-success"] = \
+                        fail_reasons.get("url-not-found-despite-success", 0) + 1
+                    ctx.log(f"loom {vid}: transcription_status=success but no"
+                            f" signed URL in the share page — EXTRACTION BUG")
+                else:
+                    stats["transcript_pending"] += 1
+                    ctx.log(f"loom {vid}: no transcript yet (status={why}) —"
+                            f" leaving for the next run")
+                continue
+            tjson, terr = fetch_transcript_json(turl, http_get, http_timeout)
+            if tjson is None:
+                stats["transcript_failed"] += 1
+                # grouped histogram key: whitespace-collapsed so the CloudFront
+                # <Code> survives into the metrics, where a human reading the run
+                # detail can see WHY without re-deriving it from a live page.
+                key = " ".join((terr or "unknown").split())[:200]
+                fail_reasons[key] = fail_reasons.get(key, 0) + 1
+                ctx.log(f"loom {vid}: transcript fetch failed — {terr}")
+                continue
+            if not tjson.get("phrases"):
+                # Fetched fine; Loom simply heard nothing. A silent screen capture
+                # has an empty transcript forever, so this is a permanent skip —
+                # the same class as transcoding_failure, not a fetch problem.
                 stats["no_transcript"] += 1
+                no_transcript_reasons["empty-transcript"] = \
+                    no_transcript_reasons.get("empty-transcript", 0) + 1
+                ctx.log(f"loom {vid}: transcript is EMPTY (no speech in the"
+                        f" recording) — recording permanently skipped")
                 if not dry_run:
                     with db.connect(dbp) as conn:
                         _record_no_transcript(conn, v)
-                continue
-            tjson = fetch_transcript_json(turl, http_get, http_timeout)
-            if not tjson or not (tjson.get("phrases")):
-                stats["transcript_failed"] += 1
-                ctx.log(f"loom {vid}: transcript fetch/parse failed (retry next run)")
                 continue
 
             payload = build_inbox_payload(v, tjson)
@@ -478,6 +637,10 @@ def run_fetch(ctx, *, eval_fn=None, navigate=None, http_get=None, sleep=None,
                 "SELECT count(*) c FROM sources WHERE source_type='loom'"
                 " AND status IN ('ingested','extracted')").fetchone()["c"]
         stats["sources_after"] = sources_after
+        if no_transcript_reasons:
+            stats["no_transcript_reasons"] = no_transcript_reasons
+        if fail_reasons:
+            stats["fail_reasons"] = fail_reasons
     finally:
         if teardown:
             teardown()
@@ -489,10 +652,59 @@ def run_fetch(ctx, *, eval_fn=None, navigate=None, http_get=None, sleep=None,
                 f"{stats['known']} known, 0 new — up to date.")
         raise runner.TaskSkip("loom corpus already current (0 new)")
 
+    # A run that ATTEMPTED work and ingested NOTHING is degraded, not completed
+    # (2026-08-13, run 5391: 34 attempted, 0 ingested, status `completed`, source
+    # health `ok`). The existing loom_fetch_empty_index guard only covers an EMPTY
+    # index; "index is fine, ingested nothing" is a different shape and slipped
+    # straight through it. Expressed the way every other degradation in this
+    # codebase is — a registered degrade_kind anomaly on the latest run, which
+    # core/source_health.py turns into DEGRADED on the Today source line and
+    # self-heals the moment a healthy run raises no anomaly.
+    #
+    # Severity splits on WHOSE fault it is: a run whose whole batch was Loom-side
+    # permanent no-transcript is thin but not broken (warn, briefs/cockpit only);
+    # anything with a failed fetch or an unresolved pending is a real defect and
+    # earns the interrupt (critical). Both degrade the source — degrade_kinds
+    # matches on kind, not severity.
+    #
+    # `ready` excludes transcript_pending. A recording Loom has not finished
+    # transcribing is not work this rail failed at — there was nothing to fetch
+    # yet — and it does NOT leave the candidate set, so degrading on it would
+    # never self-heal. That is not hypothetical: loom/5c26cfbefab549…, recorded
+    # 2025-06-15, has sat at transcription_status `in_progress` ever since, and a
+    # literal 'attempted > 0 and ingested == 0' rule pinned this source amber
+    # forever on the strength of that one stuck video. A WHOLE batch coming back
+    # pending is a different claim — Loom does not have five-plus recordings mid
+    # transcription including ones from 2024 — so that still degrades.
+    pending_only_is_suspicious = (stats["transcript_pending"] == stats["attempted"]
+                                  and stats["attempted"] >= 5)
+    ready = stats["attempted"] - stats["transcript_pending"]
+    if stats["ingested"] == 0 and (ready > 0 or pending_only_is_suspicious):
+        hard = stats["transcript_failed"] + stats["share_failed"]
+        stats["degraded"] = True
+        stats["degrade_reason"] = (
+            f"attempted {stats['attempted']}, ingested 0"
+            + (f" ({hard} failed)" if hard else " (all Loom-side no-transcript)"))
+        ctx.anomaly("loom_fetch_zero_ingest", "critical" if hard else "warn",
+                    {"detail": f"loom_fetch attempted {stats['attempted']}"
+                               f" recordings and ingested 0 — this run added"
+                               f" NOTHING to the KB. Do not read it as 'up to"
+                               f" date'.",
+                     "attempted": stats["attempted"],
+                     "no_transcript": stats["no_transcript"],
+                     "transcript_failed": stats["transcript_failed"],
+                     "transcript_pending": stats["transcript_pending"],
+                     "share_failed": stats["share_failed"],
+                     "no_transcript_reasons": no_transcript_reasons,
+                     "fail_reasons": fail_reasons,
+                     "dry_run": bool(dry_run)})
+        ctx.log(f"loom fetch: DEGRADED — {stats['degrade_reason']}")
+
     ctx.log(
         f"loom fetch: index {stats['index_count']} | new {stats['new_candidates']}"
         f" (attempted {stats['attempted']}) -> ingested {stats['ingested']}"
         f", duplicate {stats['duplicate']}, no-transcript {stats['no_transcript']}"
+        f", pending {stats['transcript_pending']}"
         f", share-failed {stats['share_failed']}, transcript-failed "
         f"{stats['transcript_failed']} | sources_after {stats['sources_after']}"
         + (" | DRY-RUN (no writes)" if dry_run else ""))
