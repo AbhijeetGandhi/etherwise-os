@@ -4,6 +4,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from core import db, registry
@@ -369,6 +370,182 @@ class BridgeTests(unittest.TestCase):
                                   " source_ref='fathom/A'").fetchone()
         self.assertEqual([r["author"] for r in q], ["stranger@bigco.com"])
         self.assertEqual(healed["client_id"], "diskover-data")
+
+
+# ── the thread write paths (Review's third backlog) ──────────────────────────
+# An Upwork thread has no `events` row, so resolve() cannot reach it. These two
+# are the whole of its write surface, and both are PERMANENT.
+
+THREAD_REG = TEMP_REG + """\
+  -
+    id: zeta
+    name: Zeta Ltd
+    upwork_rooms:
+      - room_taken
+"""
+
+
+class ThreadWriteCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email",
+                        "t@t.io"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "T"],
+                       check=True)
+        self.reg = self.root / "clients.yaml"
+        self.reg.write_text(THREAD_REG)
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "init"],
+                       check=True)
+        self.dbp = self.root / "t.db"
+        db.migrate(self.dbp)
+        with db.connect(self.dbp) as conn:
+            conn.execute("INSERT INTO threads (id, room_name) VALUES"
+                         " ('room_a','Rupali Singh')")
+            conn.execute("INSERT INTO threads (id, room_name, client_id) VALUES"
+                         " ('room_b','Already','acme')")
+            conn.execute("INSERT INTO threads (id, room_name) VALUES"
+                         " ('room_taken','Zeta room')")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def log(self):
+        return subprocess.run(["git", "-C", str(self.root), "log",
+                               "--format=%an|%s"], check=True,
+                              capture_output=True, text=True).stdout
+
+
+class AssignThreadTests(ThreadWriteCase):
+    def test_claims_the_room_and_links_the_thread(self):
+        out = approve.assign_thread(self.dbp, "room_a", "acme", evidence="22 msgs",
+                                    registry_path=self.reg, root=self.root)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["linked"], 1)
+        self.assertRegex(out["registry"]["commit"], r"^[0-9a-f]{12}$")
+        reg = registry.load(self.reg, force=True)
+        # the claim link_threads consults FIRST — deterministic, hand-approved
+        self.assertEqual(reg.match_upwork_room("room_a"), "acme")
+        with db.connect(self.dbp) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT client_id FROM threads WHERE id='room_a'"
+            ).fetchone()["client_id"], "acme")
+        self.assertIn("cockpit-approval", self.log())
+        self.assertIn("acme upwork_rooms += room_a", self.log())
+
+    def test_it_claims_the_room_not_the_name(self):
+        """A one-word Upwork display name as an ALIAS is how 'rick k' once
+        claimed 'Patrick Kelly'. Only the room id is learned."""
+        approve.assign_thread(self.dbp, "room_a", "acme", evidence="e",
+                              registry_path=self.reg, root=self.root)
+        reg = registry.load(self.reg, force=True)
+        self.assertIsNone(reg.match_name("Rupali Singh"))
+        self.assertEqual(reg.by_id["acme"].get("aliases"), [])
+
+    def test_never_overwrites_an_existing_attribution(self):
+        out = approve.assign_thread(self.dbp, "room_b", "diskover-data",
+                                    evidence="e", registry_path=self.reg,
+                                    root=self.root)
+        self.assertIn("already attributed", out["error"])
+        self.assertNotIn("upwork_rooms", self.log())
+
+    def test_a_room_another_client_owns_is_refused_before_the_db_write(self):
+        """The uniqueness index for upwork_rooms is _room_to_id, not the alias
+        index. Consulting the wrong one let a second client claim a room, which
+        is a registry LOAD ERROR — every reader in the system, not just this
+        one."""
+        out = approve.assign_thread(self.dbp, "room_taken", "acme", evidence="e",
+                                    registry_path=self.reg, root=self.root)
+        self.assertIn("already claimed", out["error"])
+        with db.connect(self.dbp) as conn:
+            self.assertIsNone(conn.execute(
+                "SELECT client_id FROM threads WHERE id='room_taken'"
+            ).fetchone()["client_id"])
+        registry.load(self.reg, force=True)      # still loads
+
+    def test_unknown_thread_and_unknown_client_are_refused(self):
+        self.assertIn("unknown client_id", approve.assign_thread(
+            self.dbp, "room_a", "nope", evidence="e",
+            registry_path=self.reg, root=self.root)["error"])
+        self.assertIn("unknown thread", approve.assign_thread(
+            self.dbp, "room_zzz", "acme", evidence="e",
+            registry_path=self.reg, root=self.root)["error"])
+
+    def test_write_registry_recognises_a_room_this_client_already_has(self):
+        approve.assign_thread(self.dbp, "room_a", "acme", evidence="e",
+                              registry_path=self.reg, root=self.root)
+        r = approve.write_registry("acme", "upwork_rooms", "room_a",
+                                   evidence="e", by="t", do_git=False,
+                                   path=self.reg)
+        self.assertFalse(r["changed"])
+        self.assertEqual(r["note"], "already-known")
+
+
+class CreateClientTests(ThreadWriteCase):
+    def test_creates_a_valid_entry_and_commits_it(self):
+        out = approve.create_client("rupali-singh", "Rupali Singh",
+                                    kind="prospect", upwork_room="room_a",
+                                    evidence="upwork room room_a; 22 messages",
+                                    path=self.reg, root=self.root)
+        self.assertTrue(out["ok"])
+        self.assertRegex(out["commit"], r"^[0-9a-f]{12}$")
+        reg = registry.load(self.reg, force=True)
+        self.assertEqual(reg.kind("rupali-singh"), "prospect")
+        self.assertEqual(reg.match_upwork_room("room_a"), "rupali-singh")
+        # a prospect is matchable but NOT on the economics roster, so a mistaken
+        # create cannot move revenue figures
+        self.assertIn("rupali-singh", reg.matchable_ids())
+        self.assertNotIn("rupali-singh", reg.client_ids())
+        # the subject line is the contract cockpit Activity parses out of git log
+        self.assertIn("registry: rupali-singh new_client += Rupali Singh",
+                      self.log())
+        # inserted in id ORDER rather than appended blindly — a new entry at
+        # the bottom of a sorted file is a diff nobody can read. (The fixture is
+        # only partly sorted, so the rule is 'before the first larger id'.)
+        ids = [c["id"] for c in reg.clients]
+        self.assertEqual(ids[ids.index("rupali-singh") + 1], "zeta")
+
+    def test_every_collision_the_loader_would_refuse_is_refused_here(self):
+        for kw, needle in (
+                (dict(client_id="acme", name="Other"), "already exists"),
+                (dict(client_id="acme2", name="Acme Co"), "already claimed by"),
+                (dict(client_id="new1", name="New", upwork_room="room_taken"),
+                 "already claimed"),
+                (dict(client_id="Bad Slug", name="X"), "must be a slug"),
+                (dict(client_id="ok-id", name="  "), "name required"),
+                (dict(client_id="ok-id", name="X", kind="vendor"),
+                 "kind must be")):
+            out = approve.create_client(evidence="e", path=self.reg,
+                                        root=self.root, **kw)
+            self.assertIn(needle, out["error"], kw)
+        self.assertEqual(self.log().count("new_client"), 0)
+        registry.load(self.reg, force=True)      # untouched and still valid
+
+    def test_multiline_evidence_cannot_break_the_file(self):
+        """registry._lines() is line-based: a newline inside a quoted scalar
+        does not round-trip, and clients.yaml is the spine — an unreadable one
+        takes every reader down at once."""
+        out = approve.create_client("multi-line", "Multi Line",
+                                    upwork_room="room_a",
+                                    evidence="line one\nline two\ttabbed",
+                                    path=self.reg, root=self.root)
+        self.assertTrue(out["ok"], out)
+        reg = registry.load(self.reg, force=True)
+        self.assertEqual(reg.by_id["multi-line"]["scope_notes"],
+                         "line one line two tabbed")
+
+    def test_a_write_that_would_not_reload_is_rolled_back(self):
+        before = self.reg.read_text()
+        with mock.patch.object(approve.registry, "dumps",
+                               return_value="clients:\n  - not a mapping\n"):
+            out = approve.create_client("x-client", "X Client", evidence="e",
+                                        path=self.reg, root=self.root)
+        self.assertIn("rolled back", out["error"])
+        self.assertEqual(self.reg.read_text(), before)
+        self.assertEqual(self.log().count("new_client"), 0)
+        registry.load(self.reg, force=True)
 
 
 if __name__ == "__main__":

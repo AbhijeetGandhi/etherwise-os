@@ -385,6 +385,224 @@ def queue_resolve(db_path, body: dict) -> dict:
                            reason=body.get("reason"), by="cockpit-approval")
 
 
+# ── batch resolution (Review) ────────────────────────────────────────────────
+# 58 held emails from banks and airlines, and 29 Loom recordings the classifier
+# was 72% sure about, are not 87 decisions — they are two. But a batch must not
+# become a different KIND of write from the single action it repeats, so this
+# is a loop over approve.resolve and nothing else: same authority, same git
+# commits, same heal, same refusals. Each item succeeds or fails on its own and
+# the failures are returned, never summarised away.
+QUEUE_BATCH_MAX = 60
+
+
+def queue_batch(db_path, body: dict) -> dict:
+    """POST /api/queue/batch — resolve many queued/held events in one request.
+
+    body: {event_ids: [...], action, client_id?, reason?}
+      or  {items: [{event_id, action, client_id?, reason?}, ...]}
+
+    The cap is real and enforced server-side: every assign can recompile a
+    dossier (approve.resolve -> fathom_bridge.heal_source), so an unbounded
+    batch is an unbounded request. The UI chunks; the server refuses."""
+    from modules.jarvis import approve
+    body = body or {}
+    items = body.get("items")
+    if items is None:
+        ids = body.get("event_ids") or []
+        if not isinstance(ids, list):
+            return {"error": "event_ids must be a list"}
+        items = [{"event_id": e, "action": body.get("action"),
+                  "client_id": body.get("client_id"),
+                  "reason": body.get("reason")} for e in ids]
+    if not isinstance(items, list) or not items:
+        return {"error": "nothing to do: pass event_ids[] or items[]"}
+    if len(items) > QUEUE_BATCH_MAX:
+        return {"error": "batch too large: {} items, cap is {}".format(
+            len(items), QUEUE_BATCH_MAX)}
+
+    results, applied, failed, commits = [], 0, 0, []
+    for it in items:
+        it = it or {}
+        eid, action = it.get("event_id"), it.get("action")
+        if action not in _QUEUE_ACTIONS:
+            res = {"error": "action must be one of {}".format(sorted(_QUEUE_ACTIONS))}
+        elif not eid:
+            res = {"error": "event_id required"}
+        else:
+            try:
+                res = approve.resolve(db_path, eid, action,
+                                      client_id=it.get("client_id"),
+                                      reason=it.get("reason"),
+                                      by="cockpit-approval")
+            except Exception as exc:            # noqa: BLE001 — one bad row
+                res = {"error": repr(exc)[:300]}   # must not lose the other 59
+        ok = bool(res.get("ok"))
+        applied += 1 if ok else 0
+        failed += 0 if ok else 1
+        sha = (res.get("registry") or {}).get("commit")
+        if sha and sha not in commits:
+            commits.append(sha)
+        results.append({"event_id": eid, "action": action, "ok": ok,
+                        "error": res.get("error"),
+                        "registry": res.get("registry"),
+                        "healed": bool(res.get("heal"))})
+    return {"ok": failed == 0, "total": len(items), "applied": applied,
+            "failed": failed, "commits": commits, "results": results}
+
+
+# ── Upwork thread review (the third backlog) ─────────────────────────────────
+# THE DISMISSAL STORE. `nudge_state` under 'review:thread:<id>' — the cockpit's
+# own decision overlay, the same table Today's Done writes to and the same table
+# data._is_actioned reads. See the long note above data.review_threads for why
+# it is not a column on `threads` and not a fake `events` row.
+#
+# The verdict here is about IDENTITY, not about a task, so unlike a Done it does
+# NOT decay: nothing in the reader lets a new message resurrect it. Restore
+# DELETES the row — a reversal should leave no trace of itself, otherwise the
+# next reader has to know which of two states means "never decided".
+REVIEW_THREAD_PREFIX = "review:thread:"
+REVIEW_THREAD_ACTIONS = {"dismiss", "restore", "assign", "create_client"}
+REVIEW_BATCH_MAX = 100
+DEFAULT_DISMISS_REASON = "prospect — never converted"
+
+
+def _thread_key(thread_id: str) -> str:
+    return REVIEW_THREAD_PREFIX + thread_id
+
+
+def _thread_evidence(db_path, thread_id: str) -> str:
+    """The one-line audit note a registry commit carries for a thread write.
+    Read from the DB, never from the request body: the evidence in a permanent
+    commit must be what the system can see, not what a form said."""
+    with db.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT room_name, topic, proposal_id, latest_message_dt,"
+            " (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id) n"
+            " FROM threads t WHERE id=?", (thread_id,)).fetchone()
+    if not row:
+        return "upwork room {}".format(thread_id)
+    bits = ["upwork room {}".format(thread_id),
+            "'{}'".format(row["room_name"] or "(unnamed)"),
+            "{} messages".format(row["n"])]
+    if row["latest_message_dt"]:
+        bits.append("last {}".format(str(row["latest_message_dt"])[:10]))
+    if row["proposal_id"]:
+        bits.append("proposal {}".format(row["proposal_id"]))
+    return "; ".join(bits)
+
+
+def review_thread(db_path, body: dict) -> dict:
+    """POST /api/review/thread — the ONLY write path for the thread backlog.
+
+    body: {thread_ids: [...], action, client_id?, reason?, new_client?}
+      dismiss        record 'not a client' permanently (local, no git)
+      restore        undo a dismissal (deletes the row)
+      assign         claim the room for an EXISTING registry client (git commit)
+      create_client  make a NEW registry entry from ONE thread, then assign it
+
+    create_client is capped at one thread on purpose. Every other action here is
+    a repetition of the same small decision; that one is a new identity in the
+    spine, and a form that could mint several at once is a form that will."""
+    from modules.jarvis import approve
+    body = body or {}
+    action = body.get("action")
+    if action not in REVIEW_THREAD_ACTIONS:
+        return {"error": "action must be one of {}".format(
+            sorted(REVIEW_THREAD_ACTIONS))}
+    ids = body.get("thread_ids")
+    if ids is None and body.get("thread_id"):
+        ids = [body.get("thread_id")]
+    if not isinstance(ids, list) or not ids:
+        return {"error": "thread_ids required"}
+    ids = [str(i) for i in ids if i]
+    if len(ids) > REVIEW_BATCH_MAX:
+        return {"error": "batch too large: {} threads, cap is {}".format(
+            len(ids), REVIEW_BATCH_MAX)}
+
+    if action in ("dismiss", "restore"):
+        reason = (body.get("reason") or DEFAULT_DISMISS_REASON).strip()
+        with db.connect(db_path) as conn:
+            known = {r["id"] for r in conn.execute(
+                "SELECT id FROM threads WHERE id IN ({})".format(
+                    ",".join("?" * len(ids))), ids)}
+            unknown = [i for i in ids if i not in known]
+            for tid in sorted(known):
+                if action == "dismiss":
+                    conn.execute(
+                        "INSERT INTO nudge_state (item_key, state, note, source,"
+                        " updated_at) VALUES (?, 'dismissed', ?, 'cockpit',"
+                        " datetime('now')) ON CONFLICT(item_key) DO UPDATE SET"
+                        " state='dismissed', note=excluded.note,"
+                        " snooze_until=NULL, updated_at=datetime('now')",
+                        (_thread_key(tid), reason))
+                else:
+                    conn.execute("DELETE FROM nudge_state WHERE item_key=?",
+                                 (_thread_key(tid),))
+        return {"ok": not unknown, "action": action, "total": len(ids),
+                "applied": len(known), "failed": len(unknown),
+                "unknown": unknown,
+                "reason": reason if action == "dismiss" else None,
+                "note": ("Recorded in nudge_state as 'dismissed'. It will not"
+                         " come back on its own — press Restore, or let the"
+                         " thread gain a client_id."
+                         if action == "dismiss" else
+                         "Dismissal deleted — the thread is back in the queue.")}
+
+    if action == "create_client":
+        nc = body.get("new_client") or {}
+        if len(ids) != 1:
+            return {"error": "create_client takes exactly one thread"
+                             " (got {})".format(len(ids))}
+        tid = ids[0]
+        ev = _thread_evidence(db_path, tid)
+        created = approve.create_client(
+            nc.get("id") or "", nc.get("name") or "",
+            kind=nc.get("kind") or "prospect", upwork_room=tid, evidence=ev,
+            by="cockpit-thread-review")
+        if created.get("error"):
+            return {"ok": False, "action": action, "total": 1, "applied": 0,
+                    "failed": 1, "results": [{"thread_id": tid,
+                                              "ok": False,
+                                              "error": created["error"]}]}
+        linked = approve.assign_thread(db_path, tid, created["client_id"],
+                                       evidence=ev, by="cockpit-thread-review")
+        ok = bool(linked.get("ok"))
+        return {"ok": ok, "action": action, "total": 1,
+                "applied": 1 if ok else 0, "failed": 0 if ok else 1,
+                "created": created,
+                "commits": [c for c in [created.get("commit")] if c],
+                "results": [{"thread_id": tid, "ok": ok,
+                             "error": linked.get("error"),
+                             "client_id": created["client_id"],
+                             "registry": created.get("registry")}]}
+
+    # assign
+    client_id = body.get("client_id")
+    if not client_id:
+        return {"error": "assign requires client_id"}
+    results, applied, failed, commits = [], 0, 0, []
+    for tid in ids:
+        try:
+            res = approve.assign_thread(
+                db_path, tid, client_id, evidence=_thread_evidence(db_path, tid),
+                by="cockpit-thread-review")
+        except Exception as exc:                # noqa: BLE001
+            res = {"error": repr(exc)[:300]}
+        ok = bool(res.get("ok"))
+        applied += 1 if ok else 0
+        failed += 0 if ok else 1
+        sha = (res.get("registry") or {}).get("commit")
+        if sha and sha not in commits:
+            commits.append(sha)
+        results.append({"thread_id": tid, "ok": ok, "error": res.get("error"),
+                        "client_id": res.get("client_id"),
+                        "client_name": res.get("client_name"),
+                        "registry": res.get("registry")})
+    return {"ok": failed == 0, "action": action, "total": len(ids),
+            "applied": applied, "failed": failed, "commits": commits,
+            "results": results}
+
+
 # ── Card closure confirm/reject (J1.5) ───────────────────────────────────────
 # A possibly-resolved card shows a "confirm?" chip. Confirm closes it (hidden);
 # reject keeps it open and stops re-chipping. Resolves the card by its item_key.

@@ -3453,5 +3453,557 @@ class TestRerunAllowlist(unittest.TestCase):
                 self.assertNotIn(s["task_name"], actions.RERUN_JOBS, s["key"])
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Review — the three backlogs, the dismissal rule, and the batch action
+# ══════════════════════════════════════════════════════════════════════════════
+
+REVIEW_REG = """\
+clients:
+  -
+    id: diat-khan
+    name: Diat Khan
+    aliases:
+      - Remote Office
+    billing:
+      canonical: Diat Khan
+  -
+    id: acme
+    name: Acme Corporation
+    emails:
+      - acme.com
+    billing:
+      canonical: Acme Corporation
+  -
+    id: a-product
+    name: Some Product
+    no_match: yes
+"""
+
+OWNER = "1647672547786633216"
+
+
+class ReviewCase(unittest.TestCase):
+    """Threads, messages, proposals, contracts and revenue rows, against a
+    FIXTURE registry — the real config/clients.yaml is a moving target and the
+    hint rule is the one thing here that must be pinned to exact strings."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="review-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        self.reg = registry.loads_registry(REVIEW_REG)
+        self.patch = mock.patch.object(registry, "load", return_value=self.reg)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def thread(self, tid, room_name, **kw):
+        cols = dict(id=tid, room_name=room_name, topic=kw.get("topic", ""),
+                    room_type=kw.get("room_type", "INTERVIEW"),
+                    contract_id=kw.get("contract_id"),
+                    proposal_id=kw.get("proposal_id"),
+                    offer_ids_json=kw.get("offer_ids_json"),
+                    bucket=kw.get("bucket"), tier=kw.get("tier"),
+                    awaiting_reply_from=kw.get("awaiting_reply_from", "None"),
+                    latest_message_dt=kw.get("latest_message_dt"),
+                    client_id=kw.get("client_id"))
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO threads ({}) VALUES ({})".format(
+                    ",".join(cols), ",".join("?" * len(cols))),
+                tuple(cols.values()))
+
+    def message(self, tid, mid, *, theirs=True, when="2026-08-01T10:00:00Z",
+                text="hello", org=None, user="Them"):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO messages (id, thread_id, message, created_dt,"
+                " sender_user_id, sender_user_name, sender_org_name)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (mid, tid, text, when, "them" if theirs else OWNER,
+                 user, org))
+
+    def revenue(self, company, minor, *, n=1):
+        with db.connect(self.db_path) as conn:
+            for i in range(n):
+                conn.execute(
+                    "INSERT INTO transactions (record_id, canonical_key, source,"
+                    " description, assignment_company, amount_base_minor,"
+                    " pnl_bucket) VALUES (?,?,?,?,?,?, 'revenue')",
+                    ("t-{}-{}".format(company, i), "k-{}-{}".format(company, i),
+                     "Upwork", "work", company, minor))
+
+
+class TestReviewThreadsReader(ReviewCase):
+    def test_evidence_ranking_and_groups(self):
+        # a real client under a spelling the registry does not hold, WITH money
+        self.thread("room_money", "Rupali Singh", room_type="ONE_ON_ONE",
+                    latest_message_dt="2026-08-10T09:00:00Z")
+        self.message("room_money", "m1", org="Remoteoffice", user="Rupali S.",
+                     text="the invoice is paid")
+        self.revenue("Remoteoffice", 20900, n=2)
+        # an expired proposal — the correct answer is "prospect"
+        self.thread("room_dead", "Nabil, Super Nova", proposal_id="p1",
+                    latest_message_dt="2025-06-01T09:00:00Z")
+        self.message("room_dead", "m2", text="thanks, we went another way")
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO proposals (id, status, thread_id,"
+                         " job_title) VALUES ('p1','Expired','room_dead','n8n')")
+        # a live one
+        self.thread("room_live", "John Bohan", proposal_id="p2",
+                    awaiting_reply_from="Abhijeet", bucket="owed",
+                    latest_message_dt=datetime.now(timezone.utc).isoformat())
+        self.message("room_live", "m3", text="can you start Monday?")
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO proposals (id, status, thread_id)"
+                         " VALUES ('p2','Interview','room_live')")
+        # one that is already attributed — must not appear at all
+        self.thread("room_done", "Acme Corporation", client_id="acme")
+
+        d = data.review_threads(self.db_path)
+        self.assertEqual(d["total"], 3)
+        self.assertEqual(d["open_total"], 3)
+        self.assertEqual(d["attributed_total"], 1)
+        # a REAL zero carrying its reason: no unattributed thread is contract-
+        # backed, and the payload says so rather than omitting the figure
+        self.assertEqual(d["contract_backed"], 0)
+        self.assertEqual(d["money_backed"], 1)
+        self.assertEqual(d["hinted"], 1)
+
+        keys = [g["key"] for g in d["groups"]]
+        self.assertEqual(keys[0], "hint:diat-khan")     # the actionable group
+        self.assertIn("live", keys)
+        self.assertIn("prospect", keys)
+
+        hint = d["groups"][0]["items"][0]
+        self.assertEqual(hint["thread_id"], "room_money")
+        self.assertEqual(hint["hint"]["client_id"], "diat-khan")
+        self.assertEqual(hint["hint"]["registry_value"], "Remote Office")
+        self.assertEqual(hint["money"]["usd"], 418.0)   # 2 x 209.00
+        self.assertEqual(hint["money"]["txns"], 2)
+        self.assertEqual(hint["last_message"]["excerpt"], "the invoice is paid")
+        # the strongest evidence sorts first
+        self.assertGreater(hint["score"],
+                           next(g for g in d["groups"]
+                                if g["key"] == "prospect")["items"][0]["score"])
+
+    def test_a_no_match_client_is_never_offered(self):
+        self.thread("room_a", "Anyone")
+        d = data.review_threads(self.db_path)
+        ids = {c["id"] for c in d["clients"]}
+        self.assertIn("acme", ids)
+        self.assertNotIn("a-product", ids)   # products hold no threads
+
+    def test_short_names_never_hint(self):
+        """A false hint is a wrong PERMANENT write, so the alnum key has a floor.
+        'Diat' is 4 characters — a coincidence, not evidence."""
+        self.thread("room_s", "Diat")
+        self.message("room_s", "m", user="Diat")
+        d = data.review_threads(self.db_path)
+        self.assertEqual(d["hinted"], 0)
+
+    def test_bad_show_is_an_error_envelope_not_an_empty_list(self):
+        self.thread("room_a", "Anyone")
+        out = data.review_threads(self.db_path, show="lol")
+        self.assertIn("error", out)
+        self.assertEqual(out["groups"], [])
+        # NOT 0 — a rejected filter must never look like "no data"
+        self.assertIsNone(out["open_total"])
+
+
+class TestReviewDismissalSticks(ReviewCase):
+    """THE RULE THIS SCREEN EXISTS FOR. 'This is a prospect, not a client' has
+    to be recorded so the item never reappears — and it must be visible and
+    reversible rather than deleted."""
+
+    def setUp(self):
+        super().setUp()
+        for i in range(3):
+            self.thread("room_%d" % i, "Prospect %d" % i)
+            self.message("room_%d" % i, "m%d" % i)
+
+    def test_dismiss_removes_it_from_the_producing_query_and_the_badge(self):
+        before = data.review_threads(self.db_path)
+        self.assertEqual(before["open_total"], 3)
+        self.assertEqual(data.review_counts(self.db_path)["threads_open"], 3)
+
+        out = actions.review_thread(self.db_path,
+                                    {"thread_ids": ["room_0", "room_1"],
+                                     "action": "dismiss"})
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["applied"], 2)
+
+        after = data.review_threads(self.db_path)
+        self.assertEqual(after["open_total"], 1)
+        self.assertEqual(after["dismissed_total"], 2)
+        self.assertEqual(after["total"], 3)          # nothing was deleted
+        self.assertNotIn("room_0", [i["thread_id"]
+                                    for g in after["groups"] for i in g["items"]])
+        counts = data.review_counts(self.db_path)
+        self.assertEqual(counts["threads_open"], 1)
+        self.assertEqual(counts["threads_dismissed"], 2)
+
+    def test_a_new_message_does_not_resurrect_a_dismissal(self):
+        """The deliberate difference from Today's `_is_actioned`: a Done decays
+        when the counterparty speaks, because a Done means 'handled'. A thread
+        dismissal is about IDENTITY — a stranger sending another message is
+        still a stranger — so it does not decay."""
+        actions.review_thread(self.db_path,
+                              {"thread_ids": ["room_0"], "action": "dismiss"})
+        self.message("room_0", "later",
+                     when=datetime.now(timezone.utc).isoformat(),
+                     text="are you still available?")
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE threads SET latest_message_dt=? WHERE id=?",
+                         (datetime.now(timezone.utc).isoformat(), "room_0"))
+        d = data.review_threads(self.db_path)
+        self.assertEqual(d["open_total"], 2)
+        self.assertNotIn("room_0", [i["thread_id"]
+                                    for g in d["groups"] for i in g["items"]])
+
+    def test_dismissed_rows_are_visible_and_restorable(self):
+        actions.review_thread(self.db_path, {"thread_ids": ["room_0"],
+                                             "action": "dismiss",
+                                             "reason": "recruiter spam"})
+        shown = data.review_threads(self.db_path, show="dismissed")
+        self.assertEqual(shown["shown_total"], 1)
+        self.assertEqual(shown["groups"][0]["items"][0]["dismissed"]["reason"],
+                         "recruiter spam")
+        self.assertEqual(data.review_threads(self.db_path, show="all")["shown_total"], 3)
+
+        actions.review_thread(self.db_path, {"thread_ids": ["room_0"],
+                                             "action": "restore"})
+        self.assertEqual(data.review_threads(self.db_path)["open_total"], 3)
+        # restore DELETES the row: a reversal must leave nothing behind that a
+        # later reader could mistake for "decided"
+        with db.connect(self.db_path) as conn:
+            n = conn.execute("SELECT COUNT(*) n FROM nudge_state WHERE"
+                             " item_key LIKE 'review:thread:%'").fetchone()["n"]
+        self.assertEqual(n, 0)
+
+    def test_attribution_retires_a_dismissal_structurally(self):
+        """The other honest way a dismissal ends: the thread really does become
+        a client. The producing query is client_id IS NULL, so it drops out —
+        and it stops being counted as dismissed too, or the badge would sag by
+        a row that is no longer anywhere."""
+        actions.review_thread(self.db_path, {"thread_ids": ["room_0"],
+                                             "action": "dismiss"})
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE threads SET client_id='acme' WHERE id='room_0'")
+        d = data.review_threads(self.db_path)
+        self.assertEqual(d["total"], 2)
+        self.assertEqual(d["dismissed_total"], 0)
+        self.assertEqual(data.review_counts(self.db_path)["threads_dismissed"], 0)
+
+    def test_dismiss_refuses_an_unknown_thread_without_losing_the_rest(self):
+        out = actions.review_thread(self.db_path,
+                                    {"thread_ids": ["room_0", "nope"],
+                                     "action": "dismiss"})
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["applied"], 1)
+        self.assertEqual(out["unknown"], ["nope"])
+        self.assertEqual(data.review_threads(self.db_path)["dismissed_total"], 1)
+
+    def test_thread_keys_cannot_collide_with_a_today_card(self):
+        """nudge_state is shared with Today. The namespaces must not overlap:
+        _card_key emits 'card:*' and the CoS engine 'followup:*', this emits
+        'review:thread:*'."""
+        actions.review_thread(self.db_path, {"thread_ids": ["room_0"],
+                                             "action": "dismiss"})
+        with db.connect(self.db_path) as conn:
+            keys = [r["item_key"] for r in conn.execute(
+                "SELECT item_key FROM nudge_state")]
+        self.assertEqual(keys, ["review:thread:room_0"])
+        for k in keys:
+            self.assertNotEqual(data._card_key(k), k)
+            self.assertFalse(k.startswith("followup:"))
+
+
+class TestReviewCounts(ReviewCase):
+    def test_the_badge_counts_all_three_backlogs(self):
+        with db.connect(self.db_path) as conn:
+            for i, state in enumerate(["queued", "queued", "held", "excluded",
+                                       "mapped"]):
+                conn.execute(
+                    "INSERT INTO events (id, source, native_id, state)"
+                    " VALUES (?,?,?,?)", ("e%d" % i, "email", "n%d" % i, state))
+        self.thread("room_a", "A")
+        self.thread("room_b", "B")
+        c = data.review_counts(self.db_path)
+        self.assertEqual(c["events_queued"], 2)
+        self.assertEqual(c["events_held"], 1)
+        self.assertEqual(c["threads_open"], 2)
+        self.assertEqual(c["total"], 5)          # excluded/mapped never count
+
+        actions.review_thread(self.db_path, {"thread_ids": ["room_a"],
+                                             "action": "dismiss"})
+        self.assertEqual(data.review_counts(self.db_path)["total"], 4)
+
+
+class TestQueueLearnsHonesty(unittest.TestCase):
+    """`learns` is what an ASSIGN would write into clients.yaml for THIS row.
+
+    The old screen warned "Assign writes to the client registry — permanently"
+    on every row. For a Fathom or Loom event that is false: they carry no
+    author, approve.learned_pattern returns None and approve.resolve skips
+    write_registry entirely. Measured on the live DB 2026-08-13: 39 of 51 queued
+    events learn nothing. The warning has to be per row or it is noise."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="queue-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, author, subject,"
+                " state, text, raw_ref, proposed_client_id, proposal_confidence)"
+                " VALUES ('evt:loom:1','loom','1',NULL,'Walkthrough','queued',"
+                " ?, 'loom-ref', 'acme', 0.72)", ("x" * 900,))
+            conn.execute(
+                "INSERT INTO events (id, source, native_id, author, subject,"
+                " state, text, proposed_client_id, proposal_confidence)"
+                " VALUES ('evt:email:1','email','1','bob@acme.com','Hi',"
+                " 'queued','body','acme',0.9)")
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " title, status, density) VALUES ('loom','loom-ref','h1',"
+                " 'Walkthrough','extracted',0.6)")
+            sid = conn.execute("SELECT id FROM sources").fetchone()["id"]
+            for i in range(3):
+                conn.execute(
+                    "INSERT INTO facts (client_id, source_id, category,"
+                    " fact_text, citation, confidence)"
+                    " VALUES ('acme',?,'c','f','cit','CONFIRMED')", (sid,))
+
+    def test_a_recording_learns_nothing_and_says_so(self):
+        d = data.queue(self.db_path)
+        items = {i["event_id"]: i for g in d["groups"] for i in g["items"]}
+        loom = items["evt:loom:1"]
+        self.assertEqual(loom["kind"], "recording")
+        self.assertIsNone(loom["learns"])
+        # …and it says how big the heal is instead
+        self.assertEqual(loom["recording"]["facts"], 3)
+        self.assertEqual(loom["recording"]["title"], "Walkthrough")
+
+    def test_a_message_names_the_exact_registry_write(self):
+        d = data.queue(self.db_path)
+        items = {i["event_id"]: i for g in d["groups"] for i in g["items"]}
+        mail = items["evt:email:1"]
+        self.assertEqual(mail["kind"], "message")
+        self.assertEqual(mail["learns"], {"field": "emails", "value": "acme.com"})
+
+    def test_the_group_summarises_what_a_select_all_would_write(self):
+        g = data.queue(self.db_path)["groups"][0]
+        self.assertEqual(g["learns_n"], 1)            # one of the two
+        self.assertEqual(sorted(g["kinds"]), ["message", "recording"])
+        self.assertEqual(data.queue(self.db_path)["by_kind"],
+                         {"recording": 1, "message": 1})
+
+    def test_the_excerpt_is_long_enough_to_decide_on_and_says_when_it_is_cut(self):
+        items = {i["event_id"]: i
+                 for g in data.queue(self.db_path)["groups"] for i in g["items"]}
+        self.assertEqual(len(items["evt:loom:1"]["excerpt"]), data._QUEUE_EXCERPT)
+        self.assertTrue(items["evt:loom:1"]["excerpt_truncated"])
+        self.assertFalse(items["evt:email:1"]["excerpt_truncated"])
+
+
+class TestQueueBatch(unittest.TestCase):
+    """A batch must be the SAME write as the single action it repeats — same
+    authority, same refusals — and one bad row must not lose the other 59."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="batch-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        with db.connect(self.db_path) as conn:
+            for i in range(4):
+                conn.execute(
+                    "INSERT INTO events (id, source, native_id, author, state,"
+                    " text) VALUES (?,'email',?,?, 'held','junk')",
+                    ("evt:email:%d" % i, str(i), "noreply@bank%d.com" % i))
+
+    def test_batch_ignore_excludes_every_row_permanently(self):
+        ids = ["evt:email:%d" % i for i in range(4)]
+        out = actions.queue_batch(self.db_path,
+                                  {"event_ids": ids, "action": "ignore",
+                                   "reason": "not a client"})
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["applied"], 4)
+        self.assertEqual(out["failed"], 0)
+        self.assertEqual(out["commits"], [])         # ignore never touches git
+        # the producing query is state='held'/'queued', so excluded is gone
+        self.assertEqual(data.queue(self.db_path)["held_total"], 0)
+        with db.connect(self.db_path) as conn:
+            rows = conn.execute("SELECT state, exclude_reason, resolved_by"
+                                " FROM events").fetchall()
+        for r in rows:
+            self.assertEqual(r["state"], "excluded")
+            self.assertEqual(r["exclude_reason"], "not a client")
+            self.assertEqual(r["resolved_by"], "cockpit-approval")
+
+    def test_one_bad_row_does_not_lose_the_others(self):
+        out = actions.queue_batch(
+            self.db_path,
+            {"event_ids": ["evt:email:0", "evt:email:nope"], "action": "ignore"})
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["applied"], 1)
+        self.assertEqual(out["failed"], 1)
+        bad = [r for r in out["results"] if not r["ok"]][0]
+        self.assertEqual(bad["event_id"], "evt:email:nope")
+        self.assertIn("unknown event", bad["error"])
+
+    def test_the_cap_is_enforced_server_side(self):
+        out = actions.queue_batch(
+            self.db_path,
+            {"event_ids": ["e"] * (actions.QUEUE_BATCH_MAX + 1),
+             "action": "ignore"})
+        self.assertIn("batch too large", out["error"])
+
+    def test_a_bad_action_is_refused_for_every_row(self):
+        out = actions.queue_batch(self.db_path,
+                                  {"event_ids": ["evt:email:0"],
+                                   "action": "delete"})
+        self.assertEqual(out["failed"], 1)
+        self.assertIn("action must be one of", out["results"][0]["error"])
+        self.assertEqual(data.queue(self.db_path)["held_total"], 4)
+
+    def test_empty_batch_is_an_error_not_a_silent_success(self):
+        self.assertIn("error", actions.queue_batch(self.db_path,
+                                                   {"event_ids": [],
+                                                    "action": "ignore"}))
+
+
+class TestReviewThreadWrites(ReviewCase):
+    """assign / create_client are the PERMANENT ones. They are verified by
+    stubbing the approval module and asserting the payload — deliberately never
+    fired for real, because a stray test commit against the live
+    config/clients.yaml is a mess to unpick."""
+
+    def setUp(self):
+        super().setUp()
+        self.thread("room_a", "Rupali Singh", room_type="ONE_ON_ONE",
+                    latest_message_dt="2026-08-10T09:00:00Z", proposal_id="p9")
+        self.message("room_a", "m1", org="Remoteoffice")
+        self.thread("room_b", "Someone Else")
+
+    def test_assign_delegates_to_the_registry_write_path_with_db_evidence(self):
+        with mock.patch("modules.jarvis.approve.assign_thread") as fake:
+            fake.return_value = {"ok": True, "client_id": "diat-khan",
+                                 "client_name": "Diat Khan",
+                                 "registry": {"commit": "abc123abc123"}}
+            out = actions.review_thread(self.db_path,
+                                        {"thread_ids": ["room_a", "room_b"],
+                                         "action": "assign",
+                                         "client_id": "diat-khan"})
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["applied"], 2)
+        self.assertEqual(out["commits"], ["abc123abc123"])   # deduplicated
+        self.assertEqual(fake.call_count, 2)
+        args, kw = fake.call_args_list[0]
+        self.assertEqual(args[1:], ("room_a", "diat-khan"))
+        self.assertEqual(kw["by"], "cockpit-thread-review")
+        # the evidence in a permanent commit is READ FROM THE DB, never from the
+        # request body — a form must not be able to write its own audit note
+        self.assertIn("upwork room room_a", kw["evidence"])
+        self.assertIn("'Rupali Singh'", kw["evidence"])
+        self.assertIn("1 messages", kw["evidence"])
+        self.assertIn("proposal p9", kw["evidence"])
+
+    def test_assign_without_a_client_is_refused_before_any_write(self):
+        with mock.patch("modules.jarvis.approve.assign_thread") as fake:
+            out = actions.review_thread(self.db_path,
+                                        {"thread_ids": ["room_a"],
+                                         "action": "assign"})
+        self.assertIn("client_id", out["error"])
+        fake.assert_not_called()
+
+    def test_create_client_is_one_thread_only(self):
+        with mock.patch("modules.jarvis.approve.create_client") as fake:
+            out = actions.review_thread(
+                self.db_path,
+                {"thread_ids": ["room_a", "room_b"], "action": "create_client",
+                 "new_client": {"id": "x", "name": "X"}})
+        self.assertIn("exactly one thread", out["error"])
+        fake.assert_not_called()
+
+    def test_create_client_then_claims_the_room(self):
+        with mock.patch("modules.jarvis.approve.create_client") as create, \
+             mock.patch("modules.jarvis.approve.assign_thread") as assign:
+            create.return_value = {"ok": True, "client_id": "rupali-singh",
+                                   "name": "Rupali Singh", "commit": "deadbeef1234",
+                                   "registry": {"commit": "deadbeef1234"}}
+            assign.return_value = {"ok": True, "client_id": "rupali-singh"}
+            out = actions.review_thread(
+                self.db_path,
+                {"thread_ids": ["room_a"], "action": "create_client",
+                 "new_client": {"id": "rupali-singh", "name": "Rupali Singh",
+                                "kind": "prospect"}})
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["commits"], ["deadbeef1234"])
+        _, kw = create.call_args
+        self.assertEqual(kw["kind"], "prospect")
+        self.assertEqual(kw["upwork_room"], "room_a")
+        self.assertIn("upwork room room_a", kw["evidence"])
+        assign.assert_called_once()
+
+    def test_a_refused_create_never_reaches_the_assign(self):
+        with mock.patch("modules.jarvis.approve.create_client") as create, \
+             mock.patch("modules.jarvis.approve.assign_thread") as assign:
+            create.return_value = {"error": "client id 'acme' already exists"}
+            out = actions.review_thread(
+                self.db_path,
+                {"thread_ids": ["room_a"], "action": "create_client",
+                 "new_client": {"id": "acme", "name": "Acme"}})
+        self.assertFalse(out["ok"])
+        self.assertIn("already exists", out["results"][0]["error"])
+        assign.assert_not_called()
+
+    def test_unknown_action_and_oversized_batch_are_refused(self):
+        self.assertIn("action must be one of",
+                      actions.review_thread(self.db_path,
+                                            {"thread_ids": ["room_a"],
+                                             "action": "delete"})["error"])
+        self.assertIn("batch too large", actions.review_thread(
+            self.db_path,
+            {"thread_ids": ["x"] * (actions.REVIEW_BATCH_MAX + 1),
+             "action": "dismiss"})["error"])
+        self.assertIn("thread_ids required",
+                      actions.review_thread(self.db_path,
+                                            {"action": "dismiss"})["error"])
+
+
+class TestReviewServerRoutes(CockpitServerCase):
+    def test_the_routes_are_reachable_and_token_gated(self):
+        for path in ("/api/review/threads", "/api/review/counts"):
+            self.assertEqual(self.get(path, token=None)[0], 401)
+            status, body = self.get(path)
+            self.assertEqual(status, 200, body)
+            json.loads(body)
+
+    def test_show_is_forwarded_and_validated(self):
+        status, body = self.get("/api/review/threads?show=dismissed")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["shown"], "dismissed")
+        # a rejected filter is a 200 carrying {"error"}, never an empty list
+        status, body = self.get("/api/review/threads?show=lol")
+        self.assertEqual(status, 200)
+        out = json.loads(body)
+        self.assertIn("error", out)
+        self.assertIsNone(out["open_total"])
+
+    def test_an_unregistered_param_cannot_reach_the_reader(self):
+        plain = self.get("/api/review/threads")[1]
+        self.assertEqual(self.get("/api/review/threads?today=lol")[1], plain)
+
+    def test_the_batch_routes_are_posts_and_token_gated(self):
+        for path in ("/api/queue/batch", "/api/review/thread"):
+            self.assertEqual(self.post(path, token=None)[0], 401)
+            status, body = self.post(path, body={})
+            self.assertEqual(status, 200, body)
+            self.assertIn("error", json.loads(body))
+
+
 if __name__ == "__main__":
     unittest.main()

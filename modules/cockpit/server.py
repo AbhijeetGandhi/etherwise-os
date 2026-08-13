@@ -48,6 +48,11 @@ GET_ROUTES: dict = {
     "/api/pipeline/facts": data.pipeline_facts,          # chart source (one row/job)
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     "/api/queue": data.queue,     # Jarvis J1 mapping queue (unmapped events)
+    # Review's other two backlogs. /threads is the unattributed Upwork rooms
+    # (?show=open|dismissed|all); /counts is the nav badge's single source —
+    # counts only, no rows, because the shell re-reads it every five minutes.
+    "/api/review/threads": data.review_threads,
+    "/api/review/counts": data.review_counts,
     # Activity: the daily digest (?day=YYYY-MM-DD) + one run's full detail
     # (?run_id=N). Both params are KEYWORD-ONLY on the readers — see below.
     "/api/activity": data.activity,
@@ -119,11 +124,21 @@ QUERY_PARAMS: dict = {
     # with total 0 AND the day's real type counts, so "no data" is never
     # mistaken for "you asked for a type that does not exist".
     "source_type": "sources.source_type, e.g. fathom|loom|email|slack",
+    # /api/review/threads — which side of the dismissal line to list. Validated
+    # in the reader (a 200 carrying {"error": …}), never a silent empty list:
+    # "you asked for a value I do not know" and "there is nothing here" are
+    # opposite answers and this screen is where the difference costs most.
+    "show": "open|dismissed|all",
 }
 
 POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
     "/api/queue/resolve": actions.queue_resolve,  # assign|create_alias|ignore
+    "/api/queue/batch": actions.queue_batch,      # the same, many at once
+    # the thread backlog's own write path: dismiss|restore|assign|create_client.
+    # It is separate from queue/resolve because a thread is not an event and
+    # approve.resolve cannot reach it (see modules/jarvis/approve.py header).
+    "/api/review/thread": actions.review_thread,
     "/api/wake": actions.wake,    # allowlisted launchd kick
     "/api/rail": actions.rail,    # allowlisted rail trigger
     "/api/rerun": actions.rerun,  # allowlisted re-run of a task from the run log

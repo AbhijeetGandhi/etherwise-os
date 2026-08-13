@@ -9,7 +9,7 @@ import json
 import sqlite3
 import subprocess
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -2327,17 +2327,81 @@ def money_transactions(db_path: Optional[Path] = None, *,
 
 
 # ── Jarvis mapping queue (J1 D3) ──────────────────────────────────────────────
+_RECORDING_SOURCES = ("fathom", "loom")
+_QUEUE_EXCERPT = 600          # enough to decide without opening the recording
+
+
+def _event_kind(source: Optional[str]) -> str:
+    """'recording' (a Fathom call or Loom walkthrough — assigning it heals a
+    dossier) vs 'message' (mail/Slack — assigning it teaches a sender pattern).
+    They look identical in the events table and behave completely differently on
+    approval, which is exactly why the UI has to be able to tell them apart."""
+    return "recording" if (source or "") in _RECORDING_SOURCES else "message"
+
+
+def _learns(author: Optional[str]) -> Optional[dict]:
+    """What an ASSIGN would write into clients.yaml for this event — or None.
+
+    THE THING THIS EXISTS TO STOP SAYING: Review warns, on every row, that
+    "Assign writes to the client registry — permanently". For a Fathom or Loom
+    event that warning is simply false. Those events carry `author = NULL`
+    (fathom_bridge/loom_bridge store participants in the body, not the author
+    slot), approve.learned_pattern(None) returns None, and approve.resolve then
+    skips write_registry entirely — the assign maps the event and heals the
+    dossier and touches git not at all. Measured on the live DB 2026-08-13: 39
+    of the 51 queued events learn NOTHING. A warning that is wrong four times
+    out of five is a warning nobody reads by the fifth."""
+    from modules.jarvis import approve
+    pat = approve.learned_pattern(author or "")
+    return {"field": pat[0], "value": pat[1]} if pat else None
+
+
+def _queue_source_meta(conn, refs: list) -> dict:
+    """{sources.source_ref: {title, occurred, status, facts}} for the recordings
+    in the queue. This is WHAT AN ASSIGN WOULD MOVE: approve.resolve calls
+    fathom_bridge.heal_source, which reattributes the source row AND its facts
+    and recompiles the client's dossier. `facts` is therefore the size of the
+    edit, and it was invisible."""
+    out: dict = {}
+    refs = [r for r in refs if r]
+    if not refs:
+        return out
+    for chunk in (refs[i:i + 400] for i in range(0, len(refs), 400)):
+        qs = ",".join("?" * len(chunk))
+        for r in conn.execute(
+                "SELECT s.source_ref, s.title, s.occurred_dt, s.status,"
+                " s.density, (SELECT COUNT(*) FROM facts f WHERE f.source_id=s.id)"
+                " facts FROM sources s WHERE s.source_ref IN ({})".format(qs),
+                tuple(chunk)):
+            out[r["source_ref"]] = {"title": r["title"],
+                                    "occurred": r["occurred_dt"],
+                                    "status": r["status"],
+                                    "density": r["density"],
+                                    "facts": r["facts"]}
+    return out
+
+
 def queue(db_path: Optional[Path] = None) -> dict:
     """Unmapped events grouped by proposed client, with evidence + provenance,
     plus the client list for assignment and the latest sweep's reconciliation.
-    Counts reconcile: total = mapped + queued + held + excluded."""
+    Counts reconcile: total = mapped + queued + held + excluded.
+
+    DISMISSAL IS ALREADY PERMANENT HERE and needs nothing invented: Ignore /
+    Internal call go through approve.resolve -> events.ignore, which sets
+    state='excluded' with a reason. The producing query below is state='queued'
+    / state='held', so an excluded event can never come back — the only path
+    from 'excluded' is a hand-written UPDATE. (The THREAD backlog has no such
+    ledger; see review_threads for where its verdicts live.)"""
     conn = _ro(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, source, author, subject, ts, permalink, proposed_client_id,"
-            " proposal_confidence, proposal_evidence, substr(text,1,180) preview"
+            "SELECT id, source, author, subject, ts, permalink, raw_ref,"
+            " proposed_client_id, proposal_confidence, proposal_evidence,"
+            " substr(text,1,180) preview, substr(text,1,?) excerpt,"
+            " length(text) text_len"
             " FROM events WHERE state='queued'"
-            " ORDER BY proposed_client_id IS NULL, proposed_client_id, ts DESC")]
+            " ORDER BY proposed_client_id IS NULL, proposed_client_id, ts DESC",
+            (_QUEUE_EXCERPT,))]
         counts = {s: 0 for s in ("mapped", "queued", "held", "excluded")}
         for r in conn.execute("SELECT state, COUNT(*) n FROM events GROUP BY state"):
             if r["state"] in counts:
@@ -2345,15 +2409,35 @@ def queue(db_path: Optional[Path] = None) -> dict:
         counts["total"] = sum(counts[s] for s in
                               ("mapped", "queued", "held", "excluded"))
         held_rows = [dict(r) for r in conn.execute(
-            "SELECT id, source, author, subject, ts, permalink,"
-            " substr(text,1,180) preview FROM events WHERE state='held'"
-            " ORDER BY ts DESC")]
+            "SELECT id, source, author, subject, ts, permalink, raw_ref,"
+            " substr(text,1,180) preview, substr(text,1,?) excerpt,"
+            " length(text) text_len FROM events WHERE state='held'"
+            " ORDER BY ts DESC", (_QUEUE_EXCERPT,))]
+        smeta = _queue_source_meta(
+            conn, [r["raw_ref"] for r in rows] + [r["raw_ref"] for r in held_rows])
         last = conn.execute(
             "SELECT id, metrics_json, completed_at FROM runs WHERE"
             " task_name='jarvis_sweep' AND status IN ('completed','skipped_empty')"
             " ORDER BY id DESC LIMIT 1").fetchone()
     finally:
         conn.close()
+
+    def item(r: dict, proposed: bool) -> dict:
+        out = {
+            "event_id": r["id"], "source": r["source"], "author": r["author"],
+            "subject": r["subject"], "ts": r["ts"], "permalink": r["permalink"],
+            "preview": r["preview"],
+            # new, additive: the three things a one-glance decision needs
+            "kind": _event_kind(r["source"]),
+            "excerpt": r["excerpt"],
+            "excerpt_truncated": bool((r["text_len"] or 0) > _QUEUE_EXCERPT),
+            "learns": _learns(r["author"]),
+            "recording": smeta.get(r["raw_ref"] or ""),
+        }
+        if proposed:
+            out.update({"confidence": r["proposal_confidence"],
+                        "evidence": r["proposal_evidence"]})
+        return out
 
     reg = registry.load()
     groups: dict = {}
@@ -2366,11 +2450,12 @@ def queue(db_path: Optional[Path] = None) -> dict:
             else "Unassigned (no confident proposal)",
             "count": 0, "items": []})
         g["count"] += 1
-        g["items"].append({
-            "event_id": r["id"], "source": r["source"], "author": r["author"],
-            "subject": r["subject"], "ts": r["ts"], "permalink": r["permalink"],
-            "confidence": r["proposal_confidence"],
-            "evidence": r["proposal_evidence"], "preview": r["preview"]})
+        g["items"].append(item(r, True))
+    for g in groups.values():
+        # what a select-all on this group would actually do, stated once per
+        # group rather than re-derived in the browser
+        g["kinds"] = sorted({i["kind"] for i in g["items"]})
+        g["learns_n"] = sum(1 for i in g["items"] if i["learns"])
     ordered = sorted(groups.values(),
                      key=lambda g: (g["proposed_client_id"] is None, -g["count"]))
 
@@ -2383,17 +2468,433 @@ def queue(db_path: Optional[Path] = None) -> dict:
         last_sweep = {"at": last["completed_at"], "run_id": last["id"],
                       "reconciled": m.get("reconciled"), "metrics": m}
 
-    held_items = [{"event_id": r["id"], "source": r["source"],
-                   "author": r["author"], "subject": r["subject"], "ts": r["ts"],
-                   "permalink": r["permalink"], "preview": r["preview"]}
-                  for r in held_rows]
+    held_items = [item(r, False) for r in held_rows]
+    by_kind: dict = {}
+    for it in [i for g in ordered for i in g["items"]] + held_items:
+        by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
     return {"groups": ordered, "queued_total": len(rows),
             "held_items": held_items, "held_total": len(held_items),
-            "counts": counts,
+            "counts": counts, "by_kind": by_kind,
             "clients": [{"id": cid, "name": reg.by_id[cid]["name"]}
                         for cid in sorted(reg.matchable_ids(),
                                           key=lambda i: reg.by_id[i]["name"].lower())],
             "registry_sha": reg.sha[:12], "last_sweep": last_sweep}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Review — the UNATTRIBUTED UPWORK THREAD backlog (the third queue)
+# ══════════════════════════════════════════════════════════════════════════════
+# 75 rooms with threads.client_id IS NULL. For most of them the correct answer
+# is "a prospect who never bought", and the screen has to let Abhijeet say that
+# ONCE, permanently. A handful are real clients under a spelling the registry
+# does not hold.
+#
+# WHERE THE DISMISSAL LIVES, AND WHY (the decision this module makes)
+# -------------------------------------------------------------------
+# `nudge_state`, under the key `review:thread:<thread_id>`, state 'dismissed'.
+#
+#   * It could NOT live on `threads`. That table is a mirror of Upwork rewritten
+#     by the inbox rail; a verdict column there is a column the next sync has to
+#     be trusted to preserve, and this repo already has one bug of exactly that
+#     shape (link_threads' non-overwrite rule exists because attribution was
+#     being re-litigated).
+#   * It could NOT live in `events`. Threads are not events — that is precisely
+#     why they have their own path — and minting fake event rows to reuse
+#     `state='excluded'` would put rows in the sweep's reconciliation ledger
+#     that no sweep ever collected, breaking the one invariant that ledger has.
+#   * `nudge_state` IS the cockpit's own decision overlay: item_key -> state,
+#     written only by cockpit actions, read only by cockpit readers, already
+#     namespaced by prefix ('followup:', 'hotlead:', 'nudge:'). No migration, no
+#     other writer, no chance of a rail clobbering it.
+#
+# HOW IT DIFFERS FROM Today's `_is_actioned`, deliberately: there, a Done DECAYS
+# when the counterparty says something new, because a Done means "I have handled
+# this" and news un-handles it. A thread dismissal is not about a task, it is
+# about IDENTITY — "this counterparty is not a client of ours" — and a new
+# message does not make a stranger a client. So it is read as absolute. The two
+# ways it correctly ends are both structural, not temporal: the thread genuinely
+# becomes a client (threads.client_id stops being NULL, and the producing query
+# below drops it for that reason), or Abhijeet presses Restore, which DELETES
+# the row. Dismissed threads are counted and drillable on the screen, so the
+# decision is reversible and never silently swallows work.
+_REVIEW_THREAD_PREFIX = "review:thread:"
+_UPWORK_ROOM_URL = "https://www.upwork.com/nx/messages/rooms/{}"
+_REVIEW_EXCERPT = 400
+_OWNER_UPWORK_USER_ID = "1647672547786633216"   # matches knowledge.clients
+_REVIEW_HINT_MIN_LEN = 6      # below this an alnum key is a coincidence
+_RECENT_DAYS = 30
+_WARM_DAYS = 90
+
+
+def _alnum_key(s: Optional[str]) -> str:
+    """registry.norm() with punctuation and spacing thrown away as well.
+
+    This is a WEAKER key than anything the attribution rails are allowed to use,
+    and that is the point. knowledge.clients has already run over every one of
+    these threads with the real matcher and failed; re-running the same rules
+    here would produce a suggestion column that is empty by construction. An
+    alnum fold catches the one class the strict matcher cannot — a counterparty
+    spelled without the separator the registry holds ('Remoteoffice' vs the
+    'Remote Office' alias on diat-khan, live on 2026-08-13) — and it is offered
+    ONLY as a hint on a row a human must still confirm. It never writes."""
+    return _re.sub(r"[^a-z0-9]", "", registry.norm(s or ""))
+
+
+def _review_hint_index(reg) -> dict:
+    """{alnum key: (client_id, the identifier it came from)} over matchable
+    clients. Short keys are dropped — 'dive', 'emax' inside a company name is a
+    coincidence, and a false hint on this screen is a wrong PERMANENT write."""
+    idx: dict = {}
+    for cid in reg.matchable_ids():
+        c = reg.by_id[cid]
+        for ident in [cid, c["name"], *(c.get("aliases") or []),
+                      *(c.get("fathom_names") or [])]:
+            k = _alnum_key(ident)
+            if len(k) >= _REVIEW_HINT_MIN_LEN:
+                idx.setdefault(k, (cid, ident))
+    return idx
+
+
+def _revenue_payers(conn) -> dict:
+    """{alnum payer key: {label, txns, usd}} over REVENUE rows only.
+
+    Same two label paths money() uses (Wise puts the payer in the description,
+    Upwork puts it in assignment_company) — reusing them means the money this
+    screen shows next to a thread is the same money the Money screen counts, to
+    the cent, rather than a second opinion."""
+    out: dict = {}
+    for r in conn.execute(
+            "SELECT source, description, assignment_company, amount_base_minor"
+            " FROM transactions WHERE pnl_bucket='revenue'"):
+        label = (_wise_payer(r["description"])
+                 if (r["source"] or "").startswith("Wise")
+                 else (r["assignment_company"] or "").strip() or None)
+        k = _alnum_key(label)
+        if len(k) < _REVIEW_HINT_MIN_LEN:
+            continue
+        e = out.setdefault(k, {"label": label, "txns": 0, "minor": 0})
+        e["txns"] += 1
+        e["minor"] += int(r["amount_base_minor"] or 0)
+    for e in out.values():
+        e["usd"] = _from_minor(e.pop("minor"))
+    return out
+
+
+def _age_days(ts, now: Optional[datetime] = None) -> Optional[int]:
+    """Whole days since `ts`, or None if it cannot be read as a time.
+
+    Goes through _ts_utc (the ts_key law — this table stores 'T…Z' while
+    nudge_state stores ' ' and neither string-compares against the other), and
+    ts_key returns a NAIVE 'YYYY-MM-DD HH:MM:SS' already in UTC. So the
+    comparison must be naive-UTC on both sides; mixing an aware `now` in here
+    raises TypeError, which the caller would have swallowed into a silent
+    'unknown age' — and age is half the ranking."""
+    inst = _ts_utc(ts)
+    if not inst:
+        return None
+    try:
+        then = datetime.strptime(inst[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    ref = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
+    return (ref - then).days
+
+
+def _thread_identities(room_name: Optional[str], org: Optional[str],
+                       user: Optional[str]) -> list:
+    """The counterparty strings a thread can be identified by, whole values
+    first then comma-parts — the same decomposition knowledge.clients uses,
+    because an Upwork room is literally titled "Julie Heffernan, Public Safety
+    Group" and both halves are real identities."""
+    out, seen = [], set()
+    for f in (room_name, org, user):
+        if not f:
+            continue
+        for part in [f] + [p.strip() for p in f.split(",")]:
+            if part and part not in seen:
+                seen.add(part)
+                out.append(part)
+    return out
+
+
+def _review_group(it: dict) -> tuple:
+    """(group key, label, why) for one thread. Every thread lands in exactly one
+    group, most-consequential first, so a select-all is always a coherent batch."""
+    # HINT BEFORE EVIDENCE, deliberately. Both are strong, but only the hint
+    # names the client you would batch-assign to — it is the "group by proposed
+    # client" grouping, and grouping the one thread that has both under 'money'
+    # would leave the actionable group permanently empty. Money/contract/offer
+    # still render on the row, as the reason.
+    if it["hint"]:
+        return ("hint:" + it["hint"]["client_id"],
+                "Looks like " + it["hint"]["client_name"],
+                "The registry already holds this name — with different spacing"
+                " or punctuation, which is why the matcher missed it. Confirm"
+                " and the room is claimed permanently.")
+    if it["money"] or it["contract"] or it["offers_n"]:
+        return ("evidence", "Money, a contract or an offer says this is a client",
+                "These are not prospects: the ledger, the contract table or an"
+                " Upwork offer already ties this counterparty to real work —"
+                " but nothing in the registry names them yet.")
+    if it["is_live"]:
+        return ("live", "Still live — recent, or you owe a reply",
+                "Too recent to call dead. Leave them until they go quiet.")
+    if (it["proposal"] or {}).get("status") == "Expired":
+        return ("prospect", "Proposal expired — never converted",
+                "You applied, the proposal expired, nothing came of it. This is"
+                " the correct answer for most of this backlog: dismiss the lot.")
+    if it["proposal"]:
+        return ("stale", "Applied, talked, went quiet",
+                "An interview thread with no offer, no contract and no money,"
+                " last touched a long time ago.")
+    return ("direct", "Direct message, no job attached",
+            "A one-to-one room with no proposal behind it — usually a recruiter,"
+            " an agency pitch or a cold approach.")
+
+
+_REVIEW_GROUP_ORDER = ["hint", "evidence", "live", "stale", "prospect", "direct"]
+
+
+def review_threads(db_path: Optional[Path] = None, *,
+                   show: Optional[str] = None) -> dict:
+    """Upwork threads with no client, with the evidence needed to decide.
+
+    `show` = open (default) | dismissed | all. Dismissed rows are never simply
+    gone: the count is always returned and `show=dismissed` lists them, because
+    a queue that silently shrinks is a queue you stop trusting."""
+    show = (show or "open").strip().lower()
+    if show not in ("open", "dismissed", "all"):
+        return {"error": "show must be open|dismissed|all (got {!r})".format(show),
+                "groups": [], "open_total": None}
+
+    conn = _ro(db_path)
+    try:
+        threads = [dict(r) for r in conn.execute(
+            "SELECT id, room_name, topic, room_type, contract_id, proposal_id,"
+            " offer_ids_json, bucket, tier, awaiting_reply_from,"
+            " latest_message_dt, first_seen_at FROM threads"
+            " WHERE client_id IS NULL")]
+        attributed = conn.execute(
+            "SELECT COUNT(*) n FROM threads WHERE client_id IS NOT NULL"
+        ).fetchone()["n"]
+        ids = [t["id"] for t in threads]
+        msgs: dict = {}
+        last_msg: dict = {}
+        parties: dict = {}
+        props: dict = {}
+        contracts: dict = {}
+        if ids:
+            qs = ",".join("?" * len(ids))
+            for r in conn.execute(
+                    "SELECT thread_id, COUNT(*) n,"
+                    " SUM(CASE WHEN sender_user_id != ? THEN 1 ELSE 0 END) theirs"
+                    " FROM messages WHERE thread_id IN ({}) GROUP BY thread_id"
+                    .format(qs), (_OWNER_UPWORK_USER_ID, *ids)):
+                msgs[r["thread_id"]] = {"n": r["n"], "theirs": r["theirs"] or 0}
+            for r in conn.execute(
+                    "SELECT thread_id, GROUP_CONCAT(DISTINCT sender_org_name) o,"
+                    " GROUP_CONCAT(DISTINCT sender_user_name) u FROM messages"
+                    " WHERE thread_id IN ({}) AND sender_user_id != ?"
+                    " GROUP BY thread_id".format(qs),
+                    (*ids, _OWNER_UPWORK_USER_ID)):
+                parties[r["thread_id"]] = (r["o"], r["u"])
+            # their LAST message: the single most useful line of evidence, and
+            # the only one that says what the conversation was actually about.
+            for r in conn.execute(
+                    "SELECT m.thread_id, m.created_dt, m.sender_user_name,"
+                    " substr(m.message,1,?) excerpt FROM messages m"
+                    " WHERE m.thread_id IN ({}) AND m.sender_user_id != ?"
+                    " AND m.created_dt = (SELECT MAX(m2.created_dt) FROM messages"
+                    " m2 WHERE m2.thread_id=m.thread_id AND m2.sender_user_id != ?)"
+                    .format(qs), (_REVIEW_EXCERPT, *ids,
+                                  _OWNER_UPWORK_USER_ID, _OWNER_UPWORK_USER_ID)):
+                last_msg.setdefault(r["thread_id"], dict(r))
+            for r in conn.execute(
+                    "SELECT id, thread_id, status, upwork_status, job_title,"
+                    " charge_rate, charge_currency, client_company, created_dt"
+                    " FROM proposals WHERE thread_id IN ({})".format(qs), ids):
+                props[r["thread_id"]] = dict(r)
+            for r in conn.execute(
+                    "SELECT id, thread_id, title, upwork_status, hourly_rate"
+                    " FROM contracts WHERE thread_id IN ({})".format(qs), ids):
+                contracts[r["thread_id"]] = dict(r)
+        payers = _revenue_payers(conn)
+        state = {r["item_key"]: dict(r) for r in conn.execute(
+            "SELECT item_key, state, note, updated_at FROM nudge_state"
+            " WHERE item_key LIKE ? ESCAPE '\\'",
+            (_like_escape(_REVIEW_THREAD_PREFIX) + "%",))}
+    finally:
+        conn.close()
+
+    reg = registry.load()
+    hints = _review_hint_index(reg)
+    now = datetime.now(timezone.utc)
+    items, dismissed_n = [], 0
+    for t in threads:
+        org, user = parties.get(t["id"], (None, None))
+        idents = _thread_identities(t["room_name"], org, user)
+        money = hint = None
+        for p in idents:
+            k = _alnum_key(p)
+            if len(k) < _REVIEW_HINT_MIN_LEN:
+                continue
+            if money is None and k in payers:
+                money = dict(payers[k], matched_on=p)
+            if hint is None and k in hints:
+                cid, ident = hints[k]
+                hint = {"client_id": cid, "client_name": reg.by_id[cid]["name"],
+                        "matched_on": p, "registry_value": ident}
+        prop = props.get(t["id"])
+        contract = contracts.get(t["id"])
+        try:
+            offers = json.loads(t["offer_ids_json"] or "[]")
+        except (TypeError, ValueError):
+            offers = []
+        age_days = _age_days(t["latest_message_dt"], now)
+        owed = (t["awaiting_reply_from"] == "Abhijeet"
+                or (t["bucket"] or "") in ("owed", "unmatched-owed"))
+        is_live = bool((age_days is not None and age_days <= _RECENT_DAYS) or owed)
+        m = msgs.get(t["id"], {"n": 0, "theirs": 0})
+        st = state.get(_REVIEW_THREAD_PREFIX + t["id"])
+        dismissed = (st or {}).get("state") == "dismissed"
+        if dismissed:
+            dismissed_n += 1
+
+        reasons = []
+        score = 0
+        if money:
+            score += 50
+            reasons.append("${:,.2f} of revenue from '{}'".format(
+                money["usd"], money["label"]))
+        if contract:
+            score += 40
+            reasons.append("contract {} ({})".format(
+                contract["id"], contract["upwork_status"] or "?"))
+        if offers:
+            score += 30
+            reasons.append("{} Upwork offer(s)".format(len(offers)))
+        if hint:
+            score += 25
+            reasons.append("registry holds '{}' for {}".format(
+                hint["registry_value"], hint["client_name"]))
+        if owed:
+            score += 15
+            reasons.append("you owe the reply")
+        if age_days is not None and age_days <= _RECENT_DAYS:
+            score += 20
+            reasons.append("active in the last {} days".format(_RECENT_DAYS))
+        elif age_days is not None and age_days <= _WARM_DAYS:
+            score += 10
+        if prop and (prop.get("status") or "") not in (
+                "Expired", "Lost", "Withdrawn", "Skipped"):
+            score += 10
+        if not prop:
+            score += 10          # a direct room is a person, not an application
+            reasons.append("direct room — no job application behind it")
+        score += min(m["theirs"], 30)
+
+        items.append({
+            "thread_id": t["id"], "room_name": t["room_name"],
+            "topic": t["topic"], "room_type": t["room_type"],
+            "tier": t["tier"], "bucket": t["bucket"],
+            "awaiting_reply_from": t["awaiting_reply_from"],
+            "latest_message_dt": t["latest_message_dt"],
+            "first_seen_at": t["first_seen_at"],
+            "age_days": age_days,
+            "messages_n": m["n"], "their_messages_n": m["theirs"],
+            "counterparties": idents,
+            "last_message": last_msg.get(t["id"]),
+            "proposal": prop, "contract": contract, "offers_n": len(offers),
+            "money": money, "hint": hint,
+            "owed": owed, "is_live": is_live,
+            "score": score, "reasons": reasons,
+            "permalink": _UPWORK_ROOM_URL.format(t["id"]),
+            "dismissed": ({"at": st.get("updated_at"), "reason": st.get("note")}
+                          if dismissed else None),
+        })
+
+    open_items = [i for i in items if not i["dismissed"]]
+    shown = (open_items if show == "open"
+             else [i for i in items if i["dismissed"]] if show == "dismissed"
+             else items)
+
+    groups: dict = {}
+    for it in shown:
+        key, label, why = _review_group(it)
+        g = groups.setdefault(key, {"key": key, "label": label, "why": why,
+                                    "count": 0, "items": [],
+                                    "client_id": (it["hint"] or {}).get("client_id")
+                                    if key.startswith("hint:") else None})
+        g["count"] += 1
+        g["items"].append(it)
+    for g in groups.values():
+        # newest first, then strongest first — two stable passes, because the
+        # tiebreaker is a STRING (ts_key) and a string cannot be negated inside
+        # one composite key without silently reversing the primary sort too.
+        g["items"].sort(key=lambda i: _ts_utc(i["latest_message_dt"]) or "",
+                        reverse=True)
+        g["items"].sort(key=lambda i: -i["score"])
+    order = {k: i for i, k in enumerate(_REVIEW_GROUP_ORDER)}
+    ordered = sorted(groups.values(), key=lambda g: (
+        order.get(g["key"].split(":")[0], 99), -g["count"], g["label"]))
+
+    return {
+        "shown": show,
+        "groups": ordered,
+        "total": len(items),
+        "open_total": len(open_items),
+        "dismissed_total": dismissed_n,
+        "shown_total": len(shown),
+        "attributed_total": attributed,
+        # a REAL zero with its reason attached (UI_BUILD_BRIEF §0): every one of
+        # the 57 synced contracts points at a thread that already has a client,
+        # so "no unattributed thread is contract-backed" is a finding, not a gap.
+        "contract_backed": sum(1 for i in items if i["contract"]),
+        "money_backed": sum(1 for i in items if i["money"]),
+        "hinted": sum(1 for i in items if i["hint"]),
+        "clients": [{"id": cid, "name": reg.by_id[cid]["name"]}
+                    for cid in sorted(reg.matchable_ids(),
+                                      key=lambda i: reg.by_id[i]["name"].lower())],
+        "registry_sha": reg.sha[:12],
+        "dismissal_note": "A dismissal is stored as nudge_state"
+                          " 'review:thread:<id>' = dismissed. It does not decay:"
+                          " only Restore, or the thread genuinely gaining a"
+                          " client_id, brings it back.",
+    }
+
+
+def review_counts(db_path: Optional[Path] = None) -> dict:
+    """The nav badge's one source of truth: what genuinely awaits a decision,
+    across all three backlogs. Counts only — no rows, no registry load, no
+    per-thread evidence — because the shell re-reads this every five minutes and
+    on every action.
+
+    `events_queued + events_held` is the mapping queue (recordings and mail);
+    `threads_open` is the unattributed Upwork rooms MINUS the ones already
+    dismissed, which is the whole point of the dismissal store: the badge has to
+    fall when he clears the backlog, or he will stop believing it."""
+    conn = _ro(db_path)
+    try:
+        ev = {r["state"]: r["n"] for r in conn.execute(
+            "SELECT state, COUNT(*) n FROM events"
+            " WHERE state IN ('queued','held') GROUP BY state")}
+        threads_total = conn.execute(
+            "SELECT COUNT(*) n FROM threads WHERE client_id IS NULL"
+        ).fetchone()["n"]
+        dismissed = conn.execute(
+            "SELECT COUNT(*) n FROM nudge_state WHERE state='dismissed'"
+            " AND item_key LIKE ? ESCAPE '\\' AND substr(item_key, ?) IN"
+            " (SELECT id FROM threads WHERE client_id IS NULL)",
+            (_like_escape(_REVIEW_THREAD_PREFIX) + "%",
+             len(_REVIEW_THREAD_PREFIX) + 1)).fetchone()["n"]
+    finally:
+        conn.close()
+    queued, held = ev.get("queued", 0), ev.get("held", 0)
+    threads_open = max(threads_total - dismissed, 0)
+    return {"events_queued": queued, "events_held": held,
+            "threads_total": threads_total, "threads_dismissed": dismissed,
+            "threads_open": threads_open,
+            "total": queued + held + threads_open}
 
 
 # ── Activity: what the system actually did on a day (UI brief §3) ────────────

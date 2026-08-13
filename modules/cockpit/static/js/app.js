@@ -277,7 +277,12 @@ async function refreshHealth() {
 
 async function refreshBadges() {
   try {
-    navBadges.review = reviewBadgeCount(await api("/api/queue"));
+    // /api/review/counts, not /api/queue: Review holds THREE backlogs now
+    // (queued events, held events, unattributed Upwork threads) and the badge
+    // has to count all three — including the fall when he dismisses a batch of
+    // threads, or it stops being believed. Counts only: no rows, no registry
+    // load, because this runs every five minutes and after every action.
+    navBadges.review = reviewBadgeCount(await api("/api/review/counts"));
   } catch (e) {
     navBadges.review = 0;                 // never invent a count out of an error
   }
