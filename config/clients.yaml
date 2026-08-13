@@ -137,6 +137,7 @@ clients:
     emails:
       - recointensive.com
       - reco.health
+      - e.read.ai
     scope_notes: "PROSPECT (2026-08-09, inbound via ChatGPT). Five-brand behavioural-health network, Delray Beach FL. Wants a unified exec dashboard across Kipu + CollaborateMD + Salesforce; explicitly NOT replacing their billing company. Call 1 held 2026-08-11 with BD, COO, CFO. Nothing quoted, nothing paid. Decision-maker Erika Boodhoo (CFO). Full record: clients/RECO Health/context.md"
   -
     id: cmf-publishing
