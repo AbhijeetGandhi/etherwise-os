@@ -232,6 +232,69 @@ class CatchUpCase(unittest.TestCase):
         self.assertIn("launchctl bootstrap gui/501", cmd)
         self.assertIn("io.test.rail.plist", cmd)
 
+    # ── re-arming the alarm (2026-08-13) ─────────────────────────────────────
+    def _not_installed_anomaly(self, conn, key, label, resolved=False, when_h=1):
+        """A catch_up_not_installed row in the real shape run() writes."""
+        ts = (_now() - timedelta(hours=when_h)).isoformat(timespec="seconds")
+        conn.execute(
+            "INSERT INTO anomalies (task_name, kind, severity, detail_json,"
+            " detected_at, resolved_at) VALUES"
+            " ('catch_up','catch_up_not_installed','critical',?,?,?)",
+            ('{"sources": [{"key": "%s", "label": "%s"}]}' % (key, label),
+             ts, ts if resolved else None))
+
+    def _open_ni(self, conn):
+        return conn.execute(
+            "SELECT COUNT(*) FROM anomalies WHERE"
+            " kind='catch_up_not_installed' AND resolved_at IS NULL"
+        ).fetchone()[0]
+
+    def test_installing_the_label_re_arms_the_not_installed_alarm(self):
+        """Nothing in production sets anomalies.resolved_at, so without this the
+        one-time-loud guard is once-per-key-FOREVER: the alarm could never fire
+        again for a source that was fixed and later broke again."""
+        with db.connect(self.db_path) as conn:
+            _run_row(conn, "t_rail", 0.5)
+            _run_row(conn, "t_scan", 0.5)             # both healthy now
+            self._not_installed_anomaly(conn, "rail", "io.test.rail")
+            self.assertEqual(self._open_ni(conn), 1)
+        out = self._go()                              # every label loaded
+        self.assertEqual(out["rearmed"], ["rail"])
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(self._open_ni(conn), 0)
+
+    def test_alarm_can_fire_AGAIN_after_a_reinstall_then_a_second_unload(self):
+        """The end-to-end regression: jarvis_sweep was flagged (Aug-11), then
+        reinstalled. A second reboot dropping it must be just as loud."""
+        with db.connect(self.db_path) as conn:
+            _run_row(conn, "t_rail", 0.5)
+            _run_row(conn, "t_scan", 0.5)
+            self._not_installed_anomaly(conn, "rail", "io.test.rail")
+        self._go()                                    # reinstalled -> re-armed
+        # now it falls out of launchd again AND goes stale (a reboot: its only
+        # successful run recedes past the 26h deadline)
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM runs WHERE task_name='t_rail'")
+            _run_row(conn, "t_rail", 72)
+        self.ctx.anomaly.reset_mock()
+        out = self._go(_loaded=lambda label, uid: label != "io.test.rail")
+        self.assertEqual(out["not_installed"], ["rail"])
+        kinds = [c.args[0] for c in self.ctx.anomaly.call_args_list]
+        self.assertIn("catch_up_not_installed", kinds)   # LOUD a second time
+
+    def test_still_unloaded_stays_quiet_no_duplicate_criticals(self):
+        """Re-arming must not become a fresh critical every 30 minutes while the
+        fault persists — that is what the one-time-loud guard is for."""
+        with db.connect(self.db_path) as conn:
+            _run_row(conn, "t_rail", 72)
+            _run_row(conn, "t_scan", 0.5)
+            self._not_installed_anomaly(conn, "rail", "io.test.rail")
+        out = self._go(_loaded=lambda label, uid: label != "io.test.rail")
+        self.assertEqual(out["rearmed"], [])          # label still absent
+        self.assertEqual(out["not_installed"], ["rail"])
+        kinds = [c.args[0] for c in self.ctx.anomaly.call_args_list]
+        self.assertNotIn("catch_up_not_installed", kinds)   # already open
+
     def test_give_up_holds_per_key_off_the_kickstart_trail(self):
         """The guard the 26x loop needed: 3 consecutive kickstart failures for a
         key ⇒ the 4th attempt is suppressed and ONE catch_up_gave_up is raised,

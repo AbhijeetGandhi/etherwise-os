@@ -349,5 +349,90 @@ class DoctorSourceCheckCase(unittest.TestCase):
                         [(c.name, c.status, c.detail) for c in checks])
 
 
+class EmptyOkCase(unittest.TestCase):
+    """`empty_ok`: does a CLEAN EMPTY SKIP count as the rail being alive?
+
+    Why this exists (2026-08-13): loom_fetch is weekly and its normal healthy
+    outcome is '0 new recordings', which run_fetch records via runner.TaskSkip
+    -> status 'skipped_empty'. Freshness counted only status='completed', so the
+    rail would have read DOWN forever even once working — the wrong-health-
+    definition bug that let it sit unnoticed having never run.
+
+    It is opt-in, and the opposite case is why: upwork_scan's TaskSkip means 'no
+    tiles extracted on ANY feed', which is a BROKEN scanner. That one must still
+    read stale, or the registry would bless exactly the silent zero it exists to
+    catch."""
+
+    OPT_IN = ({"key": "loomish", "label": "Weekly fetch", "task_name": "t_loom",
+               "max_age_hours": 192, "degrade_kinds": (), "critical": False,
+               "backs": "today", "empty_ok": True, "why": "weekly pull"},)
+    OPT_OUT = ({"key": "scanish", "label": "Scanner", "task_name": "t_scan2",
+                "max_age_hours": 3, "degrade_kinds": (), "critical": True,
+                "backs": "pipeline", "why": "the funnel"},)
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="src-empty-ok-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _skip_run(self, conn, task, hours_ago):
+        """A clean empty-skip exactly as core.runner._finish_run writes it —
+        status 'skipped_empty' WITH completed_at set (the run did finish)."""
+        ts = (_now() - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+        conn.execute(
+            "INSERT INTO runs (task_name, started_at, completed_at, status,"
+            " shadow) VALUES (?,?,?, 'skipped_empty', 0)", (task, ts, ts))
+
+    def _status(self, sources):
+        with db.connect(self.db_path) as conn:
+            return sh.source_health(conn, now=_now(),
+                                    sources=sources)["sources"][0]
+
+    def test_empty_ok_source_is_fresh_after_a_clean_skip(self):
+        with db.connect(self.db_path) as conn:
+            self._skip_run(conn, "t_loom", 2)
+        s = self._status(self.OPT_IN)
+        self.assertEqual(s["status"], "ok", s)
+        self.assertIsNotNone(s["last_success"])
+
+    def test_empty_ok_source_still_goes_stale_when_it_stops_skipping(self):
+        """empty_ok must not make a source immortal — it advances freshness, it
+        does not suspend the deadline."""
+        with db.connect(self.db_path) as conn:
+            self._skip_run(conn, "t_loom", 400)      # > 192h deadline
+        self.assertEqual(self._status(self.OPT_IN)["status"], "stale")
+
+    def test_empty_ok_source_with_only_skips_is_never_down(self):
+        """'down' means NEVER produced. A rail that has skipped cleanly has run."""
+        with db.connect(self.db_path) as conn:
+            for h in (2, 200, 400):
+                self._skip_run(conn, "t_loom", h)
+        self.assertNotEqual(self._status(self.OPT_IN)["status"], "down")
+
+    def test_source_without_empty_ok_is_NOT_freshened_by_a_skip(self):
+        """The guard that keeps this honest: a scanner extracting nothing is
+        broken, and its skip must never read as a live run."""
+        with db.connect(self.db_path) as conn:
+            self._skip_run(conn, "t_scan2", 1)       # well inside its 3h deadline
+        s = self._status(self.OPT_OUT)
+        self.assertEqual(s["status"], "down", s)     # never a *completed* run
+        self.assertIsNone(s["last_success"])
+
+    def test_registry_opt_ins_are_exactly_the_clean_skip_rails(self):
+        """Whoever adds empty_ok next must justify it: the ONLY rails whose
+        TaskSkip means 'healthy, nothing new' are the sweep (quiet inbox) and
+        the weekly loom fetch (corpus current)."""
+        opted = {s["key"] for s in config.SOURCES if s.get("empty_ok")}
+        self.assertEqual(
+            opted, {"jarvis_sweep", "jarvis_imap_01", "jarvis_imap_02",
+                    "loom_fetch"}, opted)
+        # upwork_scan's TaskSkip means a broken feed — it must stay opted out
+        scan = next(s for s in config.SOURCES if s["key"] == "scanner")
+        self.assertFalse(scan.get("empty_ok"))
+
+
 if __name__ == "__main__":
     unittest.main()

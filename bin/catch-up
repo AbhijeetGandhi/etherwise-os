@@ -33,6 +33,7 @@ Guards:
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import time
@@ -105,6 +106,46 @@ def _already_open(conn, kind: str, key: str) -> bool:
         (kind, f'%"key": "{key}"%')).fetchone() is not None
 
 
+def clear_installed(conn, _loaded=None, uid: int = 0,
+                    sources=None) -> list:
+    """Close `catch_up_not_installed` anomalies whose labels are now loaded.
+
+    WHY (2026-08-13): `_already_open` above is the one-time-loud guard, and it
+    keys off `resolved_at IS NULL` — but NOTHING in production ever sets
+    `resolved_at` (the cockpit deliberately computes 'recovered' instead, and
+    the only writers are one-off scripts in var/cc-runs/). So the guard was not
+    one-time-loud, it was ONCE PER KEY, EVER: jarvis_sweep's row from
+    2026-08-11 was still open when its label was reinstalled today, which means
+    the NEXT time a reboot dropped it the alarm would have stayed silent — the
+    exact silent failure this shim exists to prevent, in the shim itself.
+
+    Resolving on 'the label is loaded again' is precise: that IS the condition
+    the anomaly reports, so the signal re-arms the moment the fault is fixed and
+    cannot re-fire while it persists. Only checks labels actually named by an
+    open anomaly, so it costs no launchctl calls on a healthy system."""
+    _loaded = is_loaded if _loaded is None else _loaded   # defined below
+    rows = conn.execute(
+        "SELECT id, detail_json FROM anomalies WHERE"
+        " kind='catch_up_not_installed' AND resolved_at IS NULL").fetchall()
+    by_label = {s.get("launchd_label") for s in
+                (sources if sources is not None else config.SOURCES)}
+    cleared = []
+    for row in rows:
+        try:
+            named = json.loads(row[1] or "{}").get("sources") or []
+        except (TypeError, ValueError):
+            continue
+        labels = {n.get("label") for n in named if n.get("label")}
+        # only labels this registry still knows about; a retired one can never
+        # come back loaded and must not pin the anomaly open forever
+        labels &= by_label
+        if labels and all(_loaded(lbl, uid) for lbl in labels):
+            conn.execute("UPDATE anomalies SET resolved_at=datetime('now')"
+                         " WHERE id=?", (row[0],))
+            cleared.extend(n.get("key") for n in named)
+    return cleared
+
+
 def _bootstrap_cmd(label: str, uid: int) -> str:
     """The exact command a human runs to install a job launchd has never heard
     of — surfaced verbatim in the anomaly so nobody has to reconstruct it."""
@@ -151,6 +192,11 @@ def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
     dbp = ctx.db_path or config.DB_PATH
 
     with db.connect(dbp) as conn:
+        # re-arm the not-installed alarm for anything that has since been
+        # installed, BEFORE deciding what to raise this run (see clear_installed)
+        cleared = [] if dry_run else clear_installed(conn, _loaded, uid)
+        if cleared:
+            ctx.log(f"not-installed alarm re-armed for: {', '.join(cleared)}")
         candidates = overdue_sources(conn, now)
         due, skipped, gave_up, not_installed = [], [], [], []
         max_fail = config.CATCH_UP_MAX_CONSECUTIVE_FAILURES
@@ -234,7 +280,8 @@ def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
             "failed": [f["key"] for f in failed],
             "skipped_cooldown": [s["key"] for s in skipped],
             "gave_up": [g["key"] for g in gave_up],
-            "not_installed": [n["key"] for n in not_installed]}
+            "not_installed": [n["key"] for n in not_installed],
+            "rearmed": cleared}
 
 
 def main() -> int:

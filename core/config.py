@@ -563,6 +563,9 @@ SOURCES = (
      # the client-centric backbone, so a stale/degraded rail turns health amber.
      # Keep the launchd job loaded so freshness stays inside max_age_hours.
      "critical": True, "backs": "today",
+     # a quiet inbox is a CLEAN skip ('no new mail since cursor'), not a death —
+     # see SUCCESS_STATUSES_EMPTY_OK in core/source_health.py
+     "empty_ok": True,
      "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
      "why": "the client-centric sweep behind Today + the mapping queue; a stale"
             " sweep means new client mail is not being seen or routed"},
@@ -575,14 +578,14 @@ SOURCES = (
     {"key": "jarvis_imap_01", "label": "Jarvis IMAP (abhijeetgandhi01@gmail.com)",
      "task_name": "jarvis_sweep", "max_age_hours": 16,
      "degrade_kinds": ("jarvis_imap_error_abhijeetgandhi01_gmail.com",),
-     "critical": False, "backs": "today",
+     "critical": False, "backs": "today", "empty_ok": True,
      "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
      "why": "read-only IMAP rail for the 01 inbox (card/finance + client mail the"
             " OAuth app cannot reach); a dead rail means that inbox goes unseen"},
     {"key": "jarvis_imap_02", "label": "Jarvis IMAP (abhijeetgandhi02@gmail.com)",
      "task_name": "jarvis_sweep", "max_age_hours": 16,
      "degrade_kinds": ("jarvis_imap_error_abhijeetgandhi02_gmail.com",),
-     "critical": False, "backs": "today",
+     "critical": False, "backs": "today", "empty_ok": True,
      "launchd_label": "io.etherwise.v3.jarvis-sweep", "catch_up": True,
      "why": "read-only IMAP rail for the 02 inbox; a dead rail means that inbox"
             " goes unseen"},
@@ -615,13 +618,23 @@ SOURCES = (
     # Freshness is runs-based (did the rail RUN), NOT data-based: an inbox with no
     # new Wise email is legitimately empty and must not read as 'down'. The
     # email-ahead-of-ledger signal is the SEPARATE staleness() overlay in the
-    # cockpit. catch_up=False + STAGED plist until Abhijeet loads it (mirrors the
-    # jarvis-slack staging) — a catch_up=True label that isn't loaded flags loudly.
+    # cockpit.
+    # NO empty_ok: an empty inbox COMPLETES normally here (inserted: 0). This
+    # rail's only TaskSkip is InboxSkip = 'no app password configured', which is
+    # broken, not healthy, and must never count as a live run.
+    # catch_up FLIPPED False->True (2026-08-13). The old comment argued its own
+    # opposite — "a catch_up=True label that isn't loaded flags loudly" — and then
+    # set False, which made the rail INVISIBLE to the shim: overdue_sources()
+    # skips non-catch_up sources, so no catch_up_not_installed anomaly was ever
+    # raised and the never-loaded plist went 97h stale in total silence while
+    # jarvis_sweep and loom_fetch (both catch_up=True) were flagged within hours.
+    # Safe to restart unattended: read-only IMAP, no sends, and the local write is
+    # idempotent (upsert_provisional dedupes on canonical_key).
     {"key": "finance_payment_mail", "label": "Payment-mail rail (Wise/Stripe email)",
      "task_name": "finance_payment_mail", "max_age_hours": 26,
      "degrade_kinds": ("finance_payment_mail_unmatched",),
      "critical": False, "backs": "money",
-     "launchd_label": "io.etherwise.v3.finance-payment-mail", "catch_up": False,
+     "launchd_label": "io.etherwise.v3.finance-payment-mail", "catch_up": True,
      "why": "reads Wise/Stripe payment NOTIFICATIONS read-only so a stale CSV"
             " import announces itself; a dead rail means the ledger can silently"
             " fall behind the money that actually arrived"},
@@ -631,10 +644,17 @@ SOURCES = (
     # frozen KB. Weekly cadence => 8d deadline (7 + grace). A logged-out session is
     # a degrade signal between runs (its critical anomaly also fails the run). Not
     # critical (KB freshness, not money/pipeline); catch_up-safe (idempotent read).
+    # empty_ok: a weekly rail's NORMAL healthy outcome is '0 new recordings',
+    # which run_fetch records as a clean TaskSkip. Counting only 'completed'
+    # would have pinned this source at 'down' forever even once it works —
+    # the exact wrong-health-definition bug that let it sit unnoticed.
+    # loom_fetch_empty_index: a VALID session returning an empty index is the
+    # silent zero — the account has ~590 recordings, so 0 means the fetch broke,
+    # not that the corpus is empty. It degrades instead of reporting 'up to date'.
     {"key": "loom_fetch", "label": "Loom fetch rail (new recordings)",
      "task_name": "loom_fetch", "max_age_hours": 192,   # 8d = weekly + grace
-     "degrade_kinds": ("loom_fetch_logged_out",),
-     "critical": False, "backs": "today",
+     "degrade_kinds": ("loom_fetch_logged_out", "loom_fetch_empty_index"),
+     "critical": False, "backs": "today", "empty_ok": True,
      "launchd_label": "io.etherwise.v3.kb-loom-fetch", "catch_up": True,
      "why": "pulls new Loom walkthroughs (the richest 'what we deliver' evidence)"
             " into the KB; a stalled fetcher froze the corpus four months and must"

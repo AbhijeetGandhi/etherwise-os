@@ -317,6 +317,43 @@ class RunFetchTests(unittest.TestCase):
         self.assertEqual(stats["attempted"], 2)
         self.assertEqual(stats["ingested"], 2)
 
+    # ── the silent zero (2026-08-13) ─────────────────────────────────────────
+    def test_live_session_with_an_EMPTY_index_degrades_instead_of_up_to_date(self):
+        """A valid session returning zero videos is NOT 'corpus current'.
+
+        parse_index only raises LoomLoggedOut on an AUTH signal, so a query that
+        stops matching (renamed field, moved `my_videos`) returns a clean,
+        believable []. Without this guard the run logs 'up to date', skips, and
+        — now that skipped_empty counts as fresh — the source would go GREEN
+        while the corpus quietly froze. That is exactly how the last four-month
+        freeze went unnoticed. This account has ~590 recordings; 0 means broken."""
+        chrome = FakeLoomChrome([], {})                 # session fine, index empty
+        with self.assertRaises(loom_fetch.runner.TaskSkip):
+            self._run(chrome)
+        kinds = [c.args[0] for c in self.ctx.anomaly.call_args_list]
+        self.assertIn("loom_fetch_empty_index", kinds)
+        crit = next(c for c in self.ctx.anomaly.call_args_list
+                    if c.args[0] == "loom_fetch_empty_index")
+        self.assertEqual(crit.args[1], "critical")
+
+    def test_empty_index_degrade_kind_is_registered_in_SOURCES(self):
+        """An anomaly nobody declared is an anomaly nobody sees: the kind has to
+        be in the source's degrade_kinds or source-health ignores it."""
+        src = next(s for s in config.SOURCES if s["key"] == "loom_fetch")
+        self.assertIn("loom_fetch_empty_index", src["degrade_kinds"])
+        self.assertIn("loom_fetch_logged_out", src["degrade_kinds"])
+
+    def test_a_normal_up_to_date_run_raises_NO_empty_index_anomaly(self):
+        """The guard must not cry wolf: a non-empty index with nothing new is
+        the genuine healthy steady state."""
+        chrome = FakeLoomChrome([_video("aaa")], {"aaa": True})
+        self._run(chrome)                               # ingest aaa
+        self.ctx.anomaly.reset_mock()
+        with self.assertRaises(loom_fetch.runner.TaskSkip):
+            self._run(chrome)                           # 0 new, index still has 1
+        kinds = [c.args[0] for c in self.ctx.anomaly.call_args_list]
+        self.assertNotIn("loom_fetch_empty_index", kinds)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -409,6 +409,23 @@ def run_fetch(ctx, *, eval_fn=None, navigate=None, http_get=None, sleep=None,
             ctx.log(f"loom fetch: LOGGED OUT — {lo}")
             raise
 
+        # A VALID session that returns an EMPTY index is the silent zero this
+        # registry exists to catch. parse_index only raises LoomLoggedOut on an
+        # auth signal, so a query that stops matching (a renamed field, a moved
+        # `my_videos`) comes back as a clean, believable `[]` — and the run would
+        # then log 'up to date' and go green while the corpus quietly froze. That
+        # is precisely how the last four-month freeze went unnoticed. This account
+        # has ~590 recordings; zero means the fetch broke, not that Loom is empty.
+        if not index:
+            ctx.anomaly("loom_fetch_empty_index", "critical",
+                        {"detail": "loom.com returned a live session but ZERO"
+                                   " videos — the index query has almost"
+                                   " certainly stopped matching. Do NOT read"
+                                   " this as 'corpus current'.",
+                         "index_limit": index_limit})
+            ctx.log("loom fetch: session OK but index came back EMPTY —"
+                    " degrading (this is not 'up to date')")
+
         # incremental skips already-ingested AND no-transcript; --full retries the
         # no-transcript ids (Loom may have generated a transcript since).
         with db.connect(dbp) as conn:

@@ -28,6 +28,18 @@ from core import config
 # (ran, went cold) is worse than 'degraded' (fresh but thin) is worse than 'ok'.
 STATUS_RANK = {"down": 3, "stale": 2, "degraded": 1, "ok": 0}
 
+# Which run statuses PROVE the rail is alive (2026-08-13).
+# A rail whose 'nothing new' outcome is a clean skip (runner.TaskSkip ->
+# status 'skipped_empty') still proved liveness: it ran, reached its source and
+# correctly found nothing. Counting only 'completed' marked such a rail DEAD at
+# its own healthy steady state — loom_fetch is weekly and USUALLY has 0 new
+# recordings, so it would have read 'down' forever even after being fixed.
+# Opt-in per source (`empty_ok`) because the opposite case exists and matters:
+# upwork_scan's TaskSkip means 'no tiles extracted on ANY feed', which is a
+# BROKEN scanner and must never be allowed to read as fresh.
+SUCCESS_STATUSES = ("completed",)
+SUCCESS_STATUSES_EMPTY_OK = ("completed", "skipped_empty")
+
 # escalation thresholds, in hours PAST a source's own deadline. The brief runs
 # twice daily, so these land at roughly 'still dead after ~2 briefs' and 'after
 # ~6 briefs' — the point of escalating wording is that a persistent dead source
@@ -79,10 +91,13 @@ def source_status(conn, source: dict, now: datetime) -> dict:
         row = conn.execute(fsql).fetchone()
         last_success = row[0] if row and row[0] else None
     else:
+        ok_statuses = (SUCCESS_STATUSES_EMPTY_OK if source.get("empty_ok")
+                       else SUCCESS_STATUSES)
+        marks = ",".join("?" * len(ok_statuses))
         last_row = conn.execute(
-            "SELECT completed_at FROM runs WHERE task_name=? AND"
-            " status='completed' ORDER BY completed_at DESC LIMIT 1",
-            (task,)).fetchone()
+            f"SELECT completed_at FROM runs WHERE task_name=? AND"
+            f" status IN ({marks}) ORDER BY completed_at DESC LIMIT 1",
+            (task, *ok_statuses)).fetchone()
         last_success = last_row[0] if last_row else None
     dt = _parse(last_success)
     age_hours = None if dt is None else max(

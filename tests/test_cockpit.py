@@ -3398,8 +3398,14 @@ class TestRerunAllowlist(unittest.TestCase):
         self.assertIn("io.etherwise.v3.upwork-scan", " ".join(argv))
 
     def test_rerun_refuses_an_unlisted_task(self):
+        # finance_payment_mail USED to be listed here as a forbidden example,
+        # only because it was catch_up=False. That flag was wrong (it hid the
+        # rail from the catch-up shim while it sat unscheduled for 97h), so it
+        # is now catch_up-safe AND allowlisted — see the sibling invariant
+        # test_catch_up_safe_sources_are_all_rerunnable. The brief jobs replace
+        # it here: they SEND email, so they must never be kickable from the UI.
         with mock.patch.object(actions.subprocess, "run") as run:
-            for task in ("cockpit", "catch_up", "finance_payment_mail",
+            for task in ("cockpit", "catch_up", "cos_brief_pm",
                          "cos_brief_am", "rm -rf", "", None):
                 with self.assertRaises(ValueError):
                     actions.rerun(None, {"task": task})
