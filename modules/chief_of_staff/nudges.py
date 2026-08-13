@@ -119,12 +119,70 @@ def followup_key(client_id: Optional[str], room_name: Optional[str],
     One person = one card. The card names every thread it covers, so nothing is
     hidden — only the duplicate row is. Falls back to the thread id when there
     is no usable name, which is a card that behaves exactly as before rather
-    than a silent merge of unrelated people under an empty slug."""
+    than a silent merge of unrelated people under an empty slug.
+
+    THIS KEY IS DERIVED FROM MUTABLE DATA. Attributing a thread changes it, and
+    the founder's Done is filed under the old one. Nothing here may assume the
+    key is stable — see modules.chief_of_staff.decisions, which carries a
+    decision across a re-keying through the threads it covered."""
     if client_id:
         return f"followup:c:{client_id}"
     base = (room_name or "").split(",")[0].strip()
     slug = _SLUG.sub("-", base.lower()).strip("-")
     return f"followup:p:{slug}" if slug else f"followup:{thread_id}"
+
+
+def followup_key_forms(client_id: Optional[str], room_name: Optional[str],
+                       thread_id: str) -> List[str]:
+    """Every follow-up key this thread could be filed under, most specific
+    first. The INVERSE of followup_key, and it must stay in lockstep with it:
+    the attributed form, the counterparty-name form it had before attribution,
+    and the thread-id form it had before it even had a name.
+
+    This is how a decision taken under an earlier attribution state is found
+    again. It recovers room->person and person->client; it CANNOT recover a
+    client merge or rename, because the retired client_id is no longer reachable
+    from the thread. That gap is why decisions.record() exists."""
+    forms = []
+    if client_id:
+        forms.append(f"followup:c:{client_id}")
+    base = (room_name or "").split(",")[0].strip()
+    slug = _SLUG.sub("-", base.lower()).strip("-")
+    if slug:
+        forms.append(f"followup:p:{slug}")
+    forms.append(f"followup:{thread_id}")
+    return forms
+
+
+def _decisions():
+    """Late import — decisions imports this module for followup_key_forms."""
+    from modules.chief_of_staff import decisions
+    return decisions
+
+
+def _latest_actioned(conn, dedup_key: str, thread_ids: List[str]):
+    """The most recent done/dismissed row for this CARD, under its own key or
+    under any key the same counterparty was filed under before.
+
+    With no aliases this is byte-identical to the old `WHERE dedup_key=? ORDER
+    BY id DESC LIMIT 1`. With aliases it takes the LATEST decision by real UTC
+    instant (ts_key, never a string compare) — the most recent decision is the
+    one that stands, which is the rule the 2026-08-12 carry-over used too."""
+    rows = [r for r in [conn.execute(
+        "SELECT id, updated_at FROM nudges WHERE dedup_key=? AND"
+        " state IN ('done','dismissed') ORDER BY id DESC LIMIT 1",
+        (dedup_key,)).fetchone()] if r]
+    alias = _decisions().aliases(conn, dedup_key, thread_ids)
+    for k in alias:
+        r = conn.execute(
+            "SELECT id, updated_at FROM nudges WHERE dedup_key=? AND"
+            " state IN ('done','dismissed') ORDER BY id DESC LIMIT 1",
+            (k,)).fetchone()
+        if r:
+            rows.append(r)
+    if not rows:
+        return None
+    return max(rows, key=lambda r: ts_key(r["updated_at"], naive="ist"))
 
 
 # ── time helpers (IST throughout) ─────────────────────────────────────────────
@@ -210,7 +268,14 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
         title = clean_card_title(title)      # + no relative-date strings when dated
     ih = intent_hash(client, intent or title)
     pj = json.dumps(payload) if payload is not None else None
+    tids = (payload or {}).get("thread_ids") or (
+        [(payload or {}).get("thread_id")] if (payload or {}).get("thread_id")
+        else [])
     with db.connect(db_path) as conn:
+        # WHAT THIS CARD IS ABOUT, recorded in the same transaction that mints
+        # it. The key is derived from attribution and will change; the threads
+        # are primary keys and will not. See modules.chief_of_staff.decisions.
+        _decisions().record(conn, dedup_key, tids)
         row = conn.execute(
             "SELECT id FROM nudges WHERE dedup_key=? AND state IN ('open','snoozed')",
             (dedup_key,)).fetchone()
@@ -253,12 +318,17 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
             #
             # No evidence_ts supplied => old behaviour (refire), so other
             # recurring kinds are unaffected.
+            #
+            # AND IT MUST STICK ACROSS A RE-KEYING. This lookup used to read
+            # `dedup_key=?` alone, so the day a thread was attributed the key
+            # changed, no actioned row was found under the new one, and a fresh
+            # OPEN card was minted over a decision the founder had already made
+            # — #1110/#1111 on 2026-08-13, Rocky Choy and Dhanya Sangolli, for
+            # the third time. The alias lookup asks the same question of every
+            # key that stands for the same counterparty.
             ev = (payload or {}).get("evidence_ts")
             if ev:
-                actioned = conn.execute(
-                    "SELECT id, updated_at FROM nudges WHERE dedup_key=? AND"
-                    " state IN ('done','dismissed') ORDER BY id DESC LIMIT 1",
-                    (dedup_key,)).fetchone()
+                actioned = _latest_actioned(conn, dedup_key, tids)
                 if actioned and ts_key(ev) <= ts_key(actioned["updated_at"],
                                                     naive="ist"):
                     return {"id": actioned["id"], "op": "suppressed-unchanged",

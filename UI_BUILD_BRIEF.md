@@ -30,6 +30,13 @@ These are not style preferences. Each one exists because something went wrong on
 7. **No model calls in the cockpit process.** `/api/ask` shells out to `bin/kb-ask`.
 8. **Card identity** = (client, intent), not surface. `_card_key`, `_is_actioned`,
    `nudges.followup_key`, `nudges.ts_key` — see CLAUDE.md.
+8b. **...and the key that identity is written as is NOT stable.** `followup_key`
+   is derived from attribution, so every improvement to attribution renames the
+   card and orphans the founder's Done — three times now. A decision is
+   therefore looked up through the THREADS it covered (`card_subjects`,
+   `modules/chief_of_staff/decisions.py`), never by the key alone. Nothing may
+   assume a card key is permanent, and a re-keying is never repaired with
+   another bespoke migration — `scripts/today_carry_decisions.py` is general.
 9. `funnel.js` stays a pure, separately unit-tested module. A 131% conversion bug is why.
 10. Token file lives in the **v2 tree** (`etherwise-os/.credentials/cockpit-token.txt`).
     Cross-repo dependency, easy to break.

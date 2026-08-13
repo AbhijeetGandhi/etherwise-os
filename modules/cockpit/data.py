@@ -1644,6 +1644,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     Design bar (2026-07-27): answer 'what do I act on right now?' in one view;
     respect intent (applications paused since ~Jun 30) rather than nagging with
     an accumulating guilt pile of hot leads."""
+    from modules.chief_of_staff import decisions as _decisions
     from modules.chief_of_staff import evidence as _evidence
     from modules.chief_of_staff import nudges as _eng
     day = today or _ist_today()
@@ -1680,9 +1681,11 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         # LATER of the two timestamps is the founder's real decision; the
         # earlier one is just the store that route did not touch.
         suppressed, actioned_at = set(), {}
+        decided: list = []                   # every raw decision, for forwarding
 
         def _record(key: str, state: str, when: str) -> None:
             suppressed.add(key)
+            decided.append((key, state, when))
             if state not in ("done", "dismissed"):
                 return               # snoozed: explicit "not until <date>"
             prev = actioned_at.get(key)
@@ -1703,6 +1706,29 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             # same UTC shape before it is compared with anything (ts_key law)
             _record(r["dedup_key"] or "", r["state"],
                     _eng.ts_key(r["updated_at"], naive="ist"))
+
+        # ONE DECISION, WHATEVER THE CARD IS CALLED TODAY. A follow-up key is
+        # DERIVED from attribution (`followup:c:<client>` once the thread is
+        # attributed, `followup:p:<slug>` before), so every improvement to
+        # attribution renames the card and orphans the founder's Done. It has
+        # now happened three times: room -> person on 2026-08-12 (migrated by
+        # hand), person -> client on 2026-08-13 (not migrated — Rocky Choy and
+        # Dhanya Sangolli were back on the board the next morning after five
+        # Dones), and it would happen again on the next merge or rename.
+        #
+        # So the decision is looked up through what it was ABOUT — the threads
+        # it covered — and re-filed under the key that counterparty carries now.
+        # Nothing below this line knows a re-keying happened: a forwarded
+        # decision enters the SAME two maps and therefore obeys the SAME rules —
+        # evidence still revives it, a re-mint still speaks for kinds with no
+        # evidence, a snooze is still an explicit "not until <date>".
+        try:
+            _fwd = _decisions.forward_map(conn, sorted({k for k, _, _ in decided}))
+            for key, state, when in list(decided):
+                for nk in _fwd.get(key, ()):
+                    _record(nk, state, when)
+        except Exception:   # noqa: BLE001 — forwarding is a repair, not a gate.
+            pass            # A broken lookup must never blank the board.
 
         # follow-ups = pending drafts + thread context; owed before followup.
         # ONE ROW PER COUNTERPARTY (nudges.followup_key): Upwork opens a room per

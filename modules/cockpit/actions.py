@@ -256,6 +256,7 @@ def cos_nudge(db_path: Optional[Path], body: dict) -> dict:
             " updated_at=datetime('now')",
             (dedup_key, _COS_STATE[action], snooze_until,
              (body or {}).get("note")))
+        _capture_subject(conn, dedup_key)
     return {"ok": out["updated"] > 0, "dedup_key": dedup_key,
             "state": _COS_STATE[action]}
 
@@ -307,6 +308,25 @@ def _engine_key(item_key: str) -> str:
     return item_key[6:] if item_key.startswith("nudge:") else item_key
 
 
+def _capture_subject(conn, item_key: str) -> None:
+    """Write down WHICH CONVERSATIONS this decision was about.
+
+    The key the decision is filed under is derived from attribution and changes
+    the moment attribution improves — three times now (room -> person 08-12,
+    person -> client 08-13). The threads it covers do not change. Recording them
+    here is what lets the decision be found again under tomorrow's key; see
+    modules.chief_of_staff.decisions.
+
+    Never allowed to cost the decision itself: a failure here means the card may
+    reappear after a future re-keying, which is bad; losing the Done outright is
+    worse. Swallowed on purpose, and the founder's row is already written."""
+    try:
+        from modules.chief_of_staff import decisions
+        decisions.capture(conn, item_key)
+    except Exception:                       # noqa: BLE001 — see docstring
+        pass
+
+
 def apply_nudge(db_path: Optional[Path], item_key: str, action: str,
                 snooze_days: Optional[int] = None, note: Optional[str] = None,
                 today: Optional[str] = None) -> dict:
@@ -331,6 +351,7 @@ def apply_nudge(db_path: Optional[Path], item_key: str, action: str,
             " snooze_until=excluded.snooze_until, note=excluded.note,"
             " updated_at=datetime('now')",
             (item_key, state, snooze_until, note))
+        _capture_subject(conn, item_key)
     # WRITE THROUGH TO THE ENGINE. nudge_state is a cockpit-local overlay; the
     # nudges table is what the morning brief, top_n and the sweep read. Until
     # 2026-08-12 'Done' wrote only the overlay, so a card the founder had closed
