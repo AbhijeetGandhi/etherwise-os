@@ -524,14 +524,48 @@ class ReclassifyQueuedFathomTests(unittest.TestCase, PinHealOnHigh):
                             "fathom-kind:internal-language")
 
         # a NON-registered external speaker changes nothing: still internal
+        # (an unknown human is not a known client, and the rule stands)
         self._queued_fathom("f1b", "Impromptu Zoom Meeting", [
-            {"speaker": "Tanmay", "text": hindi},
+            {"speaker": "Rahul Deshmukh", "text": hindi},
             {"speaker": "Abhijeet Gandhi", "text": "ठीक है"}])
         m2, _ = self._run(_kind("client-work", pid="adelye", conf=0.99))
         self.assertEqual(m2["rule_excluded"], 1)
         self.assertEqual(m2["language_guard"], 0)
         self.assertEqual(self._event("f1b")["exclude_reason"],
                          "fathom-kind:internal-language")
+
+    def test_the_STRONG_internal_verdict_still_passes_the_speaker_guard(self):
+        """The 'internal-team' verdict (Devanagari + only Etherwise people)
+        shares the exclusion branch with the plain Hindi rule ON PURPOSE: the
+        guard is a floor, and a stronger upstream verdict must not become a way
+        around it. Here the strong rule cannot fire anyway (a client spoke), so
+        this asserts the belt as well as the braces — the call reaches the
+        guard and the guard holds it back."""
+        hindi = "हां ठीक है चलो देखते हैं भाई"
+        self._queued_fathom("f1c", "Impromptu Zoom Meeting", [
+            {"speaker": "Jay Pokharna", "text": hindi},
+            {"speaker": "Dhanya Sangolli", "text": hindi}])
+        m, _ = self._run(_kind("client-work", pid="dhanya-sangolli", conf=0.99))
+        self.assertEqual(m["rule_excluded"], 0)
+        self.assertEqual(m["language_guard"], 1)
+        self.assertNotEqual(self._event("f1c")["exclude_reason"],
+                            "fathom-kind:internal-language")
+
+    def test_an_internal_team_exclusion_records_WHY_not_just_WHICH_BUCKET(self):
+        """`exclude_reason` is a bucket name; it says nothing about the call
+        that went into it. 114 rows were found in exactly that state on
+        2026-08-14 — correctly labelled and unauditable without re-reading the
+        transcript, so nobody audited them. The deciding phrase is stored."""
+        self._queued_fathom("f1d", "Impromptu Zoom Meeting", [
+            {"speaker": "Jay Pokharna", "text": "हां भाई ठीक है चलो देखते हैं"},
+            {"speaker": "Abhijeet Gandhi", "text": "ठीक है"}])
+        m, ctx = self._run(_kind("client-work", pid="adelye", conf=0.99))
+        self.assertEqual(m["rule_excluded"], 1)
+        self.assertEqual(len(ctx.claude_calls), 0)              # $0
+        ev = self._event("f1d")
+        self.assertEqual(ev["exclude_reason"], "fathom-kind:internal-language")
+        self.assertIn("Devanagari", ev["proposal_evidence"] or "")
+        self.assertIn("Jay Pokharna", ev["proposal_evidence"] or "")
 
     def test_yogita_wins_even_over_a_confident_model(self):
         """'if yogita was part of the call then it was 99% of the time for

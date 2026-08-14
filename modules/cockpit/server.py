@@ -47,6 +47,10 @@ GET_ROUTES: dict = {
     "/api/pipeline/rows": data.pipeline_rows,            # drill-down (traceability)
     "/api/pipeline/facts": data.pipeline_facts,          # chart source (one row/job)
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
+    # the capture box's poll target (?note_id=N): "is it a card yet, and if not
+    # what did the classifier decide instead?" The classifying runs in a child
+    # process; this is the read that lets the toast tell him the truth.
+    "/api/note": data.note_status,
     "/api/queue": data.queue,     # Jarvis J1 mapping queue (unmapped events)
     # Review's other two backlogs. /threads is the unattributed Upwork rooms
     # (?show=open|dismissed|all); /counts is the nav badge's single source —
@@ -129,6 +133,9 @@ QUERY_PARAMS: dict = {
     # "you asked for a value I do not know" and "there is nothing here" are
     # opposite answers and this screen is where the difference costs most.
     "show": "open|dismissed|all",
+    # /api/note — which captured note the box is polling. Validated in the
+    # reader (integer or a 200 carrying {"error": …}).
+    "note_id": "notes.id, integer",
 }
 
 POST_ROUTES: dict = {
@@ -143,13 +150,21 @@ POST_ROUTES: dict = {
     "/api/rail": actions.rail,    # allowlisted rail trigger
     "/api/rerun": actions.rerun,  # allowlisted re-run of a task from the run log
     "/api/ask": actions.ask,      # kb-librarian proxy (model call out-of-process)
-    "/api/note": actions.note,    # Quick Capture -> CoS notes inbox
+    "/api/note": actions.note,    # Quick Capture -> CoS notes inbox (+ classify now)
+    # his answer to a note the classifier said was not actionable:
+    # 'card' (make one anyway) | 'filed' (agreed, stop showing it)
+    "/api/note/resolve": actions.note_resolve,
     "/api/cos-nudge": actions.cos_nudge,  # act on a real M4 nudge
     "/api/card/closure": actions.card_closure,  # J1.5 confirm/reject a chip
     "/api/finance/import": actions.finance_import,  # dry-run/commit via importer bins
 }
 # raw-body route (file bytes, not JSON): staged into finance-inbox, kind-allowlisted
 UPLOAD_ROUTE = "/api/finance/upload"
+# ceiling on a JSON POST body (the upload route has its own, larger one)
+JSON_MAX_BYTES = 1024 * 1024
+# how much of a refused body we will read and throw away so the 413 can reach
+# the client as a message rather than as a broken pipe (see Handler._drain)
+DRAIN_MAX_BYTES = 32 * 1024 * 1024
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -177,6 +192,25 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    # Read and discard a body we are about to refuse, in bounded chunks.
+    #
+    # WHY REFUSING POLITELY MATTERS HERE: replying 413 and closing while the
+    # client is still writing gives it a broken pipe, not a message — so the
+    # capture box would show "connection error" for what is really "that paste
+    # was too big, and your text is still in the box". The whole point of the
+    # cap is that the refusal is READABLE. Bounded so draining cannot itself
+    # become the unbounded read the cap exists to prevent; past DRAIN_MAX_BYTES
+    # we stop and the connection closes, which for a body that size is fine.
+    DRAIN_CHUNK = 65536
+
+    def _drain(self, length: int) -> None:
+        remaining = min(length, DRAIN_MAX_BYTES)
+        while remaining > 0:
+            chunk = self.rfile.read(min(self.DRAIN_CHUNK, remaining))
+            if not chunk:
+                return
+            remaining -= len(chunk)
 
     def _json(self, status: int, obj) -> None:
         # API reads are live state. A JSON body must never be cached, and
@@ -345,6 +379,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "unknown endpoint"})
             return
         length = int(self.headers.get("Content-Length") or 0)
+        # A JSON body had NO ceiling: `rfile.read(Content-Length)` read whatever
+        # it was told to. Quick Capture is a box he can paste into, so the first
+        # realistic way to reach that was an accidental paste of a whole
+        # transcript. Refused with a reason he can read (the UI leaves his text
+        # in the box), rather than swallowed into memory. 1 MB is ~50x the
+        # capture cap — generous for every other route, finite for this one.
+        if length > JSON_MAX_BYTES:
+            self._drain(length)                  # …then answer, see _drain
+            self._json(413, {"error": "request body too large ({:,} bytes; the"
+                                      " cap is {:,}). Nothing was saved."
+                             .format(length, JSON_MAX_BYTES)})
+            return
         raw = self.rfile.read(length) if length else b"{}"
         try:
             body = json.loads(raw or b"{}")

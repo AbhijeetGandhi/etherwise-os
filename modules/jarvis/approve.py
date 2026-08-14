@@ -164,11 +164,17 @@ def _git_commit(path: Path, client_id: str, field: str, value: str,
 
 def resolve(db_path, event_id: str, action: str, *, client_id: Optional[str] = None,
             reason: Optional[str] = None, by: str = "cockpit-approval",
+            evidence: Optional[str] = None,
             do_git: bool = True, registry_path: Optional[Path] = None,
             root: Optional[Path] = None, dossier_dir: Optional[Path] = None,
             now_iso: Optional[str] = None) -> dict:
     """action = assign(client_id) | create_alias(client_id) | ignore(reason)
-    | internal."""
+    | internal.
+
+    `evidence` is the deciding PHRASE, stored next to the bucket name on an
+    ignore/internal (see events.ignore). A reason says which bucket the row went
+    into and nothing about the call that put it there — the state 114 rows were
+    found in on 2026-08-14, correctly labelled and unauditable."""
     now_iso = now_iso or datetime.now(timezone.utc).isoformat()
     with db.connect(db_path) as conn:
         ev = conn.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
@@ -185,9 +191,9 @@ def resolve(db_path, event_id: str, action: str, *, client_id: Optional[str] = N
         excl_reason = (INTERNAL_REASON if action == "internal"
                        else (reason or "not a client"))
         with db.connect(db_path) as conn:
-            events.ignore(conn, event_id, excl_reason, by)
+            events.ignore(conn, event_id, excl_reason, by, evidence=evidence)
         return {"ok": True, "action": action, "event_id": event_id,
-                "exclude_reason": excl_reason}
+                "exclude_reason": excl_reason, "evidence": evidence}
 
     if action not in ("assign", "create_alias"):
         return {"error": f"unknown action {action!r}"}

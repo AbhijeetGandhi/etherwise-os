@@ -7,7 +7,20 @@
 //
 //   · source-health line   a quiet queue must be provably quiet, not a dead
 //                          feed. It is ALWAYS rendered, including when fine.
-//   · quick capture        zero friction; the next sweep classifies it.
+//   · quick capture        zero friction, and it TELLS HIM WHAT HAPPENED. The
+//                          box polls the note it just wrote and names the
+//                          verdict ("→ card created: …") within seconds. It
+//                          used to say "classified next sweep", which was
+//                          honest and was the admission of the bug: the sweep
+//                          is 2-hourly, so Today did not change and the only
+//                          reading available was "it didn't save".
+//   · captured notes       the other half of that bug. A note the classifier
+//                          judged NOT actionable produced nothing anywhere a
+//                          screen could reach — note #2, "evolve exteriors
+//                          everything sorted out", vanished into a table
+//                          nobody renders. Every such note is listed here with
+//                          the verdict that stopped it, and one click makes it
+//                          a card anyway.
 //   · act-now queue        ONE ruthlessly ranked list. Cards expand in place.
 //   · +N more              the old Nudges TAB, folded in (brief §2). Same
 //                          queue, so it is the same page — with the grouped
@@ -69,6 +82,7 @@ export async function render(root, ctx) {
     heading("Today", "— what to act on right now"),
     sourceHealth(d.sources || {}),
     quickCapture(ctx),
+    ...captured(d, ctx),
     ...actNow(d, ctx),
     ...backlog(d, ctx),
     heading("At a glance", null, "h3"),
@@ -94,6 +108,54 @@ function sourceHealth(s) {
 
 /* ── quick capture ────────────────────────────────────────────────────────── */
 
+/**
+ * Poll the note we just wrote until it has a verdict.
+ *
+ * The classifier runs in a child process (bin/note-classify), spawned by
+ * /api/note the moment the row commits — the cockpit server may not make model
+ * calls, and it may not sit on the HTTP response for seconds either. So the
+ * write returns instantly and this asks "is it a card yet?" until the answer
+ * arrives, typically in two or three seconds.
+ *
+ * It gives up after CAPTURE_POLL_MS and SAYS SO, rather than pretending. The
+ * note is safe either way: it is in the inbox, the 2-hourly sweep still
+ * classifies it, and it is already listed under Captured below.
+ */
+const CAPTURE_POLL_EVERY_MS = 700;
+const CAPTURE_POLL_MS = 20000;
+
+async function pollNote(ctx, id) {
+  const until = Date.now() + CAPTURE_POLL_MS;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, CAPTURE_POLL_EVERY_MS));
+    let d;
+    try { d = await ctx.api("/api/note?note_id=" + encodeURIComponent(id)); }
+    catch (e) { return null; }                 // network/401 — the caller says so
+    if (d && d.done) return d;
+  }
+  return null;
+}
+
+function captureOutcome(d) {
+  if (!d) {
+    return ["Saved. Still classifying — it is listed under Captured below.", false];
+  }
+  if (d.failed || (d.state === "new")) {
+    return ["Saved, but it could not be classified: "
+      + (d.last_error || "no reason recorded")
+      + ". It is under Captured below — make it a card from there.", true];
+  }
+  if (d.bucket === "nudge") {
+    return ["Card created: " + (d.card_title || "(untitled)"), false];
+  }
+  if (d.bucket === "commitment") {
+    return ["Saved as a commitment.", false];
+  }
+  // kb_note / idea: a real verdict, and the reason it must be visible
+  return ["Saved as a note, not a to-do — see Captured below to make it a card.",
+    false];
+}
+
 function quickCapture(ctx) {
   const input = el("input", {
     class: "input grow", type: "text",
@@ -104,17 +166,110 @@ function quickCapture(ctx) {
     const text = input.value.trim();
     if (!text) return;
     go.disabled = true;
+    let wrote = null;
     try {
-      await ctx.post("/api/note", { text });
-      input.value = "";
-      toast("Captured — classified next sweep");
+      wrote = await ctx.post("/api/note", { text });
     } catch (e) {
-      toast("Capture failed", true);
+      // THE TEXT STAYS IN THE BOX. Clearing it on a failed write is how a
+      // capture box loses what he typed, which is the whole subject here.
+      toast("Not saved — " + String((e && e.message) || e)
+        + ". Your text is still in the box.", true);
+      go.disabled = false;
+      return;
     }
+    input.value = "";
+    if (!wrote.classifying) {
+      // the child could not be spawned — say what will happen instead
+      toast(wrote.note || "Saved.", false);
+      ctx.refresh();
+      go.disabled = false;
+      return;
+    }
+    const t = toast("Captured — classifying…");
+    const done = await pollNote(ctx, wrote.id);
+    const [msg, bad] = captureOutcome(done);
+    if (t && t.remove) t.remove();
+    toast(msg, bad);
+    ctx.refresh();                              // the card, or the note, appears
     go.disabled = false;
   }, { icon: "zap" });
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
   return el("div", "card", el("div", "field-row", [input, go]));
+}
+
+/* ── captured notes that produced no card ─────────────────────────────────── */
+
+/**
+ * The fix for the second half of the capture bug: a note the classifier judged
+ * NOT actionable used to produce nothing at all — no card, no row on any
+ * screen, just a `notes` record nobody rendered. Something written down in
+ * order not to be forgotten was then unreachable.
+ *
+ * So every note still waiting on him is listed here WITH THE VERDICT, and two
+ * buttons: disagree (make it a card) or agree (file it, stop showing it).
+ * Nothing here deletes a note; "Keep as a note" only stops it asking.
+ */
+function captured(d, ctx) {
+  const c = d.captures || {};
+  const items = c.items || [];
+  if (c.error) {
+    return [notice("bad", c.error)];
+  }
+  if (!items.length) return [];                 // silent when there is nothing
+
+  const bits = [];
+  if (c.pending) bits.push(`${c.pending} still classifying`);
+  if (c.needs_decision) bits.push(`${c.needs_decision} waiting on you`);
+
+  const box = el("div", "card flush");
+  items.forEach((n) => box.appendChild(capturedRow(n, ctx)));
+  if (c.total > items.length) {
+    box.appendChild(el("div", "muted small",
+      `Showing ${items.length} of ${c.total} — the rest are older captures`
+      + ` still waiting on you.`));
+  }
+  return [
+    heading("Captured", bits.length ? "— " + bits.join(" · ") : "— just typed", "h3"),
+    box,
+  ];
+}
+
+function capturedRow(n, ctx) {
+  const row = el("div", "qitem");
+  const left = el("div", "q-left", [
+    el("div", "q-title", el("span", "txt", n.text || "(empty)")),
+    el("div", "q-meta", [
+      pill(n.verdict || "captured", n.needs_decision ? "warn" : "outline"),
+      el("span", "muted", `captured ${fmt.dateShort(n.created_at)}`
+        + (n.source ? ` from ${n.source}` : "")),
+      n.verdict_detail ? el("span", "neg", "· " + n.verdict_detail) : null,
+    ]),
+  ]);
+
+  const actions = el("div", "q-actions");
+  if (n.needs_decision) {
+    actions.append(
+      btn("Make it a card", () => resolveNote(n, "card", ctx),
+        { variant: "primary", sm: true, icon: "check" }),
+      btn("Keep as a note", () => resolveNote(n, "filed", ctx),
+        { sm: true, icon: "file-text" }),
+    );
+  } else {
+    actions.appendChild(el("span", "muted small", "classifying…"));
+  }
+  row.appendChild(el("div", "q-row q-capture", [left, actions]));
+  return row;
+}
+
+async function resolveNote(n, action, ctx) {
+  try {
+    await ctx.post("/api/note/resolve", { note_id: n.id, action });
+    toast(action === "card" ? "Card created from your note."
+      : "Kept as a note — it will stop asking.");
+    ctx.refresh();
+  } catch (e) {
+    toast("That did not stick: " + String((e && e.message) || e), true);
+  }
 }
 
 /* ── ACT NOW ──────────────────────────────────────────────────────────────── */

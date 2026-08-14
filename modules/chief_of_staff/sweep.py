@@ -273,6 +273,15 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
     # classify captured notes + extract commitments from NEW sources first, so a
     # just-captured to-do or a freshly-promised due-dated item can surface this
     # same sweep. A Sonnet hiccup in either must not break the sweep.
+    #
+    # THIS IS NO LONGER THE PRIMARY PATH FOR CAPTURE (2026-08-14). /api/note now
+    # spawns bin/note-classify the moment a note commits, because "the next
+    # sweep" meant up to two hours of a note being invisible and reading as
+    # lost. The call stays here as the BACKSTOP — a child that never ran, a
+    # `bin/note` from a machine that then slept, a classifier that failed its
+    # first attempts. capture.claim() makes the overlap free: a note another
+    # process is working on is not claimed twice, so this costs nothing when
+    # the fast path already worked.
     for fn in (_capture, _commitments):
         if fn:
             try:

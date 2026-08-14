@@ -50,11 +50,23 @@ class HindiTests(unittest.TestCase):
         self.assertEqual(R.hindi_ratio(""), 0.0)
 
     def test_hindi_call_is_internal_and_loses_its_client(self):
+        # only our own people spoke -> the STRONG form (see InternalTeamTests);
+        # either way the outcome Abhijeet asked for holds: internal, no client
         v = R.classify(turns(("Abhijeet Gandhi", "मुझे लगता है यह ठीक है"),
                              ("Jay Pokharna", "हाँ सही है")))
-        self.assertEqual(v["rule"], "hindi")
+        self.assertEqual(v["rule"], "internal-team")
         self.assertEqual(v["kind"], "internal")
         self.assertIsNone(v["client_id"])
+
+    def test_hindi_with_an_outsider_stays_the_WEAK_rule(self):
+        """The weak rule is the one the speaker guard polices, so a call with
+        anyone from outside must land on it — never on the strong verdict,
+        which no guard is applied to because it cannot fire here."""
+        v = R.classify(turns(("Abhijeet Gandhi", "हाँ ठीक है"),
+                             ("Zeeshan Rasheed", "جی بالکل, हाँ भाई")))
+        self.assertEqual(v["rule"], "hindi")
+        self.assertEqual(v["kind"], "internal")
+        self.assertEqual(v["external_speakers"], ["zeeshan rasheed"])
 
     def test_english_call_is_left_alone(self):
         v = R.classify(turns(("Abhijeet Gandhi", "Let us ship on Friday"),
@@ -90,6 +102,72 @@ class PrecedenceTests(unittest.TestCase):
         for p in (turns(("Yogita Soma", "ok")),
                   turns(("A", "यह हिंदी है"))):
             self.assertTrue(R.classify(p)["evidence"])
+
+
+class InternalTeamTests(unittest.TestCase):
+    """Rule 2 — *"all devnagri call with jay are internal. tanmay is new
+    emplyee so its internal as well."* (Abhijeet, 2026-08-14).
+
+    Encoded as a rule rather than applied to the rows that happened to be
+    queued that day, so the next Hindi standup with a teammate is not a fresh
+    unknown. The safety property is that it is NARROWER than the plain Hindi
+    rule, not wider: an outsider in the room stops it firing at all."""
+
+    def test_devanagari_with_only_our_people_is_the_strong_verdict(self):
+        v = R.classify(turns(("Jay Pokharna", "हाँ वो हो गया"),
+                             ("Tanmay", "ठीक है भाई")))
+        self.assertEqual(v["rule"], "internal-team")
+        self.assertEqual(v["kind"], "internal")
+        self.assertIsNone(v["client_id"])
+        self.assertEqual(v["external_speakers"], [])
+        self.assertIn("Jay Pokharna", v["evidence"])
+        self.assertIn("no external speaker", v["evidence"])
+
+    def test_it_holds_for_a_NEW_HIRE_without_a_code_change(self):
+        """Tanmay is E008, hired 2026-08-10. The roster is derived from
+        Payroll/employees.json (config.INTERNAL_PEOPLE), so a hire stops
+        looking like a client the moment payroll knows about them."""
+        from core import config
+        self.assertTrue(config.is_internal_person("Tanmay Abhay Bora"))
+        self.assertTrue(config.is_internal_person("Tanmay"))
+        self.assertIn("tanmay abhay bora", config.INTERNAL_PEOPLE)
+
+    def test_an_EXTERNAL_speaker_is_never_swallowed_by_it(self):
+        """THE regression this rule must never cause. `fathom/117473152` is
+        Zeeshan Rasheed's own client call, held in Urdu, which sat on
+        `fathom-kind:internal-language` asserting the opposite of the truth.
+        A stronger verdict that skipped the speaker guard would make that
+        permanent, so the strong verdict declines to fire when anyone outside
+        the roster spoke — even alongside two of our own."""
+        v = R.classify(turns(("Jay Pokharna", "हाँ ठीक है"),
+                             ("Abhijeet Gandhi", "चलो"),
+                             ("Zeeshan Rasheed", "हाँ भाई بالکل")))
+        self.assertEqual(v["rule"], "hindi")          # the GUARDED path
+        self.assertNotEqual(v["rule"], "internal-team")
+        self.assertEqual(v["external_speakers"], ["zeeshan rasheed"])
+
+    def test_an_unidentifiable_label_counts_as_external(self):
+        """"iPhone", an initial, a half-typed name — we cannot say it was one
+        of ours, so we do not say it. Withholding the strong verdict is free:
+        the weak rule reaches the same `internal` kind by the guarded path."""
+        v = R.classify(turns(("Jay Pokharna", "हाँ ठीक है"),
+                             ("iPhone", "हाँ")))
+        self.assertEqual(v["rule"], "hindi")
+        self.assertEqual(v["external_speakers"], ["iphone"])
+
+    def test_english_team_call_is_still_left_alone(self):
+        """The rule is about Devanagari calls. An English internal call is not
+        this rule's business — the normal classifier decides."""
+        v = R.classify(turns(("Jay Pokharna", "shipped it"),
+                             ("Tanmay", "great")))
+        self.assertIsNone(v["rule"])
+        self.assertEqual(v["internal_speakers"], ["jay pokharna", "tanmay"])
+
+    def test_yogita_still_outranks_it(self):
+        v = R.classify(turns(("Yogita Soma", "हाँ मैंने देख लिया"),
+                             ("Jay Pokharna", "ठीक है")))
+        self.assertEqual(v["rule"], "yogita")
+        self.assertEqual(v["client_id"], "hermon")
 
 
 if __name__ == "__main__":

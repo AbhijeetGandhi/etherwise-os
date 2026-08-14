@@ -486,6 +486,15 @@ td.drillable:hover { text-decoration: underline; }
   padding: var(--space-3) var(--space-5);
 }
 .q-row.q-followup { box-shadow: inset 3px 0 0 var(--info); }
+/* a captured note that produced no card — it is asking a question, not
+   reporting work, so it gets the warning rail rather than the info one */
+.q-row.q-capture { box-shadow: inset 3px 0 0 var(--warning); }
+/* …and its text WRAPS. Every other row on this page is a generated one-line
+   title, but this one is whatever he typed, and truncating the note in the
+   panel whose entire purpose is "nothing you typed is hidden" would be a
+   small version of the same bug. */
+.q-row.q-capture .q-title { cursor: default; font-weight: 500; }
+.q-row.q-capture .q-title .txt { white-space: normal; overflow: visible; }
 .q-left { flex: 1; min-width: 0; }
 .q-title {
   display: flex; align-items: center; gap: 6px; width: 100%;

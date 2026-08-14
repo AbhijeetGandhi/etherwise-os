@@ -381,6 +381,28 @@ def nudges(db_path: Optional[Path] = None) -> dict:
             "latest_brief": latest}
 
 
+def note_status(db_path: Optional[Path] = None, *,
+                note_id: Optional[str] = None) -> dict:
+    """GET /api/note?note_id=N — the capture box's poll target.
+
+    Exists so pressing Capture can be answered with the VERDICT ("→ card
+    created: Update the ANTHC dashboard") a second or two later, instead of the
+    old toast that promised a sweep two hours away. Read-only, single row, no
+    model — the classifying itself happens in `bin/note-classify`.
+
+    A bad or missing id comes back as a 200 carrying {"error": …}, never an
+    empty object: "I do not know that note" and "nothing has happened yet" are
+    opposite answers, and the poll would stop on the wrong one."""
+    from modules.chief_of_staff import capture
+    if note_id in (None, ""):
+        return {"error": "note_id required"}
+    try:
+        nid = int(str(note_id))
+    except (TypeError, ValueError):
+        return _bad_filter("note_id", note_id, "an integer notes.id")
+    return capture.status(db_path or config.DB_PATH, nid)
+
+
 def knowledge(db_path: Optional[Path] = None, *, client: Optional[str] = None,
               q: Optional[str] = None) -> dict:
     """Knowledge panel — live kb (M3). Three modes (all READ-ONLY, no model):
@@ -2191,8 +2213,28 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                                "rail_week": rail_applied_week})
     elif rail_applied_week == 0:
         applied_note = "no applications in the last 7 days"
+
+    # ── captured notes that produced no card (2026-08-14) ────────────────────
+    # THE RULE: something he typed is visible as a card, or visible as a note
+    # with the verdict that stopped it becoming one. Never neither. Note #2,
+    # "evolve exteriors everything sorted out", was classified `kb_note` — a
+    # defensible verdict, it is a status note and not a to-do — and then landed
+    # in a table no screen renders, so a thing he wrote down IN ORDER NOT TO
+    # FORGET became unreachable from the UI. This block is where it now lives,
+    # with a one-click way to disagree.
+    #
+    # Wrapped, like source health, because a read that fails must degrade to a
+    # missing panel rather than to a blank Today.
+    try:
+        from modules.chief_of_staff import capture as _capture
+        captures = _capture.unresolved(db_path or config.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        captures = {"items": [], "total": None, "shown": 0, "pending": 0,
+                    "needs_decision": 0,
+                    "error": f"could not read the capture inbox: {exc!r}"[:200]}
     return {
         "sources": sources,
+        "captures": captures,
         "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
         "queue_hidden_no_provenance": len(_hidden_keys),
         "queue_auto_closed": _auto_closed, "clusters": clusters,

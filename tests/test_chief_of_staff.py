@@ -942,6 +942,198 @@ class TestCapture(CoSCase):
             pass
         cap.assert_called_once()
 
+    def test_a_long_note_is_refused_not_truncated(self):
+        """Silently storing 20,000 of the 25,000 characters he pasted and then
+        saying "captured" is the same class of lie as losing it outright."""
+        from modules.chief_of_staff import capture
+        with self.assertRaises(ValueError) as e:
+            capture.add_note(self.db_path, "x" * (config.CAPTURE_MAX_CHARS + 1))
+        self.assertIn("Nothing was saved", str(e.exception))
+        self.assertEqual(self.rows("SELECT * FROM notes"), [])
+
+    def test_only_the_head_of_a_long_note_reaches_the_model(self):
+        """…but the WHOLE note is stored and the whole note is what the UI
+        shows. The cap is on the prompt, not on the record."""
+        from modules.chief_of_staff import capture
+        text = ("follow up with Acme. " + ("filler " * 2000)
+                )[:config.CAPTURE_MAX_CHARS].strip()
+        capture.add_note(self.db_path, text)
+        seen = {}
+
+        def fake_call(**kw):
+            seen["content"] = kw["user_content"]
+            return mock.Mock(parsed={"bucket": "idea", "title": "t",
+                                     "action": None, "due": None, "who": "us"})
+
+        with mock.patch.object(capture.runner, "claude_call", fake_call):
+            capture.classify_new(self.db_path, now=dt())
+        self.assertLessEqual(len(seen["content"]),
+                             config.CAPTURE_CLASSIFY_CHARS + 200)
+        self.assertEqual(len(self.rows("SELECT * FROM notes")[0]["text"]),
+                         len(text))
+
+
+# ── Quick Capture: nothing he types may become invisible ─────────────────────
+class TestCaptureVisibility(CoSCase):
+    """The 2026-08-14 defect, both halves.
+
+    *"whenever I typed anything in the capture box, like things I wanted to add
+    to today, it didn't get added."*  Note #3 waited 101 minutes for the sweep;
+    note #2 was classified `kb_note` and produced nothing on any screen at all.
+    """
+
+    def _classified(self, bucket, **over):
+        d = {"bucket": bucket, "title": "T", "action": None, "due": None,
+             "who": "us"}
+        d.update(over)
+        return lambda db, n: d
+
+    def test_a_targeted_classify_makes_the_card_immediately(self):
+        """LATENCY. The card must exist as soon as the classifier has run —
+        which is now seconds after the POST (a spawned child), not up to two
+        hours later (the next sweep)."""
+        from modules.chief_of_staff import capture
+        n = capture.add_note(self.db_path, "anthc dashboard updates and email",
+                             "cockpit")
+        out = capture.classify_new(self.db_path, ids=[n["id"]],
+                                   _classify=self._classified(
+                                       "nudge", title="Update ANTHC dashboard"),
+                                   now=dt())
+        self.assertEqual(out["nudge"], 1)
+        card = self.rows("SELECT * FROM nudges WHERE dedup_key=?",
+                         (f"note:{n['id']}",))
+        self.assertEqual(len(card), 1)
+        self.assertEqual(card[0]["state"], "open")
+        st = capture.status(self.db_path, n["id"])
+        self.assertTrue(st["done"] and st["actionable"])
+        self.assertEqual(st["card_title"], "Update ANTHC dashboard")
+
+    def test_a_non_actionable_note_is_VISIBLE_with_its_verdict(self):
+        """Note #2, 'evolve exteriors everything sorted out'. `kb_note` is a
+        defensible verdict — it is a status note, not a to-do — but it used to
+        produce nothing anywhere, so a thing he wrote down in order not to
+        forget became unreachable."""
+        from modules.chief_of_staff import capture
+        n = capture.add_note(self.db_path,
+                             "evolve exteriors everything sorted out", "cockpit")
+        capture.classify_new(self.db_path, _classify=self._classified("kb_note"),
+                             now=dt())
+        u = capture.unresolved(self.db_path)
+        self.assertEqual(u["needs_decision"], 1)
+        item = u["items"][0]
+        self.assertEqual(item["id"], n["id"])
+        self.assertEqual(item["text"], "evolve exteriors everything sorted out")
+        self.assertIn("not a to-do", item["verdict"])
+
+    def test_he_can_disagree_and_the_note_becomes_a_card(self):
+        from modules.chief_of_staff import capture
+        n = capture.add_note(self.db_path, "evolve exteriors sorted", "cockpit")
+        capture.classify_new(self.db_path, _classify=self._classified("kb_note"),
+                             now=dt())
+        out = capture.resolve(self.db_path, n["id"], "card", now=dt())
+        self.assertTrue(out["ok"])
+        self.assertEqual(len(self.rows("SELECT * FROM nudges WHERE dedup_key=?",
+                                       (f"note:{n['id']}",))), 1)
+        self.assertEqual(capture.unresolved(self.db_path)["needs_decision"], 0)
+
+    def test_he_can_agree_and_it_stops_asking_without_deleting_anything(self):
+        from modules.chief_of_staff import capture
+        n = capture.add_note(self.db_path, "acme uses make + airtable")
+        capture.classify_new(self.db_path, _classify=self._classified("kb_note"),
+                             now=dt())
+        capture.resolve(self.db_path, n["id"], "filed", now=dt())
+        self.assertEqual(capture.unresolved(self.db_path)["needs_decision"], 0)
+        row = self.rows("SELECT * FROM notes WHERE id=?", (n["id"],))[0]
+        self.assertEqual(row["text"], "acme uses make + airtable")   # never gone
+        self.assertEqual(row["resolved_by"], "filed")
+
+    def test_resolve_is_idempotent(self):
+        from modules.chief_of_staff import capture
+        n = capture.add_note(self.db_path, "note")
+        capture.classify_new(self.db_path, _classify=self._classified("idea"),
+                             now=dt())
+        capture.resolve(self.db_path, n["id"], "card", now=dt())
+        again = capture.resolve(self.db_path, n["id"], "filed", now=dt())
+        self.assertTrue(again["already"])
+        self.assertEqual(again["action"], "card")
+
+    def test_an_UNDATED_commitment_is_treated_as_invisible_too(self):
+        """The third hole in this path: `rule_commitments_due` requires
+        `due IS NOT NULL`, so a captured promise with no date is accepted and
+        then never reaches any screen."""
+        from modules.chief_of_staff import capture
+        capture.add_note(self.db_path, "told them the register ships soon")
+        capture.classify_new(self.db_path,
+                             _classify=self._classified("commitment", due=None),
+                             now=dt())
+        u = capture.unresolved(self.db_path)
+        self.assertEqual(u["needs_decision"], 1)
+        self.assertIn("never reach Today", u["items"][0]["verdict"])
+
+    def test_a_DATED_commitment_is_not_nagged_about(self):
+        from modules.chief_of_staff import capture
+        capture.add_note(self.db_path, "POC to the client on Friday")
+        capture.classify_new(self.db_path,
+                             _classify=self._classified("commitment",
+                                                        due="2026-06-27"),
+                             now=dt())
+        self.assertEqual(capture.unresolved(self.db_path)["needs_decision"], 0)
+
+    def test_a_failed_classification_keeps_the_note_and_says_why(self):
+        """The classifier failing must cost the VERDICT, never the note. The
+        row stays claimable (the sweep retries) and stays visible meanwhile."""
+        from modules.chief_of_staff import capture
+
+        def boom(db, n):
+            raise RuntimeError("model unavailable")
+
+        n = capture.add_note(self.db_path, "fix the broken automation")
+        out = capture.classify_new(self.db_path, _classify=boom, now=dt())
+        self.assertEqual(out["failed"], 1)
+        row = self.rows("SELECT * FROM notes WHERE id=?", (n["id"],))[0]
+        self.assertEqual(row["state"], "new")
+        self.assertIsNone(row["claimed_at"])           # lease handed back
+        self.assertEqual(row["attempts"], 1)
+        self.assertIn("model unavailable", row["last_error"])
+        u = capture.unresolved(self.db_path)
+        self.assertEqual(u["total"], 1)
+        self.assertIn("model unavailable", u["items"][0]["verdict_detail"])
+
+    def test_it_stops_paying_after_MAX_ATTEMPTS_but_never_stops_showing(self):
+        from modules.chief_of_staff import capture
+        calls = []
+
+        def boom(db, n):
+            calls.append(n["id"])
+            raise RuntimeError("nope")
+
+        capture.add_note(self.db_path, "something")
+        for _ in range(config.CAPTURE_MAX_ATTEMPTS + 3):
+            capture.classify_new(self.db_path, _classify=boom, now=dt())
+        self.assertEqual(len(calls), config.CAPTURE_MAX_ATTEMPTS)
+        u = capture.unresolved(self.db_path)
+        self.assertEqual(u["needs_decision"], 1)       # now HIS to decide
+        self.assertIn("could not be classified", u["items"][0]["verdict"])
+
+    def test_two_classifiers_racing_do_not_both_pay(self):
+        """The child the cockpit spawns and the 2-hourly sweep can reach the
+        same row. The lease is what stops the second one paying for it."""
+        from modules.chief_of_staff import capture
+        capture.add_note(self.db_path, "one note")
+        first = capture.claim(self.db_path, now=dt())
+        second = capture.claim(self.db_path, now=dt())
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
+    def test_a_stale_lease_is_reclaimable_so_a_crash_cannot_strand_a_note(self):
+        from datetime import timedelta
+        from modules.chief_of_staff import capture
+        capture.add_note(self.db_path, "one note")
+        capture.claim(self.db_path, now=dt())          # a child that then died
+        later = dt() + timedelta(
+            minutes=config.CAPTURE_CLAIM_TTL_MINUTES + 1)
+        self.assertEqual(len(capture.claim(self.db_path, now=later)), 1)
+
 
 # ── grouped queue (cockpit/terminal display) ─────────────────────────────────
 class TestGroupedQueue(CoSCase):

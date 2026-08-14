@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Classify captured notes — OUT OF the cockpit server process.
+
+    bin/note-classify [note_id ...]        # classify these first, then the rest
+    bin/note-classify --limit 20           # sweep the whole inbox
+
+THE SEAM THIS FILE IS. The cockpit is a view+action plane: no model calls in
+the server process (UI_BUILD_BRIEF §0.7), which is why `/api/ask` shells out to
+`bin/kb-ask`. Quick Capture needs the same thing, with one extra constraint —
+it must not block the HTTP response for seconds either. So `/api/note` commits
+the row, spawns THIS as a detached child, and returns immediately; the capture
+box then polls `/api/note?note_id=N` until the verdict lands, typically in two
+or three seconds instead of the up-to-two-hours it used to take.
+
+WHY IT SWEEPS THE WHOLE INBOX, not just the ids it was given: a note stranded
+by an earlier failed attempt is precisely the one nobody goes looking for. The
+claim in `capture.claim` makes that safe — a note another process is already
+working on is simply not claimed here.
+
+WHY IT HAS NO RUN LEDGER ROW. `runner.run_task` takes a per-task flock, so two
+captures a second apart would make the second run `skipped_locked` and wait for
+the sweep — reintroducing the exact latency this exists to remove. Mutual
+exclusion lives on the ROW instead (the lease), which is finer-grained and
+survives a crash. Spend is still metered: the gateway writes `claude_usage`
+under task_name 'cos_capture' exactly as the sweep's call did, and every
+failure is recorded on the note itself (`attempts`, `last_error`) where the UI
+shows it.
+
+Exits 0 even when a classification fails: the note stays in the inbox with its
+reason attached, the sweep will try again, and Today renders it in the
+meantime. There is no exit code that should make a captured note disappear.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, runner                       # noqa: E402
+from modules.chief_of_staff import capture            # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("note_ids", nargs="*", type=int)
+    ap.add_argument("--limit", type=int, default=20)
+    args = ap.parse_args()
+
+    out = {"targeted": [], "swept": {}}
+    try:
+        if args.note_ids:
+            out["targeted"] = capture.classify_new(
+                config.DB_PATH, ids=args.note_ids, limit=len(args.note_ids))
+        # …then whatever else is sitting unclassified. Cheap when there is
+        # nothing: claim() returns [] and no model is called.
+        out["swept"] = capture.classify_new(config.DB_PATH, limit=args.limit)
+    except Exception as exc:                    # noqa: BLE001 — see docstring
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        runner._log("cos_capture", f"note-classify failed: {exc!r}")
+    print(json.dumps(out, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

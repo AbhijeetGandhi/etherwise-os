@@ -12,8 +12,35 @@ attribution. So the rules are a PRECEDENCE ORDER, not a set:
     1. Yogita present            -> hermon, client-work. Wins even if Hindi.
                                     Tagged internal_language when Hindi so the
                                     facts are never quoted as client-facing.
-    2. else Hindi at/over cutoff -> internal. Strips an existing client_id.
-    3. else                      -> untouched; the normal classifier decides.
+    2. else Hindi at/over cutoff
+       AND one of US spoke
+       AND nobody else did       -> 'internal-team'. The strong form (below).
+    3. else Hindi at/over cutoff -> internal. Strips an existing client_id.
+                                    The weak form: language alone.
+    4. else                      -> untouched; the normal classifier decides.
+
+RULE 2, AND WHY IT IS A RULE AND NOT A ROW (2026-08-14)
+------------------------------------------------------
+    "all devnagri call with jay are internal. tanmay is new emplyee so its
+     internal as well."   — Abhijeet
+
+Resolving those calls one at a time would answer today's queue and nothing else;
+the next Hindi standup with a teammate arrives as a fresh unknown. So it is
+encoded here, as its own named verdict with its own evidence string, and it
+holds for every internal person on the roster — not just Jay, and not just the
+rows that happened to be queued when he said it.
+
+The strong form is deliberately NARROWER than rule 3, and that is the safety
+property. It requires an Etherwise person (`config.is_internal_person`, the one
+roster) to have SPOKEN and requires that NOBODY ELSE did. So it cannot fire on
+`fathom/117473152` — Zeeshan Rasheed's own client call, held in Urdu, which sat
+on `fathom-kind:internal-language` asserting the opposite of the truth. That
+call has an outside speaker, so it falls through to the WEAK rule, where the
+existing speaker guard at the call site still gets its say. Two independent
+protections, and the stronger verdict never even applies when an outsider is in
+the room. A label we cannot identify (a device name, an initial) counts as
+external on purpose: withholding the strong verdict costs nothing, since rule 3
+reaches the same `internal` kind by the guarded path.
 
 Why Devanagari and not the `language` field: Fathom's own field says "hi" for
 only 21 of 603 calls, while 165 transcripts actually contain Devanagari. The
@@ -50,11 +77,17 @@ the rule Abhijeet gave. It lives at the one call site that acts on the verdict,
 signals are already loaded: a registered client audibly on the call falsifies
 "internal" and the exclusion is withheld. That is the same `speaker_guard` law
 every other exclusion in this system is already subject to.
+
+Rule 2 (`internal-team`) adds a SECOND, independent protection in front of that
+one — it declines to fire at all when anyone outside the roster spoke — but it
+does not replace it. Both stay.
 """
 from __future__ import annotations
 
 import json
 import re
+
+from core import config
 
 DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 WORDCHAR = re.compile(r"\w")
@@ -120,25 +153,60 @@ def has_yogita(payload: dict, text: str = "") -> bool:
     return bool(YOGITA.search(json.dumps(payload.get("participants") or [])))
 
 
+def split_speakers(payload: dict) -> tuple:
+    """(ours, theirs) — the speakers on this call, split by the ONE roster.
+
+    `config.is_internal_person` is the only place that answers "is this person
+    us?"; asking it here rather than matching a name locally is what keeps a new
+    hire from having to be added twice. Anything it does not recognise is
+    counted as theirs, INCLUDING a junk device label — see the module header:
+    an unidentifiable speaker withholds the strong verdict, which is free.
+    """
+    ours, theirs = [], []
+    for name in sorted(_speakers(payload)):
+        (ours if config.is_internal_person(name) else theirs).append(name)
+    return ours, theirs
+
+
+def _title(name: str) -> str:
+    return " ".join(w.capitalize() for w in (name or "").split())
+
+
 def classify(payload: dict, *, cutoff: float = HINDI_CUTOFF) -> dict:
     """Apply the precedence order. Returns the verdict plus the evidence that
-    produced it, so every reattribution can be explained and reversed."""
+    produced it, so every reattribution can be explained and reversed.
+
+    Keys: rule · client_id · kind · internal_language · hindi_ratio · evidence,
+    plus `internal_speakers` / `external_speakers` — the split that rule 2 was
+    decided on, carried out so a verdict can be audited without re-reading the
+    transcript (`events.ignore`'s whole argument for storing evidence)."""
     text = transcript_text(payload)
     ratio = hindi_ratio(text)
     hindi = ratio >= cutoff
     yogita = has_yogita(payload)
+    ours, theirs = split_speakers(payload)
+    base = {"hindi_ratio": round(ratio, 4), "internal_speakers": ours,
+            "external_speakers": theirs}
 
     if yogita:
-        return {"rule": "yogita", "client_id": YOGITA_CLIENT,
+        return {**base, "rule": "yogita", "client_id": YOGITA_CLIENT,
                 "kind": "client-work", "internal_language": hindi,
-                "hindi_ratio": round(ratio, 4),
                 "evidence": "Yogita spoke on the call"
                             + (f"; {ratio:.1%} Devanagari (internal team call)"
                                if hindi else "")}
+    if hindi and ours and not theirs:
+        # THE STRONG FORM. Not "it was in Hindi" but "it was in Hindi and the
+        # only people in the room were ours" — which is a fact about the call,
+        # not an inference from its language, and is therefore durable.
+        return {**base, "rule": "internal-team", "client_id": None,
+                "kind": "internal", "internal_language": True,
+                "evidence": f"{ratio:.1%} of the transcript is Devanagari and"
+                            f" the only speakers were "
+                            + ", ".join(_title(n) for n in ours)
+                            + " (Etherwise) — no external speaker on the call"}
     if hindi:
-        return {"rule": "hindi", "client_id": None, "kind": "internal",
-                "internal_language": True, "hindi_ratio": round(ratio, 4),
+        return {**base, "rule": "hindi", "client_id": None, "kind": "internal",
+                "internal_language": True,
                 "evidence": f"{ratio:.1%} of the transcript is Devanagari"}
-    return {"rule": None, "client_id": None, "kind": None,
-            "internal_language": False, "hindi_ratio": round(ratio, 4),
-            "evidence": None}
+    return {**base, "rule": None, "client_id": None, "kind": None,
+            "internal_language": False, "evidence": None}

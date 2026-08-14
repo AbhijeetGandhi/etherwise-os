@@ -54,17 +54,29 @@ def load(conn):
 
 
 def sensitivity(corpus):
-    print("=== cutoff sensitivity (how many calls the Hindi rule would catch) ===")
-    print("  cutoff | hindi-only (-> internal) | of which already have a client")
+    """Counts the LANGUAGE verdict at each cutoff — both its forms.
+
+    `kind == 'internal'`, not `rule == 'hindi'`: since 2026-08-14 a Devanagari
+    call on which only Etherwise people spoke returns the stronger, separately
+    named `internal-team` verdict, and a table that matched the old rule string
+    would have quietly reported those calls as zero.
+    """
+    print("=== cutoff sensitivity (how many calls the language rule catches) ===")
+    print("  cutoff | -> internal (team / language-only) | of which have a client")
     for cut in (0.005, 0.01, 0.02, 0.05, 0.10):
-        n = strip = 0
+        team = lang = strip = 0
         for src, payload in corpus:
             v = rules.classify(payload, cutoff=cut)
-            if v["rule"] == "hindi":
-                n += 1
-                if src["client_id"]:
-                    strip += 1
-        print(f"   {cut:>5.1%} | {n:>24} | {strip:>29}")
+            if v["kind"] != "internal":
+                continue
+            if v["rule"] == "internal-team":
+                team += 1
+            else:
+                lang += 1
+            if src["client_id"]:
+                strip += 1
+        print(f"   {cut:>5.1%} | {team + lang:>10} ({team} team / {lang} lang)"
+              f"      | {strip:>21}")
     print()
 
 
@@ -121,7 +133,7 @@ def main() -> int:
         strips = [(s, p, v) for s, p, n, v in moves if p and not n]
         if strips:
             print(f"\n=== {len(strips)} calls would LOSE an existing client "
-                  f"(Hindi rule) — these remove facts from live dossiers ===")
+                  f"(language rule) — these remove facts from live dossiers ===")
             for s, p, v in strips[:15]:
                 print(f"   {p:16} {v['hindi_ratio']:>6.1%}  {s['source_ref']}")
 

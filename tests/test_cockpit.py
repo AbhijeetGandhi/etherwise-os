@@ -91,6 +91,33 @@ class CockpitServerCase(unittest.TestCase):
             return e.code, e.read().decode()
 
 
+class TestBodyLimits(CockpitServerCase):
+    """A JSON POST body had NO ceiling — `rfile.read(Content-Length)` read
+    whatever the header said. Quick Capture is the first route he can paste
+    into, so the first realistic way to reach that is an accidental paste of a
+    whole transcript. Refused with a reason, never swallowed."""
+
+    def test_an_oversized_json_body_is_refused_with_a_reason(self):
+        big = {"text": "x" * (server.JSON_MAX_BYTES + 10)}
+        status, body = self.post("/api/note", body=big)
+        self.assertEqual(status, 413)
+        self.assertIn("Nothing was saved", body)
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) c FROM notes").fetchone()["c"], 0)
+
+    def test_a_note_over_the_CAPTURE_cap_is_refused_before_it_is_stored(self):
+        """Under the transport ceiling, over the capture one. Truncating to fit
+        and reporting success is the same class of bug as losing it."""
+        status, body = self.post(
+            "/api/note", body={"text": "x" * (config.CAPTURE_MAX_CHARS + 1)})
+        self.assertEqual(status, 500)            # the reader's own ValueError
+        self.assertIn("Nothing was saved", body)
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) c FROM notes").fetchone()["c"], 0)
+
+
 class TestAuth(CockpitServerCase):
     def test_api_without_token_401(self):
         status, _ = self.get("/api/system", token=None)
@@ -2042,6 +2069,125 @@ class TestNoteAction(unittest.TestCase):
     def test_empty_note_rejected(self):
         with self.assertRaises(ValueError):
             actions.note(self.db_path, {"text": "  "})
+
+    # ── the capture latency fix (2026-08-14) ────────────────────────────────
+    # He typed note #3 at 14:49 IST; its card appeared at 16:30, because
+    # `classify_new` only ran inside the 2-hourly sweep. He got a toast, Today
+    # did not change, and the only reading available was "it didn't save".
+
+    def _as_live_db(self):
+        """Pretend this temp DB is the server's, so `db_path=None` (what the
+        production route is handed) takes the SPAWN path. Never point a test at
+        the real DB to get there."""
+        return mock.patch.object(config, "DB_PATH", self.db_path)
+
+    def test_capture_spawns_the_classifier_as_a_DETACHED_CHILD(self):
+        """The seam. No model call may happen in the cockpit process (the same
+        rule /api/ask obeys by shelling out to bin/kb-ask) — AND the response
+        must not block on it, which is why this is Popen and not run.
+
+        `start_new_session` is load-bearing: `bin/cockpit reload` restarts this
+        server after every Python change, and a child in its process group
+        would die with it, mid-classification."""
+        with self._as_live_db(), \
+                mock.patch.object(actions.subprocess, "Popen") as pop:
+            out = actions.note(None, {"text": "anthc dashboard updates"})
+        self.assertTrue(out["classifying"])
+        argv, kw = pop.call_args[0][0], pop.call_args[1]
+        self.assertTrue(str(argv[1]).endswith("bin/note-classify"))
+        self.assertEqual(argv[2], str(out["id"]))
+        self.assertTrue(kw["start_new_session"])
+        self.assertNotIn("timeout", kw)          # fire-and-forget, never awaited
+
+    def test_a_spawn_failure_still_keeps_the_note_and_says_what_happens_next(self):
+        """The note is committed BEFORE the child is spawned, so a spawn that
+        fails costs the latency and never the note. The copy then has to be
+        true of the slow path — the sweep — instead of the fast one."""
+        with self._as_live_db(), \
+                mock.patch.object(actions.subprocess, "Popen",
+                                  side_effect=OSError("no fork for you")):
+            out = actions.note(None, {"text": "keep me"})
+        self.assertFalse(out["classifying"])
+        self.assertIn("next sweep", out["note"])
+        with db.connect(self.db_path) as conn:
+            row = conn.execute("SELECT state FROM notes WHERE id=?",
+                               (out["id"],)).fetchone()
+        self.assertEqual(row["state"], "new")    # still there, still claimable
+
+    def test_a_test_db_never_spawns_a_child_against_the_LIVE_one(self):
+        with mock.patch.object(actions.subprocess, "Popen") as pop:
+            out = actions.note(self.db_path, {"text": "x"})
+        pop.assert_not_called()
+        self.assertFalse(out["classifying"])
+
+    def test_note_status_is_the_polls_stop_condition(self):
+        from modules.chief_of_staff import capture
+        n = capture.add_note(self.db_path, "fix the thing", "cockpit")
+        pending = data.note_status(self.db_path, note_id=str(n["id"]))
+        self.assertFalse(pending["done"])
+        capture.classify_new(
+            self.db_path, ids=[n["id"]],
+            _classify=lambda db, x: {"bucket": "nudge", "title": "Fix the thing",
+                                     "action": None, "due": None, "who": "us"})
+        done = data.note_status(self.db_path, note_id=str(n["id"]))
+        self.assertTrue(done["done"] and done["actionable"])
+        self.assertEqual(done["card_title"], "Fix the thing")
+
+    def test_note_status_rejects_a_bad_id_rather_than_looking_empty(self):
+        """"I do not know that note" and "nothing has happened yet" are
+        opposite answers, and the poll would stop on the wrong one."""
+        self.assertIn("error", data.note_status(self.db_path, note_id="lol"))
+        self.assertIn("error", data.note_status(self.db_path, note_id=None))
+        self.assertIn("error", data.note_status(self.db_path, note_id="999"))
+
+    # ── the non-actionable path is visible (2026-08-14) ─────────────────────
+
+    def test_today_surfaces_a_note_that_produced_no_card(self):
+        """Note #2, 'evolve exteriors everything sorted out', classified
+        `kb_note` and produced nothing on any screen. Today now carries it,
+        with the verdict, until he answers it."""
+        from modules.chief_of_staff import capture
+        capture.add_note(self.db_path, "evolve exteriors everything sorted out",
+                         "cockpit")
+        capture.classify_new(
+            self.db_path,
+            _classify=lambda db, x: {"bucket": "kb_note", "title": "Evolve",
+                                     "action": None, "due": None, "who": "us"})
+        caps = data.today(self.db_path)["captures"]
+        self.assertEqual(caps["needs_decision"], 1)
+        self.assertEqual(caps["items"][0]["text"],
+                         "evolve exteriors everything sorted out")
+        self.assertTrue(caps["items"][0]["verdict"])
+
+    def test_note_resolve_makes_a_card_anyway(self):
+        from modules.chief_of_staff import capture
+        n = capture.add_note(self.db_path, "evolve exteriors sorted", "cockpit")
+        capture.classify_new(
+            self.db_path,
+            _classify=lambda db, x: {"bucket": "kb_note", "title": "E",
+                                     "action": None, "due": None, "who": "us"})
+        out = actions.note_resolve(self.db_path,
+                                   {"note_id": n["id"], "action": "card"})
+        self.assertTrue(out["ok"])
+        self.assertEqual(data.today(self.db_path)["captures"]["needs_decision"], 0)
+        with db.connect(self.db_path) as conn:
+            row = conn.execute("SELECT title, state FROM nudges WHERE dedup_key=?",
+                               (f"note:{n['id']}",)).fetchone()
+        self.assertEqual(row["state"], "open")
+
+    def test_note_resolve_validates(self):
+        with self.assertRaises(ValueError):
+            actions.note_resolve(self.db_path, {"action": "card"})
+        with self.assertRaises(ValueError):
+            actions.note_resolve(self.db_path, {"note_id": 1, "action": "delete"})
+
+    def test_a_broken_capture_read_never_blanks_TODAY(self):
+        from modules.chief_of_staff import capture as cap
+        with mock.patch.object(cap, "unresolved", side_effect=RuntimeError("x")):
+            d = data.today(self.db_path)
+        self.assertIn("error", d["captures"])
+        self.assertEqual(d["captures"]["items"], [])
+        self.assertIn("queue", d)                       # the page still renders
 
     def test_cos_nudge_acts_on_real_table(self):
         from modules.chief_of_staff import nudges as eng

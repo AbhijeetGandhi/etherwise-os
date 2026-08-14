@@ -882,7 +882,14 @@ def reclassify_queued(ctx, reg=None, fingerprints: Optional[list] = None, *,
                 m["rule_healed"] += 1
                 rules_fired["yogita"] += 1
                 continue
-            if v["rule"] == "hindi":
+            if v["kind"] == "internal":
+                # BOTH internal forms come through here — the strong
+                # 'internal-team' verdict (Devanagari + only our people spoke)
+                # and the weak 'hindi' one (Devanagari, whoever was in the
+                # room). They share this branch on purpose: the guard below is
+                # a floor, and a stronger upstream verdict must not be a way
+                # around it.
+                #
                 # ...UNLESS a REGISTERED CLIENT is audibly on the call. This is
                 # the same `speaker_guard` law already applied to every other
                 # exclusion: a person speaking on a call is a fact about that
@@ -900,21 +907,29 @@ def reclassify_queued(ctx, reg=None, fingerprints: Optional[list] = None, *,
                 # them: Zeeshan Rasheed's own client call, conducted in Urdu,
                 # sitting on `fathom-kind:internal-language` — a bucket asserting
                 # the opposite of the truth — and the moment he was registered
-                # (2026-08-14) this rule would have put it straight back.
+                # (2026-08-14) this rule would have put it straight back. Note
+                # that 'internal-team' declines to fire on that call at all
+                # (Zeeshan spoke), so it reaches the guard as 'hindi' and the
+                # guard still holds it back. Belt and braces, deliberately.
                 hinted = speaker_client_hints(
                     reg, (signals or {}).get("external_speakers") or [])
                 hinted &= valid_ids
                 if not hinted:
                     if not dry_run:
                         with db.connect(db_path) as conn:
+                            # WITH THE DECIDING PHRASE. `exclude_reason` is a
+                            # bucket name and says nothing about the call that
+                            # went into it — the exact state 114 rows were
+                            # found in on 2026-08-14, correctly labelled and
+                            # unauditable without re-reading the transcript.
                             events.ignore(conn, e["id"],
                                           f"{source_type}-kind:internal-language",
-                                          by)
+                                          by, evidence=v["evidence"])
                     m["rule_excluded"] += 1
-                    rules_fired["hindi"] += 1
+                    rules_fired[v["rule"]] += 1
                     continue
                 m["language_guard"] = m.get("language_guard", 0) + 1
-                rules_fired["hindi-guarded"] += 1
+                rules_fired[v["rule"] + "-guarded"] += 1
 
         # 0b. deterministic registry match (the registry may have learned since)
         cid = (loom_bridge.title_match(reg, title)

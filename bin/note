@@ -1,13 +1,35 @@
 #!/bin/bash
-# Quick Capture: drop a note into the Chief-of-Staff inbox (next sweep classifies).
+# Quick Capture: drop a note into the Chief-of-Staff inbox and classify it NOW.
 # Usage: bin/note "follow up with Acme about the invoice"
-cd "$(dirname "$0")/.." && PYTHONPATH="$PWD" python3 -c "
-import sys
+#
+# Classifies in-process here (a terminal call can afford to wait 2s; the cockpit
+# cannot, which is why /api/note spawns bin/note-classify instead). Either way
+# the note is committed BEFORE the model is asked anything, so a classifier
+# failure costs the verdict and never the note.
+cd "$(dirname "$0")/.." && PYTHONPATH="$PWD" python3 -c "import sys
 from modules.chief_of_staff import capture
 from core import config
 text = ' '.join(sys.argv[1:]).strip()
 if not text:
     print('usage: bin/note \"<text>\"'); sys.exit(1)
-out = capture.add_note(config.DB_PATH, text, source='terminal')
-print(f'captured note #{out[\"id\"]} — will be classified next sweep')
+try:
+    out = capture.add_note(config.DB_PATH, text, source='terminal')
+except ValueError as exc:
+    print(f'NOT saved: {exc}'); sys.exit(1)
+nid = out['id']
+print(f'captured note #{nid} — classifying…')
+try:
+    capture.classify_new(config.DB_PATH, ids=[nid], limit=1)
+except Exception as exc:
+    print(f'  classifier failed ({exc!r}) — the note is safe; the next sweep')
+    print(f'  will retry it, and it is listed under Captured on Today.')
+st = capture.status(config.DB_PATH, nid)
+if st.get('bucket') == 'nudge':
+    print(f'  -> card created: {st.get(\"card_title\") or st.get(\"text\")}')
+elif st.get('bucket'):
+    print(f'  -> {st[\"verdict\"]}')
+    if not st.get('actionable'):
+        print('     (listed under Captured on Today — one click makes it a card)')
+else:
+    print('  -> not classified yet; it is under Captured on Today until it is')
 " "$@"

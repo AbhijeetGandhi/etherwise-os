@@ -495,17 +495,62 @@ JARVIS_SLACK_CONV_POLL_TIMEOUT_SECONDS = 22
 # is in here as a bare token precisely because Slack renders him that way; a
 # substring rule would let it claim "Abhijeet Sharma", a stranger.
 #
-# ADD A TEAMMATE HERE AND NOWHERE ELSE. Source of truth for who is on payroll:
-# ../Payroll/employees.json (contractors are not in it — this list is wider).
-INTERNAL_PEOPLE = (
-    "abhijeet gandhi",
-    "abhijeet",
-    "jay pokharna",          # E001
-    "shruti dhumne",         # E002
-    "yogita soma",           # E003
+# DERIVED FROM PAYROLL, NOT HAND-MAINTAINED (2026-08-14). The hand-kept tuple
+# had drifted four names behind `../Payroll/employees.json` — E004 Sachin Kadam,
+# E005 Ranjana Gandhi, E007 Ankita Mehta and E008 Tanmay Bora were all on
+# payroll and none of them was "us" to this system. That is a defect with a
+# known shape: an unrecognised human on a call is read as external CLIENT
+# signal, and the roster miner then proposes the teammate as a client alias
+# (Alphons Jaimon, twice, on two different clients). A new hire must not need a
+# code change to stop looking like a client.
+#
+# So the roster is: every name in employees.json (whatever their status — a
+# withdrawn or not-yet-started hire is still not a client) UNION the extras
+# below, which are the people and display forms payroll cannot know about.
+#
+# ADD A CONTRACTOR OR A DISPLAY FORM to INTERNAL_PEOPLE_EXTRA; add an EMPLOYEE
+# to Payroll/employees.json and this picks them up on the next import.
+PAYROLL_FILE = WORKSPACE_ROOT / "Payroll" / "employees.json"
+
+INTERNAL_PEOPLE_EXTRA = (
+    "abhijeet gandhi",       # the founder — not on the payroll file
+    "abhijeet",              # …and the bare token Slack renders him as
     "alphons jaimon",        # contractor (confirmed by Abhijeet 2026-08-13);
                              # alphons@etherwise.io appears on src 712
+    # E008's transcript SPEAKER label is the bare given name. Fathom wrote
+    # "Tanmay" (not "Tanmay Abhay Bora") on evt:fathom:170653696 — 41%
+    # Devanagari, with Jay — and an exact-full-name check does not see it, so
+    # the call read as "an unknown human was here" until Abhijeet said
+    # otherwise. Deliberate, like "abhijeet": checked 2026-08-14 against every
+    # registry identifier, no client claims the token.
+    "tanmay",
 )
+
+
+def _payroll_people() -> tuple:
+    """Every employee name in Payroll/employees.json, lowercased.
+
+    Never raises and never returns a SHORTER roster than the extras: a missing
+    or malformed payroll file must degrade to "we know about fewer people",
+    not to an import-time crash in the module every other module imports.
+    A read failure is recorded on `PAYROLL_READ_ERROR` so `bin/doctor` can say
+    so out loud rather than letting the roster silently shrink.
+    """
+    global PAYROLL_READ_ERROR
+    try:
+        import json
+        data = json.loads(PAYROLL_FILE.read_text())
+        names = [str(e.get("name") or "").strip().lower()
+                 for e in (data.get("employees") or [])]
+        return tuple(n for n in names if n)
+    except Exception as exc:                    # noqa: BLE001 — see docstring
+        PAYROLL_READ_ERROR = f"{type(exc).__name__}: {exc}"
+        return ()
+
+
+PAYROLL_READ_ERROR = None                       # set by _payroll_people() below
+# dict.fromkeys: de-duplicated, insertion-ordered, stable across runs.
+INTERNAL_PEOPLE = tuple(dict.fromkeys(_payroll_people() + INTERNAL_PEOPLE_EXTRA))
 # Our own display names inside CLIENT workspaces: a message from one of these is
 # OURS -> tagged direction='outbound' (captured, never dropped) so the follow-up
 # logic can tell we already replied. Matched case-insensitively on the full name.
@@ -835,6 +880,15 @@ COS_DECAY_TTL_DAYS = {
     "escalate_client":  7,
     "capture":          14,
 }
+# ── Quick Capture (2026-08-14) ───────────────────────────────────────────────
+# A captured note is classified by a CHILD process spawned by /api/note, within
+# seconds, and by the sweep as the backstop. These bound that path. See
+# modules/chief_of_staff/capture.py for why each one exists.
+CAPTURE_MAX_CHARS = 20000          # add_note REFUSES past this; never truncates
+CAPTURE_CLASSIFY_CHARS = 4000      # …but only this much reaches the model
+CAPTURE_CLAIM_TTL_MINUTES = 10     # a classifier lease this old is re-claimable
+CAPTURE_MAX_ATTEMPTS = 3           # stop paying; start SHOWING him the failure
+CAPTURE_CLASSIFY_TIMEOUT_S = 90    # the spawned child's own wall-clock ceiling
 COS_BRIEF_TOPN = 3                 # brief leads with the top-N nudges by urgency
 COS_BRIEFS_DIR = V3_ROOT / "var" / "briefs"   # shadow draft artifacts (no send)
 # Sweep rule thresholds (Abhijeet, 2026-06-22)

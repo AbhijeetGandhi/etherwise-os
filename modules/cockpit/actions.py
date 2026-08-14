@@ -261,15 +261,86 @@ def cos_nudge(db_path: Optional[Path], body: dict) -> dict:
             "state": _COS_STATE[action]}
 
 
+_NOTE_CLASSIFY_CLI = _REPO_ROOT / "bin" / "note-classify"
+
+
+def _spawn_classifier(db_path: Optional[Path], note_id: int) -> dict:
+    """Kick the capture classifier as a DETACHED child, and never let its
+    failure cost the note.
+
+    THE THREE CONSTRAINTS THIS RESOLVES, in the order they bind:
+
+    1. No model calls in the cockpit process (UI_BUILD_BRIEF §0.7). So it is a
+       child, the same seam `ask` uses with `bin/kb-ask`.
+    2. It must not block the HTTP response for seconds. So it is `Popen`, not
+       `run` — `ask` can afford to wait 45s because he is watching a spinner
+       for an answer; here he is typing and expects the box to clear at once.
+    3. It must not be able to lose the note. So the row is ALREADY COMMITTED
+       before this is called, the exception is swallowed, and both remaining
+       backstops still hold: the 2-hourly sweep still classifies unclassified
+       notes, and Today renders them in the meantime with "waiting to be
+       classified" rather than nothing at all.
+
+    `start_new_session=True` is load-bearing: without it the child dies with
+    the cockpit, and `bin/cockpit reload` is a thing that happens after every
+    Python change on this server. The child must outlive its parent.
+    """
+    try:
+        subprocess.Popen(                       # noqa: S603 — fixed argv
+            [sys.executable, str(_NOTE_CLASSIFY_CLI), str(note_id)],
+            cwd=str(_REPO_ROOT), start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        return {"spawned": True, "error": None}
+    except Exception as exc:                    # noqa: BLE001 — see docstring
+        return {"spawned": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def note(db_path: Optional[Path], body: dict) -> dict:
-    """POST /api/note — Quick Capture from the cockpit. Drops raw text into the
-    CoS notes inbox; the next sweep classifies it (nudge/commitment/kb/idea).
-    Local only — no external write."""
+    """POST /api/note — Quick Capture from the cockpit.
+
+    Commits the raw text to the CoS notes inbox, then spawns the classifier as
+    a detached child so the card exists within seconds rather than at the next
+    2-hourly sweep. Returns immediately; the box polls GET /api/note?note_id=N
+    for the verdict. Local only — no external write.
+
+    A rejected note (empty, or over the cap) raises, the server answers 500 with
+    the message, and the UI leaves the text in the box. That is deliberate: the
+    one thing this route may never do is report success over text it did not
+    store."""
     from modules.chief_of_staff import capture
     text = ((body or {}).get("text") or "").strip()
     if not text:
         raise ValueError("text required")
-    return capture.add_note(db_path, text, source="cockpit")
+    out = capture.add_note(db_path, text, source="cockpit")
+    # db_path is None in production (the server passes its own), and the child
+    # reads config.DB_PATH — so a TEST db must not spawn a child against the
+    # live one. Tests pass a db_path; production does not.
+    kick = ({"spawned": False, "error": "test db — classifier not spawned"}
+            if db_path is not None and Path(db_path) != config.DB_PATH
+            else _spawn_classifier(db_path, out["id"]))
+    return {**out, "classifying": kick["spawned"],
+            "classify_error": kick["error"],
+            # what the toast may truthfully say
+            "note": ("Classifying now — the card appears here in a moment."
+                     if kick["spawned"] else
+                     "Saved. The next sweep will classify it (within 2 hours)"
+                     " — it is listed under Captured below until then.")}
+
+
+def note_resolve(db_path: Optional[Path], body: dict) -> dict:
+    """POST /api/note/resolve — his answer to a note that produced no card.
+
+    body: {note_id, action: 'card'|'filed'}. 'card' overrides the classifier
+    and mints the capture card; 'filed' agrees with it and stops Today showing
+    the note. Both are HIS decision, and neither deletes anything: the note row
+    survives either way, which is the whole contract of this feature."""
+    from modules.chief_of_staff import capture
+    body = body or {}
+    note_id = body.get("note_id")
+    if note_id in (None, ""):
+        raise ValueError("note_id required")
+    return capture.resolve(db_path, int(note_id), body.get("action") or "")
 
 
 def ask(db_path: Optional[Path], body: dict) -> dict:

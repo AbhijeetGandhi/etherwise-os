@@ -4,6 +4,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from core import registry
 
@@ -164,6 +165,38 @@ class RegistryValidationTests(unittest.TestCase):
         Slack list would read as the CLIENT talking in that client's workspace."""
         from core import config
         self.assertIs(config.JARVIS_SLACK_SELF_AUTHORS, config.INTERNAL_PEOPLE)
+
+    def test_the_roster_is_DERIVED_from_payroll_not_hand_maintained(self):
+        """The hand-kept tuple had drifted four names behind
+        Payroll/employees.json — E004, E005, E007 and E008 were all on payroll
+        and none of them was "us" to this system. An unrecognised human on a
+        call reads as external CLIENT signal, and the roster miner then
+        proposes the teammate as a client alias (Alphons Jaimon, twice, on two
+        different clients). A new hire must not need a code change."""
+        import json
+        from core import config
+        payroll = json.loads(config.PAYROLL_FILE.read_text())
+        for e in payroll["employees"]:
+            self.assertTrue(
+                config.is_internal_person(e["name"]),
+                f"{e['employee_id']} {e['name']} is on payroll and is not"
+                " recognised as one of us")
+        # …and the extras payroll cannot know about survive the derivation
+        for extra in config.INTERNAL_PEOPLE_EXTRA:
+            self.assertIn(extra, config.INTERNAL_PEOPLE)
+
+    def test_a_missing_payroll_file_degrades_it_does_not_crash_config(self):
+        """core.config is imported by everything. A payroll file that is gone
+        or malformed must cost roster COVERAGE (recorded, so the doctor can
+        say so) and never the import."""
+        from pathlib import Path
+        from core import config
+        with mock.patch.object(config, "PAYROLL_FILE",
+                               Path("/nonexistent/employees.json")):
+            names = config._payroll_people()
+        self.assertEqual(names, ())
+        self.assertTrue(config.PAYROLL_READ_ERROR)
+        config.PAYROLL_READ_ERROR = None          # leave the module as we found it
 
     def test_no_match_entry_registered_but_not_matchable(self):
         text = (SAMPLE + "  -\n    id: phonicflow\n    name: PhonicFlow\n"
