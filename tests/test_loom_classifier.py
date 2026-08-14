@@ -502,6 +502,37 @@ class ReclassifyQueuedFathomTests(unittest.TestCase, PinHealOnHigh):
         self.assertEqual(self._event("f1")["exclude_reason"],
                          "fathom-kind:internal-language")
 
+    def test_a_registered_client_on_the_call_survives_the_hindi_rule(self):
+        """...and a stranger does not. Abhijeet's rule was about his own
+        INTERNAL calls; it never said a client stops being a client in another
+        language. `fathom/117473152` is Zeeshan Rasheed's own client call, held
+        in Urdu, and it sat on `fathom-kind:internal-language` — a bucket
+        asserting the opposite of the truth. The instant he was registered
+        (2026-08-14) this rule would have put it straight back.
+
+        The guard is the same `speaker_guard` law every other exclusion already
+        obeys: a person speaking on a call is a fact about that call, and a
+        REGISTERED client in the room falsifies 'internal' outright."""
+        hindi = "हां ठीक है चलो देखते हैं भाई"
+        self._queued_fathom("f1a", "Impromptu Zoom Meeting", [
+            {"speaker": "Dhanya Sangolli", "text": hindi},
+            {"speaker": "Abhijeet Gandhi", "text": "ठीक है"}])
+        m, _ctx = self._run(_kind("client-work", pid="dhanya-sangolli", conf=0.99))
+        self.assertEqual(m["rule_excluded"], 0)
+        self.assertEqual(m["language_guard"], 1)
+        self.assertNotEqual(self._event("f1a")["exclude_reason"],
+                            "fathom-kind:internal-language")
+
+        # a NON-registered external speaker changes nothing: still internal
+        self._queued_fathom("f1b", "Impromptu Zoom Meeting", [
+            {"speaker": "Tanmay", "text": hindi},
+            {"speaker": "Abhijeet Gandhi", "text": "ठीक है"}])
+        m2, _ = self._run(_kind("client-work", pid="adelye", conf=0.99))
+        self.assertEqual(m2["rule_excluded"], 1)
+        self.assertEqual(m2["language_guard"], 0)
+        self.assertEqual(self._event("f1b")["exclude_reason"],
+                         "fathom-kind:internal-language")
+
     def test_yogita_wins_even_over_a_confident_model(self):
         """'if yogita was part of the call then it was 99% of the time for
         hermon' — and she is detected as a SPEAKER, not a mention."""

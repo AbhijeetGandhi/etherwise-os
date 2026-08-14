@@ -1,6 +1,6 @@
 # PT Bank Mandiri — Dossier
 
-_Compiled 2026-08-14 05:16 IST · 2 client facts (2 trusted) from 1 sources._
+_Compiled 2026-08-14 16:24 IST · 2 client facts (2 trusted) from 1 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

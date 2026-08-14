@@ -314,5 +314,105 @@ class TestSubjectRecording(unittest.TestCase):
                          ["followup:c:rocky-choy"])
 
 
+class TestMergeClients(unittest.TestCase):
+    """`scripts/merge_clients.py` — the general client-merge path.
+
+    Two merges have happened (andrew-wang -> endura 2026-08-13, servicepeople +
+    raphael-mahir -> visa-gate 2026-08-14) and a third is likely. The first was
+    a throwaway script in var/agent-scratch, and re-deriving the same table list
+    from memory is precisely how a table gets missed — that one repointed
+    `offers.client_id`, which is UPWORK's numeric company id, and would have
+    corrupted the row had any matched.
+
+    So the script carries a schema guard, and this pins it against the REAL
+    migrated schema: when a future migration adds a client-bearing column,
+    THIS test fails rather than the merge silently leaving rows behind."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="merge-clients-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _module(self):
+        import importlib.util
+        p = Path(__file__).resolve().parents[1] / "scripts" / "merge_clients.py"
+        spec = importlib.util.spec_from_file_location("merge_clients", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_every_client_bearing_column_is_accounted_for(self):
+        mod = self._module()
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(mod._unmapped_columns(conn), [])
+
+    def test_card_keys_are_derived_from_followup_key_not_spelled_out(self):
+        """CLAUDE.md: never add a card key form without adding it to
+        `nudges.followup_key_forms`. This merge path must read the form from
+        `nudges`, so a new one cannot be left behind here."""
+        mod = self._module()
+        pairs = dict(mod._card_keys("old-id", "new-id"))
+        self.assertEqual(pairs[nudges.followup_key("old-id", None, "")],
+                         nudges.followup_key("new-id", None, ""))
+        self.assertEqual(pairs["stale_dossier:old-id"], "stale_dossier:new-id")
+
+    def test_the_retired_crm_source_is_deleted_never_repointed(self):
+        """`crm.ingest_crm` keys its synthetic source on
+        content_hash('crm/<id>') and only clears the facts of the source IT
+        owns, so repointing the retired one leaves the survivor with TWO and
+        double-counts its revenue facts. The next compile re-derives one."""
+        mod = self._module()
+        with db.connect(self.db_path) as conn:
+            for cid in ("old-id", "new-id"):
+                conn.execute(
+                    "INSERT INTO sources (source_type, source_ref, content_hash,"
+                    " client_id, client_name, content_type, status)"
+                    " VALUES ('crm', ?, ?, ?, ?, 'crm', 'ingested')",
+                    (f"crm/{cid}", f"h-{cid}", cid, cid))
+            sid = conn.execute("SELECT id FROM sources WHERE source_ref=?",
+                               ("crm/old-id",)).fetchone()["id"]
+            conn.execute("INSERT INTO facts (source_id, client_id, category,"
+                         " fact_text, citation, confidence) VALUES (?,?,?,?,?,?)",
+                         (sid, "old-id", "numbers", "Revenue $1.00", "CRM", "CONFIRMED"))
+            out = mod.merge(conn, "old-id", "new-id", "New", apply=True)
+            self.assertEqual(out["moved"]["crm source (deleted)"], 1)
+            self.assertEqual(out["moved"]["crm facts (deleted)"], 1)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM sources WHERE source_type='crm'"
+                             " AND client_id='new-id'").fetchone()[0], 1)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0], 0)
+
+    def test_a_real_source_and_its_facts_move_with_their_display_name(self):
+        mod = self._module()
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO sources (source_type, source_ref, content_hash,"
+                " client_id, client_name, content_type, status)"
+                " VALUES ('fathom','fathom/1','h1','old-id','Old','client-call',"
+                "'extracted')")
+            sid = conn.execute("SELECT id FROM sources WHERE source_ref='fathom/1'"
+                               ).fetchone()["id"]
+            conn.execute("INSERT INTO facts (source_id, client_id, category,"
+                         " fact_text, citation, confidence) VALUES (?,?,?,?,?,?)",
+                         (sid, "old-id", "overview", "A thing", "fathom/1", "CONFIRMED"))
+            conn.execute("INSERT INTO threads (id, room_name, client_id)"
+                         " VALUES ('r1','Old, Co','old-id')")
+            out = mod.merge(conn, "old-id", "new-id", "New Name", apply=True)
+            self.assertEqual(out["moved"]["sources.client_id"], 1)
+            self.assertEqual(out["moved"]["facts.client_id"], 1)
+            self.assertEqual(out["moved"]["threads.client_id"], 1)
+            row = conn.execute("SELECT client_id, client_name FROM sources"
+                               " WHERE source_ref='fathom/1'").fetchone()
+            self.assertEqual((row["client_id"], row["client_name"]),
+                             ("new-id", "New Name"))
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM facts WHERE client_id='old-id'"
+                             ).fetchone()[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

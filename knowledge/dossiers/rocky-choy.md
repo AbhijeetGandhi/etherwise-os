@@ -1,6 +1,6 @@
 # Rocky Choy — Dossier
 
-_Compiled 2026-08-14 05:16 IST · 19 client facts (19 trusted) from 2 sources._
+_Compiled 2026-08-14 16:24 IST · 19 client facts (19 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

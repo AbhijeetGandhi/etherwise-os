@@ -233,6 +233,21 @@ CLIENT_CANONICAL = {
     "(inner)": "inner.garden",
     "cmf publishing llc": "CMF Publishing",
     "cmf publishing": "CMF Publishing",
+    # Registry merge 2026-08-14 (Abhijeet: "service people rapheal and visa gate
+    # all three are same"). `servicepeople` and `raphael-mahir` were retired into
+    # `visa-gate`. These keys are what make the CLIENTS TAB agree with the
+    # dossier: without them `_canon_client('Servicepeople')` still title-cases
+    # its way to a row called 'Servicepeople' ($900.00, the 4 rows Upwork
+    # labelled directly) while the two hourly rows reach the survivor through
+    # the contract bridge and land on a SECOND row ($113.75) — one client, two
+    # rows, which is the exact failure `_contract_client` exists to end. With
+    # them both label groups collapse onto the dossier's own name and the tab
+    # reads $1,013.75, to the cent.
+    "servicepeople": "Visa Gate GmbH",
+    "raphael mahir": "Visa Gate GmbH",
+    "raphael mahir, servicepeople": "Visa Gate GmbH",
+    "visa gate": "Visa Gate GmbH",          # _CO_SUFFIX strips the 'GmbH' first
+    "visa gate gmbh": "Visa Gate GmbH",
     # NOT merged on purpose (Abhijeet, 2026-07-27): real client, NO dossier, and
     # we do not invent one — stays named-but-unlinked until a dossier exists:
     #   'Consulting Systems B.V.' -> Hermon/Abel  (no hermon dossier)
@@ -263,19 +278,37 @@ RATE_UNSTATED_MIN_HIRES = 1                    # ...or payment-verified with a h
 # payment id (Abhijeet, 2026-07-30). Set to None once Stripe has >1 client and
 # the Payments export is dropped alongside balance_history for real attribution.
 #
-# UNVERIFIED — READ THIS BEFORE QUOTING THE NUMBER (2026-08-13). No Payments
-# export has ever been dropped in finance-inbox/stripe/ (only balance_history,
-# which carries NO customer column), so 100% of the Stripe revenue on the
-# Clients tab — 3 rows, $574.39, Jul 2/16/30 2026 — is attributed by THIS
-# CONSTANT and by nothing the ledger observed. Two facts sit against it: every
-# one of those payments carries Fee 0.00, which is not what a live Stripe card
-# charge looks like; and Abhijeet said on 2026-08-13 "there is no stripe client
-# revenue at all", though he was speaking about the EUR Beglaubigt.de receipts,
-# which are a DIFFERENT Stripe account (EUR, zero-value, product testing — see
-# payment_mail_rail.ZERO_VALUE_STATE). Left exactly as it is on purpose:
-# re-attributing money on an inference is the failure this whole file guards
-# against. Needs one sentence from Abhijeet, then either a Payments export or
-# STRIPE_DEFAULT_CLIENT = None.
+# CONFIRMED 2026-08-14 — this was flagged UNVERIFIED on 2026-08-13 and the flag
+# is now retired. Abhijeet: "optimize is real revenue, that is Optimize IS, a
+# client that we have. This was their latest payout." So the 3 rows / $574.39
+# (Jul 2 / 16 / 30 2026) on the Clients tab are REAL client revenue and this
+# constant stays. What was true in the old caveat and is still true: no Payments
+# export has ever been dropped in finance-inbox/stripe/, so the ATTRIBUTION is
+# still carried by this constant rather than observed per-payment. That is
+# acceptable while Stripe has one paying client and is exactly why the first
+# line above says to set it to None when a second appears.
+#
+# THE 'Fee 0.00' WORRY IS RESOLVED, ARITHMETICALLY (2026-08-14). It was raised
+# because a live Stripe CARD charge is never fee-free — but these are not card
+# charges. balance_history holds five rows: three `payment` (Source `py_…`, a
+# charge on a non-card payment method) and two `payout` (Source `po_…`), and a
+# payout is a bank settlement, not a processed charge, so Fee 0.00 on it is
+# structurally correct. On the three payments the zero is not merely reported,
+# it is PROVEN by the ledger's own arithmetic: each settled payment is followed
+# by a payout of the identical amount to the paisa (₹23,111.76 → ₹23,111.76 on
+# Jul 2 → 5; ₹17,329.69 → ₹17,329.69 on Jul 16 → 19), which a deducted fee makes
+# impossible, and `stripe_csv.reconcile()` closes Σpayments = Σpayouts + Σfees +
+# balance exactly (55,015.53 = 40,441.45 + 0 + 14,574.08, the balance being the
+# Jul-30 payment not yet settled at export time — "their latest payout"). The
+# importer reads the Fee column rather than defaulting it, so a real fee would
+# have shown. Measured: var/agent-scratch/four/04-money.
+#
+# Abhijeet's 2026-08-13 "there is no stripe client revenue at all" was about the
+# EUR Beglaubigt.de receipts, a DIFFERENT Stripe account (EUR, zero-value,
+# product testing — payment_mail_rail.ZERO_VALUE_STATE). That rule keys on the
+# AMOUNT, never the provider, so it cannot swallow a payment like this one;
+# tests/test_payment_mail_rail.py::test_a_real_stripe_payment_is_still_tracked_
+# and_escalates pins it, using "Optimize IS" by name.
 STRIPE_DEFAULT_CLIENT = "Optimize IS"
 
 # ── Finance payment-mail rail (2026-08-09) ───────────────────────────────────

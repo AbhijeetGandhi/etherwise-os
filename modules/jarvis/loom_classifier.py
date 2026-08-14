@@ -847,10 +847,10 @@ def reclassify_queued(ctx, reg=None, fingerprints: Optional[list] = None, *,
             " WHERE e.source=? AND e.state='queued'", (source_type,))]
 
     m = {"source_type": source_type, "rechecked": len(rows), "det_healed": 0,
-         "rule_healed": 0, "rule_excluded": 0, "fold_proposed": 0,
-         "speaker_guard": 0, "llm_healed": 0, "provisional_mapped": 0,
-         "requeued": 0, "excluded": 0, "held": 0, "classify_calls": 0,
-         "facts_reattributed": 0}
+         "rule_healed": 0, "rule_excluded": 0, "language_guard": 0,
+         "fold_proposed": 0, "speaker_guard": 0, "llm_healed": 0,
+         "provisional_mapped": 0, "requeued": 0, "excluded": 0, "held": 0,
+         "classify_calls": 0, "facts_reattributed": 0}
     kinds: Counter = Counter()
     rules_fired: Counter = Counter()
 
@@ -883,13 +883,38 @@ def reclassify_queued(ctx, reg=None, fingerprints: Optional[list] = None, *,
                 rules_fired["yogita"] += 1
                 continue
             if v["rule"] == "hindi":
-                if not dry_run:
-                    with db.connect(db_path) as conn:
-                        events.ignore(conn, e["id"],
-                                      f"{source_type}-kind:internal-language", by)
-                m["rule_excluded"] += 1
-                rules_fired["hindi"] += 1
-                continue
+                # ...UNLESS a REGISTERED CLIENT is audibly on the call. This is
+                # the same `speaker_guard` law already applied to every other
+                # exclusion: a person speaking on a call is a fact about that
+                # call, and it falsifies "internal" outright. It does not
+                # weaken Abhijeet's rule — he was describing his own INTERNAL
+                # calls ("all the calls which included hindi language you need
+                # to mark them as internal"), not claiming a client stops being
+                # a client in another language.
+                #
+                # MEASURED before shipping (2026-08-14, var/agent-scratch/four/
+                # 07-langaudit): the Hindi rule fires on 88 of the Fathom corpus;
+                # 3 of those 88 have any external speaker at all; and 0 of the 3
+                # resolved to a registered client — so this guard changed nothing
+                # retroactively. It exists because `fathom/117473152` was one of
+                # them: Zeeshan Rasheed's own client call, conducted in Urdu,
+                # sitting on `fathom-kind:internal-language` — a bucket asserting
+                # the opposite of the truth — and the moment he was registered
+                # (2026-08-14) this rule would have put it straight back.
+                hinted = speaker_client_hints(
+                    reg, (signals or {}).get("external_speakers") or [])
+                hinted &= valid_ids
+                if not hinted:
+                    if not dry_run:
+                        with db.connect(db_path) as conn:
+                            events.ignore(conn, e["id"],
+                                          f"{source_type}-kind:internal-language",
+                                          by)
+                    m["rule_excluded"] += 1
+                    rules_fired["hindi"] += 1
+                    continue
+                m["language_guard"] = m.get("language_guard", 0) + 1
+                rules_fired["hindi-guarded"] += 1
 
         # 0b. deterministic registry match (the registry may have learned since)
         cid = (loom_bridge.title_match(reg, title)

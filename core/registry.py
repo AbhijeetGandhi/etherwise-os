@@ -39,13 +39,24 @@ Per-client schema (all fields optional except id + name):
                   because a silent pick would put one client's money in two
                   dossiers.
     scope_notes   free text                              (str)
-    kind          "client" (default) | "prospect"        (str)
+    kind          "client" (default) | "prospect" | "former"  (str)
     no_match      truthy => product/internal, never mapped (str/bool)
 
 `kind: prospect` marks an entry that is NOT a paying client (e.g. an expired
 proposal that nonetheless produced real calls). UNLIKE `no_match`, a prospect is
 fully indexed and matchable, so its calls attribute to it and the context is
 kept — but it is excluded from the client economics roster (`client_ids()`).
+
+`kind: former` marks a client who DID pay and will not again. It exists because
+"no longer active" had no machine-readable form: the convention for a finished
+engagement is a CLOSED contract row (`contracts.upwork_status`), which the
+Clients tab already reads — and a client who never had an Upwork contract has no
+way to say it, so it lived in prose nobody can act on. A former client is fully
+matchable (its history is real and must keep attributing) and IS on the
+economics roster (past revenue is revenue — that is exactly what separates it
+from a prospect); `is_active()` is the one thing that answers False, so nothing
+chases it. First use: `zeeshan-rasheed` (Abhijeet 2026-08-14: "just have him but
+I know we are not going to work with him ever again").
 """
 from __future__ import annotations
 
@@ -272,7 +283,10 @@ def _domain(addr: str) -> str:
 # ── the loaded registry ──────────────────────────────────────────────────────
 _LIST_FIELDS = ("aliases", "emails", "upwork_rooms", "fathom_names")
 _STR_FIELDS = ("name", "teams", "clickup", "scope_notes")
-_KINDS = ("client", "prospect")
+_KINDS = ("client", "prospect", "former")
+# kinds that are still an ACTIVE commercial relationship. 'former' is the only
+# one that is not; a prospect has not converted YET, which is not the same claim.
+_ACTIVE_KINDS = ("client", "prospect")
 
 
 class Registry:
@@ -433,13 +447,22 @@ class Registry:
         return [cid for cid, c in self.by_id.items() if not c.get("no_match")]
 
     def kind(self, client_id: str) -> Optional[str]:
-        """'client' (default) or 'prospect'; None if the id is unknown."""
+        """'client' (default), 'prospect' or 'former'; None if id is unknown."""
         c = self.by_id.get(client_id)
         return None if c is None else (c.get("kind") or "client")
 
+    def is_active(self, client_id: str) -> bool:
+        """Is this still a live commercial relationship? False for a `former`
+        client and for anything the registry does not hold. This is the ONE
+        question 'no longer active' is allowed to be asked as — never a string
+        read out of scope_notes."""
+        return self.kind(client_id) in _ACTIVE_KINDS
+
     def client_ids(self) -> list[str]:
         """The economics roster: matchable ids that are real clients — excludes
-        both no_match products and prospects (unpaid, kept only for context)."""
+        both no_match products and prospects (unpaid, kept only for context).
+        A `former` client STAYS: it paid, so its money belongs in the economics
+        even though nobody should chase it (see `is_active`)."""
         return [cid for cid in self.matchable_ids()
                 if self.kind(cid) != "prospect"]
 

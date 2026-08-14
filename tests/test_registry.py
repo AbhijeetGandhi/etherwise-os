@@ -188,6 +188,27 @@ class RegistryValidationTests(unittest.TestCase):
         self.assertNotIn("clara", reg.client_ids())          # not in economics
         self.assertIn("adelye", reg.client_ids())
 
+    def test_former_client_is_still_a_client_but_not_active(self):
+        """"no longer active" had no machine-readable form. The convention for a
+        finished engagement is a CLOSED contract row, which the Clients tab
+        already reads — and `zeeshan-rasheed` never had an Upwork contract, so
+        the fact lived in prose nobody can act on (Abhijeet 2026-08-14: "just
+        have him but I know we are not going to work with him ever again").
+
+        `former` is NOT `prospect`: a prospect has not converted YET, a former
+        client DID pay. So it stays on the economics roster — dropping it would
+        quietly delete past revenue — and `is_active()` is the one thing that
+        answers False."""
+        text = (SAMPLE + "  -\n    id: zeeshan-rasheed\n    name: Zeeshan Rasheed\n"
+                "    kind: former\n")
+        reg = self._load(text)
+        self.assertEqual(reg.kind("zeeshan-rasheed"), "former")
+        self.assertIn("zeeshan-rasheed", reg.matchable_ids())   # history attributes
+        self.assertIn("zeeshan-rasheed", reg.client_ids())      # it paid
+        self.assertFalse(reg.is_active("zeeshan-rasheed"))      # never chased
+        self.assertTrue(reg.is_active("adelye"))                # default kind
+        self.assertFalse(reg.is_active("nobody-at-all"))        # unknown != active
+
     def test_unknown_kind_rejected(self):
         with self.assertRaises(registry.RegistryError):
             self._load(SAMPLE + "  -\n    id: x\n    name: X\n    kind: lead\n")

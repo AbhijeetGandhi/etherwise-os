@@ -1,6 +1,6 @@
 # Amanda Thomas — Dossier
 
-_Compiled 2026-08-14 05:16 IST · 86 client facts (86 trusted) from 6 sources._
+_Compiled 2026-08-14 16:24 IST · 86 client facts (86 trusted) from 6 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

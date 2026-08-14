@@ -1,6 +1,6 @@
 # Etherwise — Proof Points & Capabilities
 
-_Compiled 2026-08-14 05:16 IST · 1661 agency + 1277 cross-client facts (2900 trusted)._
+_Compiled 2026-08-14 16:24 IST · 1660 agency + 1277 cross-client facts (2899 trusted)._
 
 > Agency-level knowledge extracted from client calls but NOT specific to one client. Cited; use CONFIRMED / CROSS-VERIFIED for outreach.
 
@@ -328,7 +328,6 @@ _Compiled 2026-08-14 05:16 IST · 1661 agency + 1277 cross-client facts (2900 tr
 - Abhijeet (agency) committed to sending the client a scoping document with his understanding of requirements and proposed next steps within one hour of the call. [CONFIRMED · fathom/140347413 @ I'll put together doc and have it sent over to you within the next hour and then we can go from there.]
 - Abhijeet Gandhi commits to delivering usable automations within a few weeks, starting small and building incrementally into a full end-to-end pipeline over time. [CONFIRMED · fathom/171448316 @ delivering automations in a way that you can actually start using it within a few weeks is my goal... we start very slow or small]
 - Abhijeet Gandhi committed to doing R&D on whether a VAPI-configured Twilio number can still send/receive SMS without breaking, and to report back. [CONFIRMED · fathom/56009113 @ 00:07:00]
-- Abhijeet Gandhi committed to fixing the link-generation bug and adding both new features, estimating completion within approximately two days (by Tuesday). [CONFIRMED · fathom/50909261 @ I'll probably have it read in two days / probably have it ready by the end of date uh tuesday]
 - Abhijeet Gandhi committed to two immediate priorities: (1) resolving the reply-draft thread-attachment issue (via API docs) within a couple of hours, and (2) providing an update on the Better Loans project by end of day. [CONFIRMED · fathom/53824402 @ 00:16:58]
 - Abhijeet agreed to forward Andrew a voice-agent questionnaire document (covering sample conversations, third-party integrations, agent persona, call flow) that the agency uses for voice agent scoping. [CONFIRMED · fathom/56778897 @ 00:22:00]
 - Abhijeet and Alphons plan to discuss a future engagement arrangement (hourly or fixed monthly with fixed hours per week) to continue work after the current scope ends. [CONFIRMED · fathom/126831266 @ 00:25:31]

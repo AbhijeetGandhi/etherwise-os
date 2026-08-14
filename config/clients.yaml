@@ -81,7 +81,7 @@ clients:
       - Felix Adrian
       - Thomas Charlier
       - Jackson Ly
-    scope_notes: "Jackson Ly is beglaubigt-side, confirmed by Abhijeet 2026-08-14 and by his address jackson@beglaubigt.de (proof-points, email/19f5fd156893e978). He is on 18 attributed beglaubigt calls. ONE call disagrees and is NOT resolved by this alias: fathom/163477950 (src 1832, 2026-07-14) is filed under netfly by fathom_classifier:high, a MODEL verdict, although its only external speaker is Jackson and it says 'i messaged yannis about that' (Yannis = Ioannis Pirigkos) while walking a HubSpot-to-Dialpad automation. Left alone deliberately: re-pointing an already-attributed source moves 14 facts between dossiers and is Abhijeet's call, not a rule's."
+    scope_notes: "Jackson Ly is beglaubigt-side, confirmed by Abhijeet 2026-08-14 and by his address jackson@beglaubigt.de (proof-points, email/19f5fd156893e978). He is on 18 attributed beglaubigt calls. RESOLVED 2026-08-14 — fathom/163477950 (src 1832, 2026-07-14) was filed under netfly by fathom_classifier:high, a MODEL verdict; Abhijeet answered 'yes jackson is beglaubig' and it was RE-POINTED here, moving 14 facts out of netfly. The evidence on the call itself: Jackson is its only external speaker; Abhijeet says 'i messaged yannis about that' (Yannis = Ioannis Pirigkos, this client's lead) and at 00:38:10 'I have the Google login of Ioannis and I am not able to log into Dialpad with his account' — the Dialpad account being automated is Ioannis's. The classifier had only HubSpot-to-Dialpad vocabulary, which netfly and beglaubigt share. The event carries resolved_by='hand', so no retroactive rule may re-open it."
     clickup: beglaubigt.de
     slack:
       workspace: Beglaubigt.de
@@ -500,11 +500,6 @@ clients:
     billing:
       canonical: PT Bank Mandiri
   -
-    id: raphael-mahir
-    name: Raphael Mahir
-    billing:
-      canonical: Raphael Mahir
-  -
     id: rasheed-khan
     name: Rasheed Khan
     aliases:
@@ -575,11 +570,6 @@ clients:
       canonical: Saman Shafigh
       ledger_label: S
     scope_notes: "Upwork contract 40430519 (AI Engineer — Conversational Pathways, FIXED, 2025-04-27 to 2025-07-18, ENDED). $450.00 gross / $404.55 net across 3 rows. Client side had two people: Saman S. and Max S. Upwork TRUNCATED assignment_company to 'S' — recorded as billing.ledger_label, deliberately NOT an alias (a one-character token would match inside anything) and deliberately NOT billing.canonical (that is the card DISPLAY name)."
-  -
-    id: servicepeople
-    name: Servicepeople
-    billing:
-      canonical: Servicepeople
   -
     id: simran-bhola
     name: Simran Bhola
@@ -665,13 +655,20 @@ clients:
       - Visa Gate
       - Visa-Gate
       - "Raphael Mahir | Visa Gate GmbH"
+      - Raphael Mahir
+      - Servicepeople
+      - "Raphael Mahir, Servicepeople"
     emails:
       - visa-gate.com
       - raphael.mahir@visa-gate.com
       - martin.schisslbauer@gmail.com
+    upwork_rooms:
+      - room_58a47082ad364139d76948bad0ca70b8
+      - room_d90fe8da13cc5ea73abc7e1fe7f22b65
+      - room_85c0a6678623a2cd8d488c28cac212c1
     billing:
       canonical: Visa Gate GmbH
-    scope_notes: "Upwork contracts 40655756 (AI-powered purchasing Bot) + 40951616 (Postal forwarding service), both CLOSED. Contacts: Raphael Mahir (raphael.mahir@visa-gate.com), Martin Schisslbauer (martin.schisslbauer@gmail.com, personal gmail — address-only). NOTE: standalone client 'raphael-mahir' may be the same person — merge is Abhijeet's call."
+    scope_notes: "MERGED 2026-08-14: the registry held ONE client three times — as `visa-gate` (the company), `servicepeople` (its Upwork account label) and `raphael-mahir` (the person). Abhijeet: 'service people rapheal and visa gate all three are same'. `visa-gate` survives because it is the only one of the three that carries an identity anchor — the visa-gate.com domain and raphael.mahir@visa-gate.com — and the only one holding real knowledge (the kick-off call fathom/64401809 and its 16 cited facts; the other two held nothing but derived CRM numbers, which are re-derived from the ledger on every compile). Raphael names himself 'Raphael Mahir | Visa Gate GmbH' on that call. The three aliases are LOAD-BEARING and must not be trimmed: contracts.client_company and threads.room_name literally say 'Raphael Mahir, Servicepeople' and transactions.assignment_company says 'Servicepeople', so removing them strands the money. Upwork contracts 40655756 (AI-powered purchasing Bot, FIXED) + 40951616 (Postal forwarding service, HOURLY), both CLOSED; Upwork company id 1014458706708754432 (offers 107405750 / 107818263 / 107818282). Contacts: Raphael Mahir (raphael.mahir@visa-gate.com), Martin Schisslbauer (martin.schisslbauer@gmail.com, personal gmail — address-only). This merge closed the last dossier-vs-Money disagreement: $900.00 on the Clients tab + $113.75 filed under a second row 'Raphael Mahir, Servicepeople' == the dossier's $1,013.75 gross."
   -
     id: vitaliy-kahanets
     name: Vitaliy Kahanets
@@ -680,6 +677,15 @@ clients:
     clickup: Vitaliy
     aliases:
       - Vitaliy
+  -
+    id: zeeshan-rasheed
+    name: Zeeshan Rasheed
+    kind: former
+    fathom_names:
+      - zeeshan rasheed
+    billing:
+      canonical: Zeeshan Rasheed
+    scope_notes: "FORMER micro-client. Abhijeet 2026-08-14: 'yeah just have him but I know we are not going to work with him ever again' — hence kind: former (registered so three calls of delivery history survive; never chased, reg.is_active() is False). Three Fathom calls 2025-03-09 → 2026-01-27 (fathom/50909261, fathom/114797497, fathom/117473152): an LLM benchmark harness (BBH / GSM8K / ARC token sizes) and an AI code builder a student of Abhijeet's had built. NO Upwork thread, NO contract, $0.00 in the ledger — and that $0.00 means NOT MEASURED, never no money: on fathom/50909261 @ 00:01:00 he says 'this problem need to be sold with the previous money and the next two features ... so that I can $50 for that', i.e. he paid OFF-LEDGER, outside every rail this system reads. HE IS NOT rasheed-khan — a different person, different work, non-overlapping window (rasheed-khan is $420.00 gross on Upwork contracts 35757642 / 36079611, 2023-11 → 2024-01; these calls are 2025-03 → 2026-01 with no contract at all). Never merge the two, and never let a bare 'Rasheed' become an identifier for either. Also: fathom/117473152 is conducted in URDU with him as the only external speaker, and sat on fathom-kind:internal-language until 2026-08-14 — his own client call, bucketed as an internal one."
   -
     id: the-cradle-company
     name: The Cradle Company

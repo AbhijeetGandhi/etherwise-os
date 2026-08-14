@@ -28,6 +28,28 @@ against the counts rather than argued about.
 Yogita is detected in the transcript body, not the participants list — she
 appears in ZERO structured participant lists but is named in 139 transcripts
 (she joins via someone else's device or is only ever addressed by name).
+
+WHAT THIS MODULE CANNOT SEE, AND WHO COMPENSATES (2026-08-14)
+------------------------------------------------------------
+`classify()` reads the SCRIPT and Yogita, and nothing else — it has no notion of
+who else was in the room. So rule 2 is capable of calling an EXTERNAL client call
+internal purely because it was not held in English, and it did:
+`fathom/117473152` is Zeeshan Rasheed's own call, conducted in Urdu (Fathom
+transcribes the Hindi-adjacent stretches in Devanagari, 16.3%), and it sat on
+`fathom-kind:internal-language` — a bucket asserting the opposite of the truth.
+
+Measured over the live corpus (var/agent-scratch/four/07-langaudit): the Hindi
+rule fires on 88 Fathom calls, exactly 3 of which have any external speaker, and
+0 of those 3 resolved to a registered client at the time. So the exposure is real
+but small, and it grows by exactly one row each time a speaker on such a call is
+registered.
+
+The guard therefore does NOT live here — this file stays a faithful statement of
+the rule Abhijeet gave. It lives at the one call site that acts on the verdict,
+`loom_classifier.reclassify_queued` pass 0a, where the deterministic speaker
+signals are already loaded: a registered client audibly on the call falsifies
+"internal" and the exclusion is withheld. That is the same `speaker_guard` law
+every other exclusion in this system is already subject to.
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # Visa Gate GmbH — Dossier
 
-_Compiled 2026-08-14 05:16 IST · 16 client facts (16 trusted) from 2 sources._
+_Compiled 2026-08-14 16:24 IST · 20 client facts (20 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -11,6 +11,10 @@ _Compiled 2026-08-14 05:16 IST · 16 client facts (16 trusted) from 2 sources._
 
 ## The numbers
 
+- Contract: AI-powered purchasing Bot — status CLOSED. [CONFIRMED · CRM:contracts/40655756]
+- Contract: Postal forwarding service — status CLOSED. [CONFIRMED · CRM:contracts/40951616]
+- Revenue to date (GROSS, billed): $1,013.75 across 6 revenue transactions (2025-06-11 → 2025-07-23). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $899.87 — gross $1,013.75 less $112.76 Upwork service fees, $1.12 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The project budget was raised from approximately $600 to approximately $900 (roughly 50% increase) across three defined steps. [CONFIRMED · fathom/64401809 @ 00:01:00]
 
 ## People

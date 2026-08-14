@@ -320,8 +320,9 @@ def create_client(client_id: str, name: str, *, kind: str = "prospect",
     original text is restored and the error returned. Never commits a file it
     could not read back."""
     kind = (kind or "prospect").strip().lower()
-    if kind not in ("client", "prospect"):
-        return {"error": "kind must be 'client' or 'prospect', got {!r}".format(kind)}
+    if kind not in registry._KINDS:
+        return {"error": "kind must be one of {}, got {!r}".format(
+            registry._KINDS, kind)}
     client_id = (client_id or "").strip().lower()
     # ONE LINE, ALWAYS. registry._lines() is line-based, so a newline inside a
     # double-quoted scalar does not round-trip — it would write a file the

@@ -77,6 +77,36 @@ class ParseCase(unittest.TestCase):
             income = [b for b in rows if b["kind"] == "income"]
         self.assertTrue(all(b["customer"] == "Optimize IS" for b in income))
 
+    def test_fee_zero_is_read_from_stripe_and_proven_by_the_payouts(self):
+        """'Fee 0.00' was cited on 2026-08-13 as a reason to doubt the $574.39
+        was real revenue at all — "not what a live Stripe card charge looks
+        like". It is not a card charge: every Source here is `py_` (a charge on
+        a non-card payment method) and the two settlement rows are `po_`
+        payouts, where a zero fee is structural.
+
+        And the zero is not merely REPORTED, it is arithmetic: each settled
+        payment is followed by a payout of the identical amount to the paisa,
+        which a deducted fee makes impossible. Abhijeet confirmed the revenue on
+        2026-08-14 ("optimize is real revenue... this was their latest payout"),
+        and this pins WHY the number is trustworthy rather than just asserting
+        it. The parser must keep READING the Fee column too — defaulting it to
+        zero would make a real fee invisible."""
+        rows = stripe_csv.parse_balance_history(BALANCE_CSV)
+        self.assertTrue(all(r["fee_minor"] == 0 for r in rows))
+        self.assertTrue(all(r["net_minor"] == r["amount_minor"] for r in rows))
+        paid = {abs(r["amount_minor"]) for r in rows if r["kind"] == "settlement"}
+        got = {r["amount_minor"] for r in rows if r["kind"] == "income"}
+        self.assertTrue(paid <= got, "a payout must equal its payment exactly")
+        rec = stripe_csv.reconcile(rows)
+        self.assertEqual(rec["fees_minor"], 0)
+        self.assertEqual(rec["payments_total_minor"],
+                         rec["settlement_total_minor"] + rec["fees_minor"]
+                         + rec["balance_minor"])
+        # a REAL fee still lands: the column is parsed, never assumed
+        withfee = stripe_csv.parse_balance_history(
+            BALANCE_CSV.replace("14574.08,0.00,14574.08", "14574.08,574.08,14000.00"))
+        self.assertEqual(stripe_csv.reconcile(withfee)["fees_minor"], 57408)
+
     def test_reconcile_fails_when_settlements_exceed_payments(self):
         bad = stripe_csv.parse_balance_history(
             BALANCE_CSV.replace("-17329.69", "-99000.00"))

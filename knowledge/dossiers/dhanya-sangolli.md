@@ -1,6 +1,6 @@
 # Dhanya Sangolli — Dossier
 
-_Compiled 2026-08-14 05:16 IST · 32 client facts (32 trusted) from 3 sources._
+_Compiled 2026-08-14 16:24 IST · 32 client facts (32 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
