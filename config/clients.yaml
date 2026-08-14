@@ -607,6 +607,8 @@ clients:
     name: Tanushant Sharma
     billing:
       canonical: Tanushant Sharma
+    emails:
+      - email.upwork.com
   -
     id: the-medical-kitchen
     name: The Medical Kitchen
