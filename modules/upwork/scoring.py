@@ -120,9 +120,10 @@ def hard_rule_skip(job: dict) -> Optional[str]:
 
 _MATRIX = """\
 You score Upwork jobs for Etherwise (Abhijeet Gandhi — Top Rated Plus, $100K+
-earned, $32.50/hr; core stack Make.com, Airtable, Vapi, GoHighLevel, Python,
-AI/LLM). v2.3 scoring matrix — score each dimension, then bonuses, then the
-gate:
+earned; Upwork profile rate $51.50/hr, he bids $50/hr as standard and $45/hr is
+the practical compromise floor; core stack Make.com, Airtable, Vapi,
+GoHighLevel, Python, AI/LLM). v2.3 scoring matrix — score each dimension, then
+bonuses, then the gate:
 
 Dimensions (base, max 28):
 - Skill Fit 1-5, WEIGHTED x2 (strongest win predictor)
@@ -236,23 +237,99 @@ def _gate_exempt(job: dict) -> bool:
 
 
 # ── proposal drafting (>=16 at scan time, M1 decision) ───────────────────────
+#
+# THE SOURCE OF TRUTH IS upwork/proposal-writing-master-reference.md, IN FULL.
+#
+# Until 2026-08-16 this read `skills/upwork-proposal-writer/SKILL.md`, sliced
+# `[:6000]` against a 24,271-char file. Three quarters of the playbook — every
+# hard rule that matters — never reached the model, and the cut landed
+# mid-sentence in "2. **Budget** — Is it worth t". Measured across 2,279 live
+# drafts: 1,710 contain an em dash (the ban lives at char ~11,700), 603 exceed
+# the length cap (char ~10,300), 18 quote the retired $32.50 rate.
+#
+# The surviving quarter was worse than nothing: it ORDERED a knowledge-base
+# lookup ("Before writing ANY proposal, you MUST read ... proof-points.md") that
+# a single-shot, tool-less gateway call cannot perform. Told to cite a file it
+# could not open, the model invented. Evidence is now SUPPLIED, in the user
+# message, by modules/upwork/evidence.py — never ordered.
+#
+# Whole file, not a condensation: a scanner-sized digest is a third artifact
+# that drifts from the file Abhijeet edits by hand, which is the exact failure
+# this fixes. It costs ~1 dollar a month at observed cache-hit rates.
+PROPOSAL_REFERENCE = (config.WORKSPACE_ROOT
+                      / "upwork/proposal-writing-master-reference.md")
 
-PROPOSAL_SKILL = config.WORKSPACE_ROOT / "skills/upwork-proposal-writer/SKILL.md"
+# The ONE deterministic exclusion, by exact header. Section 16 is a list of the
+# founder's absolute local paths plus an Airtable base id: useless to a drafter
+# and no reason to ship a filesystem layout to the API 25 times a day.
+EXCLUDED_SECTIONS = ("## Section 16: File Locations",)
+
+_DRAFT_SYSTEM_PREFIX = (
+    "You draft Upwork proposals for Abhijeet Gandhi (Etherwise).\n\n"
+    "The reference below is the COMPLETE and ONLY source of his voice rules,"
+    " anchor numbers, rate and positioning. Follow it exactly.\n\n"
+    "You have no tools and cannot open files. Everything you are permitted to"
+    " assert is either in this reference or in the EVIDENCE block of the user"
+    " message. If a number, a client name or a project detail is in neither,"
+    " you may not write it — write the sentence without it, or leave the claim"
+    " out. An unsupported specific is worse than no specific.\n\n"
+    "--- REFERENCE ---\n\n")
 
 
-def draft_proposal(job: dict, task_name: str, db_path=None) -> str:
-    skill = PROPOSAL_SKILL.read_text()[:6000]
+def proposal_reference() -> str:
+    """The master reference, in full, minus EXCLUDED_SECTIONS.
+
+    Never sliced. tests/test_upwork_drafting.py pins the rules that used to
+    fall off the end (em dashes, contractions, length, $50/hr) so a future
+    `[:n]` cannot come back quietly."""
+    text = PROPOSAL_REFERENCE.read_text()
+    for header in EXCLUDED_SECTIONS:
+        text = _drop_section(text, header)
+    return text.strip()
+
+
+def _drop_section(text: str, header: str) -> str:
+    """Remove one markdown section: the header line through the line before the
+    next `## ` heading or `---` rule. Header matched as a line prefix, so a
+    mention of the section elsewhere is not a cut point."""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.startswith(header)), None)
+    if start is None:
+        return text
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].rstrip()
+        if stripped.startswith("## ") or stripped == "---":
+            end = i
+            break
+    return "".join(lines[:start] + lines[end:])
+
+
+def draft_system() -> str:
+    return _DRAFT_SYSTEM_PREFIX + proposal_reference()
+
+
+def job_brief(job: dict) -> str:
+    return ("Draft a proposal for this job. Return ONLY the proposal text.\n\n"
+            f"Title: {job.get('title')}\n"
+            f"Description: {(job.get('description') or '')[:3000]}\n"
+            f"Type: {job.get('contract_type')}"
+            f" Budget: {job.get('fixed_budget') or ''}"
+            f" ${job.get('hourly_min')}-{job.get('hourly_max')}/hr\n"
+            f"Skills: {job.get('skills_json')}")
+
+
+def draft_proposal(job: dict, task_name: str, db_path=None,
+                   evidence_block: Optional[str] = None) -> str:
+    """One drafting call. `evidence_block` (from modules.upwork.evidence) goes
+    in the USER message, never the system block — the system block is prompt-
+    cached for an hour and per-job evidence would bust the cache on every job."""
+    user = job_brief(job)
+    if evidence_block:
+        user = user + "\n\n" + evidence_block
     result = runner.claude_call(
         task_name=task_name, model_key="drafting",
-        system=("You draft Upwork proposals for Abhijeet Gandhi (Etherwise)."
-                " Follow these rules exactly:\n\n" + skill),
-        user_content=("Draft a proposal for this job. Return ONLY the"
-                      " proposal text.\n\n"
-                      f"Title: {job.get('title')}\n"
-                      f"Description: {(job.get('description') or '')[:3000]}\n"
-                      f"Type: {job.get('contract_type')}"
-                      f" Budget: {job.get('fixed_budget') or ''}"
-                      f" ${job.get('hourly_min')}-{job.get('hourly_max')}/hr\n"
-                      f"Skills: {job.get('skills_json')}"),
+        system=draft_system(), user_content=user,
         purpose=f"draft {job.get('id')}", db_path=db_path)
     return result.text.strip()

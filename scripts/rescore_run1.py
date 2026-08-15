@@ -44,7 +44,6 @@ ROOT = next(p for p in Path(__file__).resolve().parents
 DB = ROOT / "etherwise-os/etherwise.db"
 REPORTS = ROOT / "reports"
 EVAL_REPORT = REPORTS / "scoring-eval-2026-06-12.md"
-PROPOSAL_SKILL = ROOT / "skills/upwork-proposal-writer/SKILL.md"
 TASK_NAME = "rescore-run1-jobs"
 DRAFT_THRESHOLD = 16
 
@@ -114,22 +113,17 @@ def regen_breakdowns(rows, approved):
 
 
 def draft_for(row):
-    """Proposal draft via the gateway using the v1 proposal-writer rules."""
+    """Proposal draft via the gateway, from the SAME master reference the live
+    scanner uses (2026-08-16). This used to read SKILL.md[:6000] — the identical
+    truncation bug as modules/upwork/scoring.py; SKILL.md is now a redirect stub,
+    so this path would have drafted from nothing at all."""
     from core import claude_gateway as gw
+    from modules.upwork import scoring
 
-    skill = PROPOSAL_SKILL.read_text()[:6000]
     result = gw.call(
         task_name="rescore_drafts", model_key="drafting",
-        system=("You draft Upwork proposals for Abhijeet Gandhi (Etherwise)."
-                " Follow these rules exactly:\n\n" + skill),
-        user_content=("Draft a proposal for this job. Return ONLY the"
-                      " proposal text.\n\n"
-                      f"Title: {row.get('title')}\n"
-                      f"Description: {(row.get('description') or '')[:3000]}\n"
-                      f"Type: {row.get('contract_type')}"
-                      f" Budget: {row.get('fixed_budget') or ''}"
-                      f" ${row.get('hourly_min')}-{row.get('hourly_max')}/hr\n"
-                      f"Skills: {row.get('skills_json')}"),
+        system=scoring.draft_system(),
+        user_content=scoring.job_brief(row),
         purpose=f"draft for {row['id']}")
     return result.text.strip()
 
