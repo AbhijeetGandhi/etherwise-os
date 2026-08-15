@@ -95,7 +95,8 @@ def navigate_tab(tab_ref, url: str) -> None:
 
 
 def _update_scored(conn, jid: str, verdict: dict, draft: Optional[str],
-                   skip_reason: Optional[str]) -> None:
+                   skip_reason: Optional[str],
+                   evidence_prov: Optional[dict] = None) -> None:
     if skip_reason:
         cur = conn.execute(
             f"UPDATE {TABLE} SET status='Skipped', hard_rule_skip=?,"
@@ -105,12 +106,14 @@ def _update_scored(conn, jid: str, verdict: dict, draft: Optional[str],
         cur = conn.execute(
             f"""UPDATE {TABLE} SET score=?, score_breakdown_json=?,
                 loom_flag=?, draft_proposal=?, draft_word_count=?, status=?,
+                draft_evidence_json=?,
                 first_scored_at=datetime('now'), updated_at=datetime('now')
                 WHERE id=? AND status='New'""",
             (verdict["score"], json.dumps(verdict["breakdown"]),
              verdict["loom_flag"], draft,
              len(draft.split()) if draft else None,
-             "Drafted" if draft else "Scored", jid))
+             "Drafted" if draft else "Scored",
+             json.dumps(evidence_prov) if evidence_prov else None, jid))
     assert cur.rowcount == 1, f"{jid}: expected exactly one New row"
 
 
@@ -236,18 +239,33 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             f"SELECT * FROM {TABLE} WHERE status='New' ORDER BY fetched_at")]
 
     scored, skipped, drafted = [], [], 0
+    grounded = 0        # drafts that carried supplied, cited evidence
+    ungrounded = 0      # drafts written from the reference alone (honest)
+    blocked = 0         # drafts that failed validation on EVERY attempt
     for row in new_rows:
         skip = scoring.hard_rule_skip(row)
-        verdict, draft = None, None
+        verdict, draft, prov = None, None, None
         if not skip:
             verdict = scoring.score_job(row, task_name=ctx.task_name,
                                         db_path=dbp)
             if verdict["score"] >= config.HOT_LEAD_THRESHOLD:
-                draft = scoring.draft_proposal(row, task_name=ctx.task_name,
-                                               db_path=dbp)
-                drafted += 1
+                draft, prov = scoring.draft_proposal_grounded(
+                    row, task_name=ctx.task_name, db_path=dbp)
+                if draft:
+                    drafted += 1
+                    grounded += 1 if prov.get("status") == "supplied" else 0
+                    ungrounded += 1 if prov.get("status") != "supplied" else 0
+                else:
+                    # every claim must trace or nothing ships. The card still
+                    # gets created; it just has no draft on it.
+                    blocked += 1
+                    ctx.anomaly("draft_validation_failed", "warn",
+                                {"job_id": row["id"], "title": row.get("title"),
+                                 "problems": prov.get("problems", [])})
+                    ctx.log(f"{row['id']}: draft BLOCKED, untraceable claims"
+                            f" — {json.dumps(prov.get('problems', []))[:300]}")
         with db.connect(dbp) as conn:
-            _update_scored(conn, row["id"], verdict, draft, skip)
+            _update_scored(conn, row["id"], verdict, draft, skip, prov)
         (skipped if skip else scored).append(
             {"id": row["id"], "score": verdict["score"] if verdict else None,
              "skip": skip})
@@ -353,7 +371,9 @@ def scan(ctx, _sleep=time.sleep) -> dict:
 
     return {"feeds": feeds, "claimed": sum(f["new"] for f in feeds.values()),
             "scored": len(scored), "skipped": len(skipped),
-            "drafts": drafted, "clickup_intents": intents,
+            "drafts": drafted, "drafts_grounded": grounded,
+            "drafts_ungrounded": ungrounded, "drafts_blocked": blocked,
+            "clickup_intents": intents,
             "clickup_pushed": pushed,
             "hot": len(hot), "digest": digest_status,
             "icp": len(icp_hits), "icp_near": len(icp_near),

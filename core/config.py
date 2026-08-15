@@ -165,6 +165,24 @@ SWEEP_INTERVAL_HOURS = 2       # within work hours; empty-skip short-circuit
 INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately (decision #9)
 HOT_LEAD_THRESHOLD = 16
 LOOM_FLAG_THRESHOLD = 22
+
+# ── Proposal evidence (modules/upwork/evidence.py, 2026-08-16) ───────────────
+# Deterministic KB retrieval for a draft. Every one of these is a gate, not a
+# preference: the drafter used to be ORDERED to look facts up and, being a
+# tool-less single-shot call, invented them instead.
+EVIDENCE_MIN_GRADE = 2        # 0=tool inventory, 1=plain, 2=insight OR number, 3=both
+EVIDENCE_MIN_FACTS = 3        # below this: no evidence block, plain path, `evidence: none`
+EVIDENCE_MAX_FACTS = 8        # ~600 prompt tokens; more is dilution, not proof
+EVIDENCE_PER_TOOL = 3         # stops one dense tool crowding out the rest of the stack
+# A MEASURED claim decays into a wrong number: the same statement reads "80+
+# automations" (2024-11) and "3,000+" (2026-04). Citing the old one is a 37x
+# understatement in his own voice. An architectural constraint ages far better.
+EVIDENCE_MEASURED_MAX_AGE_DAYS = 365
+EVIDENCE_MAX_AGE_DAYS = 1095
+# Post-draft validator: integers at or below this are enumeration ("three
+# phases", "2 weeks", "1."), not claims. Anything above must trace to the
+# reference, the supplied evidence, or the job post itself.
+EVIDENCE_FREE_INTEGER_MAX = 12
 # Founder INTENT, carried as config so the system respects it instead of reading
 # neglect into deliberate choice. When set to a YYYY-MM-DD, the Today screen shows
 # accumulated hot leads as a 'ready when you resume' backlog (ranked by ICP/score),

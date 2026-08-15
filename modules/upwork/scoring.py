@@ -333,3 +333,68 @@ def draft_proposal(job: dict, task_name: str, db_path=None,
         system=draft_system(), user_content=user,
         purpose=f"draft {job.get('id')}", db_path=db_path)
     return result.text.strip()
+
+
+def _fact_note(f: dict) -> dict:
+    """The provenance row for one supplied fact — enough to audit the claim
+    later without copying the whole KB into scored_jobs."""
+    return {"id": f.get("id"), "tool": f.get("tool"), "grade": f.get("grade"),
+            "age_days": f.get("age_days"),
+            "citation": (f.get("citation") or "")[:200],
+            "fact_text": (f.get("fact_text") or "")[:300]}
+
+
+def draft_proposal_grounded(job: dict, task_name: str, db_path=None):
+    """(draft_text_or_None, provenance) — the whole emit ladder, code-enforced.
+
+    1. Enough graded evidence  -> draft WITH the numbered block, then validate.
+    2. Rejected, or there was never enough evidence -> plain draft, validate.
+    3. Rejected again -> NO DRAFT. The card is still created; he writes it.
+
+    Step 3 is the point. A claim that traces to nothing must not be able to
+    survive the emit path — a hallucinated proof point sitting on a ClickUp
+    card, one copy-paste from a client, is worse than an empty card. This has
+    always been the honest outcome; before today nothing could tell."""
+    from modules.upwork import evidence     # local: keeps import order simple
+
+    ev = evidence.for_job(job, db_path=db_path)
+    reference = proposal_reference()
+    prov = {"status": ev["status"], "found": ev.get("found", 0),
+            "stack": ev.get("stack", [])}
+    if ev.get("reason"):
+        prov["reason"], prov["min"] = ev["reason"], ev.get("min")
+
+    # Two rungs, always. When evidence exists rung 1 carries it and rung 2 is
+    # the plain path; when it does not, BOTH rungs are plain and the second
+    # gets the validator's complaint. Measured 2026-08-16: a thin-evidence job
+    # with only one rung got exactly one shot and was blocked outright, which
+    # is not a fallback, it is a coin flip.
+    plan = [("evidence", ev["block"], ev["facts"])] \
+        if ev["status"] == "supplied" else [("plain", None, [])]
+    plan.append(("plain", None, []))
+
+    last_problems = []
+    for attempt, block, facts in plan:
+        addendum = evidence.retry_note(last_problems)
+        text = draft_proposal(
+            job, task_name, db_path=db_path,
+            evidence_block="\n\n".join(p for p in (block, addendum) if p)
+            or None)
+        ok, problems = evidence.validate_draft(text, reference, facts, job)
+        if ok:
+            prov.update({"attempt": attempt, "validated": True,
+                         "retried": bool(last_problems),
+                         "facts": [_fact_note(f) for f in facts]})
+            if last_problems:
+                prov["rejected"] = last_problems[:6]
+            if attempt == "plain" and ev["status"] == "supplied":
+                # evidence existed; the model still made something up with it
+                prov["status"] = "none"
+                prov["reason"] = "evidence_draft_failed_validation"
+            return text, prov
+        last_problems = problems
+
+    prov.update({"attempt": None, "validated": False, "status": "none",
+                 "reason": "validation_failed_on_every_attempt",
+                 "problems": last_problems[:12]})
+    return None, prov

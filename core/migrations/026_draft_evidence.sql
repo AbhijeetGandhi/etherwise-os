@@ -1,0 +1,23 @@
+-- 026: record what a draft was actually allowed to know.
+--
+-- Until 2026-08-16 the drafter was ORDERED to read knowledge-base files inside
+-- a tool-less single-shot call. It could not, so it invented, and nothing in
+-- the row said whether a given draft had any grounding at all. A draft that
+-- cited real evidence and a draft that made its specifics up were byte-
+-- identical as far as scored_jobs was concerned.
+--
+-- draft_evidence_json holds the provenance for the draft in the same row:
+--   {"status": "supplied"|"none",          -- honest degradation is recorded,
+--    "found": 8, "min": 3,                 --   never inferred from silence
+--    "reason": "insufficient_graded_facts",
+--    "stack": ["airtable","zapier"],
+--    "validated": true|false,
+--    "attempt": "evidence"|"plain",        -- which path produced the text
+--    "problems": [ {kind, value, ...} ],   -- why a draft was rejected
+--    "facts": [ {id, tool, grade, age_days, citation, fact_text} ]}
+--
+-- 'none' is a first-class, expected value: the KB holds 374 facts for make.com
+-- and 283 for airtable, but 3 for Shopify and none at all for Retell or Kommo.
+-- A NULL here means the row predates this column, which is not the same thing.
+
+ALTER TABLE scored_jobs ADD COLUMN draft_evidence_json TEXT;
