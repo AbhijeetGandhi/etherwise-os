@@ -1,6 +1,6 @@
 # Mustafa Ahmed — Dossier
 
-_Compiled 2026-08-18 18:19 IST · 109 client facts (108 trusted) from 8 sources._
+_Compiled 2026-08-18 19:12 IST · 109 client facts (108 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

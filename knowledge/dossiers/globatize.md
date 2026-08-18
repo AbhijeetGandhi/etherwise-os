@@ -1,6 +1,6 @@
-# Globaltize — Dossier
+# Globaltize LLC — Dossier
 
-_Compiled 2026-08-18 18:19 IST · 8 client facts (8 trusted) from 2 sources · 9 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-18 19:12 IST · 8 client facts (8 trusted) from 2 sources · 9 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
