@@ -1,13 +1,13 @@
 # Optimize IS — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 19 client facts (19 trusted) from 3 sources._
+_Compiled 2026-08-18 18:19 IST · 19 client facts (19 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## The numbers
 
-- Revenue to date (GROSS, billed): $574.39 across 3 revenue transactions (2026-07-02 → 2026-07-30). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $574.39 — the same as gross; the ledger carries no fee, tax or refund rows for this client. [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $1,162.36 across 4 revenue transactions (2026-07-02 → 2026-08-13). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $1,162.36 — the same as gross; the ledger carries no fee, tax or refund rows for this client. [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## People
 

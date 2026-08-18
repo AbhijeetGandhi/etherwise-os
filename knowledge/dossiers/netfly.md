@@ -1,6 +1,6 @@
 # NETFLY — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 619 client facts (608 trusted) from 50 sources · 65 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-18 18:19 IST · 619 client facts (608 trusted) from 50 sources · 65 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -92,8 +92,8 @@ _Compiled 2026-08-14 16:24 IST · 619 client facts (608 trusted) from 50 sources
 - NetFly's system serves more than 10 law firms [CONFIRMED · https://www.loom.com/share/2429942eed364a7a8291bb62bde55383 @ 00:45 'we already have been serving more than 10 law firms']
 - No logs exist for July 25 at the time of this call. [CONFIRMED · https://www.loom.com/share/520bc5f2758f419a9f4b46afc7943ebc @ 0:00 - 'no logs for 25']
 - On July 24, there were 20 rows in the logging system, representing 20 leads who replied to messages sent that day. [CONFIRMED · https://www.loom.com/share/520bc5f2758f419a9f4b46afc7943ebc @ 0:00-0:15 - 'there are only 20 rows for 24' and '20 leads replied to our message']
-- Revenue to date (GROSS, billed): $4,792.50 across 11 revenue transactions (2026-05-03 → 2026-07-17). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $4,309.23 — gross $4,792.50 less $479.27 Upwork service fees, $4.00 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $4,873.50 across 12 revenue transactions (2026-05-03 → 2026-08-14). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $4,382.05 — gross $4,873.50 less $487.37 Upwork service fees, $4.08 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - Setting up improved logging with conversation reframing by send-date would require 2-3 hours of development. [CONFIRMED · https://www.loom.com/share/520bc5f2758f419a9f4b46afc7943ebc @ 5:15-5:20 - 'we'll need to spend, like, 2-3 hours to set up these new set of logs']
 - The agency currently has at least three active clients, with a fourth potential client also mentioned as having been recently contacted. [CONFIRMED · fathom/143045470 @ 00:24:00]
 - The client's contacts system uses a database structure where leads begin as contacts, may become opportunities, and can be marked as lost or deleted [CONFIRMED · https://www.loom.com/share/f509183ecba94252b71ccaa67a9459dd @ 'contact is like your database', 'when you mark any leads as lost, those contacts will automatically be deleted']

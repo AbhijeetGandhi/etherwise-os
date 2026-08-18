@@ -1,6 +1,6 @@
 # Sale Pros Corp — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 75 client facts (71 trusted) from 11 sources._
+_Compiled 2026-08-18 18:19 IST · 75 client facts (71 trusted) from 11 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

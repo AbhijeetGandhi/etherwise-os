@@ -1,6 +1,6 @@
 # Zeeshan Rasheed — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 23 client facts (23 trusted) from 4 sources._
+_Compiled 2026-08-18 18:19 IST · 23 client facts (23 trusted) from 4 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

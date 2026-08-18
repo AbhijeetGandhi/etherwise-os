@@ -275,6 +275,25 @@ clients:
     billing:
       canonical: Gethybrid
   -
+    id: globatize
+    name: Globaltize
+    kind: client
+    aliases:
+      - Globatize
+      - Globaltize LLC
+      - Nick Esquivel
+      - Ryan Stomberg
+      - Royan Stomberg
+      - "Royan Stomberg, Ryan Stomberg"
+    emails:
+      - globaltize.com
+    upwork_rooms:
+      - room_c92bbd26a8799dd5fd8aa4b5de92e37a
+      - room_0d412d500d8d84a8837e50ac2e5a5ce2
+    billing:
+      canonical: Globaltize
+    scope_notes: "CLIENT since 2026-08-17 — Upwork contract 44315695 (Ai Automation Engineer, HOURLY, ACTIVE). Recruitment agency, places international talent for US companies, mostly LatAm; ~40 staff. TWO ENTRY POINTS, ONE CLIENT, which is why both rooms are claimed here: Ryan Stomberg (recruitment team) came in on Upwork and that thread DIED on rate ($45 asked vs $25 offered, 2026-08-16 04:45Z); 37 seconds earlier Nick Esquivel (principal) had submitted the Etherwise site contact form saying - my partner reached out on Upwork - and reopened it on LinkedIn. SPELLING: every first-party source says GLOBALTIZE (nick@globaltize.com, globaltize.com, Checkr tenant globaltize-884c6a1702); the id slug and clients/Globatize keep Abhijeet's spelling, unaligned on purpose — rename via scripts/merge_clients.py if he wants. The legal suffix LLC is UNVERIFIED. Month one billed entirely on Upwork, off-platform from month two (Abhijeet's own condition). Full record: clients/Globatize/context.md"
+  -
     id: hermon
     name: Hermon
     aliases:

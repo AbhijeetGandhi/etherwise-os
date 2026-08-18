@@ -1,6 +1,6 @@
 # Beglaubigt — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 691 client facts (686 trusted) from 65 sources · 6 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-18 18:19 IST · 691 client facts (686 trusted) from 65 sources · 6 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -77,8 +77,8 @@ _Compiled 2026-08-14 16:24 IST · 691 client facts (686 trusted) from 65 sources
 - More than 3,500 HubSpot dealer contacts have been created in Dialpad as of the call date; initially ~500 were reported but the correct count after processing older logs and overnight batch was 3,500+. [CONFIRMED · fathom/163477950 @ there were more than 2000 created i just didn't look at the you know the older logs... now there are more than 3500 contacts created in the dialpad now]
 - Multiple duplicate deals are being created for the same email address due to automation triggering without deduplication logic. [CONFIRMED · https://www.loom.com/share/7d6ebdcfc5274389a39dfc5a32e36b9a @ 0:05-0:20 and 2:30-3:00]
 - Processing ~5,000 historical contacts in Make.com would consume approximately 50,000 Make credits, estimated at ~$150 (15,000 credits ≈ $50). [CONFIRMED · fathom/163477950 @ 00:12:30 / 00:13:01 - 15,000 credits is like $50 worth of credits... roughly 50,000 credits]
-- Revenue to date (GROSS, billed): $7,210.01 across 15 revenue transactions (2026-04-29 → 2026-08-05). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $6,856.03 — gross $7,210.01 less $866.84 Upwork service fees, $512.86 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $7,857.51 across 17 revenue transactions (2026-04-29 → 2026-08-19). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $7,438.13 — gross $7,857.51 less $931.59 Upwork service fees, $512.21 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - Stripe transaction sync with HubSpot has only 2 missing transactions out of 100; both missing are caused by the same translation products issue. [CONFIRMED · fathom/156935557 @ Yeah, mainly the transactions, like the Stripe transaction, we only have two missing out of 100 now, and those two are because of the same translation products]
 - The Trustpilot review count was hardcoded as 284 in the old email template; the correct current count is 401, and the rating is 4.8. [CONFIRMED · fathom/160649819 @ 00:09:46 / 00:12:11 / 00:21:05]
 - The ad spend per lead is described as close to maximum 1x (ROAS ≈1), with an example figure of ~€88 per lead cited as yielding poor margins given current customer LTV. [CONFIRMED · fathom/145985536 @ 00:18:01 – 'pro Lead, den wir bekommen, der Adspend schon maximal 1, irgendwas ist ... Lass auch nur 88 sein pro Lead, dann ist es trotzdem keine gute Marge']

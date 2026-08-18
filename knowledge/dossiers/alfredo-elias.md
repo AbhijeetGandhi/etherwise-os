@@ -1,6 +1,6 @@
 # Alfredo Elias — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 65 client facts (63 trusted) from 8 sources._
+_Compiled 2026-08-18 18:19 IST · 65 client facts (63 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

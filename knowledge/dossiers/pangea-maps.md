@@ -1,6 +1,6 @@
 # Pangea Maps — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 3 client facts (3 trusted) from 1 sources._
+_Compiled 2026-08-18 18:19 IST · 3 client facts (3 trusted) from 1 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

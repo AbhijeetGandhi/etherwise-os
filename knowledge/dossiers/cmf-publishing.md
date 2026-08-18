@@ -1,6 +1,6 @@
 # CMF Publishing — Dossier
 
-_Compiled 2026-08-14 16:24 IST · 508 client facts (505 trusted) from 36 sources._
+_Compiled 2026-08-18 18:19 IST · 508 client facts (505 trusted) from 36 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -40,8 +40,8 @@ _Compiled 2026-08-14 16:24 IST · 508 client facts (505 trusted) from 36 sources
 - Normal expected EPC for the TMS account is approximately $5; the trend chart is currently showing near-zero EPC for most days, indicating an attribution bug. [CONFIRMED · fathom/172525326 @ 00:05:48]
 - One round of GPT-4o costs approximately the same as the entire multi-step run using Gemini, effectively doubling the cost when GPT-4o is used for the observation step. [CONFIRMED · fathom/48637146 @ 00:06:22]
 - Polling timeout was decided at 20 iterations (20 × 30 seconds = 10 minutes) as the maximum time to keep polling for new user likes. [CONFIRMED · fathom/110889278 @ 00:04:10 – 'let's go for... 20 iterations... 20, 30 second iteration']
-- Revenue to date (GROSS, billed): $41,650.41 across 49 revenue transactions (2023-05-28 → 2026-07-31) — Upwork $1,273.34, direct $40,377.07. [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $41,510.33 — gross $41,650.41 less $127.34 Upwork service fees, $12.74 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $43,259.71 across 50 revenue transactions (2023-05-28 → 2026-08-14) — Upwork $1,273.34, direct $41,986.37. [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $43,119.63 — gross $43,259.71 less $127.34 Upwork service fees, $12.74 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The RDS service is showing ~17 GB used and approximately 646–750 hours of usage, and the API gateway is logging ~860,000–866,000 requests, which the team considers anomalous given minimal actual usage. [CONFIRMED · fathom/49567253 @ 00:03:02]
 - The agency can spin up a fully integrated voice agent (including CRM integration, call summaries, and transcripts) in 6 to 8 hours. [CONFIRMED · fathom/102750251 @ 00:05:32]
 - The agency team has identified seven metrics they are planning to track in the first implementation; Michael Gandia was asked to prioritize these and add any additional ones. [CONFIRMED · fathom/131911985 @ 00:12:00 – 'we do have the seven metrics that we are planning to track, but if you have any additional thoughts on which metrics are priority-wise']
