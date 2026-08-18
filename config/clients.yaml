@@ -276,11 +276,11 @@ clients:
       canonical: Gethybrid
   -
     id: globatize
-    name: Globaltize
+    name: Globaltize LLC
     kind: client
     aliases:
+      - Globaltize
       - Globatize
-      - Globaltize LLC
       - Nick Esquivel
       - Ryan Stomberg
       - Royan Stomberg
@@ -291,8 +291,8 @@ clients:
       - room_c92bbd26a8799dd5fd8aa4b5de92e37a
       - room_0d412d500d8d84a8837e50ac2e5a5ce2
     billing:
-      canonical: Globaltize
-    scope_notes: "CLIENT since 2026-08-17 — Upwork contract 44315695 (Ai Automation Engineer, HOURLY, ACTIVE). Recruitment agency, places international talent for US companies, mostly LatAm; ~40 staff. TWO ENTRY POINTS, ONE CLIENT, which is why both rooms are claimed here: Ryan Stomberg (recruitment team) came in on Upwork and that thread DIED on rate ($45 asked vs $25 offered, 2026-08-16 04:45Z); 37 seconds earlier Nick Esquivel (principal) had submitted the Etherwise site contact form saying - my partner reached out on Upwork - and reopened it on LinkedIn. SPELLING: every first-party source says GLOBALTIZE (nick@globaltize.com, globaltize.com, Checkr tenant globaltize-884c6a1702); the id slug and clients/Globatize keep Abhijeet's spelling, unaligned on purpose — rename via scripts/merge_clients.py if he wants. The legal suffix LLC is UNVERIFIED. Month one billed entirely on Upwork, off-platform from month two (Abhijeet's own condition). Full record: clients/Globatize/context.md"
+      canonical: Globaltize LLC
+    scope_notes: "CLIENT since 2026-08-17 — Upwork contract 44315695 (Ai Automation Engineer, HOURLY, ACTIVE). Recruitment agency, places international talent for US companies, mostly LatAm; ~40 staff; Nick Esquivel is CEO. LEGAL ENTITY VERIFIED 2026-08-18 off the executed agreement: Globaltize LLC, 3400 Cottage Way, STE G2 #29453, Sacramento, CA 95825 — a mailbox-style suite; California law, ICDR arbitration seated in Sacramento. The LLC suffix was recorded as unverified until then and IS correct. TERMS AS SIGNED (International Independent Contractor and Agency Services Agreement, PandaDoc ref UXEOC-2PGTI-HXPF4-BPNI2, both parties 2026-08-18): 30.00 USD/hr for a workweek of 40 or more APPROVED hours, 35.00 USD/hr for a workweek under 40, and NO guaranteed minimum hours; invoice weekly, payment due Friday, USD, via Thera (getthera.com) or Upwork by mutual written agreement; SOW Start Date left blank as TBD; term auto-renews yearly, terminable only for cause; liability capped at six months of fees but UNCAPPED for confidentiality, credential or system misuse, IP and indemnities; IP is work made for hire plus full irrevocable assignment; non-circumvention 1 year, narrow, and 7.4 preserves the right to run the agency and serve other clients. Abhijeet's counter (a 40-hour floor, or 33 flat) was DECLINED and is superseded, not pending. OPERATIONAL GATES: section 6.4 bars Client confidential information, personal data, proprietary source code, credentials and customer data from public or consumer AI and model-training tools without written Client authorisation (not yet obtained); every Agency Personnel touching their systems, code, credentials, personal data or API keys must be disclosed to and APPROVED BY Client BEFORE access; section 4.2 warrants written IP-assignment agreements from all Agency Personnel. TWO ENTRY POINTS, ONE CLIENT, which is why both rooms are claimed here: Ryan Stomberg (recruitment team) came in on Upwork and that thread DIED on rate ($45 asked vs $25 offered, 2026-08-16 04:45Z); 37 seconds earlier Nick had submitted the Etherwise site contact form saying - my partner reached out on Upwork - and reopened it on LinkedIn. SPELLING: every first-party source says GLOBALTIZE (nick@globaltize.com, globaltize.com, Checkr tenant globaltize-884c6a1702, and the contract); the id slug and clients/Globatize keep Abhijeet's spelling, unaligned on purpose — rename via scripts/merge_clients.py if he wants. Month one billed entirely on Upwork, off-platform from month two (Abhijeet's own condition). Full record: clients/Globatize/context.md"
   -
     id: hermon
     name: Hermon
