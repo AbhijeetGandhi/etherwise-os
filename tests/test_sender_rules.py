@@ -83,6 +83,83 @@ class StructuralTests(unittest.TestCase):
         self.assertEqual(cls("someone@gmail.com")["verdict"], SR.ASK)
 
 
+class TransactionalTests(unittest.TestCase):
+    """The ten rows that must never be swept (live queue, 2026-08-19).
+
+    A blunt "automated sender = ignore" rule buries the signed Globaltize
+    contractor agreement and a paused background check on the newest client.
+    Every assertion here is a row that existed when the rules were applied
+    retroactively; if a future rule change re-decides one of them, this fails.
+    """
+    class Reg:
+        by_id = {"globatize": {"name": "Globaltize LLC",
+                               "aliases": ["Globaltize", "Globatize",
+                                           "Nick Esquivel"],
+                               "emails": ["globaltize.com"]},
+                 "hermon": {"name": "Hermon", "aliases": ["Consulting Systems"]}}
+
+        def matchable_ids(self):
+            return list(self.by_id)
+
+        def match_email(self, a):
+            return "globatize" if a.endswith("@globaltize.com") else None
+
+        def match_name(self, n):
+            return None
+
+    def test_pandadoc_and_checkr_survive_the_structural_rules(self):
+        # 'docs@email.pandadoc.net' matches bulk-subdomain 'email.';
+        # 'support@eu.checkr.com' matches noreply-local 'support'. Both would be
+        # EXCLUDE without the transactional layer.
+        for s in ("docs@email.pandadoc.net", "support@eu.checkr.com"):
+            v = cls(s)
+            self.assertNotEqual(v["verdict"], SR.EXCLUDE, s)
+            self.assertTrue(v.get("protected"), v)
+
+    def test_support_at_a_product_domain_is_still_noise(self):
+        # the reason this is a DOMAIN list and not a rule about 'support'
+        self.assertEqual(cls("support@mail.vapi.ai")["verdict"], SR.EXCLUDE)
+
+    def test_a_named_client_in_the_subject_becomes_a_proposal(self):
+        v = cls("support@eu.checkr.com", reg=self.Reg(),
+                subject="Start your Globaltize background check")
+        self.assertEqual(v["verdict"], "globatize")
+        self.assertEqual(v["rule"], "transactional-mention")
+
+    def test_a_named_client_in_the_body_counts_too(self):
+        v = cls("docs@email.pandadoc.net", reg=self.Reg(),
+                subject="Reminder to sign document",
+                text="The document sent by Nick Esquivel is awaiting your"
+                     " signature.")
+        self.assertEqual(v["verdict"], "globatize")
+
+    def test_an_unnamed_transactional_row_is_a_question_not_a_verdict(self):
+        # "Background check paused: more information needed" names nobody. It
+        # stays on the board, which is correct: it is the critical path.
+        v = cls("support@eu.checkr.com", reg=self.Reg(),
+                subject="Background check paused: more information needed")
+        self.assertEqual(v["verdict"], SR.ASK)
+        self.assertTrue(v["rule"].startswith("transactional:"))
+
+    def test_two_clients_named_is_ambiguous_and_never_guessed(self):
+        v = cls("docs@email.pandadoc.net", reg=self.Reg(),
+                subject="Globaltize and Consulting Systems agreement")
+        self.assertEqual(v["verdict"], SR.ASK)
+
+    def test_a_short_alias_cannot_be_hit_by_coincidence(self):
+        idx = SR.mention_index(self.Reg())
+        self.assertTrue(all(len(k) >= SR._MENTION_MIN_LEN for k in idx))
+
+    def test_the_contact_form_lead_is_untouched(self):
+        # onboarding@resend.dev also carries "New inquiry from Nick Esquivel
+        # (Globaltize)" — a real inbound lead. resend.dev is not transactional,
+        # so nothing here may claim it.
+        v = cls("onboarding@resend.dev", reg=self.Reg(),
+                subject="New inquiry from Nick Esquivel (Globaltize)")
+        self.assertEqual(v["verdict"], SR.ASK)
+        self.assertEqual(v["rule"], "unknown")
+
+
 class RegistryTests(unittest.TestCase):
     class FakeReg:
         by_id = {"acme": {"emails": ["acme.com"], "aliases": ["Acme"]},

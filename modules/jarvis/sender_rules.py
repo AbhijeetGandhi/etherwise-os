@@ -15,6 +15,10 @@ Two obligations follow, and the precedence order encodes both:
     1. learned-mappings.json  — anything he has ALREADY answered. Checked first,
                                 always, so a resolved question cannot resurface.
     2. registry client domain — a real client always wins over any heuristic.
+    2b. TRANSACTIONAL sender  — an e-signature / background-check / contract
+                                provider. Mail ABOUT a named counterparty, never
+                                a campaign, and never auto-excluded by anything
+                                below. See `transactional_reason`.
     3. structural rules       — bulk-mail subdomain, no-reply local part, a
                                 .bank.in/.edu.in suffix. These GENERALISE, which
                                 matters more than any denylist: 'mailers.',
@@ -84,6 +88,83 @@ def local_of(sender: str) -> str:
     return s.split("@")[0] if "@" in s else ""
 
 
+# ── transactional protection (runs BEFORE every structural rule) ─────────────
+# The structural rules read the SHAPE of an address, and a transactional
+# provider has exactly the shape of bulk mail. Measured, 2026-08-19:
+# 'docs@email.pandadoc.net' (the signed Globaltize contractor agreement) matched
+# bulk-subdomain 'email.' and 'support@eu.checkr.com' ("Background check paused")
+# matched noreply-local 'support'. Seven rows on the critical path of the newest
+# client would have been filed as promotional noise. A rule that cannot tell an
+# e-signature request from a newsletter must not be allowed to decide either.
+_MENTION_MIN_LEN = 8     # below this, an alnum key inside a body is a coincidence
+_MENTION_TEXT_CAP = 1500  # only the head of a body — footers name everyone
+
+
+def transactional_reason(sender: str, rules: Optional[dict] = None) -> Optional[str]:
+    """'transactional:<domain>' if this sender's mail is a transaction about a
+    named counterparty (e-signature, background check, contract), else None.
+
+    A DOMAIN list on purpose. The local part says nothing: 'support@eu.checkr.com'
+    is a background check on a live client and 'support@mail.vapi.ai' is a
+    product blast, and the only thing that separates them is who sent it.
+    """
+    rules = load_rules() if rules is None else rules
+    spec = (rules.get("transactional") or {})
+    dom = domain_of(sender)
+    if not dom:
+        return None
+    for d in spec.get("domains") or []:
+        if dom == d or dom.endswith("." + d):
+            return f"{spec.get('reason', 'transactional')}:{d}"
+    return None
+
+
+def _alnum(s: str) -> str:
+    from core import registry as _registry          # lazy: registry imports config
+    return re.sub(r"[^a-z0-9]", "", _registry.norm(s or ""))
+
+
+def mention_index(reg) -> dict:
+    """{alnum key: (client_id, the identifier it came from)} over matchable
+    clients. Short keys are dropped — a 6-letter alias inside a paragraph of
+    boilerplate is a coincidence, and this feeds a PROPOSAL on a live client."""
+    idx: dict = {}
+    if reg is None:
+        return idx
+    for cid in getattr(reg, "matchable_ids", lambda: [])():
+        c = reg.by_id.get(cid) or {}
+        for ident in [cid, c.get("name"), *(c.get("aliases") or [])]:
+            k = _alnum(ident or "")
+            if len(k) >= _MENTION_MIN_LEN:
+                idx.setdefault(k, (cid, ident))
+    return idx
+
+
+def mentions_client(text: str, reg, *, index: Optional[dict] = None) -> tuple:
+    """(client_id, matched identifier) iff the text names EXACTLY ONE registry
+    client, else (None, None).
+
+    Only ever called for a transactional sender, which is what makes a plain
+    substring scan safe here: the population is "mail from a signing/vetting
+    provider", where a client name in the subject means the document is that
+    client's. Two clients named => ambiguous => Abhijeet decides. It produces a
+    PROPOSAL, never a map: attribution writes client-facing content, and the
+    only thing this has actually established is that a name appears in a body.
+    """
+    idx = mention_index(reg) if index is None else index
+    if not idx:
+        return (None, None)
+    hay = _alnum((text or "")[:_MENTION_TEXT_CAP])
+    hits = {}
+    for k, (cid, ident) in idx.items():
+        if k in hay:
+            hits.setdefault(cid, ident)
+    if len(hits) != 1:
+        return (None, None)
+    cid, ident = next(iter(hits.items()))
+    return (cid, ident)
+
+
 def _registered_domains(reg) -> set:
     """Domains a client claims WHOLESALE — bare-domain identifiers only.
 
@@ -105,8 +186,12 @@ def _registered_domains(reg) -> set:
 
 def classify(sender: str, *, reg=None, rules: Optional[dict] = None,
              learned: Optional[dict] = None,
-             display_name: Optional[str] = None) -> dict:
-    """{verdict, reason, rule} where verdict is a client_id, EXCLUDE, or ASK.
+             display_name: Optional[str] = None,
+             subject: Optional[str] = None, text: Optional[str] = None) -> dict:
+    """{verdict, reason, rule, protected} — verdict is a client_id, EXCLUDE, ASK.
+
+    `protected` True means no rule in this module may exclude the row and none
+    did; something downstream (a human, or a client named in the body) owns it.
 
     `display_name` is worth passing whenever it is known. A client writing from a
     personal address is unmatchable by domain but often trivially matchable by
@@ -142,6 +227,19 @@ def classify(sender: str, *, reg=None, rules: Optional[dict] = None,
         if dom not in FREEMAIL and dom in _registered_domains(reg):
             return {"verdict": ASK, "reason": "domain claimed by a client but no"
                                               " exact match", "rule": "registry"}
+
+    # 2b. transactional — a signing/vetting provider. Never swept by shape.
+    prot = transactional_reason(sender, rules)
+    if prot:
+        cid, ident = mentions_client(f"{subject or ''}\n{text or ''}", reg)
+        if cid:
+            return {"verdict": cid, "rule": "transactional-mention",
+                    "protected": True,
+                    "reason": f"{prot}; names the registry client {cid}"
+                              f" ('{ident}') — proposed, never mapped"}
+        return {"verdict": ASK, "rule": f"transactional:{dom}", "protected": True,
+                "reason": f"{prot} — a document/vetting provider writing about a"
+                          f" named counterparty; never auto-excluded"}
 
     # 3. structural — generalises to senders nobody has listed
     for suffix, kind in (rules.get("tld_suffixes") or {}).items():

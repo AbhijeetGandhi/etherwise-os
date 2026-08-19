@@ -20,6 +20,7 @@ from typing import Callable, Optional
 
 from core import config
 from modules.jarvis import events
+from modules.jarvis import sender_rules as SR
 from modules.knowledge import email_poll as ep
 
 # ── noise blocklist (metadata-first gate) ────────────────────────────────────
@@ -98,16 +99,31 @@ def classify(source: str, native_id: str, from_header: str, subject: str,
              ts: Optional[str], permalink: str, raw_ref: str) -> dict:
     """Header-level normalization + noise gate — transport-agnostic. Returns a
     partial event dict (no body yet); `_pass` False => excluded, `_reason` set.
-    Self-noise (our own automation) is checked FIRST: never fetched, never proposed."""
+
+    Order, and why: SELF-noise first (our own automation is ours whatever it
+    looks like), then TRANSACTIONAL protection, then the generic noise gate. The
+    middle step is not decoration — `_NOISE_SENDER_DOMAINS` holds `docusign.net`
+    and `_NOISE_SENDER_SUBSTR` holds `notifications@`, so without it a signature
+    request on a live contract is dropped at the door, before a body is ever
+    fetched, and leaves no queue row for anyone to find. `sender_rules` owns the
+    list because that is where the same protection has to hold for the
+    retroactive path (modules/jarvis/resweep.py); one list, two callers, no
+    drift.
+    """
     _, addr = parseaddr(from_header or "")
-    reason = (self_noise_reason(from_header, addr, subject)
-              or noise_reason(addr or from_header, subject))
+    reason = self_noise_reason(from_header, addr, subject)
+    protected = None
+    if reason is None:
+        protected = SR.transactional_reason(addr or from_header or "")
+        if not protected:
+            reason = noise_reason(addr or from_header, subject)
     return {
         "id": events.canonical_id(source, native_id),
         "source": source, "native_id": native_id, "ts": ts,
         "author": addr or from_header, "subject": subject,
         "permalink": permalink, "raw_ref": raw_ref,
         "_pass": reason is None, "_reason": reason, "_from": from_header,
+        "_protected": protected,
     }
 
 

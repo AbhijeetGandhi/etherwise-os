@@ -1,7 +1,15 @@
 {
   "_note": "Non-client sender rules. Abhijeet, 2026-08-10: 'a lot of the crude records you can tell yourself... those are promotional letters and things like that. You should be able to sort them out yourself.' Anything matched here is auto-excluded and NEVER reaches the mapping queue. Structural rules come first because they generalise; the named lists only catch what structure misses.",
 
-  "_precedence": "learned-mappings.json > registry client domains > structural > categories > ask",
+  "_precedence": "learned-mappings.json > registry client domains > TRANSACTIONAL > structural > categories > ask",
+
+  "_retroactive": "THESE RULES ARE RETROACTIVE. modules/jarvis/resweep.py re-applies the CURRENT contents of this file (plus learned-mappings.json, plus the code-side gate in mail_pipeline/config) to every row still in `queued`/`held`, and modules/jarvis/sweep.py runs it at the top of every sweep whenever the fingerprint of those inputs changes. Editing this file is therefore enough; nothing has to be re-run by hand. That was NOT true before 2026-08-19, and it is the whole defect: the 27 bulk_subdomains below were WRITTEN from the 58 rows sitting in `held` on 2026-08-14 and then never applied to them, because the only consumer of this file was the manual bin/jarvis-triage-queue and nobody re-ran it. Three months of promotional mail sat on the Review board next to rules that already described it.",
+
+  "transactional": {
+    "reason": "transactional",
+    "domains": ["pandadoc.net", "checkr.com", "esignatures.io"],
+    "_note": "SENDERS WHOSE MAIL IS ABOUT A NAMED COUNTERPARTY, NEVER A CAMPAIGN — checked BEFORE every structural rule, and never auto-excluded by any of them. This exists because the structural rules are about the SHAPE of an address, and transactional providers have exactly the shape of bulk mail: 'docs@email.pandadoc.net' hits bulk-subdomain 'email.', 'support@eu.checkr.com' hits noreply-local 'support'. Measured on the live queue 2026-08-19: applying the rules without this section excluded the SIGNED Globaltize contractor agreement (4 rows) and 'Background check paused: more information needed' (3 rows) — the critical path on the newest client — as promotional noise. A protected sender is never swept; it is either PROPOSED to the registry client its subject/body names (rule 'transactional-mention') or left for Abhijeet. Note that 'support@mail.vapi.ai' must stay EXCLUDE, which is why this is a domain list and not a rule about the word 'support': the local part says nothing, the provider does. esignatures.io is here because HR/scripts/send_contracts.py sends Etherwise's real offer letters and NDAs through it — its mail is contractual by construction. DocuSign is deliberately NOT here: it is currently blocked at ingest by mail_pipeline._NOISE_SENDER_DOMAINS, which is the same bug one layer earlier, but no DocuSign row exists in the corpus so there is nothing to justify the change on yet — flagged for Abhijeet, not guessed at."
+  },
 
   "bulk_subdomains": [
     "mailers", "marketing", "updates", "news", "newsletter", "info", "em1",
@@ -35,7 +43,8 @@
       "domains": ["hdfcbank.bank.in", "axisbankmail.bank.in", "icici.bank.in",
                   "idfcfirst.bank.in", "hdfcbank.com", "axisbank.com",
                   "icicibank.com", "idfcfirstbank.com", "sbi.co.in",
-                  "kotak.com", "yesbank.in"]
+                  "kotak.com", "yesbank.in", "sbmbank.co.in"],
+      "_note": "sbmbank.co.in added 2026-08-19 — 'This is a scheduled downtime notification' was sitting in `held` as an unknown business domain. SBM Bank India is a bank; the category already holds eleven of them. It is only outside the .bank.in structural rule because it uses a .co.in domain."
     },
     "investment": {
       "reason": "noise:sender:investment-promo",
@@ -45,8 +54,8 @@
                   "bseindia.in", "bseindia.com", "nseindia.com",
                   "cdslindia.co.in", "nsdl.co.in", "bigshareonline.com",
                   "linkintime.co.in", "mfcentral.com", "stablemoney.in",
-                  "getdigit.in"],
-      "_note": "Abhijeet named hdfcfund.com and axismf.com explicitly as bank/AMC promotional mail. Extended 2026-08-14 with the exchange/depository/registrar senders found in `held` — IPO allotment advices, annual reports and corporate-action mail. Statutory rather than promotional, but equally not a client."
+                  "getdigit.in", "datamaticsrta.com"],
+      "_note": "Abhijeet named hdfcfund.com and axismf.com explicitly as bank/AMC promotional mail. Extended 2026-08-14 with the exchange/depository/registrar senders found in `held` — IPO allotment advices, annual reports and corporate-action mail. Statutory rather than promotional, but equally not a client. datamaticsrta.com added 2026-08-19: Datamatics is a SEBI registrar & transfer agent and the held row ('HDFC Bank Limited - Intimation for payment of...') is a corporate-action notice — the same shape as bigshareonline.com and linkintime.co.in, already here."
     },
     "saas_vendor": {
       "reason": "noise:sender:vendor",

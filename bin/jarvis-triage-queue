@@ -1,40 +1,37 @@
 #!/usr/bin/env python3
-"""Clear the obvious noise out of the mapping queue, and show only real questions.
+"""Show — and optionally apply — what the CURRENT rules say about the queue.
 
-    PYTHONPATH=. python3 bin/jarvis-triage-queue --dry-run
+    PYTHONPATH=. python3 bin/jarvis-triage-queue                 # dry run
     PYTHONPATH=. python3 bin/jarvis-triage-queue --apply
     PYTHONPATH=. python3 bin/jarvis-triage-queue --states queued,held --apply
 
-Every auto-exclusion records the RULE that produced it, so a wrong call can be
-found and reversed by rule rather than one row at a time. Whatever is left is the
-short list genuinely worth Abhijeet's attention — and once he answers one, it
-goes into learned-mappings.json and never appears again.
+THIS SCRIPT IS NO LONGER THE MECHANISM — it is the window onto it.
 
-HELD IS IN SCOPE, from 2026-08-14. This ran over `queued` only, and `held` --
-"collected, no confident proposal yet" -- accumulated 58 rows that the Review
-screen counts in its badge and asks a human to look at. All 58 were bank alerts,
-IPO advices, SaaS marketing and airline promos; not one was a client. A state
-whose entire population is noise is not a state a human should be shown, and the
-rules that decide `queued` decide `held` identically -- they read the SENDER,
-which does not care what state the row is parked in.
+Until 2026-08-19 it was the only consumer of `assets/sender-rules.json`, and
+that was the bug: the 27 `bulk_subdomains` in that file were written from the 58
+rows sitting in `held` on 2026-08-14 and then never applied to them, because
+applying them required a human to remember to run this. Three months of bank
+promos and SaaS blasts sat on the Review board next to rules that named them.
 
-A row that already carries `proposed_client_id` is NEVER auto-excluded here, in
-any state. A proposal is a decision awaiting confirmation; these rules exist for
-rows about which nothing has been concluded. Without that line the RECO x
-Etherwise meeting invite (proposed reco-health, arriving via read.ai's bulk
-subdomain) would have been swept away as vendor mail.
+The decisions now live in `modules/jarvis/resweep.py`, which `jarvis_sweep` runs
+at the top of every sweep whenever the rules change. This script calls exactly
+that code, so what it prints is what the automatic path will do — the two cannot
+drift, which is the only reason a preview is worth anything.
+
+`--apply` remains useful for the moment after a rule edit when you want the
+effect now rather than at the next sweep; it is idempotent either way.
 """
 from __future__ import annotations
 
 import argparse
 import sys
-import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import config, db, registry                      # noqa: E402
+from modules.jarvis import resweep                         # noqa: E402
 from modules.jarvis import sender_rules as SR              # noqa: E402
 
 
@@ -46,100 +43,71 @@ def main() -> int:
     args = ap.parse_args()
 
     states = tuple(s.strip() for s in args.states.split(",") if s.strip())
-    assert all(s in ("queued", "held") for s in states), args.states
+    assert all(s in resweep.STATES for s in states), args.states
 
     reg = registry.load()
     rules, learned = SR.load_rules(), SR.load_learned()
 
     with db.connect(config.DB_PATH) as conn:
-        qs = ",".join("?" * len(states))
-        rows = [dict(r) for r in conn.execute(
-            "SELECT id, source, state, author, subject, proposed_client_id,"
-            f"       substr(text,1,400) AS head FROM events WHERE state IN ({qs})",
-            states)]
-
-        excl, ask, mapped = [], [], []
+        decisions = resweep.plan(conn, reg=reg, rules=rules, learned=learned,
+                                 states=states)
+        buckets = defaultdict(list)
         by_rule = Counter()
-        for r in rows:
-            if not (r["author"] or "").strip():
-                # no sender at all: loom/fathom rows the content classifier owns,
-                # not this one. Left alone rather than guessed at.
-                ask.append((r, {"verdict": SR.ASK, "rule": "no-sender",
-                                "reason": "no sender — content rules own this"}))
-                continue
-            # the display name is often the only thing that identifies a
-            # client writing from a personal address
-            m = re.search(r"From:\s*([^<\n]{2,60})<", r.get("head") or "")
-            name = m.group(1).strip() if m else None
-            v = SR.classify(r["author"], reg=reg, rules=rules, learned=learned,
-                            display_name=name)
-            by_rule[v["rule"]] += 1
-            if r["proposed_client_id"] and v["verdict"] != r["proposed_client_id"]:
-                # a decision already exists — see the module docstring
-                ask.append((r, {"verdict": SR.ASK, "rule": "has-proposal",
-                                "reason": f"already proposed "
-                                          f"{r['proposed_client_id']}"}))
-            elif v["verdict"] == SR.EXCLUDE:
-                excl.append((r, v))
-            elif v["verdict"] == SR.ASK:
-                ask.append((r, v))
-            else:
-                mapped.append((r, v))
+        for r, d in decisions:
+            buckets[d["action"]].append((r, d))
+            by_rule[d["rule"]] += 1
 
-        print(f"events in {list(states)}: {len(rows)}")
+        excl = buckets["exclude"]
+        prop = buckets["propose"]
+        keep = buckets["keep"]
+        skip = buckets["skip"]
+
+        print(f"events in {list(states)}: {len(decisions)}")
         print(f"  auto-exclude : {len(excl)}")
-        print(f"  auto-map     : {len(mapped)}")
-        print(f"  still ASK    : {len(ask)}")
+        print(f"  propose      : {len(prop)}")
+        print(f"  still ASK    : {len(keep)}")
+        print(f"  untouched    : {len(skip)}")
         print("\n=== rules that fired ===")
         for k, n in by_rule.most_common():
-            print(f"   {k:28} {n}")
+            print(f"   {k:34} {n}")
 
         if excl:
             print("\n=== auto-excluded ===")
-            for r, v in excl:
-                print(f"   {SR.domain_of(r['author']):32} {v['reason']:34}"
+            for r, d in excl:
+                print(f"   {SR.domain_of(r['author']):32} {d['reason']:34}"
                       f" {(r['subject'] or '')[:40]}")
-        if mapped:
-            print("\n=== auto-mapped to a client ===")
-            for r, v in mapped:
-                print(f"   {SR.domain_of(r['author']):32} -> {v['verdict']}")
+        if prop:
+            print("\n=== proposed to a client (one click to confirm) ===")
+            for r, d in prop:
+                print(f"   {SR.domain_of(r['author']):32} -> {d['client_id']:16}"
+                      f" {(r['subject'] or '')[:40]}")
 
-        real_asks = [(r, v) for r, v in ask
-                     if v["rule"] not in ("no-sender", "has-proposal")]
-        print(f"\n=== NEEDS ABHIJEET ({len(real_asks)}) ===")
+        print(f"\n=== NEEDS ABHIJEET ({len(keep)}) ===")
         grouped = defaultdict(list)
-        for r, v in real_asks:
-            grouped[SR.domain_of(r["author"])].append((r, v))
+        for r, d in keep:
+            grouped[SR.domain_of(r["author"])].append((r, d))
         for dom, items in sorted(grouped.items(), key=lambda x: -len(x[1])):
-            r, v = items[0]
-            print(f"   {dom:32} x{len(items):<3} {v['reason']}")
+            r, d = items[0]
+            print(f"   {dom:32} x{len(items):<3} {d['reason']}")
             print(f"      e.g. {(r['subject'] or '')[:70]}")
-        nosender = sum(1 for _r, v in ask if v["rule"] == "no-sender")
-        proposed = sum(1 for _r, v in ask if v["rule"] == "has-proposal")
-        if nosender:
-            print(f"\n   ({nosender} rows have no sender — loom/fathom, owned by"
-                  f" the content classifier, untouched here)")
-        if proposed:
-            print(f"   ({proposed} rows already carry a proposal — a decision to"
-                  f" confirm, never auto-excluded here)")
+
+        if skip:
+            print("\n=== untouched (out of this script's authority) ===")
+            for rule, n in Counter(d["rule"] for _r, d in skip).most_common():
+                why = next(d["reason"] for _r, d in skip if d["rule"] == rule)
+                print(f"   {rule:20} x{n:<3} {why}")
 
         if not args.apply:
-            print("\nDRY RUN — nothing written. Re-run with --apply.")
+            print("\nDRY RUN — nothing written. Re-run with --apply, or just"
+                  " wait: jarvis_sweep applies this automatically whenever the"
+                  " rules change.")
             return 0
 
-        for r, v in excl:
-            conn.execute(
-                "UPDATE events SET state='excluded', exclude_reason=?,"
-                " resolved_by=?, resolved_at=datetime('now') WHERE id=?",
-                (v["reason"], f"sender_rules:{v['rule']}", r["id"]))
-        for r, v in mapped:
-            conn.execute(
-                "UPDATE events SET state='mapped', client_id=?, resolved_by=?,"
-                " resolved_at=datetime('now') WHERE id=?",
-                (v["verdict"], f"sender_rules:{v['rule']}", r["id"]))
+        written = resweep.apply(conn, decisions)
         conn.commit()
-        print(f"\nAPPLIED — {len(excl)} excluded, {len(mapped)} mapped,"
-              f" {len(real_asks)} left for Abhijeet")
+        print(f"\nAPPLIED — {written['excluded']} excluded,"
+              f" {written['proposed']} proposed,"
+              f" {len(keep)} left for Abhijeet")
     return 0
 
 

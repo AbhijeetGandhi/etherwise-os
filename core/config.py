@@ -378,6 +378,13 @@ JARVIS_SWEEP_TIMES = ("11:00", "19:00", "00:00")   # IST (informational; see pli
 JARVIS_SWEEP_MAX_EVENTS = 60        # collect at most N new items per sweep
 JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
                                     # the rest stay 'held' for the next sweep
+# A retroactive re-sweep (modules/jarvis/resweep.py) that clears more than this
+# many rows off the Review board files a `warn` anomaly. Not a limit — it always
+# applies every rule — but a rule edit is a decision Abhijeet did not watch
+# happen, and he has to be able to disagree with it after the fact. Steady state
+# is a handful of rows; the whole backlog moving at once is the case worth
+# saying out loud.
+JARVIS_RESWEEP_ANOMALY_THRESHOLD = 20
 JARVIS_LOOM_MAX_PROPOSALS = 25      # loom bridge: at most N Haiku residue-proposer
                                     # calls per run (deterministic passes are $0)
 # ── Loom KIND + domain-vocabulary classifier (2026-08-09, QUEUE-12) ──────────
@@ -643,6 +650,25 @@ SELF_SUBJECT_PATTERNS = (
     "upwork scan:", "hot upwork leads", "source-health", "source health",
     "weekly sales report", "monthly connect roi", "roi report",
     "finance-upwork-weekly", "upwork agency",
+    # 2026-08-19. 69 mails subjected "[Etherwise Ops] <Error> — <workflow>" from
+    # onboarding@resend.dev — Resend's default sender, so the ADDRESS proves
+    # nothing and cannot be used: the same address also delivers the website
+    # contact form ("New inquiry from Nick Esquivel (Globaltize)"), a real
+    # inbound lead. The SUBJECT is the discriminator and it is exact: every one
+    # of the 69 carries this prefix, the contact form carries none.
+    #
+    # WHY THEY ARE SELF-NOISE AND NOT AN INCIDENT FEED: every body cites
+    # `http://localhost:3000/incidents/<uuid>` and names `Client: Test Client A
+    # / Org: Northwind Retail`. They are test emissions from an incident-monitor
+    # build running on Abhijeet's own laptop, not production alerts about a real
+    # client. Routing them to `anomalies` would have filled the system's own
+    # health surface with fabricated incidents — the exact sin the no-fabricated-
+    # zeros rule exists to prevent. He had already reached the same verdict by
+    # hand 16 times ('not a client', cockpit-approval) while 43 more piled up
+    # behind those clicks, which is what made this the never-ask-twice failure.
+    # If this monitor ever ships for real it will send from an Etherwise domain
+    # and want its own rail; that is a decision for him, not for this tuple.
+    "[etherwise ops]",
 )
 
 # ── Source-health registry (2026-07-16) ──────────────────────────────────────

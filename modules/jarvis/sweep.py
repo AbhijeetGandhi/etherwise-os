@@ -22,9 +22,29 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core import config, db, registry, runner              # noqa: E402
 from modules.jarvis import events, gmail_rail, imap_rail, mapping   # noqa: E402
+from modules.jarvis import resweep                          # noqa: E402
 from modules.knowledge import email_poll as ep             # noqa: E402
 
 TASK_NAME = "jarvis_sweep"
+
+
+def _resweep_metrics(rs: dict) -> dict:
+    """Flatten the re-sweep result into the run's metrics.
+
+    Flat scalars on purpose: Review's "last sweep" panel and Activity's run log
+    both render `runs.metrics_json` as a key/value table, so this is the surface
+    on which a retroactive exclusion becomes visible without inventing a screen.
+    An automatic sweep that quietly removes rows from a human's queue and says
+    nothing anywhere is the silent-zero failure, just wearing a helpful face.
+    """
+    return {"resweep_ran": bool(rs.get("ran")),
+            "resweep_examined": rs.get("examined", 0),
+            "resweep_excluded": rs.get("excluded", 0),
+            "resweep_proposed": rs.get("proposed", 0),
+            "resweep_kept": rs.get("keep", 0),
+            "resweep_skipped": rs.get("skip", 0),
+            "resweep_rules": json.dumps(rs.get("by_rule") or {}, sort_keys=True),
+            "resweep_fingerprint": rs.get("fingerprint")}
 
 
 def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
@@ -32,6 +52,30 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
               imap_inboxes=(), imap_collect=imap_rail.collect, reg=None) -> dict:
     reg = reg or registry.load()
     dbp = ctx.db_path or config.DB_PATH
+
+    # 0. RE-SWEEP ──────────────────────────────────────────────────────────────
+    # Rules are RETROACTIVE. A new rule re-examines the rows that already exist,
+    # not just the mail that arrives after it. This sits FIRST, before the
+    # collect and before the empty-skip, because the failure it fixes is
+    # precisely a rule that was written to describe a backlog and then never run
+    # over it (see modules/jarvis/resweep.py). One hash compare when nothing
+    # changed; no model call ever.
+    with db.connect(dbp) as conn:
+        rs = resweep.run_if_rules_changed(conn, reg=reg, log=ctx.log)
+    if rs.get("excluded", 0) >= config.JARVIS_RESWEEP_ANOMALY_THRESHOLD:
+        # A rule edit that removes this much from a human's board is worth his
+        # eye even when it is correct — he must be able to disagree with a sweep
+        # he did not watch happen. Never fires in steady state (a re-sweep after
+        # a one-line rule change clears a handful); the whole backlog going at
+        # once is the case that needs saying out loud.
+        ctx.anomaly("jarvis_resweep_bulk_exclude", "warn",
+                    {"excluded": rs.get("excluded"),
+                     "proposed": rs.get("proposed"),
+                     "examined": rs.get("examined"),
+                     "by_rule": rs.get("by_rule"),
+                     "fingerprint": rs.get("fingerprint"),
+                     "reversible": "each row records the deciding phrase in"
+                                   " events.proposal_evidence; reverse by rule"})
 
     # 1. COLLECT ───────────────────────────────────────────────────────────────
     # contact@ over the Gmail API (OAuth) + the extra inboxes over read-only IMAP,
@@ -71,6 +115,17 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             low_base_rate_ids.update(e["id"] for e in evs)
 
     if not collected:
+        if rs.get("changed"):
+            # A re-sweep that cleared 43 rows off the Review board is not an
+            # empty run, and TaskSkip throws the metrics away (runner records
+            # only skip_reason). Report it instead, so the work shows up in the
+            # run log and in Review's "last sweep" panel rather than vanishing.
+            with db.connect(dbp) as conn:
+                counts = events.counts_by_state(conn)
+            return {"collected": 0, "inserted": 0, "resweep_only": True,
+                    "mapped": counts["mapped"], "queued": counts["queued"],
+                    "held": counts["held"], "excluded": counts["excluded"],
+                    "reconciled": True, **_resweep_metrics(rs)}
         raise runner.TaskSkip("no new mail since cursor")
 
     # 2. STORE (deterministic) ─────────────────────────────────────────────────
@@ -149,7 +204,7 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             "domain_echoed": echoed, "proposer_calls": len(proposals),
             "imap_excluded_no_signal": imap_excluded,
             "imap_inboxes": len(imap_new_cursors), "imap_skipped": imap_skipped,
-            "reconciled": reconciled}
+            "reconciled": reconciled, **_resweep_metrics(rs)}
 
 
 def main() -> int:
