@@ -127,7 +127,14 @@ def classify(source: str, native_id: str, from_header: str, subject: str,
             # per-message rules the retroactive path uses, so the door and the
             # resweep can never disagree.
             op = SR.operational_verdict(addr or from_header or "", subject)
-            if op and op["verdict"] == SR.EXCLUDE:
+            alert = SR.ops_alert(addr or from_header or "", subject) if op else None
+            if alert:
+                # kept, not deleted — but off the MAPPING queue, which asks
+                # "which client is this?" and cannot be answered by reading an
+                # automation error. It surfaces on Activity's incident feed,
+                # grouped by scenario. See sender_rules.ops_alert.
+                reason = alert["reason"]
+            elif op and op["verdict"] == SR.EXCLUDE:
                 reason = op["reason"]
             elif op:
                 protected = op["reason"]

@@ -132,7 +132,7 @@ def transactional_reason(sender: str, rules: Optional[dict] = None) -> Optional[
 # and that address is a no-reply. See the `operational._note` in
 # assets/sender-rules.json for the measurement that produced this tier.
 
-def _subject_norm(subject: Optional[str]) -> str:
+def _subject_norm(subject: Optional[str], *, fold: bool = True) -> str:
     """Decoded, lowercased subject for rule matching.
 
     These subjects are stored RAW, and platform mail is routinely RFC2047
@@ -148,7 +148,12 @@ def _subject_norm(subject: Optional[str]) -> str:
         s = str(email.header.make_header(email.header.decode_header(s)))
     except Exception:
         pass                                   # malformed encoding: use it raw
-    return re.sub(r"\s+", " ", s.replace("_", " ")).strip().lower()
+    s = re.sub(r"\s+", " ", s.replace("_", " ")).strip()
+    # fold=False keeps the ORIGINAL case. Rules match folded (a pattern should
+    # not care how Make capitalised 'scenario'), but a scenario name is shown
+    # to Abhijeet on the incident feed and '1 doulamatch | bot watcher' is not
+    # what his automation is called.
+    return s.lower() if fold else s
 
 
 def operational_verdict(sender: str, subject: Optional[str] = None,
@@ -192,6 +197,65 @@ def operational_verdict(sender: str, subject: Optional[str] = None,
             "reason": f"{spec.get('reason', 'operational')}:{hit} — a platform"
                       f" Abhijeet operates on, writing about his own business;"
                       f" never auto-excluded by shape"}
+
+
+OPS_ALERT = "ops-alert"
+
+
+def ops_alert(sender: str, subject: Optional[str] = None,
+              rules: Optional[dict] = None) -> Optional[dict]:
+    """{reason, domain, scenario} if this is an OPERATIONAL ALERT, else None.
+
+    A third thing a protected sender's mail can be. The mapping queue asks one
+    question — "which client is this?" — and for 'Encountered error in
+    [AUTOFILL] BT RBT Self scenario' that is the wrong question: the answer is
+    a scenario-name lookup, not a judgement Abhijeet can make by reading. He
+    said so when 134 of these landed on the board after the restore.
+
+    So they are kept — deleting them was the original bug — and routed to the
+    incident feed instead, grouped by the scenario named in the subject, which
+    collapses 131 rows to the ~8 automations actually failing.
+
+    Detection is deliberately split: `match` decides IF this is an alert,
+    `subject_of` decides WHICH scenario. When no `subject_of` pattern fits, the
+    whole subject becomes the group — degrading to one group per subject, never
+    to silence.
+    """
+    rules = load_rules() if rules is None else rules
+    spec = (rules.get("operational") or {})
+    dom = domain_of(sender)
+    hit = next((d for d in (spec.get("ops_alerts") or {})
+                if dom == d or dom.endswith("." + d)), None)
+    if not hit:
+        return None
+    conf = (spec.get("ops_alerts") or {})[hit]
+    subj = _subject_norm(subject)
+    if not any(_safe_search(p, subj) for p in conf.get("match") or []):
+        return None
+    # match on the folded form, SLICE from the original: the group is a name
+    # Abhijeet reads on the incident feed, and the scenario is called
+    # '1 DoulaMatch | Bot Watcher', not '1 doulamatch | bot watcher'. Same
+    # string, same offsets — only the case differs — so the folded match's span
+    # indexes the unfolded text exactly.
+    raw = _subject_norm(subject, fold=False)
+    scenario = raw
+    for pat in conf.get("subject_of") or []:
+        m = _safe_search(pat, subj)
+        if m and m.groups():
+            lo, hi = m.span(1)
+            scenario = re.sub(r"\s+", " ", raw[lo:hi]).strip(" .").strip()
+            break
+    scenario = scenario[:120] or "(unnamed)"
+    return {"reason": f"{OPS_ALERT}:{hit}:{scenario}", "domain": hit,
+            "scenario": scenario}
+
+
+def _safe_search(pattern: str, text: str):
+    """A malformed rule must never decide anything — it skips."""
+    try:
+        return re.search(pattern, text)
+    except re.error:
+        return None
 
 
 def _alnum(s: str) -> str:

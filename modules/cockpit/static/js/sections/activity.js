@@ -1355,6 +1355,54 @@ function healthCards(d) {
     }) : null,
   }));
 
+  // ── operational alerts from the platforms ─────────────────────────────────
+  // Make scenario failures and the like. They are MAIL, kept in `events` rather
+  // than copied into `anomalies` so one incident cannot end up with two
+  // timelines that disagree. They are here and not on Review because the
+  // mapping queue asks "which client is this?" and an automation error cannot
+  // answer it — Abhijeet, 2026-08-20, when 134 landed there after the restore.
+  const oa = d.ops_alerts || {}, oaRows = oa.recent || [];
+  const oaTotal = oa.total || 0;
+  g.appendChild(kpi({
+    label: `Platform alerts (${oa.window_days || 30}d)`,
+    value: oaRows.length
+      ? el("span", null, [fmt.num(oaRows.length), el("small", null, " failing")])
+      : el("span", "muted", "—"),
+    sub: oaRows.length
+      ? `${fmt.num(oaTotal)} alert${oaTotal === 1 ? "" : "s"} from`
+        + ` ${fmt.num(oaRows.length)} automation${oaRows.length === 1 ? "" : "s"}`
+      : "no platform alerts in the window",
+    onClick: oaRows.length ? () => openDrill({
+      title: `Platform alerts, last ${oa.window_days || 30} days`,
+      subtitle: `${fmt.num(oaTotal)} messages, grouped into`
+        + ` ${fmt.num(oaRows.length)} automations`,
+      note: "One row is an AUTOMATION, not a message: the tile counts how many"
+        + " are failing, and Alerts is how often each one wrote. These arrive as"
+        + " email and are deliberately kept off Review — the mapping queue asks"
+        + " which client a message belongs to, and an automation error cannot"
+        + " answer that. Nothing here is deleted; it is filed, not dropped.",
+      rows: oaRows,
+      total: oaRows.length,
+      truncated: oaRows.length >= 40,
+      capNote: oaRows.length >= 40
+        ? "The server returns at most 40 groups, newest first, and does not"
+          + " count what it drops — this is the newest 40, not the whole window."
+        : null,
+      columns: [
+        { key: "last", label: "Last seen", render: (a) => fmt.dateTime(a.last) },
+        { key: "platform", label: "Platform" },
+        { key: "scenario", label: "Automation" },
+        { key: "n", label: "Alerts", num: true, render: (a) => fmt.num(a.n) },
+        { key: "first", label: "First seen", render: (a) => fmt.dateTime(a.first) },
+      ],
+      time: (a) => a.last,
+      search: (a) => `${a.platform} ${a.scenario}`,
+      facets: [{ label: "platform", allLabel: "All platforms",
+                 of: (a) => a.platform }],
+      emptyText: "No platform alert in the window.",
+    }) : null,
+  }));
+
   return g;
 }
 

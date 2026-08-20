@@ -176,6 +176,16 @@ def decide(row: dict, *, reg=None, rules: Optional[dict] = None,
     # mail is still excluded, by the identical per-message rules.
     if not prot:
         op = SR.operational_verdict(author, subject, rules)
+        alert = SR.ops_alert(author, subject, rules) if op else None
+        if alert and not proposed:
+            # off the mapping queue, onto the incident feed. Not a deletion:
+            # cockpit.data.system reads these back by exclude_reason and groups
+            # them by scenario. See sender_rules.ops_alert.
+            return {"action": "exclude", "rule": f"{SR.OPS_ALERT}:{alert['domain']}",
+                    "reason": alert["reason"],
+                    "evidence": f"operational alert from {alert['domain']}"
+                                f" about '{alert['scenario']}' — an incident,"
+                                f" not an attribution question"}
         if op and op["verdict"] == SR.EXCLUDE and not proposed:
             return {"action": "exclude", "rule": op["rule"],
                     "reason": op["reason"],

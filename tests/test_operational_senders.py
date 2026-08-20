@@ -154,10 +154,21 @@ class IngestGateAgreesWithTheRetroactivePath(unittest.TestCase):
         got = self._door("donotreply@upwork.com", "Ryan Stomberg hired you for")
         self.assertTrue(got["_pass"], got.get("_reason"))
 
-    def test_a_make_failure_survives_the_door(self):
+    def test_a_make_failure_is_filed_as_an_incident_not_as_noise(self):
+        """Updated when Abhijeet chose the incident route, 2026-08-20. It used
+        to assert `_pass` — that a Make failure reached the mapping queue —
+        which was right against the bug it was written for (the alert being
+        DELETED as bulk mail) and wrong about where it belongs. Both outcomes
+        set `_pass` False, so the distinction that matters is the REASON: an
+        ops-alert is filed and readable on Activity; a noise: exclusion is
+        gone. Asserting the reason is what keeps the two from being confused
+        again."""
         got = self._door("noreply@us2.make.com",
                          "🛑 The scenario 1 DoulaMatch | Bot Watcher has been stopped.")
-        self.assertTrue(got["_pass"], got.get("_reason"))
+        self.assertFalse(got["_pass"])
+        self.assertTrue(got["_reason"].startswith("ops-alert:make.com:"),
+                        got["_reason"])
+        self.assertNotIn("noise:", got["_reason"])
 
     def test_job_alerts_are_still_stopped_at_the_door(self):
         got = self._door("donotreply@upwork.com",
@@ -185,6 +196,80 @@ class IngestGateAgreesWithTheRetroactivePath(unittest.TestCase):
         got = self._door("contact@etherwise.io", "Upwork scan: 3 scored, 3 hot")
         self.assertFalse(got["_pass"])
         self.assertIn("self-noise", got["_reason"])
+
+
+class OpsAlertsLeaveTheMappingQueue(unittest.TestCase):
+    """A third thing a protected sender's mail can be. Abhijeet, 2026-08-20,
+    after the restore put 134 Make failures on Review: the mapping queue asks
+    "which client is this?" and an automation error cannot answer it. Kept —
+    deleting them was the original bug — but filed as incidents, grouped by the
+    scenario named in the subject, so 131 rows become the ~8 automations that
+    are actually failing."""
+
+    def _a(self, subject, sender="noreply@us2.make.com"):
+        return SR.ops_alert(sender, subject)
+
+    def test_error_alert_is_detected_and_named(self):
+        a = self._a("🛑 Encountered error in 1  DoulaMatch | Bot Watcher scenario")
+        self.assertEqual(a["domain"], "make.com")
+        self.assertEqual(a["scenario"], "1 DoulaMatch | Bot Watcher")
+
+    def test_stopped_scenario_groups_with_its_errors(self):
+        """The same automation writes both shapes; they must land in ONE group
+        or the count of 'what is failing' is inflated."""
+        err = self._a("🛑 Encountered error in All Pandadoc - Sign Watcher  scenario")
+        stop = self._a("🛑 The scenario All Pandadoc - Sign Watcher  has been stopped.")
+        self.assertEqual(err["scenario"], stop["scenario"])
+
+    def test_warning_shapes(self):
+        for subj, want in (
+            ("⚠️ Encountered warnings in scenario Run Deduplication after Deal is moved",
+             "Run Deduplication after Deal is moved"),
+            ("⚠️ Encountered 2 warnings in scenario 9 | Auto-Membership Change",
+             "9 | Auto-Membership Change"),
+        ):
+            self.assertEqual(self._a(subj)["scenario"], want, subj)
+
+    def test_the_reason_carries_platform_and_scenario(self):
+        a = self._a("🛑 Encountered error in [AUTOFILL] BT RBT Self  scenario")
+        self.assertTrue(a["reason"].startswith("ops-alert:make.com:"))
+        self.assertIn("[AUTOFILL] BT RBT Self", a["reason"])
+
+    def test_the_displayed_name_keeps_its_capitalisation(self):
+        """Rules match case-folded; the name shown to a human does not. His
+        automation is called '1 DoulaMatch | Bot Watcher'."""
+        a = self._a("🛑 ENCOUNTERED ERROR IN 1  DoulaMatch | Bot Watcher SCENARIO")
+        self.assertEqual(a["scenario"], "1 DoulaMatch | Bot Watcher")
+
+    def test_non_alert_mail_from_the_same_sender_is_not_one(self):
+        self.assertIsNone(self._a("Your Make plan is renewing"))
+
+    def test_other_platforms_are_not_ops_alerts(self):
+        self.assertIsNone(self._a("Your contract has started",
+                                  "donotreply@upwork.com"))
+
+    def test_it_never_returns_silence_for_an_unrecognised_shape(self):
+        """`match` fired but no `subject_of` pattern fits: the whole subject
+        becomes the group. One group per subject is a degradation; None would
+        be a disappearance."""
+        a = self._a("🛑 Encountered error, details inside")
+        self.assertIsNotNone(a)
+        self.assertTrue(a["scenario"])
+
+    def test_the_door_files_it_as_an_incident_not_a_question(self):
+        got = mail_pipeline.classify(
+            "email", "n9", "noreply@eu1.make.com",
+            "🛑 Encountered error in Hipp Follow-up Unverified Encounters scenario",
+            None, "", "raw")
+        self.assertFalse(got["_pass"])
+        self.assertTrue(got["_reason"].startswith("ops-alert:make.com:"))
+
+    def test_a_client_facing_platform_message_is_still_a_question(self):
+        got = mail_pipeline.classify(
+            "email", "n10", "donotreply@upwork.com",
+            "Ryan Stomberg hired you for: Ai Automation Engineer",
+            None, "", "raw")
+        self.assertTrue(got["_pass"], got.get("_reason"))
 
 
 class SharedPlatformDomainsCannotBeClaimed(unittest.TestCase):

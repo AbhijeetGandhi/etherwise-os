@@ -317,6 +317,29 @@ def system(db_path: Optional[Path] = None) -> dict:
         # already newest-first from SQL; stable-sort unrecovered ahead of recovered
         anomalies.sort(key=lambda a: a["recovered"])
         anom_open = sum(a["open"] for a in anomalies)
+        # OPERATIONAL ALERTS from the platforms — Make scenario failures and
+        # the like. These live in `events`, not `anomalies`: they are mail, and
+        # duplicating them into a second store would give the same incident two
+        # timelines that could disagree. They are read back here by
+        # exclude_reason and grouped by the scenario named in the subject.
+        #
+        # Why they are not on Review (Abhijeet, 2026-08-20): the mapping queue
+        # asks "which client is this?", and for an automation error that is the
+        # wrong question — the answer is a scenario-name lookup. 134 of them
+        # landed there after the restore. Grouping collapses 131 rows to the ~8
+        # automations actually failing, which is the number that means anything.
+        ops_alerts = []
+        for r in conn.execute(
+                "SELECT exclude_reason, COUNT(*) n, MAX(ts) last,"
+                " MIN(ts) first, MAX(subject) sample"
+                " FROM events WHERE exclude_reason LIKE 'ops-alert:%'"
+                " AND ts >= datetime('now','-30 days')"
+                " GROUP BY exclude_reason ORDER BY last DESC LIMIT 40"):
+            a = dict(r)
+            parts = (a.pop("exclude_reason") or "").split(":", 2)
+            a["platform"] = parts[1] if len(parts) > 2 else "?"
+            a["scenario"] = parts[2] if len(parts) > 2 else "(unnamed)"
+            ops_alerts.append(a)
         sources = source_health.source_health(conn)
     finally:
         conn.close()
@@ -330,6 +353,9 @@ def system(db_path: Optional[Path] = None) -> dict:
         "shadow": {"pending": shadow.get("pending", 0), "by_status": shadow,
                    "by_task": shadow_by_task},
         "anomalies": {"recent": anomalies, "open": anom_open, "window_days": 14},
+        "ops_alerts": {"recent": ops_alerts,
+                       "total": sum(a["n"] for a in ops_alerts),
+                       "window_days": 30},
         "sources": sources,
         "doctor": _doctor_light(),
     }

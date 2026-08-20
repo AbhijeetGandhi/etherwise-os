@@ -1,6 +1,6 @@
 {
   "_note": "Non-client sender rules. Abhijeet, 2026-08-10: 'a lot of the crude records you can tell yourself... those are promotional letters and things like that. You should be able to sort them out yourself.' Anything matched here is auto-excluded and NEVER reaches the mapping queue. Structural rules come first because they generalise; the named lists only catch what structure misses.",
-  "_precedence": "learned-mappings.json > registry client domains > TRANSACTIONAL > OPERATIONAL > structural > categories > ask",
+  "_precedence": "learned-mappings.json > registry client domains > TRANSACTIONAL > OPERATIONAL (ops-alert | campaign | keep) > structural > categories > ask",
   "_retroactive": "THESE RULES ARE RETROACTIVE. modules/jarvis/resweep.py re-applies the CURRENT contents of this file (plus learned-mappings.json, plus the code-side gate in mail_pipeline/config) to every row still in `queued`/`held`, and modules/jarvis/sweep.py runs it at the top of every sweep whenever the fingerprint of those inputs changes. Editing this file is therefore enough; nothing has to be re-run by hand. That was NOT true before 2026-08-19, and it is the whole defect: the 27 bulk_subdomains below were WRITTEN from the 58 rows sitting in `held` on 2026-08-14 and then never applied to them, because the only consumer of this file was the manual bin/jarvis-triage-queue and nobody re-ran it. Three months of promotional mail sat on the Review board next to rules that already described it.",
   "transactional": {
     "reason": "transactional",
@@ -51,7 +51,21 @@
         "jobs? (you|we).{0,20}(might|may) (like|be interested)"
       ]
     },
-    "_marketing_subjects_note": "Matched against the DECODED subject: these arrive RFC2047-encoded ('=?UTF-8?q?New_job_alert:_Zapier...'), so a raw regex silently matches nothing and the protection would have re-admitted all 85 job alerts. sender_rules._subject_norm decodes and un-escapes Q-encoding first."
+    "_marketing_subjects_note": "Matched against the DECODED subject: these arrive RFC2047-encoded ('=?UTF-8?q?New_job_alert:_Zapier...'), so a raw regex silently matches nothing and the protection would have re-admitted all 85 job alerts. sender_rules._subject_norm decodes and un-escapes Q-encoding first.",
+    "ops_alerts": {
+      "make.com": {
+        "match": [
+          "encountered (?:\\d+ )?(?:error|warning)",
+          "the scenario .+ has been stopped"
+        ],
+        "subject_of": [
+          "encountered (?:\\d+ )?(?:error|warning)s? in (?:the )?scenario (.+?)\\s*$",
+          "encountered (?:\\d+ )?(?:error|warning)s? in (.+?)\\s+scenario\\b",
+          "the scenario (.+?) has been stopped"
+        ]
+      }
+    },
+    "_ops_alerts_note": "A third thing a protected sender's mail can be, alongside 'about a counterparty' and 'a campaign': an OPERATIONAL ALERT. Abhijeet, 2026-08-20, after 134 Make scenario failures were restored onto the Review board: the board asks 'which client is this?' and for an automation error that is the wrong question -- the answer is a scenario-name lookup, not a judgement. So these are kept (never deleted -- that was the original bug) but routed to the INCIDENT feed on Activity instead of the mapping queue, grouped by `subject_of`, which pulls the scenario name out of the subject so 131 rows collapse to the ~8 scenarios actually failing: DoulaMatch | Bot Watcher, All Pandadoc - Sign Watcher, [AUTOFILL] BT RBT Self, Hipp Follow-up Unverified Encounters, Run Deduplication after Deal is moved, 9 | Auto-Membership Change, Task Created - Event in Calendar -> Asana. `match` decides IF it is an alert; `subject_of` decides WHICH scenario, and falls back to the whole subject when no pattern fits, which degrades to one group per distinct subject rather than to silence."
   },
   "bulk_subdomains": [
     "mailers",
