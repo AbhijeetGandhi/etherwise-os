@@ -447,6 +447,8 @@ clients:
     billing:
       canonical: Mustafa Ahmed
     scope_notes: "Upwork contract 43986743 (AI automation architect — Airtable + Make.com + GoHighLevel + Evoto, FIXED, ACTIVE from 2026-06-29). 176 messages, the largest conversation in the system, live this week. Not yet in the transaction ledger (rail newest 2026-06-03): $0 = NOT MEASURED."
+    emails:
+      - mahmed60@gmail.com
   -
     id: nalu-group
     name: Nalu Group
