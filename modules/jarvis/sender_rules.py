@@ -19,6 +19,13 @@ Two obligations follow, and the precedence order encodes both:
                                 provider. Mail ABOUT a named counterparty, never
                                 a campaign, and never auto-excluded by anything
                                 below. See `transactional_reason`.
+    2c. OPERATIONAL platform  — Upwork, Make, Vapi, Slack, Stripe, Airtable,
+                                ClickUp: the systems the business RUNS on. Their
+                                mail is about his own work and has the shape of
+                                bulk mail, because a platform sends from exactly
+                                one no-reply address. The platform's own campaign
+                                mail is still swept, per-message, by local part
+                                or decoded subject. See `operational_verdict`.
     3. structural rules       — bulk-mail subdomain, no-reply local part, a
                                 .bank.in/.edu.in suffix. These GENERALISE, which
                                 matters more than any denylist: 'mailers.',
@@ -117,6 +124,74 @@ def transactional_reason(sender: str, rules: Optional[dict] = None) -> Optional[
         if dom == d or dom.endswith("." + d):
             return f"{spec.get('reason', 'transactional')}:{d}"
     return None
+
+
+# ── operational protection (runs after transactional, before every rule) ─────
+# The platforms Abhijeet OPERATES ON. Their mail is about his own business and
+# has exactly the shape of bulk mail, because a platform has one sending address
+# and that address is a no-reply. See the `operational._note` in
+# assets/sender-rules.json for the measurement that produced this tier.
+
+def _subject_norm(subject: Optional[str]) -> str:
+    """Decoded, lowercased subject for rule matching.
+
+    These subjects are stored RAW, and platform mail is routinely RFC2047
+    encoded: '=?UTF-8?q?New_job_alert:_Zapier_Expert...'. Matching a plain
+    regex against that silently matches NOTHING — which here would have meant
+    protecting upwork.com and re-admitting all 85 job alerts to the board. So
+    the subject is decoded before any rule sees it, and Q-encoding's underscore
+    is restored to a space.
+    """
+    s = subject or ""
+    try:
+        import email.header
+        s = str(email.header.make_header(email.header.decode_header(s)))
+    except Exception:
+        pass                                   # malformed encoding: use it raw
+    return re.sub(r"\s+", " ", s.replace("_", " ")).strip().lower()
+
+
+def operational_verdict(sender: str, subject: Optional[str] = None,
+                        rules: Optional[dict] = None) -> Optional[dict]:
+    """None if this sender is not an operational platform; otherwise a dict
+    saying whether THIS message is protected or is that platform's own campaign.
+
+    Protection is per-DOMAIN, filtering is per-MESSAGE. That split is the whole
+    design: 'the platform is important' and 'this particular mail is an advert'
+    are different claims, and collapsing them is what produced both failure
+    modes — protect nothing and lose the hire, protect everything and drown the
+    board in job alerts.
+    """
+    rules = load_rules() if rules is None else rules
+    spec = (rules.get("operational") or {})
+    dom = domain_of(sender)
+    if not dom:
+        return None
+    for d in spec.get("never") or []:           # a campaign-only subdomain
+        if dom == d or dom.endswith("." + d):
+            return None
+    hit = next((d for d in spec.get("domains") or []
+                if dom == d or dom.endswith("." + d)), None)
+    if not hit:
+        return None
+
+    local = local_of(sender)
+    if local in set((spec.get("marketing_locals") or {}).get(hit) or []):
+        return {"verdict": EXCLUDE, "rule": f"operational-marketing:{hit}",
+                "reason": f"noise:sender:{local}"}
+    subj = _subject_norm(subject)
+    for pat in (spec.get("marketing_subjects") or {}).get(hit) or []:
+        try:
+            if re.search(pat, subj):
+                return {"verdict": EXCLUDE,
+                        "rule": f"operational-marketing:{hit}",
+                        "reason": f"noise:subject:{hit}-campaign"}
+        except re.error:
+            continue                            # a bad pattern must not protect-fail
+    return {"verdict": ASK, "rule": f"operational:{hit}", "protected": True,
+            "reason": f"{spec.get('reason', 'operational')}:{hit} — a platform"
+                      f" Abhijeet operates on, writing about his own business;"
+                      f" never auto-excluded by shape"}
 
 
 def _alnum(s: str) -> str:
@@ -240,6 +315,24 @@ def classify(sender: str, *, reg=None, rules: Optional[dict] = None,
         return {"verdict": ASK, "rule": f"transactional:{dom}", "protected": True,
                 "reason": f"{prot} — a document/vetting provider writing about a"
                           f" named counterparty; never auto-excluded"}
+
+    # 2c. OPERATIONAL — a platform he runs the business on. Same defect as 2b
+    # one size up: 'donotreply@upwork.com' is not a bulk sender that happens to
+    # mention a client, it is the ONLY address Upwork has, so the noreply-local
+    # rule was not filtering Upwork's marketing — it was deleting Upwork. The
+    # domain is protected from every rule below; the platform's OWN campaign
+    # mail is still swept here, by sender local part or by decoded subject.
+    op = operational_verdict(sender, subject, rules)
+    if op:
+        if op["verdict"] == EXCLUDE:
+            return op
+        cid, ident = mentions_client(f"{subject or ''}\n{text or ''}", reg)
+        if cid:
+            return {"verdict": cid, "rule": f"{op['rule']}-mention",
+                    "protected": True,
+                    "reason": f"{op['reason']}; names the registry client {cid}"
+                              f" ('{ident}') — proposed, never mapped"}
+        return op
 
     # 3. structural — generalises to senders nobody has listed
     for suffix, kind in (rules.get("tld_suffixes") or {}).items():

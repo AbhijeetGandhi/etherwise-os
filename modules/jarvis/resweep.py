@@ -168,6 +168,23 @@ def decide(row: dict, *, reg=None, rules: Optional[dict] = None,
     # 2. transactional protection, BEFORE anything that reads address shape
     prot = SR.transactional_reason(author, rules)
 
+    # 2b. …and OPERATIONAL protection, at the same point and for the same
+    # reason. This has to be here as well as in mail_pipeline.classify: the
+    # door and the retroactive path must give one answer, and step 3 below
+    # calls noise_reason() DIRECTLY, so protection added only at the door would
+    # be silently absent from every re-examination. The platform's own campaign
+    # mail is still excluded, by the identical per-message rules.
+    if not prot:
+        op = SR.operational_verdict(author, subject, rules)
+        if op and op["verdict"] == SR.EXCLUDE and not proposed:
+            return {"action": "exclude", "rule": op["rule"],
+                    "reason": op["reason"],
+                    "evidence": f"{op['rule']}: this platform's own campaign"
+                                f" mail — the account is protected, this"
+                                f" message is not"}
+        if op:
+            prot = op["reason"]
+
     # 3. the ingest noise gate (the other half of the rules — see fingerprint)
     if not prot:
         gate = mail_pipeline.noise_reason(author, subject)

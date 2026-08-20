@@ -48,7 +48,13 @@ class AssembleTests(unittest.TestCase):
             called.append(1)
             return {"text": "SHOULD NOT BE READ"}
 
-        ev = mp.assemble("email", "n2", "no-reply@stripe.com", "Your receipt",
+        # Sender changed 2026-08-20: this used to be 'no-reply@stripe.com',
+        # which is now an OPERATIONAL platform and deliberately protected — a
+        # Stripe receipt is a vendor cost, and 'Your receipt' was one of the
+        # subjects the old gate was wrongly eating. The claim under test is
+        # metadata-first (an excluded row never costs a body fetch), so it needs
+        # a sender that is still noise, not a sender that used to be.
+        ev = mp.assemble("email", "n2", "noreply@sendgrid.net", "Your receipt",
                          "2026-08-09T10:00:00+00:00", "l", "r", body)
         self.assertEqual(ev["state"], "excluded")
         self.assertIsNone(ev["text"])

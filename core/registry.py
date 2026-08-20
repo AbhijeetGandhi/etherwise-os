@@ -288,6 +288,21 @@ _KINDS = ("client", "prospect", "former")
 # one that is not; a prospect has not converted YET, which is not the same claim.
 _ACTIVE_KINDS = ("client", "prospect")
 
+# Domains through which EVERY client's mail arrives — platform notification
+# hosts and free mail. A bare-domain `emails:` entry is a wholesale claim
+# ("anyone writing from here is this client"), and on one of these that claim
+# is false by construction. See the refusal in _validate_and_index for the
+# `email.upwork.com` incident. Full addresses on these domains are unaffected.
+SHARED_SENDER_DOMAINS = frozenset({
+    "email.upwork.com", "t.upwork.com", "upwork.com",
+    "gmail.com", "googlemail.com", "yahoo.com", "outlook.com", "hotmail.com",
+    "icloud.com", "proton.me", "protonmail.com", "live.com", "aol.com",
+    "rediffmail.com",
+    "slack.com", "make.com", "clickup.com", "airtable.com", "stripe.com",
+    "zoom.us", "calendly.com", "fathom.video", "loom.com", "docusign.net",
+    "pandadoc.net", "checkr.com", "esignatures.io",
+})
+
 
 class Registry:
     """Validated, indexed, read-only view over clients.yaml."""
@@ -302,6 +317,10 @@ class Registry:
         self._room_to_id: dict[str, str] = {}
         self._slack_team_to_id: dict[str, str] = {}
         self._ledger_label_to_id: dict[str, str] = {}
+        # non-fatal integrity notes. A bad claim is DROPPED and recorded rather
+        # than raised: one malformed line must not take the whole roster down,
+        # but it must not disappear silently either (bin/doctor surfaces these).
+        self.warnings: list[str] = []
         self._validate_and_index()
 
     def _validate_and_index(self) -> None:
@@ -334,6 +353,26 @@ class Registry:
             # emails: unique across the whole registry (domain or full address)
             for e in c["emails"]:
                 key = norm(e)
+                # A SHARED PLATFORM DOMAIN IS NOT A CLIENT'S TO CLAIM.
+                # `tanushant-sharma` listed the bare domain `email.upwork.com`
+                # — Upwork's room-notification host, which EVERY client's
+                # messages come from. match_email falls back to the domain, so
+                # from that moment every 'X sent you a message' on Upwork
+                # resolved to Tanushant: found 2026-08-20 on 'Julie H. sent you
+                # a message' and 'John B. sent you a message' (Socialtyze),
+                # both filed under him. Identical in shape to listing
+                # `gmail.com`, which _registered_domains already guards
+                # against downstream — but that guard is in sender_rules and
+                # this index is read by the whole map stage, so the refusal
+                # belongs here, at the point of claim. A FULL ADDRESS on such a
+                # domain is still fine: it names one room, not the platform.
+                if "@" not in key and key in SHARED_SENDER_DOMAINS:
+                    self.warnings.append(
+                        f"{cid}: ignoring email {e!r} — a shared platform"
+                        f" domain cannot be claimed by one client (every"
+                        f" client's mail arrives from it). Use the full"
+                        f" address, or upwork_rooms.")
+                    continue
                 owner = self._email_to_id.get(key)
                 if owner and owner != cid:
                     raise RegistryError(

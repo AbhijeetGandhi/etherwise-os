@@ -116,7 +116,23 @@ def classify(source: str, native_id: str, from_header: str, subject: str,
     if reason is None:
         protected = SR.transactional_reason(addr or from_header or "")
         if not protected:
-            reason = noise_reason(addr or from_header, subject)
+            # OPERATIONAL platforms, for the same reason and at the same point.
+            # Without this the gate below deletes the platforms the business
+            # runs on before a body is ever fetched: `donotreply` and `noreply`
+            # are in _NOISE_SENDER_SUBSTR, and slack.com / stripe.com /
+            # google.com are in _NOISE_SENDER_DOMAINS, so Upwork's hire and
+            # contract mail and 139 Make client-automation failures never
+            # reached a queue row anyone could find (measured 2026-08-20).
+            # The platform's OWN campaigns are still excluded — by the same
+            # per-message rules the retroactive path uses, so the door and the
+            # resweep can never disagree.
+            op = SR.operational_verdict(addr or from_header or "", subject)
+            if op and op["verdict"] == SR.EXCLUDE:
+                reason = op["reason"]
+            elif op:
+                protected = op["reason"]
+            else:
+                reason = noise_reason(addr or from_header, subject)
     return {
         "id": events.canonical_id(source, native_id),
         "source": source, "native_id": native_id, "ts": ts,

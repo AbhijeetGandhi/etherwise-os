@@ -1,100 +1,270 @@
 {
   "_note": "Non-client sender rules. Abhijeet, 2026-08-10: 'a lot of the crude records you can tell yourself... those are promotional letters and things like that. You should be able to sort them out yourself.' Anything matched here is auto-excluded and NEVER reaches the mapping queue. Structural rules come first because they generalise; the named lists only catch what structure misses.",
-
-  "_precedence": "learned-mappings.json > registry client domains > TRANSACTIONAL > structural > categories > ask",
-
+  "_precedence": "learned-mappings.json > registry client domains > TRANSACTIONAL > OPERATIONAL > structural > categories > ask",
   "_retroactive": "THESE RULES ARE RETROACTIVE. modules/jarvis/resweep.py re-applies the CURRENT contents of this file (plus learned-mappings.json, plus the code-side gate in mail_pipeline/config) to every row still in `queued`/`held`, and modules/jarvis/sweep.py runs it at the top of every sweep whenever the fingerprint of those inputs changes. Editing this file is therefore enough; nothing has to be re-run by hand. That was NOT true before 2026-08-19, and it is the whole defect: the 27 bulk_subdomains below were WRITTEN from the 58 rows sitting in `held` on 2026-08-14 and then never applied to them, because the only consumer of this file was the manual bin/jarvis-triage-queue and nobody re-ran it. Three months of promotional mail sat on the Review board next to rules that already described it.",
-
   "transactional": {
     "reason": "transactional",
-    "domains": ["pandadoc.net", "checkr.com", "esignatures.io"],
+    "domains": [
+      "pandadoc.net",
+      "checkr.com",
+      "esignatures.io"
+    ],
     "_note": "SENDERS WHOSE MAIL IS ABOUT A NAMED COUNTERPARTY, NEVER A CAMPAIGN — checked BEFORE every structural rule, and never auto-excluded by any of them. This exists because the structural rules are about the SHAPE of an address, and transactional providers have exactly the shape of bulk mail: 'docs@email.pandadoc.net' hits bulk-subdomain 'email.', 'support@eu.checkr.com' hits noreply-local 'support'. Measured on the live queue 2026-08-19: applying the rules without this section excluded the SIGNED Globaltize contractor agreement (4 rows) and 'Background check paused: more information needed' (3 rows) — the critical path on the newest client — as promotional noise. A protected sender is never swept; it is either PROPOSED to the registry client its subject/body names (rule 'transactional-mention') or left for Abhijeet. Note that 'support@mail.vapi.ai' must stay EXCLUDE, which is why this is a domain list and not a rule about the word 'support': the local part says nothing, the provider does. esignatures.io is here because HR/scripts/send_contracts.py sends Etherwise's real offer letters and NDAs through it — its mail is contractual by construction. DocuSign is deliberately NOT here: it is currently blocked at ingest by mail_pipeline._NOISE_SENDER_DOMAINS, which is the same bug one layer earlier, but no DocuSign row exists in the corpus so there is nothing to justify the change on yet — flagged for Abhijeet, not guessed at."
   },
-
+  "operational": {
+    "reason": "operational",
+    "_note": "PLATFORMS ABHIJEET OPERATES ON. Their mail is about HIS OWN BUSINESS -- a hire, a contract change, a client message, a failing automation -- and it is structurally indistinguishable from bulk mail, because a platform has exactly one sending address and that address is a no-reply. Measured 2026-08-20 over 910 structural exclusions: 'donotreply@upwork.com' matched noreply-local 'donotreply' and took down UPWORK'S ENTIRE NOTIFICATION CHANNEL -- 'Ryan Stomberg hired you for' (the Globaltize win), 'Your contract has started', 'Contract rate increased', 'Julie H. sent you a message', four weekly summaries, 28 of 30 non-job-alert rows. 'noreply@{eu1,eu2,us2}.make.com' took 139 live client-automation failures naming DoulaMatch, All Pandadoc - Sign Watcher, [AUTOFILL] BT RBT Self and Hipp Follow-up. Same defect as the transactional tier above, one size up: the rule reads the SHAPE of an address, and these have the shape of a newsletter.\n\nA protected domain bypasses every structural and category rule. It does NOT become unfilterable: `marketing_locals` and `marketing_subjects` are how each platform's own campaign mail is still swept, which is what keeps Upwork's 85 'New job alert' rows off the board (the scanner reads those directly) while letting the hire through. `never` is the escape hatch for a subdomain that is purely a campaign channel.",
+    "domains": [
+      "upwork.com",
+      "make.com",
+      "vapi.ai",
+      "airtable.com",
+      "slack.com",
+      "stripe.com",
+      "clickup.com"
+    ],
+    "never": [
+      "mail.clickup.com",
+      "info.clickup.com",
+      "mail.airtable.com",
+      "e.stripe.com"
+    ],
+    "_never_note": "Subdomains that carry ONLY campaigns, so the parent can be protected without dragging them in. info.clickup.com is the Verified-Community blast, mail.clickup.com is 8 promos to 1 real billing error ('[IMPORTANT] Error processing card when adding user') -- that single row is a known, accepted loss rather than a fragile subject regex. mail.airtable.com is 4 product-launch blasts; the real statement comes from bare noreply@airtable.com. e.stripe.com is Stripe Tour marketing; receipts come from invoice+statements+acct_*@stripe.com.",
+    "marketing_locals": {
+      "make.com": [
+        "make-events",
+        "info"
+      ],
+      "vapi.ai": [
+        "team"
+      ]
+    },
+    "_marketing_locals_note": "Within a protected domain, senders that are the campaign channel. Make splits cleanly: scenario alerts are noreply@<region>.make.com, campaigns are make-events@ and info@ on the bare domain -- so keying on the LOCAL part generalises to a region nobody has seen yet (eu3, us1) where listing subdomains would not. Vapi splits the same way, and this CORRECTS the transactional tier's note above, which assumed 'support@mail.vapi.ai' was a product blast: all 8 of its rows are 'Fraud Alert on Your Account'. team@ is the blast (Vapicon, Simulations).",
+    "marketing_subjects": {
+      "upwork.com": [
+        "^new job alert",
+        "additional connects",
+        "handpicked jobs",
+        "upgrading your membership",
+        "^find your next project",
+        "^\\d+ new upwork opportunities",
+        "jobs? (you|we).{0,20}(might|may) (like|be interested)"
+      ]
+    },
+    "_marketing_subjects_note": "Matched against the DECODED subject: these arrive RFC2047-encoded ('=?UTF-8?q?New_job_alert:_Zapier...'), so a raw regex silently matches nothing and the protection would have re-admitted all 85 job alerts. sender_rules._subject_norm decodes and un-escapes Q-encoding first."
+  },
   "bulk_subdomains": [
-    "mailers", "marketing", "updates", "news", "newsletter", "info", "em1",
-    "em", "e", "custcomm", "digital", "notifications", "notify", "mailer",
-    "campaigns", "email", "reply", "go", "click", "track", "promo",
-    "mail", "t", "m", "send", "members", "learn"
+    "mailers",
+    "marketing",
+    "updates",
+    "news",
+    "newsletter",
+    "info",
+    "em1",
+    "em",
+    "e",
+    "custcomm",
+    "digital",
+    "notifications",
+    "notify",
+    "mailer",
+    "campaigns",
+    "email",
+    "reply",
+    "go",
+    "click",
+    "track",
+    "promo",
+    "mail",
+    "t",
+    "m",
+    "send",
+    "members",
+    "learn"
   ],
   "_bulk_subdomains_note": "A first label used purely to send bulk mail. 'mailers.hdfcbank.bank.in', 'digital.axisbankmail.bank.in', 'custcomm.icici.bank.in', 'marketing.goindigo.in', 'updates.easemytrip.com', 'em1.cloudflare.com', 'info.clickup.com' are all this shape. A real client writes from their bare domain. Added 2026-08-14 from the 58 rows sitting in `held`: 'mail.' (mail.clickup.com, mail.vapi.ai, mail.chatarv.ai), 't.' (t.shopifyemail.com, t.upwork.com), 'm.' (m.parallels.com), 'send.' (send.zapier.com), 'members.' (members.netflix.com), 'learn.' (m.learn.coursera.org). A client's own domain still wins: the registry check runs BEFORE this one.",
-
-  "plus_tags": ["news", "newsletter", "marketing", "promo", "promotions",
-                "offers", "updates", "digest", "deals"],
+  "plus_tags": [
+    "news",
+    "newsletter",
+    "marketing",
+    "promo",
+    "promotions",
+    "offers",
+    "updates",
+    "digest",
+    "deals"
+  ],
   "_plus_tags_note": "The tag half of a plus-addressed sender ('nick+news@leftclick.ai'). The sender chose that tag to say what the mail IS, which makes it the most honest structural signal on the message — and it generalises to every marketer who uses the convention, which no domain list does.",
-
   "noreply_locals": [
-    "noreply", "no-reply", "donotreply", "do-not-reply", "notifications",
-    "notification", "mailer-daemon", "bounce", "postmaster", "news",
-    "newsletter", "marketing", "support", "hello", "team", "updates"
+    "noreply",
+    "no-reply",
+    "donotreply",
+    "do-not-reply",
+    "notifications",
+    "notification",
+    "mailer-daemon",
+    "bounce",
+    "postmaster",
+    "news",
+    "newsletter",
+    "marketing",
+    "support",
+    "hello",
+    "team",
+    "updates"
   ],
   "_noreply_locals_note": "Existing convention already records these as noise:sender:<local>. Kept so this classifier agrees with what is already in the table rather than inventing a second vocabulary.",
-
   "tld_suffixes": {
     ".bank.in": "bank",
     ".edu.in": "education",
     ".ac.in": "education",
     ".gov.in": "government"
   },
-
   "categories": {
     "bank": {
       "reason": "noise:sender:bank",
-      "domains": ["hdfcbank.bank.in", "axisbankmail.bank.in", "icici.bank.in",
-                  "idfcfirst.bank.in", "hdfcbank.com", "axisbank.com",
-                  "icicibank.com", "idfcfirstbank.com", "sbi.co.in",
-                  "kotak.com", "yesbank.in", "sbmbank.co.in"],
+      "domains": [
+        "hdfcbank.bank.in",
+        "axisbankmail.bank.in",
+        "icici.bank.in",
+        "idfcfirst.bank.in",
+        "hdfcbank.com",
+        "axisbank.com",
+        "icicibank.com",
+        "idfcfirstbank.com",
+        "sbi.co.in",
+        "kotak.com",
+        "yesbank.in",
+        "sbmbank.co.in"
+      ],
       "_note": "sbmbank.co.in added 2026-08-19 — 'This is a scheduled downtime notification' was sitting in `held` as an unknown business domain. SBM Bank India is a bank; the category already holds eleven of them. It is only outside the .bank.in structural rule because it uses a .co.in domain."
     },
     "investment": {
       "reason": "noise:sender:investment-promo",
-      "domains": ["hdfcfund.com", "axismf.com", "icicipruamc.com",
-                  "sbimf.com", "nipponindiamf.com", "zerodha.com",
-                  "groww.in", "camsonline.com", "kfintech.com",
-                  "bseindia.in", "bseindia.com", "nseindia.com",
-                  "cdslindia.co.in", "nsdl.co.in", "bigshareonline.com",
-                  "linkintime.co.in", "mfcentral.com", "stablemoney.in",
-                  "getdigit.in", "datamaticsrta.com"],
+      "domains": [
+        "hdfcfund.com",
+        "axismf.com",
+        "icicipruamc.com",
+        "sbimf.com",
+        "nipponindiamf.com",
+        "zerodha.com",
+        "groww.in",
+        "camsonline.com",
+        "kfintech.com",
+        "bseindia.in",
+        "bseindia.com",
+        "nseindia.com",
+        "cdslindia.co.in",
+        "nsdl.co.in",
+        "bigshareonline.com",
+        "linkintime.co.in",
+        "mfcentral.com",
+        "stablemoney.in",
+        "getdigit.in",
+        "datamaticsrta.com"
+      ],
       "_note": "Abhijeet named hdfcfund.com and axismf.com explicitly as bank/AMC promotional mail. Extended 2026-08-14 with the exchange/depository/registrar senders found in `held` — IPO allotment advices, annual reports and corporate-action mail. Statutory rather than promotional, but equally not a client. datamaticsrta.com added 2026-08-19: Datamatics is a SEBI registrar & transfer agent and the held row ('HDFC Bank Limited - Intimation for payment of...') is a corporate-action notice — the same shape as bigshareonline.com and linkintime.co.in, already here."
     },
     "saas_vendor": {
       "reason": "noise:sender:vendor",
-      "domains": ["atlassian.com", "e.atlassian.com", "clickup.com",
-                  "mail.clickup.com", "info.clickup.com", "cloudflare.com",
-                  "em1.cloudflare.com", "twilio.com", "team.twilio.com",
-                  "supabase.com", "parallels.com", "m.parallels.com",
-                  "github.com", "notion.so", "slack.com", "airtable.com",
-                  "make.com", "zapier.com", "openai.com", "anthropic.com",
-                  "google.com", "microsoft.com", "apple.com", "vercel.com",
-                  "stripe.com", "loom.com", "fathom.video",
-                  "vapi.ai", "tella.tv", "depositphotos.com", "shopifyemail.com",
-                  "shopify.com", "canva.com", "figma.com", "elevenlabs.io"],
+      "domains": [
+        "atlassian.com",
+        "e.atlassian.com",
+        "clickup.com",
+        "mail.clickup.com",
+        "info.clickup.com",
+        "cloudflare.com",
+        "em1.cloudflare.com",
+        "twilio.com",
+        "team.twilio.com",
+        "supabase.com",
+        "parallels.com",
+        "m.parallels.com",
+        "github.com",
+        "notion.so",
+        "slack.com",
+        "airtable.com",
+        "make.com",
+        "zapier.com",
+        "openai.com",
+        "anthropic.com",
+        "google.com",
+        "microsoft.com",
+        "apple.com",
+        "vercel.com",
+        "stripe.com",
+        "loom.com",
+        "fathom.video",
+        "vapi.ai",
+        "tella.tv",
+        "depositphotos.com",
+        "shopifyemail.com",
+        "shopify.com",
+        "canva.com",
+        "figma.com",
+        "elevenlabs.io"
+      ],
       "_note": "Tools Etherwise USES. Not clients, and not promotional either — a distinct reason so spend/vendor analysis can find them later."
     },
     "travel": {
       "reason": "noise:sender:promotional",
-      "domains": ["goindigo.in", "marketing.goindigo.in", "easemytrip.com",
-                  "updates.easemytrip.com", "makemytrip.com", "cleartrip.com",
-                  "airindia.com", "booking.com", "agoda.com", "irctc.co.in",
-                  "etihadguest.com", "etihad.com", "emirates.com",
-                  "qatarairways.com", "vistara.com", "spicejet.com"]
+      "domains": [
+        "goindigo.in",
+        "marketing.goindigo.in",
+        "easemytrip.com",
+        "updates.easemytrip.com",
+        "makemytrip.com",
+        "cleartrip.com",
+        "airindia.com",
+        "booking.com",
+        "agoda.com",
+        "irctc.co.in",
+        "etihadguest.com",
+        "etihad.com",
+        "emirates.com",
+        "qatarairways.com",
+        "vistara.com",
+        "spicejet.com"
+      ]
     },
     "ecommerce": {
       "reason": "noise:sender:promotional",
-      "domains": ["amazon.com", "amazon.in", "flipkart.com", "myntra.com",
-                  "swiggy.in", "zomato.com", "motorola-mail.com",
-                  "motorola.com", "apple.com", "tatacliq.com", "ajio.com",
-                  "nykaa.com", "lego.com"]
+      "domains": [
+        "amazon.com",
+        "amazon.in",
+        "flipkart.com",
+        "myntra.com",
+        "swiggy.in",
+        "zomato.com",
+        "motorola-mail.com",
+        "motorola.com",
+        "apple.com",
+        "tatacliq.com",
+        "ajio.com",
+        "nykaa.com",
+        "lego.com"
+      ]
     },
     "personal_interest": {
       "reason": "noise:sender:personal-interest",
-      "domains": ["chessbase.com", "chess.com", "lichess.org",
-                  "spotify.com", "netflix.com", "youtube.com"],
+      "domains": [
+        "chessbase.com",
+        "chess.com",
+        "lichess.org",
+        "spotify.com",
+        "netflix.com",
+        "youtube.com"
+      ],
       "_note": "Abhijeet: 'chessbase is the chess, like, you know, player'. Personal hobby mail, not business."
     },
     "education": {
       "reason": "noise:sender:education",
-      "domains": ["aegis.edu.in", "snjb.org", "coursera.org", "udemy.com"]
+      "domains": [
+        "aegis.edu.in",
+        "snjb.org",
+        "coursera.org",
+        "udemy.com"
+      ]
     }
   }
 }

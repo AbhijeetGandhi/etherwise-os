@@ -59,14 +59,27 @@ class StructuralTests(unittest.TestCase):
     def test_the_held_backlog_senders_are_all_decided(self):
         """Every distinct sender that was sitting in `held` on 2026-08-14 — 58
         rows the Review badge was asking a human to look at, not one of them a
-        client. If a rule change ever un-decides one of these, this fails."""
-        for s in ("information@mailers.hdfcbank.bank.in", "support@mail.vapi.ai",
+        client. If a rule change ever un-decides one of these, this fails.
+
+        With ONE correction, made 2026-08-20. `upwork@t.upwork.com` was on this
+        list and should never have been: its rows are "You have an unread
+        message from Tousif A.", "You have an unread message from Carly R." and
+        "Invitation to Interview for: Build an n8n AI Chatbot Lead Generation".
+        Client messages and a lead. It was filed as bulk because of the `t.`
+        subdomain — the shape of the address, which is the exact defect the
+        OPERATIONAL tier exists to stop, sitting inside the test that was
+        supposed to be guarding against regressions. A list asserted to contain
+        no clients is only as good as the day someone read it."""
+        # support@mail.vapi.ai left this list 2026-08-20: its 8 rows are all
+        # "Fraud Alert on Your Account", not the product blast it was filed as.
+        # team@mail.vapi.ai IS the blast and stands in for it here.
+        for s in ("information@mailers.hdfcbank.bank.in", "team@mail.vapi.ai",
                   "team@mail.clickup.com", "store+92972187970@t.shopifyemail.com",
                   "guest@choose.etihadguest.com", "green_bss@bigshareonline.com",
                   "gogreen@cdslindia.co.in", "announcements@stablemoney.in",
                   "info@getdigit.in", "mailers@bseindia.in", "grant@tella.tv",
                   "mail@depositphotos.com", "nick+news@leftclick.ai",
-                  "ian@mail.chatarv.ai", "upwork@t.upwork.com",
+                  "ian@mail.chatarv.ai",
                   "shop@fashioncollections.tatacliq.com",
                   "Coursera@m.learn.coursera.org", "info@members.netflix.com",
                   "announce@m.parallels.com", "events@send.zapier.com"):
@@ -117,8 +130,25 @@ class TransactionalTests(unittest.TestCase):
             self.assertTrue(v.get("protected"), v)
 
     def test_support_at_a_product_domain_is_still_noise(self):
-        # the reason this is a DOMAIN list and not a rule about 'support'
-        self.assertEqual(cls("support@mail.vapi.ai")["verdict"], SR.EXCLUDE)
+        # the reason this is a DOMAIN list and not a rule about 'support'.
+        #
+        # REVERSED 2026-08-20, on evidence. This used to assert
+        # support@mail.vapi.ai == EXCLUDE, on the stated grounds that it was "a
+        # product blast" — but nobody had looked. Every one of its 8 rows in the
+        # corpus is "Fraud Alert on Your Account", and Vapi is the platform the
+        # client voice agents run on. The claim the test was defending is still
+        # right and still worth defending: the LOCAL part 'support' says
+        # nothing, which is why protection is keyed on the domain. What was
+        # wrong was the example chosen to illustrate it. Vapi is now an
+        # OPERATIONAL platform with team@ (Vapicon, Simulations) as its
+        # campaign channel — so 'support' is still not a rule, and the fraud
+        # alert reaches him.
+        v = cls("support@mail.vapi.ai")
+        self.assertNotEqual(v["verdict"], SR.EXCLUDE)
+        self.assertTrue(v.get("protected"), v)
+        self.assertEqual(cls("team@mail.vapi.ai")["verdict"], SR.EXCLUDE)
+        # and the point itself, on a domain that really is only a product blast:
+        self.assertEqual(cls("support@mail.chatarv.ai")["verdict"], SR.EXCLUDE)
 
     def test_a_named_client_in_the_subject_becomes_a_proposal(self):
         v = cls("support@eu.checkr.com", reg=self.Reg(),
