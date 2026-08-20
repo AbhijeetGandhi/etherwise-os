@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core import config, db, registry, runner              # noqa: E402
 from modules.jarvis import events, gmail_rail, imap_rail, mapping   # noqa: E402
 from modules.jarvis import resweep                          # noqa: E402
+from modules.jarvis import sender_rules                     # noqa: E402
 from modules.knowledge import email_poll as ep             # noqa: E402
 
 TASK_NAME = "jarvis_sweep"
@@ -165,15 +166,36 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
     cand, valid = mapping.candidates(reg), set(reg.ids())
     proposals = []
     for ev in still_held[: config.JARVIS_SWEEP_MAX_PROPOSALS]:
+        # a transactional sender's mail is never routed by intent — see
+        # mapping.route. Carried alongside the proposal so the write loop does
+        # not have to re-derive it.
+        prot = bool(sender_rules.transactional_reason(ev.get("author") or ""))
         proposals.append((ev["id"], ev["id"] in low_base_rate_ids,
-                          mapping.propose(ctx, ev, cand, valid)))
+                          mapping.propose(ctx, ev, cand, valid), prot,
+                          ev.get("subject")))
 
     with db.connect(dbp) as conn:
         queued = imap_excluded = 0
-        for eid, low, p in proposals:
+        filed: dict = {}
+        for eid, low, p, prot, subj in proposals:
             if p is None:
                 continue                          # proposer failed -> stays held
             pid, conf = p["proposed_client_id"], p["confidence"]
+            # ROUTE BY INTENT, not by the absence of a client id. Until
+            # 2026-08-20 every proposal that was not excluded here landed on the
+            # board, so "I cannot attribute this" and "a person must see this"
+            # were the same outcome — and the board filled with renewals,
+            # receipts, seat confirmations and contract notifications. The
+            # intent is now decided in the same proposer call.
+            dest = mapping.route(p["intent"], protected=prot, subject=subj)
+            if dest != "review":
+                reason = (mapping.FILE_REASON.get(p["intent"], "noise:marketing")
+                          if dest == "file" else "noise:marketing")
+                if pid and dest == "file":
+                    reason = f"{reason}:{pid}"      # whose it was, kept
+                events.set_excluded(conn, eid, reason)
+                filed[p["intent"]] = filed.get(p["intent"], 0) + 1
+                continue
             # A low-base-rate inbox queues ONLY on a positive client signal (a
             # proposer id naming a registry client at >= min_conf). No signal =>
             # EXCLUDED, never queued (keeps the queue from filling with personal /
@@ -203,6 +225,7 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             "held": counts["held"], "excluded": counts["excluded"],
             "domain_echoed": echoed, "proposer_calls": len(proposals),
             "imap_excluded_no_signal": imap_excluded,
+            "filed_by_intent": filed,
             "imap_inboxes": len(imap_new_cursors), "imap_skipped": imap_skipped,
             "reconciled": reconciled, **_resweep_metrics(rs)}
 
