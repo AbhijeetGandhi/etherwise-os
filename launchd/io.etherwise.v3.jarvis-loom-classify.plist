@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.jarvis-loom-classify</string>
+  <!-- WHY THIS EXISTS (2026-08-20). The Loom/Fathom residue the deterministic
+       bridge cannot explain is attributed here by vocabulary. It had no plist
+       and last ran 2026-08-14, so every recording since has sat unattributed —
+       invisible to dossiers, to thread linkage, and to the proposal writer that
+       reads them.
+
+       Unlike the bridge this one SPENDS (one Haiku call per recording), which
+       is why it is bounded by --limit and runs once a day rather than hourly,
+       and why it is scheduled AFTER the bridge: anything the free
+       deterministic pass can heal must be healed before we pay a model to
+       guess at it. runner enforces the budget ceilings on top of that.
+
+       jarvis-loom-fingerprints is deliberately NOT scheduled alongside these
+       two. It rebuilds assets/loom-fingerprints.json, a committed and
+       hand-reviewable asset, by overwriting it; a nightly job silently
+       rewriting reviewed input is a different kind of bug from the one this
+       plist fixes. It stays manual, on purpose. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3/bin/jarvis-loom-classify</string>
+    <string>--limit</string><string>60</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/jarvis-loom-classify.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/jarvis-loom-classify.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- daily 06:05 IST — after kb-daily (05:15) and the free bridge (05:45). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>5</integer>
+  </dict>
+</dict>
+</plist>

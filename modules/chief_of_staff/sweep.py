@@ -49,7 +49,14 @@ def escalation_covers(conn, *, open_only: bool = False) -> dict:
     Opus fills in, so matching on it let a correlation named
     'recruiting_pipeline_link:522-568' escape both the cluster filter and this
     reconciliation and sit on the board indefinitely. Provenance is ours;
-    vocabulary is the model's."""
+    vocabulary is the model's.
+
+    Since 2026-08-20 the STORED kind is canonical (nudges.canonical_kind) and
+    the model's wording lives in payload.kind_raw — but this function still
+    keys on provenance, not kind, and must keep doing so. Canonicalisation
+    stops an invented kind escaping the lifecycle TABLES; it does not make kind
+    a safe thing to identify a card by, because many situations legitimately
+    canonicalise to the same one."""
     out: dict = {}
     # open_only: merge candidates must be OPEN. Refreshing into a SNOOZED card
     # makes a brand-new escalation inherit an unrelated "not until December",
@@ -365,7 +372,10 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
         try:
             nudges.write_nudge(
                 db_path, now=now, source="sweep", dept=c.get("dept", "sales"),
-                kind=c.get("kind", "escalate_client"), title=c["title"],
+                # raw, on purpose: write_nudge canonicalises it (and keeps the
+                # model's wording in payload.kind_raw). The old default here was
+                # a second place that had to know the vocabulary.
+                kind=c.get("kind"), title=c["title"],
                 action=c.get("action"), due=c.get("due"), dedup_key=key,
                 payload={"rationale": c.get("rationale"), "covers": covers})
             covers_by_key[key] = set(covers)

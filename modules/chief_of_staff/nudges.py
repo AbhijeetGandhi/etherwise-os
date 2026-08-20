@@ -27,6 +27,39 @@ _ACTIVE = ("open", "snoozed")
 # Client-facing asks a cross-source signal can close (J1.5 closure pass).
 CLOSEABLE_KINDS = ("commitment_due", "owed_reply", "won_no_outcome")
 
+
+def canonical_kind(kind: Optional[str], *, source: Optional[str] = None) -> str:
+    """Map any `kind` onto the vocabulary the lifecycle tables actually price.
+
+    `kind` reaches this module as free text — the sweep hands over whatever Opus
+    called the situation, and that freedom is wanted, because `_is_cluster_card`
+    reads the model's own words. What was NOT wanted is that an invented kind
+    then missed every table keyed by kind AT ONCE: urgency fell to the 25
+    fallback, decay to 14 days, and sweep.RULE_KINDS never reconciled it. So a
+    card could be minted, mis-ranked, and left un-closable, and nothing anywhere
+    reported that its kind was unknown.
+
+    Resolution order, most specific first:
+      1. already canonical -> unchanged;
+      2. built out of a canonical kind as whole underscore-separated words ->
+         that kind, longest wins ('system_recurring' -> 'system',
+         'escalate_client_risk' -> 'escalate_client');
+      3. otherwise the default for the WRITER's provenance — a rail reporting a
+         failure must not inherit a sales card's 7-day decay.
+
+    Never raises and never returns something unpriced: the queue losing a card
+    to a strict validator would be worse than the card being filed roughly."""
+    k = (kind or "").strip().lower()
+    if k in config.COS_CARD_KINDS:
+        return k
+    if k:
+        built_from = [known for known in config.COS_CARD_KINDS
+                      if re.search(rf"(?<![a-z0-9]){re.escape(known)}(?![a-z0-9])", k)]
+        if built_from:
+            return max(built_from, key=len)
+    return config.COS_KIND_DEFAULT_BY_SOURCE.get(
+        (source or "").strip().lower(), config.COS_KIND_DEFAULT)
+
 # ── card identity + title hygiene (J1.5) ─────────────────────────────────────
 # Stored card text carries NO relative-date strings: the due DATE is stored and
 # the view renders "due tomorrow / overdue 1d" live. Strip parenthetical date
@@ -260,6 +293,12 @@ def write_nudge(db_path, *, source: str, dept: str, kind: str, title: str,
     canonical identity is card:<client>:<intent_hash> (intent defaults to the
     pre-clean title)."""
     ts = _iso(_now(now))
+    # CANONICALISE HERE, at the one choke point every writer passes through —
+    # not in the sweep, which is only the loudest caller. The model's own words
+    # are kept in payload.kind_raw: they describe, they no longer control.
+    raw_kind, kind = kind, canonical_kind(kind, source=source)
+    if raw_kind and raw_kind != kind:
+        payload = {**(payload or {}), "kind_raw": raw_kind}
     overdue = _is_overdue(due, now)
     urgency = compute_urgency(kind, money_at_stake=money_at_stake, score=score,
                               refreshed_at=ts, now=now, overdue=overdue)

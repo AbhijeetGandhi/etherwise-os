@@ -354,9 +354,23 @@ def check_source_freshness(db_path: Optional[Path] = None,
                    f" (max {s['max_age_hours']}h); {s['why']}")
         else:  # degraded
             msg = f"DEGRADED this run — {s['why']}"
-        # only critical sources escalate the doctor verdict; others inform
-        checks.append(Check("WARN" if s["critical"] else "PASS",
-                            f"source {s['key']}", msg))
+        # A BROKEN RAIL IS NEVER 'PASS'. This line used to read
+        #     Check("WARN" if s["critical"] else "PASS", ...)
+        # on the reasoning that only critical sources should escalate the
+        # verdict and the rest merely inform. But the doctor has exactly four
+        # words and PASS is not one of the informational ones, so the output
+        # read, literally:
+        #     [PASS] source jarvis_imap_02  DEGRADED this run — ... a dead rail
+        #                                   means that inbox goes unseen
+        # for eleven days while that inbox went unread (2026-08-20). A health
+        # check that prints PASS beside the word DEGRADED is worse than no
+        # health check: it is scanned for red, and there was none to find.
+        # WARN is still amber and still does not set the exit code (bin/doctor
+        # exits non-zero on FAIL alone), so nothing that consumed the old
+        # verdict changes — only what a human reading it is told.
+        # Criticality moves into the MESSAGE, where it belongs.
+        checks.append(Check("WARN", f"source {s['key']}",
+                            msg if s["critical"] else f"{msg} [non-critical]"))
     return checks
 
 

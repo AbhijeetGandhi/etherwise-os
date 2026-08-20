@@ -456,6 +456,18 @@ JARVIS_IMAP_FIRST_FETCH_DAYS = 3    # cursor-less first fetch is bounded to N da
 # hard requirement, not a nicety. Both the sweep rail and bin/jarvis-imap-check
 # inherit it via imap_rail._connect.
 JARVIS_IMAP_TIMEOUT_SECONDS = 20
+# …but LOGIN gets its own, larger budget. How long Gmail takes to answer LOGIN
+# is a property of the ACCOUNT, not of us: measured 2026-08-20,
+# abhijeetgandhi02@gmail.com timed out in LOGIN — never in SEARCH or FETCH — at
+# the flat 20s, roughly every other sweep since 2026-08-10 (12 anomalies,
+# `imap_inboxes` reading 1 instead of 2, that inbox unread for eleven days),
+# while 01 on the same host and the same 20s was fine. Raising the ONE number
+# would have fixed login and simultaneously allowed a stalled read to hang the
+# sweep for a minute, which is this rail's cardinal sin — so the budgets are
+# split, and imap_rail._connect tightens the socket back to the read bound the
+# moment login returns. Worst case is bounded at ATTEMPTS * LOGIN_TIMEOUT.
+JARVIS_IMAP_LOGIN_TIMEOUT_SECONDS = 60
+JARVIS_IMAP_LOGIN_ATTEMPTS = 2      # login is where the variance is; retry once
 # Per-account app passwords: { "<email>": "<app password>" }, chmod 600,
 # git-ignored, in CREDENTIALS_DIR (v2's .credentials). Read at runtime by
 # imap_rail; NEVER logged, echoed, or placed in a prompt. A missing entry means
@@ -924,6 +936,30 @@ COS_DECAY_TTL_DAYS = {
     "escalate_client":  7,
     "capture":          14,
 }
+# THE CARD VOCABULARY. Every lifecycle table above is keyed by `kind`, and the
+# sweep lets Opus fill `kind` in as free text (see sweep.OPUS_SCHEMA — that is
+# deliberate: the model's own words are the signal `_is_cluster_card` reads).
+# The bug is what happened NEXT: an invented kind matched no key in ANY of these
+# tables, so a card wearing one silently escaped all of them at once —
+# COS_URGENCY_BASE fell back to 25, COS_DECAY_TTL_DAYS to 14 days, and
+# sweep.RULE_KINDS never reconciled it. Measured 2026-08-20: 44 of the 54 kinds
+# ever stored were model inventions, and the live symptom was
+# 'system_recurring' — one word off 'system' — leaving "upwork_scan pipeline
+# down" on Today for 14 hours after the scan had recovered, with two weeks left
+# to run. Kinds are therefore CANONICALISED at the storage choke point
+# (nudges.canonical_kind, called by write_nudge); the model's original survives
+# in payload.kind_raw, where it describes and controls nothing.
+# Derived, never hand-listed: a kind that is not priced cannot be stored.
+COS_CARD_KINDS = frozenset(COS_URGENCY_BASE)
+# What an unrecognised kind becomes, by the PROVENANCE of the writer — a rail
+# reporting a failure must not decay on a sales card's schedule.
+COS_KIND_DEFAULT_BY_SOURCE = {
+    "system":     "system",
+    "capture":    "capture",
+    "commitment": "commitment_due",
+    "knowledge":  "stale_dossier",
+}
+COS_KIND_DEFAULT = "escalate_client"   # sweep correlations and anything else
 # ── Quick Capture (2026-08-14) ───────────────────────────────────────────────
 # A captured note is classified by a CHILD process spawned by /api/note, within
 # seconds, and by the sweep as the backstop. These bound that path. See

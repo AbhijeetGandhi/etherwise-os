@@ -6,6 +6,10 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock          # noqa: F401 — see TestCockpitCheck below:
+# `__import__("unittest").mock` only resolves once something has imported the
+# submodule, so test_doctor passed inside the full suite and failed when run
+# alone. Importing it here makes the module self-sufficient either way.
 from pathlib import Path
 
 from core import config, db
@@ -190,6 +194,66 @@ class TestHooksCheck(unittest.TestCase):
         checks = dc.check_hooks(root=config.V3_ROOT)
         self.assertNotIn("FAIL", statuses(checks),
                          [c.detail for c in checks])
+
+
+class TestSourceFreshnessNeverPassesABrokenRail(unittest.TestCase):
+    """2026-08-20: the doctor printed
+
+        [PASS] source jarvis_imap_02  DEGRADED this run — ... a dead rail
+                                      means that inbox goes unseen
+
+    for eleven days, because non-critical sources were labelled PASS so they
+    would not escalate the verdict. Amber was the right call; PASS was not the
+    right word for it. A reader scans for red and finds none."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.tmp.name, "t.db")
+        db.migrate(self.db)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _checks(self, sources):
+        with mock.patch("core.source_health.source_health",
+                        return_value={"sources": sources}):
+            return dc.check_source_freshness(db_path=self.db)
+
+    @staticmethod
+    def _src(key, status, critical, ok=False):
+        return {"key": key, "status": status, "ok": ok, "critical": critical,
+                "age_hours": 99, "max_age_hours": 6, "why": "the rail is dead"}
+
+    def test_degraded_non_critical_is_not_pass(self):
+        """The exact shape of the live bug."""
+        got = self._checks([self._src("jarvis_imap_02", "degraded", False)])
+        self.assertEqual(got[0].status, "WARN")
+        self.assertIn("DEGRADED", got[0].detail)
+
+    def test_no_check_ever_says_pass_and_degraded_together(self):
+        for status in ("degraded", "stale", "down"):
+            for critical in (True, False):
+                c = self._checks([self._src("s", status, critical)])[0]
+                contradiction = (c.status == "PASS" and any(
+                    w in c.detail for w in ("DEGRADED", "STALE", "NEVER")))
+                self.assertFalse(contradiction, f"{status}/{critical}: {c}")
+
+    def test_criticality_moves_into_the_message(self):
+        crit = self._checks([self._src("a", "stale", True)])[0]
+        non = self._checks([self._src("b", "stale", False)])[0]
+        self.assertEqual((crit.status, non.status), ("WARN", "WARN"))
+        self.assertNotIn("[non-critical]", crit.detail)
+        self.assertIn("[non-critical]", non.detail)
+
+    def test_healthy_source_still_passes(self):
+        got = self._checks([self._src("c", "ok", True, ok=True)])
+        self.assertEqual(got[0].status, "PASS")
+
+    def test_warn_does_not_change_the_exit_code(self):
+        """bin/doctor exits non-zero on FAIL alone, so promoting these to WARN
+        cannot break anything that consumed the old verdict."""
+        got = self._checks([self._src("d", "degraded", False)])
+        self.assertNotIn("FAIL", statuses(got))
 
 
 if __name__ == "__main__":

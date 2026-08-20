@@ -25,6 +25,7 @@ from __future__ import annotations
 import imaplib
 import json
 import re
+import socket
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from email import message_from_bytes
@@ -58,13 +59,53 @@ def app_password(inbox: str) -> Optional[str]:
 
 # ── transport (injectable) ────────────────────────────────────────────────────
 def _connect(host: str, inbox: str, password: str,
-             timeout: float = config.JARVIS_IMAP_TIMEOUT_SECONDS):
-    # timeout bounds the connect AND every later SEARCH/FETCH: it is set on the
-    # socket at connect and persists on the SSL-wrapped socket for reads. Without
-    # it a stalled server hangs the whole sweep forever (this rail's cardinal sin).
-    client = imaplib.IMAP4_SSL(host, timeout=timeout)
-    client.login(inbox, password)
-    return client
+             timeout: float = config.JARVIS_IMAP_TIMEOUT_SECONDS,
+             login_timeout: Optional[float] = None,
+             attempts: int = config.JARVIS_IMAP_LOGIN_ATTEMPTS):
+    """Connect + LOGIN, then tighten the socket for the read phase.
+
+    TWO different budgets, because they bound two different risks.
+
+    LOGIN is slow and variable: Gmail does real work on it, and how long that
+    takes is a property of the ACCOUNT, not of us. Measured 2026-08-20,
+    abhijeetgandhi02@gmail.com times out in LOGIN — never in SEARCH or FETCH —
+    at the flat 20s, roughly every other sweep since 2026-08-10. It failed 12
+    times, `imap_inboxes` read 1 instead of 2 on nearly every run, and that
+    inbox went unread for eleven days. 01, same host, same code, same 20s, is
+    fine: the number was simply too small for one mailbox.
+
+    Reading is not variable in that way: a SEARCH or FETCH that stalls means
+    the server has stopped answering, and the sweep must not wait on it. So the
+    generous budget is spent ONLY on login, and the socket is tightened back to
+    `timeout` the moment we are in. Raising one flat number would have bought
+    the login headroom at the price of letting a wedged read hang the sweep for
+    a minute — the exact failure this rail's docstring calls its cardinal sin.
+
+    Bounded by construction still holds: every call has a ceiling, and the worst
+    case is now attempts * login_timeout, not unbounded.
+    """
+    login_timeout = (config.JARVIS_IMAP_LOGIN_TIMEOUT_SECONDS
+                     if login_timeout is None else login_timeout)
+    last: Optional[BaseException] = None
+    for attempt in range(1, max(1, attempts) + 1):
+        client = imaplib.IMAP4_SSL(host, timeout=login_timeout)
+        try:
+            client.login(inbox, password)
+        except (socket.timeout, OSError) as exc:
+            # a half-open client is not reusable; drop it before retrying, and
+            # never let the cleanup mask the error we are about to re-raise.
+            last = exc
+            try:
+                client.shutdown()
+            except Exception:
+                pass
+            continue
+        try:
+            client.sock.settimeout(timeout)   # read phase: back to the tight bound
+        except Exception:
+            pass                              # injected/fake transports have no sock
+        return client
+    raise last if last is not None else socket.timeout("imap login failed")
 
 
 def _uidvalidity(client, mailbox: str = MAILBOX) -> int:

@@ -216,5 +216,95 @@ class ImapRailTests(unittest.TestCase):
         self.assertLess(seen["timeout"], 120)   # bounded, not an accidental huge value
 
 
+class _Sock:
+    def __init__(self):
+        self.timeouts = []
+
+    def settimeout(self, t):
+        self.timeouts.append(t)
+
+    def gettimeout(self):
+        return self.timeouts[-1] if self.timeouts else None
+
+
+class ConnectTimeoutBudgetTests(unittest.TestCase):
+    """LOGIN and the read phase get DIFFERENT budgets, for different reasons.
+
+    2026-08-20: abhijeetgandhi02@gmail.com timed out in LOGIN — never in SEARCH
+    or FETCH — at the flat 20s, roughly every other sweep since 2026-08-10. 12
+    anomalies, `imap_inboxes` reading 1 instead of 2, and that inbox unread for
+    eleven days while it held a client contract update. Measured after the fix:
+    01 logs in in 1.7s, 02 takes 11.1s. Same host, same code — the number was
+    simply too small for one mailbox.
+
+    Raising the single flat timeout would have bought login its headroom and, in
+    the same stroke, allowed a stalled SEARCH to hang the sweep for a minute.
+    That is why these are two numbers and why the socket is tightened on the way
+    in, not left where login needed it."""
+
+    def _stub(self, fail_logins=0, sock=None):
+        state = {"n": 0, "timeouts": []}
+
+        class _StubSSL:
+            def __init__(_s, host, timeout=None, **kw):
+                state["timeouts"].append(timeout)
+                _s.sock = sock if sock is not None else _Sock()
+
+            def login(_s, inbox, password):
+                state["n"] += 1
+                if state["n"] <= fail_logins:
+                    raise imap_rail.socket.timeout("The read operation timed out")
+
+            def shutdown(_s):
+                state["shutdown"] = state.get("shutdown", 0) + 1
+
+        return _StubSSL, state
+
+    def _run(self, stub, **kw):
+        orig = imap_rail.imaplib.IMAP4_SSL
+        imap_rail.imaplib.IMAP4_SSL = stub
+        try:
+            return imap_rail._connect("h", INBOX, "secret", **kw)
+        finally:
+            imap_rail.imaplib.IMAP4_SSL = orig
+
+    def test_login_gets_the_larger_budget(self):
+        stub, state = self._stub()
+        self._run(stub, timeout=20, login_timeout=60)
+        self.assertEqual(state["timeouts"], [60])
+
+    def test_socket_is_tightened_for_the_read_phase(self):
+        """The whole point: generosity is spent on login and then withdrawn, so
+        a wedged SEARCH still cannot hang the sweep."""
+        stub, _ = self._stub(sock=_Sock())
+        client = self._run(stub, timeout=20, login_timeout=60)
+        self.assertEqual(client.sock.gettimeout(), 20)
+
+    def test_a_timed_out_login_is_retried(self):
+        stub, state = self._stub(fail_logins=1)
+        self._run(stub, timeout=20, login_timeout=60, attempts=2)
+        self.assertEqual(state["n"], 2)
+
+    def test_the_half_open_client_is_dropped_before_retrying(self):
+        stub, state = self._stub(fail_logins=1)
+        self._run(stub, timeout=20, login_timeout=60, attempts=2)
+        self.assertEqual(state.get("shutdown"), 1)
+
+    def test_it_still_gives_up_and_raises(self):
+        """Bounded by construction: attempts * login_timeout, never unbounded,
+        and the failure still reaches the sweep so the anomaly still fires."""
+        stub, state = self._stub(fail_logins=99)
+        with self.assertRaises(imap_rail.socket.timeout):
+            self._run(stub, timeout=20, login_timeout=60, attempts=3)
+        self.assertEqual(state["n"], 3)
+
+    def test_defaults_are_sane(self):
+        from core import config
+        self.assertGreater(config.JARVIS_IMAP_LOGIN_TIMEOUT_SECONDS,
+                           config.JARVIS_IMAP_TIMEOUT_SECONDS)
+        self.assertLessEqual(config.JARVIS_IMAP_LOGIN_ATTEMPTS
+                             * config.JARVIS_IMAP_LOGIN_TIMEOUT_SECONDS, 180)
+
+
 if __name__ == "__main__":
     unittest.main()

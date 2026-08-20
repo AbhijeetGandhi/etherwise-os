@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.jarvis-fathom-bridge</string>
+  <!-- WHY THIS EXISTS (2026-08-20). bin/jarvis-fathom-bridge is the attribution
+       HEALER: when the registry gains an alias or a client, it re-maps the
+       Fathom recordings that alias now explains and recompiles their dossiers.
+       It had no plist. Nothing ran it. It last ran 2026-08-14 — by hand, in a
+       session — and healed 8 sources that day, which is the measure of what
+       was accruing unhealed in the six days after. Same failure as
+       jarvis-triage-queue: a script that exists, works, is idempotent, and is
+       not part of the system because nobody scheduled it.
+       Deterministic registry matching only — no model calls, no spend. -->
+  <!-- Framework Python (FDA-granted); NO WorkingDirectory and logs OUTSIDE
+       ~/Desktop — both required or launchd fails to spawn (exit 78) or Python
+       dies on '.' in sys.path. June-14 TCC pattern. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3/bin/jarvis-fathom-bridge</string>
+    <string>--recheck-all</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/jarvis-fathom-bridge.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/jarvis-fathom-bridge.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- daily 05:45 IST — AFTER kb-daily (05:15) has ingested the day's Fathom
+       sources, so the bridge sees them on the same night rather than the next. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>5</integer>
+    <key>Minute</key><integer>45</integer>
+  </dict>
+</dict>
+</plist>
