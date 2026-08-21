@@ -1,6 +1,6 @@
 # Diskover Data — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 174 client facts (171 trusted) from 33 sources · 8 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-21 14:09 IST · 176 client facts (173 trusted) from 34 sources · 8 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -177,6 +177,7 @@ _Compiled 2026-08-18 19:12 IST · 174 client facts (171 trusted) from 33 sources
 
 ## Other
 
+- A duplicate entry appeared in the content catalog because the client (Nathalie Sampson) manually clicked the arrow trigger rather than letting the workflow run automatically; she took responsibility for deleting it. [CONFIRMED · email/1a01fdc15314e99c @ The double entry was my fault for clicking the arrow manually, I'll delete it now.]
 - A key operational challenge for Divs's workflow is managing high request volume and the back-and-forth needed to clarify and prioritize Salesforce tasks. [CONFIRMED · email/19ff9ddaa56b69ad @ The biggest challenge will be managing the volume of requests and the back-and-forth required to clarify and prioritize them.]
 - A known operational challenge for Divs's Salesforce work is managing high volume of requests and the back-and-forth needed to clarify and prioritize them. [CONFIRMED · email/19ff6ef13be29b9d @ The biggest challenge will be managing the volume of requests and the back-and-forth required to clarify and prioritize them]
 - Diskover Data (client) uses Sprout Social and wants it connected/integrated as part of their automation work with Etherwise. [CONFIRMED · email/19ff1c14d0b98394 @ When would be a good time to discuss connecting Sprout Social?]
@@ -201,6 +202,7 @@ _Compiled 2026-08-18 19:12 IST · 174 client facts (171 trusted) from 33 sources
 - Nathalie was recently assigned as the lead for a new tab in Airtable two days before this call but lacks authorization to modify columns or update that tab's structure. [CONFIRMED · fathom/167011219 @ 00:03:54]
 - The Airtable content catalog has a messy status column with duplicate/inconsistent values (e.g., 'draft' and 'drafting', 'in review' appearing twice, 'live' and 'published') that needs cleanup before automations can be reliably triggered on status changes. [CONFIRMED · fathom/167011219 @ 00:14:30]
 - The Sprout Social integration work is scoped as a separate workstream from the existing Airtable-related automation work for Diskover Data. [CONFIRMED · email/19ffba7c3952774f @ When would be a good time to discuss connecting Sprout Social? While this isn't Airtable related]
+- The workflow that copies published blog posts to the content catalog is not placing them under the correct category — refinement is required. [CONFIRMED · email/1a01fdc15314e99c @ The workflow to copy published blog posts to the content catalog needs tweaking. At the moment, they are being copied to the catalog, but not under the correct category.]
 
 ## Sources
 
@@ -237,3 +239,4 @@ _Compiled 2026-08-18 19:12 IST · 174 client facts (171 trusted) from 33 sources
 - `email/19ffbdae8e233d50` · 2026-08-13 · email · Re: Sprout Social/Airtable
 - `email/19ffbdeb8b22b8da` · 2026-08-13 · email · Re: Sprout Social/Airtable
 - `email/19ffbe081f06742f` · 2026-08-13 · email · Re: Sprout Social/Airtable
+- `email/1a01fdc15314e99c` · 2026-08-20 · email · Workflow needs refinement

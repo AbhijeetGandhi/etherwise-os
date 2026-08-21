@@ -1,12 +1,12 @@
 # VANTAGE — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 15 client facts (15 trusted) from 2 sources._
+_Compiled 2026-08-21 14:09 IST · 15 client facts (15 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## The numbers
 
-- Contract: Automations & Systems | N8N, Make.com, GHL — status ACTIVE. [CONFIRMED · CRM:contracts/40800346]
+- Contract: Automations & Systems | N8N, Make.com, GHL — status PAUSED. [CONFIRMED · CRM:contracts/40800346]
 - Revenue to date (GROSS, billed): $468.00 across 3 revenue transactions (2025-06-15 → 2025-06-29). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
 - Revenue to date (NET, received after Upwork fees and tax): $420.73 — gross $468.00 less $46.80 Upwork service fees, $0.47 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - Two SMS messages failed to send in initial testing due to missing phone number configuration [CONFIRMED · https://www.loom.com/share/a1d93da999d9403a8464ed82c283d000 @ So, as you can see right now, it failed, uh, for two]

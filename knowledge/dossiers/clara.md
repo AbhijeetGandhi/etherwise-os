@@ -1,6 +1,6 @@
 # Clara — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 16 client facts (16 trusted) from 2 sources._
+_Compiled 2026-08-21 14:09 IST · 16 client facts (16 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

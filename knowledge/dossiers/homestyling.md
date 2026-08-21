@@ -1,6 +1,6 @@
 # Homestyling — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 74 client facts (72 trusted) from 7 sources · 62 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-21 14:09 IST · 74 client facts (72 trusted) from 7 sources · 62 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -18,8 +18,8 @@ _Compiled 2026-08-18 19:12 IST · 74 client facts (72 trusted) from 7 sources ·
 - A test transaction value of 23681 was observed and confirmed as correct during a test run. [CONFIRMED · fathom/142391273 @ 00:44:06]
 - Client receives more than hundreds of leads every week [CONFIRMED · https://www.loom.com/share/6703f8e402264ab796597e321cc754c4 @ 'we have more than hundreds of leads coming every, every week']
 - Contract: Airtable + Make Automation Specialist / Technical Coordinator (Ongoing Role) — status ACTIVE. [CONFIRMED · CRM:contracts/43475182]
-- Revenue to date (GROSS, billed): $2,820.00 across 11 revenue transactions (2026-04-26 → 2026-08-14). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $2,539.37 — gross $2,820.00 less $278.00 Upwork service fees, $2.63 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $2,850.00 across 12 revenue transactions (2026-04-26 → 2026-08-26). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $2,566.34 — gross $2,850.00 less $281.00 Upwork service fees, $2.66 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The Meta lead conversation logging scenario runs more than 5,000 times per month. [CONFIRMED · fathom/141038392 @ 00:14:01 - 'Log Conversation, Meta, Create Lead, 5000 plus Runs a Month']
 - The team reported sending 11 emails the previous night (last night) during testing of the automation. [CONFIRMED · fathom/142391273 @ 00:47:43]
 

@@ -1,6 +1,6 @@
 # RECO Health — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 47 client facts (47 trusted) from 8 sources · 16 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-21 14:09 IST · 47 client facts (47 trusted) from 9 sources · 16 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -82,3 +82,4 @@ _Compiled 2026-08-18 19:12 IST · 47 client facts (47 trusted) from 8 sources ·
 - `email/19fec8bf3ae9bdf5` · 2026-08-10 · email · Accepted: RECO × Etherwise RCM Automation Discussion @ Tue 11 Aug 2026 7:30pm - 8pm (IST) (contact@etherwise.io)
 - `email/19fec8dfe102600e` · 2026-08-10 · email · Re: Before today's call - a couple of quick questions
 - `fathom/172106366` · 2026-08-11 · fathom · Impromptu Google Meet Meeting
+- `email/1a0154bd7bb89b46` · 2026-08-18 · email · 🗓 RECO × Etherwise RCM Automation Discussion on August 11, 2026 | Read Meeting Report

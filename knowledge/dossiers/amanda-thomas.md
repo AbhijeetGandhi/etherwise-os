@@ -1,6 +1,6 @@
 # Amanda Thomas — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 86 client facts (86 trusted) from 6 sources._
+_Compiled 2026-08-21 14:09 IST · 87 client facts (87 trusted) from 7 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -21,14 +21,15 @@ _Compiled 2026-08-18 19:12 IST · 86 client facts (86 trusted) from 6 sources._
 - Adding Amanda as an approver in Sprout Social would cost approximately $6,000, which the client considers prohibitively expensive and wants to avoid. [CONFIRMED · fathom/171833723 @ 00:10:36 – 'We're talking $6,000 for me to be able to click the approve button']
 - At any given point in time, the agency's team manages more than 3,000 automations within Airtable. [CONFIRMED · fathom/166586786 @ 00:01:20]
 - Contract: Airtable Configuration and Automation — status ACTIVE. [CONFIRMED · CRM:contracts/44145310]
-- Revenue to date (GROSS, billed): $693.34 across 3 revenue transactions (2026-08-05 → 2026-08-14). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $623.30 — gross $693.34 less $69.34 Upwork service fees, $0.70 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $933.34 across 4 revenue transactions (2026-08-05 → 2026-08-26). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $839.06 — gross $933.34 less $93.34 Upwork service fees, $0.94 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The agency has built more than hundreds of Airtable bases for different clients. [CONFIRMED · fathom/166586786 @ 00:01:02]
 - There are approximately five DiscoverData team members that Abhi will meet with individually. [CONFIRMED · fathom/166586786 @ 00:04:01]
 
 ## People
 
 - Abhijeet Gandhi (agency) has met with Natalie and Dakota from the client team, and has a call scheduled with Josh; other team members have not yet booked. [CONFIRMED · fathom/167540379 @ 00:00:32]
+- Abhijeet Gandhi cancelled a consultation call with Diskover Data (contact: Amanda Thomas, Amanda.Thomas@diskoverdata.com), indicating a disruption in the client engagement process. [CONFIRMED · email/1a01f906d7ba8998 @ Abhijeet Gandhi has cancelled this appointment.]
 - Abhijeet Gandhi is the agency-side builder/consultant working on the client's Airtable system. [CONFIRMED · fathom/170487785 @ [00:00:15] Abhijeet Gandhi: I think I added the filters that you requested]
 - Abhijeet Gandhi is the agency-side contact/developer managing the Airtable build and automation work for this client. [CONFIRMED · fathom/168397077 @ 00:01:02]
 - Amanda Thomas is the client contact managing campaigns and production workflow in the system being built. [CONFIRMED · fathom/170487785 @ [00:00:00] Amanda Thomas: Good to chat with you today.]
@@ -119,3 +120,4 @@ _Compiled 2026-08-18 19:12 IST · 86 client facts (86 trusted) from 6 sources._
 - `fathom/168397077` · 2026-07-29 · fathom · Impromptu Google Meet Meeting
 - `fathom/170487785` · 2026-08-05 · fathom · Impromptu Google Meet Meeting
 - `fathom/171833723` · 2026-08-10 · fathom · Impromptu Zoom Meeting
+- `email/1a01f906d7ba8998` · 2026-08-20 · email · Appointment cancelled: Etherwise Consultation Call (30 min) (Amanda Thomas) @ Thu 20 Aug 2026 8:30pm - 9pm (IST) (contact@etherwise.io)

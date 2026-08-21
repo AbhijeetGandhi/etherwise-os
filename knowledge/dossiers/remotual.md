@@ -1,6 +1,6 @@
 # Remotual — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 31 client facts (31 trusted) from 3 sources._
+_Compiled 2026-08-21 14:09 IST · 31 client facts (31 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

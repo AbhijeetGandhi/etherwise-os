@@ -1,6 +1,6 @@
 # The Medical Kitchen — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 167 client facts (166 trusted) from 15 sources · 9 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-21 14:09 IST · 167 client facts (166 trusted) from 15 sources · 9 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

@@ -1,6 +1,6 @@
 # Globaltize LLC — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 8 client facts (8 trusted) from 2 sources · 9 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-21 14:09 IST · 8 client facts (8 trusted) from 5 sources · 10 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -31,3 +31,6 @@ _Compiled 2026-08-18 19:12 IST · 8 client facts (8 trusted) from 2 sources · 9
 
 - `crm/globatize` · — · crm · CRM numbers — Globaltize
 - `fathom/173687963` · 2026-08-16 · fathom · Impromptu Google Meet Meeting
+- `email/1a01530a4ddb2534` · 2026-08-18 · email · Invitation: Globaltize Training @ Weekly from 2am to 2:30am on Thursday, Friday, Saturday from Thu 20 Aug to Sun 23 Aug (IST) (contact@etherwise.io)
+- `email/1a01e47df57ddafe` · 2026-08-20 · email · Accept your invitation to join shared calendar: ‘Abhijeet Gandhi’
+- `email/1a01e4b5f916c68d` · 2026-08-20 · email · Abhijeet Gandhi updated your access to the calendar ‘Abhijeet Gandhi’

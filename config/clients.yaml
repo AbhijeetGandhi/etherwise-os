@@ -142,6 +142,23 @@ clients:
       - e.read.ai
     scope_notes: "PROSPECT (2026-08-09, inbound via ChatGPT). Five-brand behavioural-health network, Delray Beach FL. Wants a unified exec dashboard across Kipu + CollaborateMD + Salesforce; explicitly NOT replacing their billing company. Call 1 held 2026-08-11 with BD, COO, CFO. Nothing quoted, nothing paid. Decision-maker Erika Boodhoo (CFO). Full record: clients/RECO Health/context.md"
   -
+    id: regen-financial
+    name: Regen Financial
+    kind: prospect
+    aliases:
+      - RegenFinancial
+      - Regen Financial Group
+      - Joe McKenzie
+      - Nicole Moir
+      - Maham Butt
+    emails:
+      - regenfinancial.com
+      - joe.mckenzie@regenfinancial.com
+      - joe@regenfinancial.com
+      - nicole@regenfinancial.com
+      - maham@regenfinancial.com
+    scope_notes: "PROSPECT, added 2026-08-21 at Abhijeet's request. Pipeline: AI & dashboards enablement. Joe McKenzie is the decision-maker; Nicole Moir and Maham Butt run the working sessions and Elliott is copied. HOW IT STANDS: Abhijeet proposed an Etherwise Enablement retainer (40 hrs/month, $2,000/month, 3-month pilot); Joe accepted the engagement in principle on 2026-08-19 but COUNTERED the structure, asking for a flexible hourly contract to sign before onboarding. Abhijeet's answer: an Upwork HOURLY contract at $60/hr capped at 10 hrs/week, calls and working sessions billable, the rate reflecting that flexible hourly commits them to nothing where the monthly figure assumed committed hours. NOTHING SIGNED, NOTHING PAID. Watch the floor: a 10hr/week cap has no minimum, so a quiet month can land under the $1,000/month Abhijeet said he needs. Off-platform if it grows past ~$1k/month — Upwork's 10% is a fair price for the rails on a pilot, not on a retainer. Folder is clients/regen (short form, kept deliberately)."
+  -
     id: cmf-publishing
     name: CMF Publishing
     aliases:

@@ -1,6 +1,6 @@
 # The Cradle Company — Dossier
 
-_Compiled 2026-08-18 19:12 IST · 142 client facts (139 trusted) from 11 sources · 1 agency/other-client facts routed to proof-points._
+_Compiled 2026-08-21 14:09 IST · 142 client facts (139 trusted) from 11 sources · 1 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -30,8 +30,8 @@ _Compiled 2026-08-18 19:12 IST · 142 client facts (139 trusted) from 11 sources
 - Example lead score from DoolaMatch search was 10 out of 10 (described as 'really good' with 'best' quality). [CONFIRMED · https://www.loom.com/share/0e29ef7121f2473c87d55b4e4630b1be @ 03:45 'we got a really good dooline in the first search itself where the lead score is 10 and the quality is best']
 - Example lead score from Indeed application was 8 out of 10. [CONFIRMED · https://www.loom.com/share/0e29ef7121f2473c87d55b4e4630b1be @ 01:00 'lead has been scored and it is got 8 points on the scale of 1 to 10']
 - Phase 1 timeline estimate: automating 3 sourcing platforms (DolaMatch, Indeed, and one more) will take approximately 40 hours of work (20 hours/week × 2 weeks), inclusive of development, deployment, testing, and refactoring to a working v1. [CONFIRMED · fathom/168107325 @ 00:24:44]
-- Revenue to date (GROSS, billed): $769.17 across 3 revenue transactions (2026-08-05 → 2026-08-19). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $691.48 — gross $769.17 less $76.92 Upwork service fees, $0.77 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $1,419.17 across 4 revenue transactions (2026-08-05 → 2026-08-26). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $1,275.83 — gross $1,419.17 less $141.92 Upwork service fees, $1.42 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The Doula Match sourcing workflow takes a few minutes to fetch and process all data [CONFIRMED · https://www.loom.com/share/dee6bad9e0544cc881c85d0f5df93dec @ It takes a few minutes to fetch all of the data. So finally data from doula match has started appearing]
 
 ## People
