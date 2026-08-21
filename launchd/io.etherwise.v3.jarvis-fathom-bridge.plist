@@ -19,8 +19,15 @@
   <array>
     <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
     <string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3/bin/jarvis-fathom-bridge</string>
-    <string>--recheck-all</string>
   </array>
+  <!-- NO --recheck-all HERE. That flag adds `excluded` to the states this job
+       re-examines, and its own docstring calls it "an explicit, auditable"
+       one-off unfreeze — the repair for 114 verdicts reached on a broken
+       participant list in July. I put it on a nightly cron on 2026-08-20, so
+       every night it re-opened every exclusion the transcript classifier had
+       just made: 05:30 classify excluded 29 calls, 05:45 this job requeued all
+       29, and the Review board refilled itself before Abhijeet woke up. Run it
+       BY HAND when there is a reason to; never on a timer. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>

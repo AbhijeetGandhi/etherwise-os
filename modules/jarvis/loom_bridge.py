@@ -43,10 +43,14 @@ def _rid(source_ref: str) -> str:
 
 
 def _read_loom(raw_path: str) -> tuple[str, Optional[str]]:
-    """(transcript, url) from the raw Loom payload; ("", None) if unreadable."""
+    """(transcript, url) from the raw Loom payload; ("", None) if unreadable.
+
+    TypeError is caught for the same reason as in loom_classifier._read_fathom:
+    a NULL raw_path makes Path() raise TypeError, which is not an OSError, and
+    one such row killed the entire nightly classify run on 2026-08-21."""
     try:
-        payload = json.loads(Path(raw_path).read_text())
-    except (OSError, ValueError):
+        payload = json.loads(Path(raw_path or "").read_text())
+    except (OSError, ValueError, TypeError):
         return "", None
     parsed = ingest.parse_loom(payload)
     return parsed.get("text") or "", parsed.get("url")

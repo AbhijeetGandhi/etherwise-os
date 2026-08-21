@@ -32,6 +32,15 @@ def main() -> int:
                          "exclusion is only as good as the evidence behind it, "
                          "and 189 of them were decided on a participant list that "
                          "was missing every transcript speaker (2026-08-14).")
+    ap.add_argument("--force", action="store_true",
+                    help="ALSO re-open exclusions the TRANSCRIPT CLASSIFIER made "
+                         "(fathom-kind:*, ops-alert:*, filed:*). Off by default: "
+                         "that classifier reads the full transcript and this "
+                         "module reads only the participant list, so re-opening "
+                         "its verdicts is a worse-informed rule overruling a "
+                         "better-informed one. Without this guard the two fought "
+                         "nightly and the Review board refilled itself "
+                         "(2026-08-21).")
     ap.add_argument("--dry-run", action="store_true",
                     help="measure what --recheck/--recheck-all would do, write nothing")
     args = ap.parse_args()
@@ -41,7 +50,7 @@ def main() -> int:
         if args.recheck_all:
             return fathom_bridge.recheck_events(
                 dbp, states=("queued", "excluded"), queue_cap=args.queue_cap,
-                dry_run=args.dry_run)
+                force=args.force, dry_run=args.dry_run)
         if args.recheck:
             return fathom_bridge.recheck_queued(dbp, dry_run=args.dry_run)
         return fathom_bridge.sync_unmapped(

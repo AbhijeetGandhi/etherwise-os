@@ -56,9 +56,15 @@ def _read_fathom(raw_path: str) -> tuple[str, Optional[str]]:
     Mirrors `_read_loom` so the classifier reads either corpus through ONE reader
     contract (the Fathom residue is owner-only/internal calls with a transcript but
     no external participant -- the deterministic bridge correctly skipped them)."""
+    # `raw_path or ""` and TypeError: a source row with a NULL raw_path is not
+    # exotic, and Path(None) raises TypeError, which is NOT an OSError — so ONE
+    # such row took down the whole rail. It did, at 06:05 on 2026-08-21:
+    # `TypeError('expected str, bytes or os.PathLike object, not NoneType')`,
+    # and the classify job has failed every night since. An unreadable source is
+    # a source we skip; it is never a reason to stop reading the other fifty-nine.
     try:
-        payload = json.loads(Path(raw_path).read_text())
-    except (OSError, ValueError):
+        payload = json.loads(Path(raw_path or "").read_text())
+    except (OSError, ValueError, TypeError):
         return "", None
     parsed = ingest.parse_fathom(payload)
     return parsed.get("text") or "", parsed.get("url")
@@ -573,6 +579,11 @@ def _queue(db_path, ev: dict, run_id, proposed: str, conf: float,
 
 
 def _exclude(db_path, ev: dict, run_id, reason: str) -> bool:
+    # The `<source>_classifier` stamp this path writes to `resolved_by` is what
+    # fathom_bridge keys its no-re-open guard on — see
+    # fathom_bridge.TRANSCRIPT_DECIDERS. It records that the verdict was reached
+    # on the FULL TRANSCRIPT, which is strictly more evidence than the bridge's
+    # participant list. Do not drop it.
     ev = dict(ev, state="excluded", exclude_reason=reason)
     with db.connect(db_path) as conn:
         return events.store_event(conn, ev, run_id) == "inserted"

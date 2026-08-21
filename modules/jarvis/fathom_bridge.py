@@ -223,12 +223,47 @@ def sync_unmapped(db_path, reg=None, *, limit: int = 50, queue_cap: int = 40,
 
 RECHECK_STATES = ("queued",)
 
+# EXCLUSIONS THIS MODULE MUST NOT RE-OPEN.
+#
+# The docstring below argues that a verdict is only as good as the evidence it
+# was reached on, and uses that to justify re-reading `excluded` Fathom rows.
+# That argument is right, and it CUTS BOTH WAYS: the 114
+# `fathom-kind:internal-product` verdicts reached in July were damage, because
+# the model was handed a participant list of one internal person (the `or`/`|`
+# bug in ingest.parse_fathom). The verdicts `jarvis-loom-classify` reaches NOW
+# are reached on the full transcript with real speakers — which is strictly
+# more evidence than this module has, since all it reads is the participant
+# list. Re-opening those is not repair; it is a worse-informed rule overruling
+# a better-informed one.
+#
+# It cost a full loop: 2026-08-21, jarvis_loom_classify excluded 29 calls at
+# 05:30 and jarvis_fathom_bridge requeued all 29 at 05:45, on a nightly
+# schedule, so the Review board refilled itself every morning and every fix
+# measured clean for fifteen minutes. The founder had been chasing the same
+# forty-odd rows for days.
+#
+# `--force` still overrides, for the case this list exists to protect against:
+# a classifier verdict that is itself wrong.
+# Keyed on WHO decided (`resolved_by`), never on the exclude_reason. The July
+# verdicts wear the SAME `fathom-kind:*` reasons and must stay re-openable —
+# they were reached on a participant list of one internal person and carry no
+# stamp. Reason says what was decided; only the stamp says on what evidence.
+# A SUBSTRING, because the stamp has three live forms: 'fathom_classifier',
+# 'fathom_classifier:high' and 'loom_classifier:high'. Matching a prefix list
+# missed the bare one and the loop came straight back.
+TRANSCRIPT_DECIDER_MARK = "_classifier"
+
+
+def _classifier_decided(resolved_by: Optional[str]) -> bool:
+    return TRANSCRIPT_DECIDER_MARK in (resolved_by or "").strip().lower()
+
 
 def recheck_events(db_path, reg=None, *, states: tuple = RECHECK_STATES,
                    read_participants: Callable = _read_participants,
                    dossier_dir: Optional[Path] = None,
                    queue_cap: Optional[int] = None,
                    dry_run: bool = False,
+                   force: bool = False,
                    now_iso: Optional[str] = None) -> dict:
     """Re-evaluate decided Fathom events against the CURRENT registry + owner
     rules. A registry match heals; a real external party (behind an owner) becomes
@@ -270,6 +305,14 @@ def recheck_events(db_path, reg=None, *, states: tuple = RECHECK_STATES,
             " ORDER BY s.occurred_dt DESC", tuple(states))]
     rows = [r for r in all_rows if not events.is_human_decision(r["resolved_by"])]
     founder_decided = len(all_rows) - len(rows)
+    # …and the transcript classifier's verdicts are respected the same way, for
+    # the same reason: it read more than we can. See CLASSIFIER_REASONS.
+    if not force:
+        before = len(rows)
+        rows = [r for r in rows if not _classifier_decided(r["resolved_by"])]
+        classifier_decided = before - len(rows)
+    else:
+        classifier_decided = 0
     healed = requeued = excluded = capped = already = 0
     by_client: dict = {}
     from_reason: dict = {}
@@ -311,6 +354,7 @@ def recheck_events(db_path, reg=None, *, states: tuple = RECHECK_STATES,
             "requeued": requeued, "excluded": excluded,
             "queue_capped": capped, "already_attributed": already,
             "founder_decided": founder_decided,
+            "classifier_decided": classifier_decided,
             "dry_run": dry_run, "healed_by_client": by_client,
             "healed_from": from_reason}
 

@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -158,6 +159,52 @@ class TestWriteNudgeCanonicalises(unittest.TestCase):
         """14-day fallback vs the 7 days a system alarm is meant to get."""
         self.assertEqual(config.COS_DECAY_TTL_DAYS[
             nudges.canonical_kind("system_recurring")], 7)
+
+
+class TwoRulesMustNotUndoEachOther(unittest.TestCase):
+    """THE LOOP (2026-08-21). `jarvis_loom_classify` excluded 29 Fathom calls at
+    05:30 on the evidence of their full transcripts; `jarvis_fathom_bridge
+    --recheck-all` requeued all 29 at 05:45 on the evidence of their
+    participant lists. Both were scheduled nightly, so the Review board refilled
+    itself before the founder woke up and every fix measured clean for exactly
+    fifteen minutes. He spent days on the same forty rows.
+
+    The rule that settles it: a component may re-open a verdict only if it has
+    MORE evidence than whoever reached it. The bridge reads participants; the
+    classifier reads the transcript. So the bridge yields.
+
+    Keyed on `resolved_by` and never on `exclude_reason`: the July verdicts wear
+    the same `fathom-kind:*` reasons, were reached on a participant list of one
+    internal person (the `or`/`|` ingest bug), carry no stamp, and MUST stay
+    re-openable — that unfreeze is the whole point of `--recheck-all`."""
+
+    def test_a_transcript_verdict_is_respected(self):
+        from modules.jarvis import fathom_bridge as fb
+        for stamp in ("fathom_classifier", "fathom_classifier:high",
+                      "loom_classifier:high"):
+            self.assertTrue(fb._classifier_decided(stamp), stamp)
+
+    def test_an_unstamped_july_verdict_stays_reopenable(self):
+        from modules.jarvis import fathom_bridge as fb
+        for stamp in (None, "", "cockpit-approval"):
+            self.assertFalse(fb._classifier_decided(stamp), repr(stamp))
+
+    def test_a_hand_verdict_is_not_mistaken_for_a_classifier_one(self):
+        from modules.jarvis import fathom_bridge as fb
+        from modules.jarvis import events
+        for stamp in ("hand", "hand:abhijeet-2026-08-14"):
+            self.assertFalse(fb._classifier_decided(stamp), stamp)
+            self.assertTrue(events.is_human_decision(stamp), stamp)
+
+    def test_the_nightly_job_does_not_carry_the_unfreeze_flag(self):
+        """`--recheck-all` is a one-off repair — its own help text says so — and
+        putting it on a timer is what created the loop. If it ever returns to
+        this plist, this fails."""
+        from core import config
+        p = (Path(config.V3_ROOT) / "launchd"
+             / "io.etherwise.v3.jarvis-fathom-bridge.plist").read_text()
+        args = p.split("<key>ProgramArguments</key>", 1)[1].split("</array>", 1)[0]
+        self.assertNotIn("--recheck-all", args)
 
 
 if __name__ == "__main__":
