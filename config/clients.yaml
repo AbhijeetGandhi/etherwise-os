@@ -236,6 +236,8 @@ clients:
     billing:
       canonical: Dhanya Sangolli
     scope_notes: "AI Voice Coach (Vapi/Sheets/Twilio/Zapier). Upwork contract 44043381 (HOURLY, closed after one day) immediately replaced by 44052042 (FIXED, ACTIVE from 2026-07-08) — a contract-type switch, not two clients. Three rooms, 191 messages. Not yet in the transaction ledger (rail newest 2026-06-03): $0 = NOT MEASURED."
+    emails:
+      - email.upwork.com
   -
     id: diat-khan
     name: Diat Khan
