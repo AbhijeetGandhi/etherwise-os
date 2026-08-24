@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""One-time OAuth for mcp.upwork.com — mints the token set the shadow poller
+refreshes forever after.
+
+    PYTHONPATH=. python3 bin/upwork-mcp-auth
+
+Opens the Upwork consent page in the default browser, catches the redirect on
+127.0.0.1:8976 (the URI registered with the RFC7591 client), exchanges the
+code with PKCE, writes .credentials/upwork-mcp.json chmod 600, then proves the
+result with a live tools/list. Abhijeet's only job is to click Allow.
+
+State is checked on the way back — a mismatch aborts rather than exchanging a
+code someone else planted. Five-minute ceiling: an auth flow that waits
+forever is a background process nobody remembers holding a port.
+"""
+from __future__ import annotations
+
+import http.server
+import json
+import subprocess
+import sys
+import threading
+import urllib.parse
+import secrets
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from modules.upwork.feeds import mcp_client as mc                # noqa: E402
+
+TIMEOUT_S = 300
+
+
+def main() -> int:
+    verifier, challenge = mc.make_pkce()
+    state = secrets.token_urlsafe(24)
+    url = mc.authorize_url(challenge, state)
+    result: dict = {}
+    done = threading.Event()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):                                        # noqa: N802
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            ok = q.get("state", [""])[0] == state and q.get("code")
+            result["code"] = q.get("code", [""])[0] if ok else ""
+            result["error"] = q.get("error", [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(
+                b"<h2>Etherwise: Upwork MCP connected.</h2>"
+                b"<p>You can close this tab.</p>" if ok else
+                b"<h2>Etherwise: auth failed or state mismatch.</h2>")
+            done.set()
+
+        def log_message(self, *a):                               # silence
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 8976), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print("opening Upwork consent page — click Allow…")
+    subprocess.run(["open", url], check=False)
+
+    if not done.wait(TIMEOUT_S):
+        srv.shutdown()
+        print(f"timed out after {TIMEOUT_S}s — nothing written")
+        return 1
+    srv.shutdown()
+    if not result.get("code"):
+        print(f"authorization failed: {result.get('error') or 'state mismatch'}")
+        return 1
+
+    mc.exchange_code(result["code"], verifier)
+    print(f"tokens written to {mc.TOKENS_PATH} (600)")
+
+    s = mc.MCPSession()
+    s.initialize()
+    tools = s.tools_list()
+    print(f"live check: initialize ok, {len(tools)} tools visible")
+    accounts = s.call("list_accounts", {})
+    names = [a.get("role_label") for a in (accounts.get("accounts") or [])]
+    print(f"accounts: {names}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Run one MCP shadow poll — see modules/upwork/feeds/shadow_poll.py.
+
+    PYTHONPATH=. python3 bin/upwork-mcp-shadow
+
+Read-only against Upwork by construction (mcp_client refuses write tools in
+code). Writes only mcp_shadow_jobs + runs. The scanner is untouched; after
+24-48h scripts/mcp_shadow_report.py decides the cutover with numbers.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from modules.upwork.feeds import shadow_poll                     # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(shadow_poll.main())
