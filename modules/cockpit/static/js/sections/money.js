@@ -104,8 +104,17 @@ const kv = (v, formatter) => ({
  * Who/what is behind a row — vendor for card/POS spends, payee for bank
  * transfers, client for earnings. Presentational only: it groups the drill's
  * "where it went" strip and never touches a sum.
+ *
+ * THE SERVER'S ATTRIBUTION WINS. Revenue/refund rows arrive with `w` — the
+ * canonical client from the same _client_key ladder the Clients tab uses.
+ * The regexes below re-derived it here and disagreed: 'Received money from
+ * Consulting Systems B.V.' failed `([^.]+?) with` on the dots and fell to
+ * the source fallback, so ONE client showed as 'Consulting Systems BV' AND
+ * 'Wise-mail · revenue' in the same strip (2026-08-25). They remain only for
+ * spends (vendors) and rows the server could not attribute.
  */
 export function whoOf(x) {
+  if (x.w) return x.w;
   const d = (x.d || "").toUpperCase();
   let m = d.match(/^POS(?:-VISA)?\/([^/]+)/);
   if (m) return m[1].replace(/\s+(CYBS|SI)\b.*/, "").trim().slice(0, 26);
@@ -117,7 +126,9 @@ export function whoOf(x) {
   if (d.includes("EMI")) return "Loan EMI";
   m = (x.d || "").match(/^\(\d+\)\s*([^-]+?)\s*-/);            // Upwork hourly: client
   if (m) return m[1].trim().slice(0, 26);
-  m = (x.d || "").match(/Received money from ([^.]+?) with/i); // Wise receipt: sender
+  // Wise receipt fallback — same pattern as Python's _WISE_PAYER, so 'B.V.'
+  // payers parse instead of falling to the source fallback
+  m = (x.d || "").match(/received money from (.+?)(?:\s+with reference\b|$)/i);
   if (m) return m[1].trim().slice(0, 26);
   if (x.s === "Upwork" || x.s === "Upwork-CSV") return x.t || "Upwork";
   const vendor = (x.d || "").split(",")[0].trim();             // card rows: "VENDOR, CITY"

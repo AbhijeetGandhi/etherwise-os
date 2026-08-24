@@ -2513,7 +2513,18 @@ def money_transactions(db_path: Optional[Path] = None, *,
 
     Filters (all optional, AND-ed): bucket (comma-list — 'revenue,refund' is the
     Net-revenue KPI), month (YYYY-MM), source, q (case-insensitive substring over
-    description+type). No filters = the full reconciled ledger (the explorer)."""
+    description+type). No filters = the full reconciled ledger (the explorer).
+
+    Each revenue/refund row carries `w`: the canonical client, from the SAME
+    `_client_key` ladder the Clients tab aggregates with. Before this the Money
+    drill's "who" facet re-derived the client in JS (money.js whoOf) with its
+    own regexes — a THIRD name map — and its Wise pattern `([^.]+?) with`
+    could not cross the dots in 'Consulting Systems B.V.', so Hermon's two
+    same-day August payments grouped as 'Consulting Systems BV' and
+    'Wise-mail · revenue' on the same screen (Abhijeet, 2026-08-25) even after
+    the config maps were unified. Attribution is computed ONCE, here; the JS
+    keeps its regexes only for spend rows (vendors) and rows this returns no
+    `w` for."""
     from modules.finance import doctor, money as fmoney
 
     dbp = db_path or config.DB_PATH
@@ -2527,8 +2538,9 @@ def money_transactions(db_path: Optional[Path] = None, *,
     try:
         rows = [dict(r) for r in conn.execute(
             "SELECT source, type, description, pnl_bucket, amount_base_minor,"
-            " creation_dt, pnl_month FROM transactions"
-            " WHERE canonical_key IS NOT NULL")]
+            " creation_dt, pnl_month, assignment_company, canonical_key"
+            " FROM transactions WHERE canonical_key IS NOT NULL")]
+        title_map, id_map = _contract_maps(conn)
     finally:
         conn.close()
 
@@ -2554,9 +2566,14 @@ def money_transactions(db_path: Optional[Path] = None, *,
             continue
         minor = r.get("amount_base_minor") or 0
         total_minor += minor
-        out.append({"dt": (r.get("creation_dt") or "")[:10], "m": m, "b": b,
-                    "u": usd(minor), "s": r.get("source") or "",
-                    "t": r.get("type") or "", "d": r.get("description") or ""})
+        row = {"dt": (r.get("creation_dt") or "")[:10], "m": m, "b": b,
+               "u": usd(minor), "s": r.get("source") or "",
+               "t": r.get("type") or "", "d": r.get("description") or ""}
+        if b in ("revenue", "refund"):        # client attribution is a revenue
+            w = _client_key(r, title_map, id_map)  # concept; spends keep their
+            if w:                                  # vendor heuristics in JS
+                row["w"] = w
+        out.append(row)
     out.sort(key=lambda x: x["dt"], reverse=True)
     return {"doctor": "GREEN", "blocked": False, "rows": out,
             "count": len(out), "sum_usd": usd(total_minor)}

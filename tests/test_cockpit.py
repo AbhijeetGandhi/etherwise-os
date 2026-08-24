@@ -2585,6 +2585,35 @@ class TestMoneyDrill(unittest.TestCase):
         for k in ("dt", "m", "b", "u", "s", "t", "d"):
             self.assertIn(k, d["rows"][0])
 
+    def test_revenue_rows_carry_the_servers_client_attribution(self):
+        """One payer, two Wise spellings, ONE `w`. Hermon's two 2026-08-10
+        payments arrived as 'Consulting Systems B.V.' and 'Consulting Systems
+        BV'; the Money drill's who-facet re-derived the client in JS and its
+        regex broke on the dots, so the same client showed as two categories
+        (Abhijeet, 2026-08-25). `w` is the Clients-tab `_client_key` computed
+        server-side — the drill and the tab can no longer disagree. Spend rows
+        get NO `w`: vendor grouping stays a JS presentational concern."""
+        with db.connect(self.db_path) as conn:
+            for rid, desc in [
+                    ("wm1", "Received money from Consulting Systems B.V. with"
+                            " reference 11477447-2800599882"),
+                    ("wm2", "Received money from Consulting Systems BV with"
+                            " reference 11477447-2800595443")]:
+                conn.execute(
+                    "INSERT INTO transactions (record_id, canonical_key, type,"
+                    " category, amount_minor, amount_base_minor, currency,"
+                    " creation_dt, source, pnl_bucket, description) VALUES"
+                    " (?,?, 'Incoming', 'income', 100000, 100000, 'USD',"
+                    " '2026-08-10T00:00:00+0000', 'Wise-mail', 'revenue', ?)",
+                    (rid, f"k{rid}", desc))
+        d = data.money_transactions(self.db_path, bucket="revenue")
+        who = {r["d"]: r.get("w") for r in d["rows"] if r["dt"] == "2026-08-10"}
+        self.assertEqual(len(who), 2)
+        self.assertEqual(set(who.values()), {"Hermon"})
+        spends = data.money_transactions(self.db_path, bucket="platform_fee")
+        self.assertTrue(spends["rows"])
+        self.assertTrue(all("w" not in r for r in spends["rows"]))
+
     def test_drill_doctor_gate_no_rows_on_red(self):
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO transactions (record_id, canonical_key, type,"
