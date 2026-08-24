@@ -1,0 +1,194 @@
+{
+  "_note": "Live batch for scripts/mcp_feed_compare.py --fixtures. Captured from mcp.upwork.com 2026-08-24 (freelancer org 1647672547786633217). UNLIKE mcp_samples.json, descriptions here are FULL AND UNTRIMMED - the first score comparison was invalidated by trimmed descriptions, since Description Quality is a scored dimension and Skill Fit is double-weighted off the same text. Search rows carry _captured naming the exact live query; a job without it has no live search row and is field-checked but its search-only fields are not graded.",
+  "jobs": {
+    "2091139773174847123": {
+      "_why": "scraper 32, APPLIED (19 connects). Hourly $20-50, brand-new client, n8n in title+body alongside Make.com.",
+      "search": {
+        "_captured": "smart_search p1 2026-08-24",
+        "id": "2091139773174847123",
+        "title": "Senior AI Automation Specialist — LLMs + Make.com / n8n (Long-term, IC or PM Route)",
+        "budget": "0.0", "job_type": "hourly", "proposal_count": 39,
+        "created_date": "2026-08-22T12:25:48+0000", "published_date": "2026-08-22T12:27:41+0000",
+        "duration": "More than 6 months", "engagement": "30+ hrs/week",
+        "experience_level": "EXPERT", "hourly_budget_type": "client-specified range",
+        "skills": ["Make.com"],
+        "client": {"country": "United Arab Emirates", "total_posted_jobs": 2, "verification_status": "VERIFIED"}
+      },
+      "get": {
+        "can_apply": true, "connects_cost": 19, "connects_balance": 227,
+        "client_record": {"contracts_active": 0, "contracts_total": 0, "feedback_count": 0, "feedback_score": 0, "hours_total": 0, "jobs_with_hires": 0},
+        "preferred_qualifications": {"contractor_type": "All freelancers", "english_proficiency": "Any", "has_portfolio": false, "min_earnings": "Any", "min_hours_worked": 0, "min_job_success_score": 0, "rising_talent": false},
+        "screening_questions": [
+          "<untrusted_participant_content>\nDescribe 2–3 production AI automation systems you've built with LLMs + Make.com or n8n — what each did, who used it, and how long it ran in production.\n</untrusted_participant_content>",
+          "<untrusted_participant_content>\nTell us about a project where you worked directly with a client. How did you handle scoping, communication, and mid-project changes?\n</untrusted_participant_content>",
+          "<untrusted_participant_content>\nGive one example of a real trade-off you made (e.g., cost vs. quality vs. reliability). What did you choose and why?\n</untrusted_participant_content>",
+          "<untrusted_participant_content>\nWhich path interests you more right now — deep IC work or project/client leadership — and why?\n</untrusted_participant_content>",
+          "<untrusted_participant_content>\nYour expected hourly rate, weekly availability, and timezone.\n</untrusted_participant_content>"
+        ],
+        "data": {"marketplaceJobPosting": {
+          "id": "2091139773174847123",
+          "activityStat": {"applicationsBidStats": {"avgRateBid": {"rawValue": "37.283750000000005"}, "maxRateBid": {"rawValue": "120.0"}, "minRateBid": {"rawValue": "15.0"}}, "jobActivity": {"invitesSent": 0, "totalHired": 0, "totalInvitedToInterview": 0, "totalOffered": 0, "totalUnansweredInvites": 0}},
+          "clientCompanyPublic": {"country": {"name": "United Arab Emirates", "region": ""}, "id": "1019905166", "timezone": "Asia/Tbilisi"},
+          "content": {
+            "title": "Senior AI Automation Specialist — LLMs + Make.com / n8n (Long-term, IC or PM Route)",
+            "description": "<untrusted_participant_content>\nWe are a small, fully remote, async-first team building production AI automation systems for companies around the world using LLMs, Make.com, and n8n.\n\nWe deliberately avoid a fast-paced, high-pressure agency culture. Instead, we optimize for deep work, clear priorities, sustainability, and high standards without unnecessary urgency.\n\nWe are hiring a Senior AI Automation Specialist for a long-term engagement. This is intentionally a senior-only role. You should have 3+ years of hands-on AI automation experience, have shipped multiple real production systems using LLMs with Make.com or n8n, and have worked directly with clients across multiple projects.\n\nYou should be comfortable handling scoping, client communication, and changes independently. You should also be able to design systems end-to-end rather than simply connecting tools, while thinking about real-world trade-offs such as ROI, cost, reliability, and maintenance.\n\nEveryone starts hands-on. Over time, the role can grow in one of two directions: a deep individual contributor path with full technical ownership, or a leadership path involving project management, product thinking, client communication, and mentoring.\n\nCompensation is $20–$35/hr for a senior hands-on IC focus and $30–$50/hr for senior ICs who also take on project management, product ownership, and client leadership. Final rates depend on experience and level of responsibility. Long-term leadership and equity opportunities may also be available for exceptional contributors.\n\nThe hiring process is simple and respectful of your time: answer the application questions, complete a small 45–60 minute practical task with a short Loom explaining your thinking, and then join one relaxed call.\n\nIf you are junior, mid-level, or still learning, please do not apply.\n</untrusted_participant_content>"},
+          "contractTerms": {"contractType": "HOURLY", "experienceLevel": "EXPERT", "hourlyContractTerms": {"engagementType": "FULL_TIME", "hourlyBudgetMax": 50, "hourlyBudgetMin": 20, "hourlyBudgetType": "MANUAL"}, "personsToHire": 1}}}
+      }
+    },
+    "2091681309915385639": {
+      "_why": "scraper 28. Hourly $15-60. Client spend $1,267.74.",
+      "search": {
+        "_captured": "search q='Workiz Twilio Make.com automation dispatch' 2026-08-24",
+        "id": "2091681309915385639",
+        "title": "Twilio + Make.com + Workiz (CRM) Automation Developer",
+        "budget": "0.0", "job_type": "hourly", "proposal_count": 52,
+        "created_date": "2026-08-24T00:17:40+0000", "published_date": "2026-08-24T00:18:39+0000",
+        "duration": "1 to 3 months", "engagement": "Less than 30 hrs/week",
+        "experience_level": "EXPERT", "hourly_budget_type": "client-specified range", "freelancers_to_hire": 1,
+        "skills": ["Twilio API", "API", "Automation", "Make.com"],
+        "client": {"country": "USA", "total_hires": 2, "total_posted_jobs": 9, "verification_status": "VERIFIED"}
+      },
+      "get": {
+        "can_apply": true, "connects_cost": 0, "connects_balance": 227,
+        "client_record": {"contracts_active": 2, "contracts_total": 2, "feedback_count": 0, "feedback_score": 0, "hours_total": 97.17, "jobs_with_hires": 2, "spend_total": "1267.74"},
+        "preferred_qualifications": {"contractor_type": "All freelancers", "min_job_success_score": 0},
+        "data": {"marketplaceJobPosting": {
+          "id": "2091681309915385639",
+          "activityStat": {"applicationsBidStats": {"avgRateBid": {"rawValue": "40.77438596491228"}, "maxRateBid": {"rawValue": "90.0"}, "minRateBid": {"rawValue": "15.0"}}, "jobActivity": {"invitesSent": 10, "totalHired": 0, "totalInvitedToInterview": 0}},
+          "clientCompanyPublic": {"city": "Los Angeles", "id": "5733990", "state": "CA", "timezone": "America/Sao_Paulo"},
+          "content": {
+            "title": "Twilio + Make.com + Workiz (CRM) Automation Developer",
+            "description": "<untrusted_participant_content>\nWe are looking for an experienced automation developer to create an SMS-based scheduling and dispatch workflow connecting Twilio, Make.com, and Workiz CRM.\nThe system needs to automate communication between our company, service providers, customers, and our CRM.\nGeneral Workflow\nThe system should be able to:\nPull and update customer/job information in Workiz.\nSend and receive automated SMS/MMS through Twilio.\nSend opportunities to multiple service providers and process responses.\nAssign an opportunity based on predefined acceptance rules.\nCoordinate scheduling between service providers and customers.\nSend confirmations, reminders, status updates, and other automated messages.\nUpdate Workiz based on responses and actions.\nReceive photos and information through SMS/MMS or secure links.\nHandle cancellations, rescheduling, non-responses, and other workflow exceptions.\nMaintain accurate status information throughout the process.\nRequired Skills\nWe are looking for someone proficient with:\nTwilio — SMS, MMS, APIs and webhooks\nMake.com — advanced workflows, routers, filters and webhooks\nWorkiz CRM/API integrations\nREST APIs / JSON\nTwo-way SMS automation\nDatabase/state management\nConditional workflow logic\nError handling and troubleshooting\nExperience building scheduling, dispatch, field-service, marketplace, or similar workflow automation is strongly preferred.\nThe initial project is to build and test the core workflow, but we want the system structured so additional automation and functionality can be added later.\n</untrusted_participant_content>"},
+          "contractTerms": {"contractType": "HOURLY", "experienceLevel": "EXPERT", "hourlyContractTerms": {"engagementType": "PART_TIME", "hourlyBudgetMax": 60, "hourlyBudgetMin": 15, "hourlyBudgetType": "MANUAL"}, "personsToHire": 1}}}
+      }
+    },
+    "2091503480754476388": {
+      "_why": "scraper 32, FIXED exactly on the $500 floor, whale client $375K/327 contracts. Search row NOW captured live (q='Claude Cowork Code AI expert architect'): proposal_count 52, total_hires 327 (confirms the contracts_total fix), duration '3 to 6 months' (confirms the earlier '1 to 3 months' was fabricated, not a real diff).",
+      "search": {
+        "_captured": "search q='Claude Cowork Code AI expert architect' 2026-08-24",
+        "id": "2091503480754476388",
+        "title": "AI Expert architect/Claude Cowork & Code GPT a + - good communication",
+        "budget": "500.0", "job_type": "fixed", "proposal_count": 52,
+        "created_date": "2026-08-23T12:31:03+0000", "published_date": "2026-08-23T16:33:21+0000",
+        "duration": "3 to 6 months", "experience_level": "INTERMEDIATE", "freelancers_to_hire": 1,
+        "skills": ["Artificial Intelligence", "API"],
+        "client": {"country": "United States", "rating": 4.62, "total_hires": 327, "total_posted_jobs": 270, "total_reviews": 181, "verification_status": "VERIFIED"}
+      },
+      "get": {
+        "can_apply": true, "connects_cost": 18, "connects_balance": 227,
+        "client_record": {"contracts_active": 72, "contracts_total": 327, "feedback_count": 181, "feedback_score": 4.62, "hours_total": 11159.5, "jobs_with_hires": 215, "spend_total": "375023.53"},
+        "preferred_qualifications": {"contractor_type": "All freelancers", "english_proficiency": "Any", "has_portfolio": false, "min_earnings": "Any", "min_hours_worked": 0, "min_job_success_score": 0, "rising_talent": false},
+        "data": {"marketplaceJobPosting": {
+          "id": "2091503480754476388",
+          "activityStat": {"applicationsBidStats": {"avgRateBid": {"rawValue": "519.6135185185185"}, "maxRateBid": {"rawValue": "3000.0"}, "minRateBid": {"rawValue": "10.0"}}, "jobActivity": {"invitesSent": 0, "totalHired": 0, "totalInvitedToInterview": 0, "totalOffered": 0, "totalUnansweredInvites": 0}},
+          "clientCompanyPublic": {"city": "New York", "country": {"name": "United States", "region": ""}, "id": "1374871", "state": "NY", "timezone": "America/Sao_Paulo"},
+          "content": {
+            "title": "AI Expert architect/Claude Cowork & Code GPT a + - good communication",
+            "description": "<untrusted_participant_content>\n## Part-Time AI Builder\n\nWe're looking for a part-time AI Builder to join our existing AI team and help us build practical AI systems for our company and our service-business clients.\n\nThis is a hands-on role.\n\nYou'll be building AI agents, automations, workflows, and internal tools that actually get used — not prototypes that sit on a shelf.\n\n### You're probably a great fit if you:\n\n* Are very strong with Claude, Claude Code, Claude Cowork, and ChatGPT\n* Have personally built real AI systems for businesses\n* Have experience with autonomous agents, automations, lead generation, content systems, or business operations\n* Understand how to connect different tools, platforms, APIs, and data together\n* Love figuring things out and learning new tools\n* Communicate clearly and are genuinely easy to work with\n* Can take an idea, build it, test it, troubleshoot it, and improve it\n* Enjoy working collaboratively with a fast-moving team\n\n### Big plus if you know:\n\n* GoHighLevel (GHL)\n* Salesforce or other CRMs\n* n8n\n* Make\n* Zapier\n* APIs and webhooks\n* CRM and lead automation\n* Connecting multiple systems together into one working workflow\n\nYou do not need to know everything.\n\nWe care much more about someone who is smart, energetic, curious, dependable, loves building, and continuously learns.\n\nThis is a part-time, ongoing role working alongside our existing AI team.\n\n## How to Apply\n\nSend us three examples of AI systems you personally built and a short video walking us through your work.\n\nThen answer these four questions:\n\n1. Why should we hire you?\n2. How good are you with Claude and Claude Code? What have you personally built with them?\n3. Have you built autonomous AI agents? If yes, what did you build and what did the agents actually do?\n4. What are you like to work with? How do you communicate, collaborate, learn, and handle things when a build doesn't go as planned?\n\nKeep it short and specific.\n\nWe're looking for someone who loves to build, loves to learn, moves quickly, communicates well, and is easy to work with.\n\nIf that sounds like you, we'd love to hear from you.\n\n.\n</untrusted_participant_content>"},
+          "contractTerms": {"contractType": "FIXED", "experienceLevel": "INTERMEDIATE", "fixedPriceContractTerms": {"amount": {"rawValue": "500.0"}}, "personsToHire": 1}}}
+      }
+    },
+    "2091448765472589177": {
+      "_why": "scraper 24. Hourly $10-45. Client $2,398 spent, 64 contracts, 4.87 rating. Scraper stored total_applicants=5 (tier); live count is 109.",
+      "search": {
+        "_captured": "search q='airtable' sort=recency 2026-08-24",
+        "id": "2091448765472589177",
+        "title": "AI Agent for Invoice and Expense Tracking",
+        "budget": "0.0", "job_type": "hourly", "proposal_count": 109,
+        "created_date": "2026-08-23T08:53:37+0000", "published_date": "2026-08-23T08:54:47+0000",
+        "duration": "1 to 3 months", "engagement": "Less than 30 hrs/week",
+        "experience_level": "INTERMEDIATE", "hourly_budget_type": "client-specified range", "freelancers_to_hire": 1,
+        "skills": ["Make.com"],
+        "client": {"country": "Israel", "rating": 4.87, "total_hires": 64, "total_posted_jobs": 67, "total_reviews": 46, "verification_status": "VERIFIED"}
+      },
+      "get": {
+        "can_apply": true, "connects_cost": 26, "connects_balance": 227,
+        "client_record": {"contracts_active": 4, "contracts_total": 64, "feedback_count": 46, "feedback_score": 4.87, "hours_total": 114, "jobs_with_hires": 46, "spend_total": "2398.87"},
+        "preferred_qualifications": {"contractor_type": "All freelancers", "english_proficiency": "Any", "has_portfolio": false, "min_earnings": "Any", "min_hours_worked": 0, "min_job_success_score": 0, "rising_talent": false},
+        "data": {"marketplaceJobPosting": {
+          "id": "2091448765472589177",
+          "activityStat": {"applicationsBidStats": {"avgRateBid": {"rawValue": "32.314710743801655"}, "maxRateBid": {"rawValue": "87.5"}, "minRateBid": {"rawValue": "9.99"}}, "jobActivity": {"invitesSent": 0, "totalHired": 0, "totalInvitedToInterview": 0, "totalOffered": 0, "totalUnansweredInvites": 0}},
+          "clientCompanyPublic": {"city": "eli", "country": {"name": "Israel", "region": ""}, "id": "1002720333", "state": "TA", "timezone": "Asia/Jerusalem"},
+          "content": {
+            "title": "AI Agent for Invoice and Expense Tracking",
+            "description": "<untrusted_participant_content>\nI am looking for an experienced freelancer to build an AI agent for my client, a company that manages construction projects.\n\nThe AI agent should:\n\nReceive invoices as PDF files or images.\nExtract details such as the supplier's name, invoice number, date, amount, VAT and expense category.\nAssign each expense to the correct construction project.\nAsk follow-up questions through chat when information is missing or unclear.\nSave and categorize the information in a central database, such as Google Sheets or another suitable platform.\nAllow users to request reports through chat, including expenses, income, and profit and loss by project, category or date range.\nProvide an interface where users can view, edit and update the information manually without using the chat.\n\nI am considering WhatsApp as the chat interface, but I am open to other recommendations. I am also deciding which platform would be best for storing and managing the data.\n\nWhen applying, please include:\n\nThe tools and technology stack you recommend for this project.\nThe tools you can work with, such as n8n, Make, WhatsApp API, OCR and document-processing tools, AI models, Google Sheets, Airtable or a custom database.\nExamples of AI agents, invoice-processing systems or similar projects you have built, including the tools you used.\nYour suggested approach for handling missing information, classifying invoices and assigning expenses to projects.\nWhether you recommend starting with a small MVP and what you think it should include.\n\nBest regards,\nAvraham\n</untrusted_participant_content>"},
+          "contractTerms": {"contractType": "HOURLY", "experienceLevel": "INTERMEDIATE", "hourlyContractTerms": {"engagementType": "PART_TIME", "hourlyBudgetMax": 45, "hourlyBudgetMin": 10, "hourlyBudgetType": "MANUAL"}, "personsToHire": 1}}}
+      }
+    },
+    "2091511083012883438": {
+      "_why": "scraper 27. RATE-UNSTATED hourly (hourlyBudgetType NOT_PROVIDED, no min/max) with client spend $10,855 - the proven-spender escape path, live. Mentions Claude CoWork.",
+      "search": {
+        "_captured": "search q='airtable' sort=recency 2026-08-24",
+        "id": "2091511083012883438",
+        "title": "AI Automation",
+        "budget": "0.0", "job_type": "hourly", "proposal_count": 80,
+        "created_date": "2026-08-23T13:01:15+0000", "published_date": "2026-08-23T13:02:50+0000",
+        "duration": "1 to 3 months", "engagement": "Less than 30 hrs/week",
+        "experience_level": "INTERMEDIATE", "hourly_budget_type": "no rate stated", "freelancers_to_hire": 1,
+        "skills": ["Artificial Intelligence"],
+        "client": {"country": "United States", "rating": 4.97, "total_hires": 23, "total_posted_jobs": 43, "total_reviews": 14, "verification_status": "VERIFIED"}
+      },
+      "get": {
+        "can_apply": true, "connects_cost": 20, "connects_balance": 227,
+        "client_record": {"contracts_active": 5, "contracts_total": 23, "feedback_count": 14, "feedback_score": 4.97, "hours_total": 205.83, "jobs_with_hires": 21, "spend_total": "10855.26"},
+        "preferred_qualifications": {"contractor_type": "All freelancers", "english_proficiency": "Any", "has_portfolio": false, "min_earnings": "Any", "min_hours_worked": 0, "min_job_success_score": 0, "rising_talent": false},
+        "data": {"marketplaceJobPosting": {
+          "id": "2091511083012883438",
+          "activityStat": {"applicationsBidStats": {"avgRateBid": {"rawValue": "49.09544444444444"}, "maxRateBid": {"rawValue": "150.0"}, "minRateBid": {"rawValue": "15.0"}}, "jobActivity": {"invitesSent": 0, "totalHired": 0, "totalInvitedToInterview": 0, "totalOffered": 0, "totalUnansweredInvites": 0}},
+          "clientCompanyPublic": {"city": "Alpharetta", "country": {"name": "United States", "region": ""}, "id": "8759361", "state": "GA", "timezone": "America/Sao_Paulo"},
+          "content": {
+            "title": "AI Automation",
+            "description": "<untrusted_participant_content>\n### Title: AI Automation & Workflow Expert for Sales, Marketing, and Business Operations\n\nI'm looking for an experienced AI automation specialist to help me design and build practical, connected workflows for my business.\n\nI'm very AI-savvy and already use tools such as ChatGPT, Claude (CoWork, Code), Codex, Granola, Wispr Flow, and Airtable. However, I haven't yet brought these tools together into standardized, end-to-end workflows within my own business. I'm looking for someone who can help me move from using individual AI tools to building reliable automations that work together.\n\nI view my business across three pillars:\n\n- Growth\n- Build\n- Operate\n\nThe initial focus will likely be Growth—particularly sales, marketing, events, content etc\n\nMy CRM and sales data currently live in Airtable. I have well-defined buyer personas and offer architecture. I've developed many of my sales and marketing processes manually, and I'm now ready to make them more consistent, scalable, and efficient.\n\nPotential opportunities include:\n\n- Streamlining the process from planning an event through outreach and follow-up\n- Capturing insights and action items from meeting notes and conversations\n- Identifying engagement, buying, and follow-up signals\n- Creating personalized outreach and conversion follow-ups\n- Turning my ideas, conversations, and work into marketing content\n- Drafting and managing LinkedIn content workflows\n- Connecting CRM data with content, outreach, and follow-up activities\n- Standardizing the different AI tools I currently use\n- Designing human-in-the-loop workflows so I can review important content and communications before they are published or sent\n\nI'm not looking for someone to simply recommend a collection of tools. I want a partner who can first understand how I currently work, identify the highest-value opportunities, design the right workflow architecture, and then help build and document the automations.\n\nThe ideal person will have experience with:\n\n- AI-powered workflow design and automation\n- Airtable-based CRM workflows (open to other)\n- Sales and marketing automation\n- Event-driven outreach and follow-up\n- LLM tools such as ChatGPT and Claude\n- Content creation and LinkedIn workflows\n- Integrating multiple tools through platforms such as Make, Zapier, n8n, APIs, or similar technologies\n- Building reliable workflows with appropriate human review and approval steps\n\nInitial deliverables may include:\n\n1. Review and map my existing tools and manual processes\n2. Recommend a standardized workflow and technology approach\n3. Prioritize a small number of high-impact automations\n4. Build and test the first end-to-end workflow\n5. Document the system so it can be maintained and expanded\n6. Recommend a roadmap for automations across Growth, Build, and Operate\n\nWhen applying, please share:\n\n- Examples of similar AI-enabled business workflows you have built\n- Your experience connecting various business tools\n- How you approach workflow discovery and prioritization\n- The platforms you typically use and why\n- Whether you can support both workflow architecture and hands-on implementation\n\nI'd like to begin with one clearly scoped workflow and expand the engagement if we work well together.\n</untrusted_participant_content>"},
+          "contractTerms": {"contractType": "HOURLY", "experienceLevel": "INTERMEDIATE", "hourlyContractTerms": {"engagementType": "PART_TIME", "hourlyBudgetType": "NOT_PROVIDED"}, "personsToHire": 1}}}
+      }
+    },
+    "2091355837823145593": {
+      "_why": "scraper 27. Hourly $20-30 - hourly_max exactly at the $30 floor boundary (30 passes, 29 would skip). Brand-new client.",
+      "search": {
+        "_captured": "smart_search p1 2026-08-24",
+        "id": "2091355837823145593",
+        "title": "AI Automation Engineer — n8n/Make, Slack, Notion, Dialpad and Follow Up Boss",
+        "budget": "0.0", "job_type": "hourly", "proposal_count": 41,
+        "created_date": "2026-08-23T02:44:22+0000", "published_date": "2026-08-23T04:14:54+0000",
+        "duration": "1 to 3 months", "engagement": "Less than 30 hrs/week",
+        "experience_level": "INTERMEDIATE", "hourly_budget_type": "client-specified range", "freelancers_to_hire": 1,
+        "skills": ["API Integration", "Notion", "Slack"],
+        "client": {"country": "United States"}
+      },
+      "get": {
+        "can_apply": true, "connects_cost": 13, "connects_balance": 227,
+        "client_record": {"contracts_active": 0, "contracts_total": 0, "feedback_count": 0, "feedback_score": 0, "hours_total": 0, "jobs_with_hires": 0},
+        "preferred_qualifications": {"contractor_type": "All freelancers", "english_proficiency": "Any", "has_portfolio": false, "min_earnings": "Any", "min_hours_worked": 0, "min_job_success_score": 0, "rising_talent": false},
+        "data": {"marketplaceJobPosting": {
+          "id": "2091355837823145593",
+          "activityStat": {"applicationsBidStats": {"avgRateBid": {"rawValue": "29.75"}, "maxRateBid": {"rawValue": "60.0"}, "minRateBid": {"rawValue": "10.0"}}, "jobActivity": {"invitesSent": 0, "totalHired": 0, "totalInvitedToInterview": 0, "totalOffered": 0, "totalUnansweredInvites": 0}},
+          "clientCompanyPublic": {"country": {"name": "United States", "region": ""}, "id": "1019551130", "timezone": "America/Chicago"},
+          "content": {
+            "title": "AI Automation Engineer — n8n/Make, Slack, Notion, Dialpad and Follow Up Boss",
+            "description": "<untrusted_participant_content>\nI'm looking for an experienced AI automation engineer to help build a practical internal operations system for a real estate team.\n\nThe system will connect Slack, Notion, Dialpad, Gmail, Google Calendar, Claude and Follow Up Boss using n8n or Make. n8n is preferred, but I'm open to Make if you can explain why it is the better choice.\n\nThis is not a chatbot or basic Zapier project. I need someone who understands APIs, webhooks, structured data, approval workflows, duplicate prevention and reliable error handling.\n\nInitial priorities:\n\n* Capture requests from my team leader across email, text, calls and notes\n* Identify assignments, deadlines, missing information and next actions\n* Create one organized task system in Notion\n* Track real estate transactions, deadlines and blockers\n* Post summaries, alerts and draft replies in Slack\n* Allow me to review, revise and approve actions through Slack\n* Summarize Dialpad calls and associate them with the correct contact\n* Prevent duplicate tasks, messages and CRM records\n* Keep unconfirmed transaction information separate from verified facts\n* Create morning and evening priority briefings\n\nLater phases may include:\n\n* Context-aware Gmail and Dialpad reply drafting\n* Follow Up Boss updates\n* PLAUD and Google Drive note intake\n* More advanced transaction-stage tracking\n* Claude-assisted document and deliverable creation\n* Controlled browser automation when an API cannot perform an action\n\nRequired experience:\n\n* n8n or Make\n* REST APIs and webhooks\n* Slack apps or interactive Slack messages\n* Notion databases and API\n* Gmail and Google Calendar integrations\n* Claude, OpenAI or another LLM API\n* CRM integrations\n* JSON and basic JavaScript\n* Error logging, retries and duplicate prevention\n* Secure management of API keys and credentials\n\nExperience with Follow Up Boss, Dialpad or real estate workflows is strongly preferred but not required if you have strong general API experience.\n\nThe project will begin with a paid 10-hour test.\n\nTest workflow:\n\n1. Receive a sample completed-call event.\n2. retrieve or accept the call transcript.\n3. Generate a structured summary and action items.\n4. Match the caller with a Notion contact.\n5. Post the summary in Slack for review.\n6. Save the communication in Notion.\n7. Prevent the same event from creating duplicate records.\n8. Log any workflow failure.\n9. Provide basic documentation.\n\nThe initial test is capped at 10 hours and $250. If the test is successful, I plan to continue building the system in controlled phases.\n\nImportant requirements:\n\n* All workflows must live in accounts I control.\n* I must own all code, connections and documentation.\n* Important messages cannot send without my approval.\n* Transaction facts and stage changes require confirmation.\n* Each phase must have an agreed hour limit.\n* You must provide a working demonstration before a phase is accepted.\n* You must communicate clearly and explain the system in plain English.\n\nWhen applying, please answer:\n\n1. Which would you use for this project—n8n or Make—and why?\n2. Describe a similar multi-platform automation you personally built.\n3. How would you prevent duplicate records if a webhook fires twice?\n4. How would you create a Slack approval workflow for an AI-generated reply?\n5. How would you separate an uncertain transaction update from a confirmed fact?\n6. What would you do if Follow Up Boss or Dialpad cannot perform an action through its API?\n7. Can you complete the 10-hour paid test before requesting a larger contract?\n8. Please include screenshots, a short video or another example of a workflow you personally built.\n\nPlease do not send a generic AI-generated proposal. Begin your response with the words \"Slack approval\" so I know you read the full description.\n</untrusted_participant_content>"},
+          "contractTerms": {"contractType": "HOURLY", "experienceLevel": "INTERMEDIATE", "hourlyContractTerms": {"engagementType": "PART_TIME", "hourlyBudgetMax": 30, "hourlyBudgetMin": 20, "hourlyBudgetType": "MANUAL"}, "personsToHire": 1}}}
+      }
+    },
+    "2091741953067894458": {
+      "_why": "scraper 28. Hourly $15-35. NO live search row was captured (it did not appear in the first pages of any query run today) - search-only fields ungraded, and its score runs with total_applicants=None, which is the honest MCP-degraded case. Also carries preferred_locations naming six countries, India included.",
+      "search": {
+        "id": "2091741953067894458",
+        "job_type": "hourly"
+      },
+      "get": {
+        "can_apply": true, "connects_cost": 13, "connects_balance": 227,
+        "client_record": {"contracts_active": 0, "contracts_total": 0, "feedback_count": 0, "feedback_score": 0, "hours_total": 0, "jobs_with_hires": 0},
+        "preferred_locations": {"countries": ["Argentina", "Colombia", "Brazil", "Ukraine", "Romania", "India"], "location_required": false},
+        "preferred_qualifications": {"contractor_type": "All freelancers", "english_proficiency": "Any", "has_portfolio": false, "min_earnings": "Any", "min_hours_worked": 0, "min_job_success_score": 0, "rising_talent": false},
+        "data": {"marketplaceJobPosting": {
+          "id": "2091741953067894458",
+          "activityStat": {"applicationsBidStats": {"avgRateBid": {"rawValue": "27.62793400286944"}, "maxRateBid": {"rawValue": "82.50588235294117"}, "minRateBid": {"rawValue": "10.0"}}, "jobActivity": {"invitesSent": 0, "totalHired": 0, "totalInvitedToInterview": 0, "totalOffered": 0, "totalUnansweredInvites": 0}},
+          "clientCompanyPublic": {"country": {"name": "United States", "region": ""}, "id": "1020039441", "timezone": "America/Chicago"},
+          "content": {
+            "title": "Lead AI Engineer / Full-Stack AI Developer — Build 24/7 Real Estate Lead Generation Platform",
+            "description": "<untrusted_participant_content>\nSenior AI Engineer / Full-Stack Developer — Build 24/7 Real Estate AI Lead Generation System\n\nWe are a Florida-based real estate company looking for an experienced AI Engineer / Full-Stack Developer to design and build a powerful AI-driven lead generation and sales platform.\n\nThis is NOT a simple chatbot or basic automation project.\n\nOur goal is to build an AI system that operates 24 hours a day, 7 days a week to attract, engage, qualify, nurture, and convert real estate buyers from across the United States and international markets who are interested in purchasing or investing in Florida real estate.\n\nWhat We Want to Build\n\nThe system should eventually handle the complete process:\n\nLead Acquisition → AI Conversation → Qualification → CRM → Lead Scoring → Property Matching → Automated Follow-Up → Appointment → Human Agent\n\nWe want the AI platform to:\n\n* Communicate with prospects 24/7\n* Support English and Spanish initially, with additional languages later\n* Communicate through website chat, WhatsApp, SMS, and email\n* Ask intelligent qualification questions\n* Determine investment budget\n* Identify cash vs. financing\n* Determine purchase timeline\n* Understand investment goals and preferred Florida markets\n* Automatically score and prioritize buyers\n* Store conversations and customer information in our CRM\n* Alert our agents when a high-quality buyer is identified\n* Automatically schedule appointments\n* Follow up with leads over weeks or months\n* Re-engage older leads\n* Connect with approved real estate/property data\n* Match buyers with relevant properties\n* Eventually provide property and investment analysis\n* Track lead sources, engagement, appointments, contracts, and closings\n\nExample\n\nAn investor in Colombia sees one of our advertisements for Florida investment properties.\n\nThey contact us at 2:00 AM Florida time.\n\nThe AI immediately communicates with them in Spanish and determines:\n\n* Budget: $1,000,000\n* Cash buyer\n* Interested in Miami and Fort Lauderdale\n* Investment property\n* Purchase timeline: 60 days\n* Interested in rental income\n\nThe AI records the information in our CRM, scores the lead, continues nurturing the buyer, recommends appropriate properties, and schedules an appointment with one of our agents.\n\nOur goal is for our sales team to wake up and find qualified buyers and appointments waiting for them, rather than simply receiving unqualified internet leads.\n\nRequired Experience\n\nWe are looking for someone with strong experience in:\n\n* OpenAI API / LLM development\n* AI agents and tool/function calling\n* Python\n* Node.js / TypeScript\n* API development and integrations\n* PostgreSQL or similar databases\n* AWS, Azure, or Google Cloud\n* CRM integrations\n* WhatsApp Business API\n* Twilio / SMS\n* Email automation\n* Webhooks\n* AI workflow automation\n* Authentication and security\n* Production AI applications\n\nExperience with real estate technology, MLS/RESO/IDX data, Follow Up Boss, HubSpot, Meta/Google lead integrations, AI voice agents, or multilingual AI systems is a major plus.\n\nImportant\n\nWe are not looking for someone whose experience is limited to ChatGPT prompts, basic Zapier workflows, or simple no-code chatbots.\n\nWe need an experienced developer who can help architect, code, deploy, secure, and maintain a real production system.\n\nWe want someone who can understand our business objectives and recommend the best technical architecture rather than waiting for us to tell them exactly what code to write.\n\nLong-Term Opportunity\n\nThis will begin as a development project, but we are looking for someone who could potentially work with us long-term and become the lead developer behind our AI infrastructure.\n\nWe plan to continue investing in the platform as it proves successful.\n\nAll custom source code, databases, prompts, workflows, integrations, documentation, and intellectual property developed specifically for this project must be owned by our company. Company production accounts and credentials will remain under company control.\n\nTO APPLY\n\nPlease start your proposal with the words:\n\nFLORIDA AI\n\nThen answer the following:\n\n1. What is the most advanced AI system you have personally built?\n2. Have you built AI agents that interact with APIs, databases, CRMs, or external tools?\n3. What parts of those systems did you personally develop?\n4. Have you integrated WhatsApp, SMS, email, or a CRM with AI?\n5. What technology stack would you recommend for this project?\n6. How would you architect our first version?\n7. Please provide examples, GitHub links, demos, or videos of previous AI projects.\n8. What country and time zone are you located in?\n9. How many hours per week are you available?\n10. What is your hourly rate?\n\nWe are looking for a serious AI engineer who wants to help us build an ambitious long-term platform, not someone looking to sell us a basic chatbot.\n</untrusted_participant_content>"},
+          "contractTerms": {"contractType": "HOURLY", "experienceLevel": "EXPERT", "hourlyContractTerms": {"engagementType": "PART_TIME", "hourlyBudgetMax": 35, "hourlyBudgetMin": 15, "hourlyBudgetType": "MANUAL"}, "personsToHire": 1}}}
+      }
+    }
+  }
+}

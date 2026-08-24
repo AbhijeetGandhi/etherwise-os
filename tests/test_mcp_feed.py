@@ -170,6 +170,25 @@ class ClientBlock(unittest.TestCase):
                          ["client_payment_verified"], 0)
 
 
+class SkillsReachTheScorer(unittest.TestCase):
+    """The live pipeline scores DB rows and job_input reads `skills_json`.
+    Emitting only `skills` blanked the double-weighted skill_fit dimension for
+    every MCP job — a systematic score drop the comparison harness measured as
+    -3/-4 before this was found (2026-08-24)."""
+
+    def test_skills_json_is_emitted_and_scored(self):
+        import json as j
+        job = mcp_feed.normalize(SEARCH_HOURLY, GET_HOURLY)
+        self.assertEqual(j.loads(job["skills_json"]), ["Make.com"])
+        seen = j.loads(scoring.job_input(job))
+        self.assertEqual(j.loads(seen["skills_json"]), ["Make.com"])
+
+    def test_empty_skills_is_an_empty_list_not_missing(self):
+        import json as j
+        job = mcp_feed.normalize({}, {})
+        self.assertEqual(j.loads(job["skills_json"]), [])
+
+
 class CompetitionIsExactNotATier(unittest.TestCase):
     """The scraper keeps the LOW BOUND of Upwork's tier ('20 to 50' -> 20); the
     MCP returns the real count. Asserted so the difference is a recorded

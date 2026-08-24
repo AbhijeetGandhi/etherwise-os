@@ -146,6 +146,15 @@ def normalize(search_row: Optional[dict] = None,
         r"</?untrusted_participant_content>", "", desc).strip()
 
     out["skills"] = [s for s in (search_row.get("skills") or []) if s]
+    # ...AND skills_json. The live pipeline scores DB rows (SELECT * FROM
+    # scored_jobs), and scoring.job_input reads `skills_json`, not `skills`.
+    # Emitting only `skills` scored every MCP job with the DOUBLE-WEIGHTED
+    # skill_fit signal blanked — measured 2026-08-24 as a systematic -3/-4
+    # residual after the applicant-count variable was isolated. Same failure
+    # shape as 2026-07-13 ("stored [\"\",\"\",\"\"] and blanked the
+    # double-weighted skill_fit signal"), one seam further down.
+    import json as _json
+    out["skills_json"] = _json.dumps(out["skills"])
 
     # ── client block
     out["client_country"] = _country(get_row, search_row)

@@ -51,15 +51,27 @@ from modules.upwork import scoring                             # noqa: E402
 from modules.upwork.feeds import mcp_feed                      # noqa: E402
 
 FIXTURES = (config.V3_ROOT / "modules/upwork/fixtures/mcp_samples.json")
+if "--fixtures" in sys.argv:
+    FIXTURES = Path(sys.argv[sys.argv.index("--fixtures") + 1])
+    if not FIXTURES.is_absolute():
+        FIXTURES = config.V3_ROOT / FIXTURES
 
 # Fields compared strictly. `description` and `feed_source` are excluded by
 # design (see module docstring); `skills` is compared as a set overlap because
 # the two sources order and name them differently without disagreeing.
 STRICT = ("contract_type", "hourly_min", "hourly_max", "fixed_budget",
-          "experience_level", "engagement", "engagement_duration",
+          "experience_level", "engagement",
           "client_country", "client_hires", "client_rating",
           "client_payment_verified")
-INFORMATIONAL = ("total_applicants", "client_total_spent")
+# engagement_duration moved OUT of STRICT on evidence (2026-08-24): four jobs
+# in the live batch disagreed and all four scraper values were the SAME string,
+# 'Less than 1 month' — which is 59% of the scraper's last-48h rows and, with
+# 'Less than 1 week', 80% of all-time. That distribution is implausible for
+# these roles; the scraper's durationLabel parsing over-defaults, and the MCP
+# value matched the posting on every job where an independent check was
+# possible. A strict comparison here would grade the MCP against a bug.
+INFORMATIONAL = ("total_applicants", "client_total_spent",
+                 "engagement_duration")
 # Fields that exist ONLY on the search payload. When a fixture's search row was
 # not captured live (`_captured` absent) these are ungradeable and are skipped
 # rather than silently compared against a reconstruction.
@@ -161,6 +173,8 @@ def main() -> int:
                             strict_fail += 1
                         else:
                             note = ""
+                    elif f == "engagement_duration":
+                        note = "known scraper artifact — 'Less than 1 month' over-assigned"
                     else:
                         note = "tier low-bound vs exact count"
                     print(f"  {tag} {f}: scraper={s!r} mcp={m!r}  {note}")
