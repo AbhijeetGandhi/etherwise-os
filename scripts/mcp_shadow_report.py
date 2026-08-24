@@ -36,13 +36,19 @@ def main() -> int:
         if not first:
             print("no shadow rows yet — has the poller run?")
             return 1
+        # julianday ON BOTH SIDES, never string compare: shadow rows carry
+        # 'T...Z' timestamps and scored_jobs carries space-separated ones, and
+        # 'T' > ' ' lexicographically — the exact trap nudges.ts_key exists
+        # for, walked into again in this script's first version. The symptom
+        # was COVERAGE 0/0: every scraper row silently failed the clip and 55
+        # genuinely-shared jobs reported as "MCP-only".
         shadow = {r["id"]: dict(r) for r in conn.execute(
-            "SELECT * FROM mcp_shadow_jobs WHERE first_seen_at >="
-            " datetime('now', ?)", (f"-{HOURS} hours",))}
+            "SELECT * FROM mcp_shadow_jobs WHERE julianday(first_seen_at) >="
+            " julianday('now', ?)", (f"-{HOURS} hours",))}
         scraper = {r["id"]: dict(r) for r in conn.execute(
             "SELECT id, score, feed_source, first_scored_at, hard_rule_skip,"
-            " title FROM scored_jobs WHERE first_scored_at >= MAX("
-            " datetime('now', ?), ?)", (f"-{HOURS} hours", first))}
+            " title FROM scored_jobs WHERE julianday(first_scored_at) >= MAX("
+            " julianday('now', ?), julianday(?))", (f"-{HOURS} hours", first))}
 
     print(f"window: last {HOURS}h, clipped to first shadow row {first}")
     print(f"shadow rows: {len(shadow)} · scraper rows in window: {len(scraper)}")
@@ -80,7 +86,10 @@ def main() -> int:
             print(f"\n2. LATENCY on {len(deltas)} shared jobs: median shadow-minus-scraper"
                   f" {med:+.0f} min (negative = shadow saw it first)")
 
-    uniques = [i for i in shadow if i not in scraper]
+    # belt and braces: in_scored_jobs was stamped at INSERT time against the
+    # full scored_jobs table, so it catches overlap even outside the window.
+    uniques = [i for i in shadow
+               if i not in scraper and not shadow[i].get("in_scored_jobs")]
     clean = [i for i in uniques if not shadow[i]["hard_rule_skip"]]
     print(f"\n3. MCP-ONLY jobs: {len(uniques)} ({len(clean)} pass hard rules)")
     for i in clean[:8]:
