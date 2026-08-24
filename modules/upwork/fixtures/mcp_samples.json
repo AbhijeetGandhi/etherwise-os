@@ -1,0 +1,287 @@
+{
+  "_note": "Real payloads captured from mcp.upwork.com on 2026-08-24 against Abhijeet's freelancer org (1647672547786633217), for scripts/mcp_feed_compare.py. Descriptions are trimmed; every other value is unedited. These three are all jobs the CHROME scanner also found and scored in the same window, which is the point: the comparison is on identical jobs, so any delta is a mapping difference and not a discovery difference.",
+  "jobs": {
+    "2091139773174847123": {
+      "_why": "score 32, he APPLIED (19 connects). Hourly $20-50. Client brand new (no spend_total). Mentions n8n in title and body alongside Make.com - the hard-rule case that matters most.",
+      "search": {
+        "id": "2091139773174847123",
+        "title": "Senior AI Automation Specialist — LLMs + Make.com / n8n (Long-term, IC or PM Route)",
+        "budget": "0.0",
+        "job_type": "hourly",
+        "proposal_count": 39,
+        "created_date": "2026-08-22T12:25:48+0000",
+        "published_date": "2026-08-22T12:27:41+0000",
+        "duration": "More than 6 months",
+        "engagement": "30+ hrs/week",
+        "experience_level": "EXPERT",
+        "hourly_budget_type": "client-specified range",
+        "skills": [
+          "Make.com"
+        ],
+        "client": {
+          "country": "United Arab Emirates",
+          "total_posted_jobs": 2,
+          "verification_status": "VERIFIED"
+        },
+        "_captured": "smart_search 2026-08-24"
+      },
+      "get": {
+        "can_apply": true,
+        "connects_cost": 19,
+        "connects_balance": 227,
+        "client_record": {
+          "contracts_active": 0,
+          "contracts_total": 0,
+          "feedback_count": 0,
+          "feedback_score": 0,
+          "hours_total": 0,
+          "jobs_with_hires": 0
+        },
+        "preferred_qualifications": {
+          "contractor_type": "All freelancers",
+          "english_proficiency": "Any",
+          "has_portfolio": false,
+          "min_earnings": "Any",
+          "min_hours_worked": 0,
+          "min_job_success_score": 0,
+          "rising_talent": false
+        },
+        "screening_questions": [
+          "<untrusted_participant_content>\nDescribe 2–3 production AI automation systems you've built with LLMs + Make.com or n8n — what each did, who used it, and how long it ran in production.\n</untrusted_participant_content>",
+          "<untrusted_participant_content>\nTell us about a project where you worked directly with a client. How did you handle scoping, communication, and mid-project changes?\n</untrusted_participant_content>",
+          "<untrusted_participant_content>\nYour expected hourly rate, weekly availability, and timezone.\n</untrusted_participant_content>"
+        ],
+        "data": {
+          "marketplaceJobPosting": {
+            "id": "2091139773174847123",
+            "activityStat": {
+              "applicationsBidStats": {
+                "avgRateBid": {
+                  "rawValue": "37.283750000000005"
+                },
+                "maxRateBid": {
+                  "rawValue": "120.0"
+                },
+                "minRateBid": {
+                  "rawValue": "15.0"
+                }
+              },
+              "jobActivity": {
+                "invitesSent": 0,
+                "totalHired": 0,
+                "totalInvitedToInterview": 0,
+                "totalOffered": 0,
+                "totalUnansweredInvites": 0
+              }
+            },
+            "clientCompanyPublic": {
+              "country": {
+                "name": "United Arab Emirates",
+                "region": ""
+              },
+              "id": "1019905166",
+              "timezone": "Asia/Tbilisi"
+            },
+            "content": {
+              "title": "Senior AI Automation Specialist — LLMs + Make.com / n8n (Long-term, IC or PM Route)",
+              "description": "<untrusted_participant_content>\nWe are a small, fully remote, async-first team building production AI automation systems for companies around the world using LLMs, Make.com, and n8n.\n\nWe deliberately avoid a fast-paced, high-pressure agency culture. Instead, we optimize for deep work, clear priorities, sustainability, and high standards without unnecessary urgency.\n\nWe are hiring a Senior AI Automation Specialist for a long-term engagement. This is intentionally a senior-only role. You should have 3+ years of hands-on AI automation experience, have shipped multiple real production systems using LLMs with Make.com or n8n, and have worked directly with clients across multiple projects.\n\nCompensation is $20–$35/hr for a senior hands-on IC focus and $30–$50/hr for senior ICs who also take on project management, product ownership, and client leadership.\n</untrusted_participant_content>"
+            },
+            "contractTerms": {
+              "contractType": "HOURLY",
+              "experienceLevel": "EXPERT",
+              "hourlyContractTerms": {
+                "engagementType": "FULL_TIME",
+                "hourlyBudgetMax": 50,
+                "hourlyBudgetMin": 20,
+                "hourlyBudgetType": "MANUAL"
+              },
+              "personsToHire": 1
+            }
+          }
+        }
+      }
+    },
+    "2091681309915385639": {
+      "_why": "score 28. Hourly $15-60 - hourly_max clears the $30 floor but hourly_min does not, the exact shape the floor rule reads. Client spend $1,267.74.",
+      "search": {
+        "_captured": "search q='Workiz Twilio Make.com automation dispatch' 2026-08-24",
+        "id": "2091681309915385639",
+        "title": "Twilio + Make.com + Workiz (CRM) Automation Developer",
+        "budget": "0.0",
+        "job_type": "hourly",
+        "proposal_count": 52,
+        "created_date": "2026-08-24T00:17:40+0000",
+        "published_date": "2026-08-24T00:18:39+0000",
+        "duration": "1 to 3 months",
+        "engagement": "Less than 30 hrs/week",
+        "experience_level": "EXPERT",
+        "hourly_budget_type": "client-specified range",
+        "freelancers_to_hire": 1,
+        "skills": [
+          "Twilio API",
+          "API",
+          "Automation",
+          "Make.com"
+        ],
+        "client": {
+          "country": "USA",
+          "total_hires": 2,
+          "total_posted_jobs": 9,
+          "verification_status": "VERIFIED"
+        }
+      },
+      "get": {
+        "can_apply": true,
+        "connects_cost": 0,
+        "connects_balance": 227,
+        "client_record": {
+          "contracts_active": 2,
+          "contracts_total": 2,
+          "feedback_count": 0,
+          "feedback_score": 0,
+          "hours_total": 97.17,
+          "jobs_with_hires": 2,
+          "spend_total": "1267.74"
+        },
+        "preferred_qualifications": {
+          "contractor_type": "All freelancers",
+          "min_job_success_score": 0
+        },
+        "data": {
+          "marketplaceJobPosting": {
+            "id": "2091681309915385639",
+            "activityStat": {
+              "applicationsBidStats": {
+                "avgRateBid": {
+                  "rawValue": "40.77438596491228"
+                },
+                "maxRateBid": {
+                  "rawValue": "90.0"
+                },
+                "minRateBid": {
+                  "rawValue": "15.0"
+                }
+              },
+              "jobActivity": {
+                "invitesSent": 10,
+                "totalHired": 0,
+                "totalInvitedToInterview": 0
+              }
+            },
+            "clientCompanyPublic": {
+              "city": "Los Angeles",
+              "id": "5733990",
+              "state": "CA",
+              "timezone": "America/Sao_Paulo"
+            },
+            "content": {
+              "title": "Twilio + Make.com + Workiz (CRM) Automation Developer",
+              "description": "<untrusted_participant_content>\nWe are looking for an experienced automation developer to create an SMS-based scheduling and dispatch workflow connecting Twilio, Make.com, and Workiz CRM. The system needs to automate communication between our company, service providers, customers, and our CRM.\n\nRequired Skills: Twilio SMS/MMS APIs and webhooks, Make.com advanced workflows routers filters and webhooks, Workiz CRM/API integrations, REST APIs / JSON, two-way SMS automation, database/state management, conditional workflow logic, error handling.\n</untrusted_participant_content>"
+            },
+            "contractTerms": {
+              "contractType": "HOURLY",
+              "experienceLevel": "EXPERT",
+              "hourlyContractTerms": {
+                "engagementType": "PART_TIME",
+                "hourlyBudgetMax": 60,
+                "hourlyBudgetMin": 15,
+                "hourlyBudgetType": "MANUAL"
+              },
+              "personsToHire": 1
+            }
+          }
+        }
+      }
+    },
+    "2091503480754476388": {
+      "_why": "score 32, FIXED $500 - exactly on the fixed floor. Whale client: $375,023 spent, 215 jobs with hires, 4.62 feedback. The scraper DID capture this spend, so it is the control case for the client block. NOTE: search row not captured live; search-only fields are ungraded here.",
+      "search": {
+        "id": "2091503480754476388",
+        "title": "AI Expert architect/Claude Cowork & Code GPT a + - good communication",
+        "budget": "500.0",
+        "job_type": "fixed",
+        "proposal_count": 20,
+        "created_date": "2026-08-23T13:01:15+0000",
+        "duration": "1 to 3 months",
+        "experience_level": "INTERMEDIATE",
+        "skills": [
+          "Make.com",
+          "GoHighLevel",
+          "Salesforce"
+        ],
+        "client": {
+          "country": "United States",
+          "rating": 4.62,
+          "total_hires": 215,
+          "verification_status": "VERIFIED"
+        }
+      },
+      "get": {
+        "can_apply": true,
+        "connects_cost": 18,
+        "connects_balance": 227,
+        "client_record": {
+          "contracts_active": 72,
+          "contracts_total": 327,
+          "feedback_count": 181,
+          "feedback_score": 4.62,
+          "hours_total": 11159.5,
+          "jobs_with_hires": 215,
+          "spend_total": "375023.53"
+        },
+        "preferred_qualifications": {
+          "contractor_type": "All freelancers",
+          "min_job_success_score": 0,
+          "min_earnings": "Any"
+        },
+        "data": {
+          "marketplaceJobPosting": {
+            "id": "2091503480754476388",
+            "activityStat": {
+              "applicationsBidStats": {
+                "avgRateBid": {
+                  "rawValue": "519.6135185185185"
+                },
+                "maxRateBid": {
+                  "rawValue": "3000.0"
+                },
+                "minRateBid": {
+                  "rawValue": "10.0"
+                }
+              },
+              "jobActivity": {
+                "invitesSent": 0,
+                "totalHired": 0,
+                "totalInvitedToInterview": 0
+              }
+            },
+            "clientCompanyPublic": {
+              "city": "New York",
+              "country": {
+                "name": "United States",
+                "region": ""
+              },
+              "id": "1374871",
+              "state": "NY",
+              "timezone": "America/Sao_Paulo"
+            },
+            "content": {
+              "title": "AI Expert architect/Claude Cowork & Code GPT a + - good communication",
+              "description": "<untrusted_participant_content>\nPart-Time AI Builder. We're looking for a part-time AI Builder to join our existing AI team and help us build practical AI systems for our company and our service-business clients. You'll be building AI agents, automations, workflows, and internal tools that actually get used.\n\nYou're probably a great fit if you are very strong with Claude, Claude Code, Claude Cowork, and ChatGPT, have personally built real AI systems for businesses, and understand how to connect different tools, platforms, APIs, and data together.\n\nBig plus if you know GoHighLevel (GHL), Salesforce or other CRMs, n8n, Make, Zapier, APIs and webhooks.\n</untrusted_participant_content>"
+            },
+            "contractTerms": {
+              "contractType": "FIXED",
+              "experienceLevel": "INTERMEDIATE",
+              "fixedPriceContractTerms": {
+                "amount": {
+                  "rawValue": "500.0"
+                }
+              },
+              "personsToHire": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
