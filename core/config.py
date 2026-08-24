@@ -266,9 +266,24 @@ CLIENT_CANONICAL = {
     "raphael mahir, servicepeople": "Visa Gate GmbH",
     "visa gate": "Visa Gate GmbH",          # _CO_SUFFIX strips the 'GmbH' first
     "visa gate gmbh": "Visa Gate GmbH",
-    # NOT merged on purpose (Abhijeet, 2026-07-27): real client, NO dossier, and
-    # we do not invent one — stays named-but-unlinked until a dossier exists:
-    #   'Consulting Systems B.V.' -> Hermon/Abel  (no hermon dossier)
+    # MERGED 2026-08-24 — reversing the 2026-07-27 'NOT merged' decision, whose
+    # stated premise ('no hermon dossier, we do not invent one') no longer
+    # holds: hermon is a registry client with both Consulting-Systems spellings
+    # as aliases and a compiled dossier. The trigger was Abhijeet catching the
+    # symptom himself in this month's revenue: Abel paid two invoices on
+    # 2026-08-10 and the Money tab filed one under a synthetic client named
+    # 'Consulting Systems' while the other fell to the wise-mail bucket
+    # ("that is abel that is hermon"). Both dotted and undotted forms are
+    # keyed because Wise itself is inconsistent — the two payment emails,
+    # same payer, same day, spelled it 'B.V.' and 'BV'. 'hermon.io' is what
+    # Upwork's assignment_company carries, which was quietly a THIRD row for
+    # the same client. 'consultancy international' is a DIFFERENT registry
+    # client; no key here may collide with it.
+    "consulting systems": "Hermon",
+    "consulting systems b.v.": "Hermon",
+    "consulting systems bv": "Hermon",
+    "hermon.io": "Hermon",
+    "hermon": "Hermon",
 }
 # Wise payers that are PAYMENT PROCESSORS / EORs whose end client is NOT yet
 # supplied — shown under their own name with an 'attribution pending' flag until
@@ -362,6 +377,13 @@ PAYMENT_MAIL_AMOUNT_TOLERANCE_MINOR = 100  # $1.00 — provider fee/rounding sla
 # "consulting systems b v"; "Beglaubigt.de" -> "beglaubigt de".
 PAYER_ALIASES = {
     "consulting systems b v": "hermon",      # Hermon/Abel pays as Consulting Systems B.V.
+    # ...and as 'Consulting Systems BV', no dots — norm 'consulting systems bv',
+    # which is NOT 'consulting systems b v'. Wise used both spellings for the
+    # same payer on the SAME DAY (2026-08-10, refs ...599882 dotted and
+    # ...595443 undotted); the undotted invoice fell to the wise-mail bucket
+    # and Abhijeet caught it in the month's revenue. One alias per spelling,
+    # because the sender's inconsistency is not the ledger's problem.
+    "consulting systems bv": "hermon",
     "consulting systems": "hermon",          # suffix-stripped form
     "adelye ltd": "adelye", "adelye": "adelye",
     "horizons aba midco llc": "horizons-aba",
