@@ -606,3 +606,17 @@ refused outside `actions.RERUN_JOBS`) every 4 s until a NEW run has finished, th
 outcome in words and re-reads the tab on the same view; a run already in flight is waited for,
 never kickstarted over (a kickstart would kill it). After the flip (`534283d`) the Health table
 has eight rails — the MCP-poll row is gone and the scanner reads "Upwork job feed (MCP)".
+
+**Addendum 2026-08-26 05:15 (`1c6e4d5`, `9d2102b`) — the email in the room, and stale drafts.**
+The conversation carries `emails` (from `room_links`, migration 029): every mail the sweep
+linked to one of the person's rooms — `{id, at, sender, subject, body, link, state, thread_id}`,
+newest first. When the newest linked mail is newer than their newest Upwork message it becomes
+`their` (channel "Email", the subject shown, the Gmail permalink as the link) and the row's days
+count from it; otherwise the row prints one grey line "Also by email, 24 Aug: <subject>". The
+open row shows the mail as a bubble (class `cv-bubble mail`) above the rooms. The link itself is
+made by `modules/upwork/room_link.py` in the sweep (name match, deterministic, 30-day window,
+ambiguity links nothing) and the draft-writer is given the linked mails, so a draft never again
+says the email is missing. Separately, `poll_inbox` now supersedes a pending draft that predates
+the client's newest inbound message (Upwork or linked mail) and redrafts the room — the row's
+"draft predates their message" flag should only ever be seen between a new message and the next
+poll (or a press of "Check Upwork now").

@@ -55,6 +55,13 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   lists, connects), **Health** (rails in words), **Analysis** (the old charts). Reader
   `/api/upwork`, drills `/api/upwork/rows`. Spec: `docs/upwork/PHASE1_TAB_SPEC.md` (§11 =
   the shape as built). The Phase 2 digest slot is not drawn until Phase 2 exists.
+- **A prospect's email now reaches the Upwork room** (2026-08-26 05:15, `9d2102b`,
+  migration 029 `room_links`): a mail whose sender matches a room's counterparty by
+  first name + surname initial (`modules/upwork/room_link.py`, no model call) is linked to
+  the room, queued for Review instead of being excluded by the low-base-rate rule, shown
+  on the Inbox row, and handed to the draft-writer. And a waiting draft older than the
+  client's newest message (Upwork or linked mail) is redrafted at the next poll
+  (`1c6e4d5`). Both born of the David Séjourné draft that said "I don't see the email".
 - **Codebase map** (2026-08-25): `docs/upwork/CODEBASE_MAP.md` + `docs/upwork/codebase-maps/`
   — rails, tables as they really are, verified findings, the tab recipe, the card seam,
   Phase 0–3 readiness. Read it before touching code in this chat.
@@ -418,6 +425,35 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    the new `/api/upwork/run?task=` (`data.upwork_run_status`, RERUN_JOBS-allowlisted) every
    4 s until a NEW run has finished, says what happened in words and re-reads the tab; a
    run already in flight is waited for, never kickstarted over. 52 tests, suite 1,721 OK.
+0m. DONE 2026-08-26 04:52 `1c6e4d5` (his 04:48: "Run now … is not pulling the latest —
+   look at the current inbox item"): the poll HAD read Nabil's 20:16 message; what it had
+   not done was write a reply to it, because `poll_inbox` skipped every room that already
+   held a pending draft ("no churn") — a draft from the 19th sat under a message from the
+   25th. Now `draft_predates(generated_at, newest_inbound)`: a pending draft older than
+   the client's newest inbound message (Upwork, and since 0n a linked email) is
+   superseded and the room redrafted; metric `drafts_refreshed`. Unparseable clocks keep
+   the draft. +3 tests (test_m1b). Suite 1,724 OK.
+0n. DONE 2026-08-26 05:15 `9d2102b` (his 04:58: "he did send me an email on
+   abhijeetgandhi01@gmail.com — do you not have access to it?"; his answer to the three
+   options: **link it to the conversation and use it**). David Séjourné's brief (24 Aug
+   19:08, "DNG: Workflow to create // clustering", the Drive folder) had been read by the
+   IMAP rail and EXCLUDED by the sweep (`imap-low-base-rate:no-client-signal` — a prospect
+   is not a registry client); the draft-writer reads the room alone; so it wrote "I don't
+   see the email". Built: migration 029 `room_links(event_id, thread_id, how,
+   matched_name)`; `modules/upwork/room_link.py` — the deterministic match (Upwork shows
+   "First L."; the mail's display name, RFC 2047 decoded and accent-folded, or its address
+   local part, on first name + surname initial against inbound senders of rooms active
+   within `config.UPWORK_ROOM_LINK_DAYS` = 30; the same person in two rooms → newest; two
+   different people → no link); sweep step 3a links + queues (Review still sees the mail,
+   the room named in the evidence; metric `room_linked`); `draft_followup` gets the linked
+   mails (up to `UPWORK_ROOM_LINK_MAIL_CHARS` = 1500 of body each, "treat these as
+   received"); the Inbox row shows the mail as their last word when it is newer, else
+   "Also by email"; `room_link.backfill()` re-examines the excluded mail in the window
+   (live: 216 examined, exactly 1 linked — David's). The wrong draft was superseded by
+   hand; he had meanwhile answered David himself on Upwork (05:07), so the room is
+   `healthy` and off the Inbox. Suite 1,733 OK, cockpit reloaded.
+   ◆ The match is name-based; a client whose Upwork name and email name differ ("Bob" vs
+   "Robert", a company address) will not link — the Review queue is the safety net.
 0k. DONE 2026-08-26 00:40 `a10b421` — **the tab REDESIGNED on his verdict** (23:50: "I don't
    like the UI at all … too complicated for me to understand anything … the part that I
    hate most is the client comms and how you represent it — it all should be intuitive").
@@ -456,7 +492,14 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    **3 scored → 3 hot (27, 26, 22)**, 2 drafts grounded + 1 BLOCKED by the validator
    (an unsourced "35"), **3 ClickUp cards pushed, 0 failed, digest sent, 0 anomalies**. The
    12 rows sit in `scored_jobs` with `feed_source mcp:*`; the Jobs tab counts them. The
-   Chrome scan tab was not touched (rollback path). Pre-flip preparation (03:40):
+   Chrome scan tab was not touched (rollback path). **Second round = run 7155, 05:15–05:19
+   (247 s):** 14 queries, 117 surfaced, 66 already known, 42 older than the cut, **9 new
+   claimed** (`mcp:claude` 6 · `mcp:gohighlevel` 3), 6 killed by the hard rules, **3 scored
+   → 3 hot**, 2 drafts grounded + 1 ungrounded (kept, flagged), 3 ClickUp cards pushed,
+   0 failed, digest sent, 0 anomalies. The 04:45 sync (run 7149) ran as always (proposals
+   35 updated / 43 terminal-preserved, contracts 54, transactions 22, submitted_proposals
+   still `scope_blocked`). Two clean rounds = the flip holds; the 13:15 watch list in the
+   runbook is the next check. Pre-flip preparation (03:40):
    `var/patches/2026-08-26_p11_THE_FLIP.patch` (checked clean against HEAD) + the runbook
    `var/patches/2026-08-26_FLIP_RUNBOOK.md` (8 steps, the 13:15 watch list, the one-line
    rollback). The patch = (a)+(b) below plus: the poller plist moved to `launchd/retired/`
@@ -523,3 +566,15 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 - 2026-08-26 03:45–04:20 · "let's flip it now anyways" → THE FLIP at 03:46 (`534283d`),
   first MCP round 04:15 clean (Next actions 1). "add a manual trigger button for every
   system" → Run now everywhere (`7f7d710`, 0l). Both watched to completion in the chat.
+- 2026-08-26 04:48–05:15 · "not pulling the latest" → a stale pending draft is redrafted
+  (`1c6e4d5`, 0m). "he did send me an email … do you not have access to it" → three
+  options asked, his pick "link it to the conversation and use it" → `room_links`
+  (`9d2102b`, 0n): a deterministic name match, never a model guess; ambiguity links
+  nothing; Review keeps seeing every linked mail. Second MCP round (05:15) clean.
+- 2026-08-26 05:20 · He goes to bed with an overnight list (this chat works alone; every
+  design choice below is recorded as a note for him, not assumed silently): (a) a promise
+  made in an Upwork message ("I'll take a look and let you know") must become a task on
+  Today; (1) every other tab redesigned in the Upwork tab's style; (2) the Upwork MCP tools
+  surveyed for use cases — transactions first, to replace the CSV import; (3) the Jobs
+  numbers "0 won this month / 1 interviewing" are wrong (TCC/Brandi Jordan, Globaltize/
+  Royan won; more than one interview this week).
