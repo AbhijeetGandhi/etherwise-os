@@ -1,6 +1,6 @@
 # PHASE1_TAB_SPEC.md — the Upwork tab, designed before it is built
 
-**Status:** APPROVED 2026-08-25 19:30 (with the §7 diff; hot bar → 20 the same minute) · steps 1–3 built (`ce45a21`, `ec5de3d`); the section (§2/§6) is the remaining step · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
+**Status:** BUILT — approved 2026-08-25 19:30 (with the §7 diff; hot bar → 20 the same minute); steps 1–3 `ce45a21` + `ec5de3d`, step 4 (the section, §2/§6) `7279345` at 23:20; open items are the ◆ list in §10 · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
 **Builds on:** `UPWORK_BRIEF.md` (Phase 1, laws 1–7, decisions 5/6/9), `docs/upwork/CODEBASE_MAP.md`
 §5–§6, `codebase-maps/03_cockpit.md`. Every number in §0 was read from the live DB (read-only) at
 18:45 IST; every file:line was checked in the working tree at `39faf95`+.
@@ -104,7 +104,7 @@ page behind one `expander` (ui.js:543) — collapsed by default, remembered per 
 | Old links | `ALIASES.pipeline = "upwork"` — a `#/pipeline` bookmark opens the tab, never a blank screen | `app.js:57` |
 | Icon | keep `trending-up` (exists in the sprite, `index.html`); ◆ a distinct Upwork glyph is a 20-line sprite addition if wanted | `index.html` |
 | Last-section memory | `localStorage.ew_cockpit_last_section` may hold `pipeline`; `byId()` falls back to Today today — the alias map is applied to the stored value too (one line in `boot()`) | `app.js:460` |
-| The old file | `sections/pipeline.js` keeps its charts and becomes the Analysis module: `export async function renderAnalysis(root, ctx)`. Its OWN funnel block, outcomes block, KPI strip, win-rate line and funnel-by-week table are REMOVED (they are the new tab's blocks now) — the file's header note already documents dropping dead blocks per brief §4; this is the same move | `sections/pipeline.js` — funnel + outcomes blocks (~489–630); KPI strip, win-rate line, funnel-by-week and threads-by-status (~1078–1385) |
+| The old file | `sections/pipeline.js` keeps its charts and becomes the Analysis module: `export async function renderAnalysis(root, ctx)`. Its OWN funnel block, outcomes block, KPI strip, win-rate line and funnel-by-week table are REMOVED (they are the new tab's blocks now) — the file's header note already documents dropping dead blocks per brief §4; this is the same move. **As built (`7279345`):** `renderAnalysis` = `render(root, ctx, {analysisOnly: true})` — the heading, KPI strip, win-rate line, funnel and outcomes blocks are skipped; the **funnel-by-week and threads-by-status tables STAY in the fold** (deliberate deviation: they are history the cohort view does not show, and removing them would orphan the range bar they share) | `sections/pipeline.js` — funnel + outcomes blocks (~489–630); KPI strip, win-rate line, funnel-by-week and threads-by-status (~1078–1385) |
 | Routes | `/api/pipeline`, `/api/pipeline/facts`, `/api/pipeline/rows` STAY (the Analysis charts read facts/rows; `test_cockpit.py` pins the `/api/pipeline` keys). `/api/upwork` + `/api/upwork/rows` are added | `server.py:33-70` |
 | State keys | `ew_cockpit_pipeline_filters` (the Analysis range bar) is kept as-is; new keys are `ew_cockpit_upwork_view` (`week`|`month`) and `ew_cockpit_upwork_analysis` (`open`|`closed`) | section |
 | Badge | none in Phase 1 — Today already carries the same cards; a second badge for the same work is noise. ◆ revisit if the tab becomes the primary screen | `app.js` |
@@ -499,9 +499,11 @@ rename land when Abhijeet says go. Recommended order:
 2. DONE `ec5de3d` — `_act_now_queue` extraction + the Loom-flag view flag (Today's queue
    pinned equal to the builder's output minus Loom flags); the RULE change parked (§5.2 ◆)
 3. DONE `ce45a21` — config diff (§7) applied by the chat on his approval; doctor green
-4. `upwork.js` + Pipeline → Upwork rename + Analysis fold; `bin/cockpit reload`; Chrome check of
-   `#/upwork` and `#/pipeline`; screenshot into the chat → commit
-5. BUILD_BRIEF checkpoint line + brief next-action update
+4. DONE `7279345` (2026-08-25 23:20) — `upwork.js` + Pipeline → Upwork rename + Analysis fold;
+   `bin/cockpit reload` done; rendered headless (Playwright against the live snapshot: cards,
+   week/month, drills, `#/pipeline` → the tab, the fold) — the chat's Chrome bridge cannot open
+   127.0.0.1, so the in-browser check is Abhijeet's; screenshot sent to the chat. Suite 1,713 OK.
+5. DONE — UPWORK_BRIEF 0j + Next actions 2, BUILD_BRIEF entry, this status line.
 
 Size: reader ~350 lines, rows ~150, builder extraction ~40 (moved, not written), section ~450,
 pipeline.js −380, tests ~400. No migration. No model call anywhere on the tab.

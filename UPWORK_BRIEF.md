@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** PLANNED, Phase 0 in motion
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 built (flip 2026-08-26 after the 12:15 scan) · Phase 1 BUILT (`7279345`)
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -43,6 +43,10 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   proposals table stale, win-rate wrong. Fix: `list_freelancer_proposals` (tasks #30–33).
   Also (found 2026-08-25, fixed same night — see Codebase findings 1): the hourly
   roomList pass was writing NULL telemetry into every proposal it touched.
+- **The Upwork tab is live** (2026-08-25 night, `ec5de3d` + `7279345`): digit 2 in the
+  cockpit, `#/upwork` (`#/pipeline` aliases to it), reader `/api/upwork`, drills
+  `/api/upwork/rows`. Spec: `docs/upwork/PHASE1_TAB_SPEC.md`. The Phase 2 digest slot is
+  drawn as not-built; the rails strip already answers "are the rails working".
 - **Codebase map** (2026-08-25): `docs/upwork/CODEBASE_MAP.md` + `docs/upwork/codebase-maps/`
   — rails, tables as they really are, verified findings, the tab recipe, the card seam,
   Phase 0–3 readiness. Read it before touching code in this chat.
@@ -86,7 +90,10 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
 Phase 0 output is the DATA SPINE. Every later phase reads it; nothing later is built until
 its spine row exists. 0.4's reply detection is also the auto-clear mechanism law #5 needs.
 
-### Phase 1 — The Upwork tab (visibility)
+### Phase 1 — The Upwork tab (visibility) — BUILT 2026-08-25 (`ec5de3d` reader, `7279345` section)
+As built: `docs/upwork/PHASE1_TAB_SPEC.md` is the record (cohort funnel, closure rule, the
+hot bar at `config.HOT_LEAD_THRESHOLD` = 20, "viewed" and "offer" drawn as unmeasured until
+0.2/0.4 give them a signal). The outline below is the original intent, kept for the diff:
 Top-to-bottom, one screen by default:
 1. **Needs me now** (≤5 cards): offers awaiting response · replies owed / stale threads ·
    drafts ready for review · 🎥 custom-Loom flags. Auto-clear per law #5.
@@ -369,7 +376,25 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    reloaded and serving it (live: week 24 Aug so far — fetched 223 → passed 86 → hot 47 →
    applied 2 → interviewing 1 → won 0; contracts started 1, outside the funnel). The
    Loom-flag RULE change is parked as the ◆ under Open decisions.
-1. **THE FLIP (needs his go; ~15 min; do it just after a :15 scan, never at :40):**
+0j. DONE 23:20 `7279345` (his "let's build the UI then") — **Phase 1 step 4, the section.**
+   `static/js/sections/upwork.js` (digit 2; `#/pipeline` and a remembered "pipeline"
+   alias to it): Needs me now from the shared queue (replies + escalations before Loom
+   flags, top 5 + expander; tiles: drafts waiting, Loom-worthy open, offers "—"), the cohort
+   funnel with the week/month toggle (SIGNAL vs anecdote typesetting, unmeasured stages as
+   a dashed band with the reason, hot/applied sub-lines, contracts-started line), the rails
+   strip (source-health tones → Activity drill, re-run where the registry allows), connects
+   as counts, the Phase 2 digest slot as an explicit not-built state, the old Pipeline
+   charts behind an Analysis expander (`pipeline.renderAnalysis`; funnel-by-week and
+   threads-by-status tables stay in the fold as history the cohort view does not show —
+   a deliberate deviation from spec §2, noted there). `today.queueCard` is exported: one
+   card component for both screens. +7 tests (44 in `test_upwork_tab.py`), suite **1,713
+   OK** on the Mac, cockpit reloaded and serving the module. Rendered headless (Playwright)
+   against the live snapshot: cards, both views, drills, the fold. **Phase 1 = built**;
+   what is left of it is the ◆ list (Loom card meaning, a "viewed" signal at 0.2).
+   He has to open `http://127.0.0.1:5051/#/upwork` himself — the chat's Chrome bridge
+   refuses 127.0.0.1.
+1. **THE FLIP (agreed 2026-08-25 night: tomorrow, right after the 12:15 scan, with him in
+   the chat; ~15 min; never at :40):**
    (a) `config.JOB_FEED_PROVIDER = "mcp"` and `MCP_CLAIM_SINCE = "<now, ISO UTC>"`;
    (b) `launchctl bootout gui/$(id -u) launchd/io.etherwise.v3.upwork-mcp-shadow.plist`
    (the poller retires — one MCP budget, one round an hour) and drop `mcp_feed` from
@@ -380,9 +405,9 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    (d) leave the Chrome scan tab where it is — `_fetch_chrome` stays in the file as the
    rollback path (`JOB_FEED_PROVIDER = "chrome"`, no other change).
    Then 0.2 → 0.3 → 0.4 → 0.5. (All in this chat now.)
-2. Phase 1: steps 1–3 done (0g/0h). Left: the section JS + Pipeline → Upwork rename +
-   Analysis fold (spec §2/§6) — agreed for after 0.2, can go earlier on his word — and the
-   Loom-flag card decision (◆).
+2. Phase 1: BUILT (0g/0h/0j). Left inside it: the ◆ items only — the Loom-flag card
+   meaning (his "keep as is for now"), the "viewed" stage once 0.2 shows what signal
+   exists, the offers tile once 0.4 lands.
 3. (first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
 4. (when he says go) Phase 3 applicant pull for the LinkedIn-writer role.
 
@@ -418,3 +443,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   post-flip posts at the flip, Loom card "keep as is for now". → `6b5543e` the provider
   path (not flipped) + fixtures; the rate limit found by the dry round and paced the same
   evening. The flip is a checklist awaiting his go (Next actions 1).
+- 2026-08-25 23:00–23:25 · "I will be there at the 12:15 scan so we can flip it after, so
+  let's build the UI then" → the flip is scheduled for 2026-08-26 after the 12:15 scan with
+  him present; the Phase 1 section built and committed tonight (`7279345`, 0j). Pipeline is
+  now the Upwork tab; its charts live in the Analysis fold.
