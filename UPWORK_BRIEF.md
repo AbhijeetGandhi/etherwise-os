@@ -249,7 +249,11 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   cards that would flood the tab AND the AM/PM brief's top-N (ranked by money at stake).
   The tab shows that population as a COUNT tile with a drill (`needs_me.loom_flags`,
   `ec5de3d`). The card itself: (a) ICP-tier only (≈2/month, actionable), (b) retire the kind
-  and keep the tile, or (c) all 151. Not changed until he picks.
+  and keep the tile, or (c) all 151. His answer (22:50): "keep it as is for now". Observed
+  20:30 the same evening: the sweep decayed all 14 cards (nudges 1151–1164) the moment the
+  20:15 retry carded their jobs — so with the rule as is, the card stream is dead by
+  construction (it can only fire between a draft and its push, or on a failed push); the
+  tile (158 at 23:35) is the only place the Loom-worthy population shows now.
 - Outcome Reason vocabulary: 40 Airtable choices with duplicates (map §9) → one canonical
   set before Loop 2 codes anything.
 - `rails/REGISTRY.md` `form_url`: the Outcome Submissions table + form exist in Airtable
