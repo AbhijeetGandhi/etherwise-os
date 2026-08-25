@@ -423,12 +423,15 @@ class EmptyOkCase(unittest.TestCase):
 
     def test_registry_opt_ins_are_exactly_the_clean_skip_rails(self):
         """Whoever adds empty_ok next must justify it: the ONLY rails whose
-        TaskSkip means 'healthy, nothing new' are the sweep (quiet inbox) and
-        the weekly loom fetch (corpus current)."""
+        TaskSkip means 'healthy, nothing new' are the sweep (quiet inbox), the
+        weekly loom fetch (corpus current), and — added 2026-08-25 with the
+        Upwork rails registry — the card sweep (cos_sweep skips 'empty' when no
+        card changed, its steady state 2 runs in 3) and the Sunday outcome email
+        (a week with no closed proposal to ask about is a clean skip)."""
         opted = {s["key"] for s in config.SOURCES if s.get("empty_ok")}
         self.assertEqual(
             opted, {"jarvis_sweep", "jarvis_imap_01", "jarvis_imap_02",
-                    "loom_fetch"}, opted)
+                    "loom_fetch", "cos_sweep", "upwork_outcomes"}, opted)
         # upwork_scan's TaskSkip means a broken feed — it must stay opted out
         scan = next(s for s in config.SOURCES if s["key"] == "scanner")
         self.assertFalse(scan.get("empty_ok"))

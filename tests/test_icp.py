@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from core import config
 from modules.upwork import icp
 
 
@@ -93,8 +94,9 @@ class TestQualifiersAndNearMiss(unittest.TestCase):
 
     def test_icp_never_promotes_a_weak_lead(self):
         # ideal client, but the job scored below the hot bar -> no tier
-        self.assertIsNone(icp.classify(job(), score=12)["tier"])
-        self.assertEqual(icp.classify(job(), score=16)["tier"], "icp")
+        # the ICP overlay sits ON TOP of the hot bar, whatever its value
+        self.assertIsNone(icp.classify(job(), score=config.HOT_LEAD_THRESHOLD - 1)["tier"])
+        self.assertEqual(icp.classify(job(), score=config.HOT_LEAD_THRESHOLD)["tier"], "icp")
 
 
 class TestRouting(unittest.TestCase):

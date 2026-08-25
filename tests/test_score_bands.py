@@ -1,6 +1,6 @@
 """Score bands are ONE config source (Upwork chat decision 1, 2026-08-25).
 
-Before this, the four cuts (8 / 12 / 16 / 22) were literals in five readers,
+Before this, the four cuts (8 / 12 / 16 / 22 at the time) were literals in five readers,
 so "recalibrate 16" would have moved the drafts and the digest but not the
 ClickUp routing, the cockpit funnel or the cutover scorecard. These tests pin:
 the tuple and its order, the band arithmetic, that every reader follows a
@@ -35,12 +35,14 @@ READERS = (
     "scripts/mcp_shadow_report.py",
     "core/evals/scoring_eval.py",
 )
-# a score/total compared against one of the four cut values as a literal
+# a score/total compared against a cut value written as a literal — the
+# historical cuts (16) as well as the live ones, so a reader can neither keep
+# an old number nor freeze a new one
 _LITERAL_BAND = re.compile(
-    r"(?:\b(?:score|total)\b\s*(?:>=|<=|<|>)\s*(?:8|12|16|22)\b)"
-    r"|(?:\b(?:8|12|16|22)\b\s*(?:>=|<=|<|>)\s*\b(?:score|total)\b)"
-    r"|(?:BETWEEN\s+(?:8|12|16|22)\s+AND\s+(?:11|15|21)\b)"
-    r"|(?:>=\s*(?:16|22)\b)")
+    r"(?:\b(?:score|total)\b\s*(?:>=|<=|<|>)\s*(?:8|12|16|20|22)\b)"
+    r"|(?:\b(?:8|12|16|20|22)\b\s*(?:>=|<=|<|>)\s*\b(?:score|total)\b)"
+    r"|(?:BETWEEN\s+(?:8|12|16|20|22)\s+AND\s+(?:11|15|19|21)\b)"
+    r"|(?:>=\s*(?:16|20|22)\b)")
 
 
 class TestConfigBands(unittest.TestCase):
@@ -50,22 +52,24 @@ class TestConfigBands(unittest.TestCase):
                           config.HOT_LEAD_THRESHOLD, config.LOOM_FLAG_THRESHOLD))
         self.assertEqual(list(config.SCORE_BANDS), sorted(set(config.SCORE_BANDS)))
 
-    def test_values_unchanged_until_the_scorecard_says_otherwise(self):
-        """Decision 1: single-source FIRST, values only after the MCP scorecard
-        measures the drift. Changing these numbers is the recalibration commit
-        and must edit this test on purpose."""
-        self.assertEqual(config.SCORE_BANDS, (8, 12, 16, 22))
+    def test_values_are_the_decided_ones(self):
+        """Decision 1 (2026-08-25): single-source FIRST, values only after the
+        MCP scorecard measured the drift. The hot bar moved 16 -> 20 that
+        evening on the six-week evidence (config.py, HOT_LEAD_THRESHOLD);
+        Loom stays 22. Changing these numbers again is a decision, and it
+        must edit this test on purpose."""
+        self.assertEqual(config.SCORE_BANDS, (8, 12, 20, 22))
 
     def test_band_arithmetic_and_labels(self):
         expect = {None: "unscored", 0: "below", 7: "below", 8: "low", 11: "low",
-                  12: "standard", 15: "standard", 16: "hot", 21: "hot",
-                  22: "loom", 28: "loom"}
+                  12: "standard", 16: "standard", 19: "standard", 20: "hot",
+                  21: "hot", 22: "loom", 28: "loom"}
         for score, band in expect.items():
             self.assertEqual(config.score_band(score), band, score)
         self.assertEqual(config.score_band_label("below"), "<8")
         self.assertEqual(config.score_band_label("low"), "8-11")
-        self.assertEqual(config.score_band_label("standard"), "12-15")
-        self.assertEqual(config.score_band_label("hot"), "16-21")
+        self.assertEqual(config.score_band_label("standard"), "12-19")
+        self.assertEqual(config.score_band_label("hot"), "20-21")
         self.assertEqual(config.score_band_label("loom"), "22+")
 
     def test_band_helpers_follow_a_patched_cut(self):
@@ -89,8 +93,10 @@ class TestReadersFollowConfig(unittest.TestCase):
                              clickup_push.LIST_LOW)
             self.assertIn("<10", clickup_push._guard(
                 {"id": "2064484440376044477", "status": "Scored", "score": 9}))
-        # unchanged live behaviour at today's values
+        # live behaviour at today's values: 16 is Standard now, 20 is Hot
         self.assertEqual(clickup_push.list_for_score(16, invite=False),
+                         clickup_push.LIST_STANDARD)
+        self.assertEqual(clickup_push.list_for_score(20, invite=False),
                          clickup_push.LIST_HOT)
         self.assertEqual(clickup_push.list_for_score(12, invite=False),
                          clickup_push.LIST_STANDARD)
@@ -101,8 +107,8 @@ class TestReadersFollowConfig(unittest.TestCase):
     def test_clickup_priority_reads_config_at_call_time(self):
         row = {"score": 22, "score_breakdown_json": "{}"}
         self.assertEqual(clickup_push.priority_for(row), 1)
-        self.assertEqual(clickup_push.priority_for({"score": 16}), 2)
-        self.assertEqual(clickup_push.priority_for({"score": 15}), 3)
+        self.assertEqual(clickup_push.priority_for({"score": 20}), 2)
+        self.assertEqual(clickup_push.priority_for({"score": 19}), 3)
         with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 24):
             self.assertEqual(clickup_push.priority_for(row), 2)
         invite = {"score": 9,
@@ -110,10 +116,11 @@ class TestReadersFollowConfig(unittest.TestCase):
         self.assertEqual(clickup_push.priority_for(invite), 1)
 
     def test_eval_band_labels_derive_from_config(self):
-        self.assertEqual(scoring_eval.band(16), "16-21")
+        self.assertEqual(scoring_eval.band(20), "20-21")
+        self.assertEqual(scoring_eval.band(16), "12-19")
         self.assertEqual(scoring_eval.band(None), "?")
         with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 24):
-            self.assertEqual(scoring_eval.band(23), "16-23")
+            self.assertEqual(scoring_eval.band(23), "20-23")
             self.assertEqual(scoring_eval.band(24), "24+")
 
 
@@ -125,7 +132,7 @@ class TestCockpitBands(unittest.TestCase):
         self.today = "2026-08-25"
         with db.connect(self.db_path) as conn:
             for jid, score in (("2064484440376044471", 7), ("2064484440376044472", 8),
-                               ("2064484440376044473", 12), ("2064484440376044474", 16),
+                               ("2064484440376044473", 12), ("2064484440376044474", 20),
                                ("2064484440376044475", 22)):
                 conn.execute(
                     "INSERT INTO scored_jobs (id, title, score, status,"
@@ -145,7 +152,7 @@ class TestCockpitBands(unittest.TestCase):
         bands = data.pipeline(self.db_path, self.today)["bands"]
         self.assertEqual((bands["hot"], bands["standard"], bands["low"]),
                          (2, 1, 1))
-        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 20), \
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 21), \
                 mock.patch.object(config, "SCORE_FLOOR", 10):
             bands = data.pipeline(self.db_path, self.today)["bands"]
             self.assertEqual((bands["hot"], bands["standard"], bands["low"]),
@@ -160,7 +167,7 @@ class TestCockpitBands(unittest.TestCase):
         self.assertEqual(scored["total"], 4)                  # >= 8
         triage = data.pipeline_rows(self.db_path, stage="triage",
                                     _today=self.today)
-        self.assertEqual({r["score"] for r in triage["rows"]}, {16, 22})
+        self.assertEqual({r["score"] for r in triage["rows"]}, {20, 22})
         with mock.patch.object(config, "SCORE_FLOOR", 12), \
                 mock.patch.object(config, "HOT_LEAD_THRESHOLD", 22):
             scored = data.pipeline_rows(self.db_path, stage="scored", week=wk,
@@ -192,7 +199,7 @@ class TestClickUpListIds(unittest.TestCase):
 
     def test_routing_vocabulary_is_complete(self):
         # every list the router can return has a name for the intent ledger
-        for total, invite, icp in ((16, False, None), (12, False, None),
+        for total, invite, icp in ((20, False, None), (12, False, None),
                                    (8, False, None), (9, True, None),
                                    (20, False, "icp")):
             list_id = clickup_push.list_for_score(total, invite=invite, icp_tier=icp)
@@ -212,6 +219,7 @@ class TestNoLiteralBands(unittest.TestCase):
 
     def test_the_grep_still_bites(self):
         self.assertTrue(_LITERAL_BAND.search("if total >= 16:"))
+        self.assertTrue(_LITERAL_BAND.search("if total >= 20:"))
         self.assertTrue(_LITERAL_BAND.search("SUM(score>=12 AND score<16)"))
         self.assertTrue(_LITERAL_BAND.search("score BETWEEN 8 AND 11"))
         self.assertFalse(_LITERAL_BAND.search(

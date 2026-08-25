@@ -808,6 +808,95 @@ class TestOutcome(M1bCase):
         self.assertTrue(outcome_capture.form_url().startswith("https://"),
                         outcome_capture.form_url())
 
+    # ── the send path (finding 14, 2026-08-25) ───────────────────────────────
+    def run_live(self, send):
+        with mock.patch.dict(config.SHADOW_MODE, {"upwork": False}), \
+             mock.patch.object(outcome_capture, "form_url",
+                               return_value="https://airtable.com/appX/pagY/form"):
+            return runner.run_task(
+                outcome_capture.TASK_NAME,
+                lambda ctx: outcome_capture.capture(ctx, _send=send),
+                module="upwork", db_path=self.db_path)
+
+    def test_live_sends_one_email_with_a_link_per_proposal(self):
+        self.seed_proposal("p1")
+        self.seed_proposal("p2", status="Won", rec="recWON")
+        send = mock.MagicMock()
+        result = self.run_live(send)
+        self.assertEqual(result.status, "completed", result.error)
+        self.assertEqual(result.metrics["sent"], "sent")
+        self.assertEqual(result.metrics["candidates"], 2)
+        send.assert_called_once()
+        subject, html = send.call_args[0]
+        self.assertIn("2 proposals closed", subject)
+        self.assertIn("prefill_Proposal=recABC", html)
+        self.assertIn("prefill_Proposal=recWON", html)
+        self.assertIn("Job T", html)
+        self.assertIn("Acme", html)
+        # nothing shadowed on the live path
+        self.assertEqual(self.rows(
+            "SELECT * FROM shadow_ledger WHERE entity='outcome_capture'"), [])
+
+    def test_live_send_failure_fails_the_run_loudly(self):
+        self.seed_proposal("p1")
+        send = mock.MagicMock(side_effect=RuntimeError("smtp down"))
+        # the runner records the failed run + files the critical anomaly, then
+        # re-raises (non-retryable) — so the failure is loud in three places
+        with self.assertRaises(RuntimeError):
+            self.run_live(send)
+        run = self.rows("SELECT * FROM runs WHERE task_name=?",
+                        (outcome_capture.TASK_NAME,))[-1]
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("not sent", run["error"] or "")
+        crit = self.rows("SELECT * FROM anomalies WHERE severity='critical'")
+        self.assertTrue(crit, "a failed send must reach the interrupt queue")
+
+    def test_live_refuses_to_send_the_same_week_twice(self):
+        self.seed_proposal("p1")
+        send = mock.MagicMock()
+        first = self.run_live(send)
+        self.assertEqual(first.metrics["sent"], "sent")
+        second = self.run_live(send)
+        self.assertEqual(second.status, "skipped_empty")
+        send.assert_called_once()                    # still exactly one email
+
+    def test_missing_form_url_still_sends_but_says_so(self):
+        self.seed_proposal("p1")
+        send = mock.MagicMock()
+        with mock.patch.dict(config.SHADOW_MODE, {"upwork": False}), \
+             mock.patch.object(outcome_capture, "form_url", return_value=""):
+            result = runner.run_task(
+                outcome_capture.TASK_NAME,
+                lambda ctx: outcome_capture.capture(ctx, _send=send),
+                module="upwork", db_path=self.db_path)
+        self.assertEqual(result.metrics["sent"], "sent")
+        self.assertTrue(result.metrics["form_url_missing"])
+        html = send.call_args[0][1]
+        self.assertIn("form_url is missing", html)
+        self.assertNotIn("href", html)
+
+    def test_shadow_path_records_the_intent_and_sends_nothing(self):
+        self.seed_proposal("p1")
+        send = mock.MagicMock()
+        with mock.patch.object(outcome_capture, "form_url",
+                               return_value="https://airtable.com/appX/pagY/form"):
+            result = runner.run_task(
+                outcome_capture.TASK_NAME,
+                lambda ctx: outcome_capture.capture(ctx, _send=send),
+                module="upwork", db_path=self.db_path)
+        self.assertEqual(result.metrics["sent"], "shadow")
+        send.assert_not_called()
+
+    def test_render_escapes_what_it_prints(self):
+        html = outcome_capture.render_html({
+            "week": "2026-W34",
+            "items": [{"proposal_id": "p9", "title": "<b>bold</b> & co",
+                       "client": "A&B", "status": "Lost",
+                       "form_link": "https://x/form?prefill_Proposal=rec1&hide_Proposal=true"}]})
+        self.assertIn("&lt;b&gt;bold&lt;/b&gt; &amp; co", html)
+        self.assertIn("A&amp;B", html)
+        self.assertIn("prefill_Proposal=rec1&amp;hide_Proposal=true", html)
+
 
 # ── client token rules ────────────────────────────────────────────────────────
 class _Resp:

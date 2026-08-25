@@ -48,13 +48,21 @@ RAIL_JOBS = {
 #   catch-up                      kicks other jobs — an indirect exec surface
 #   cockpit                       would restart the server serving the request
 #   june15-credit-validation      a one-off, not a rail
+#   upwork-outcomes               removed 2026-08-25 (Upwork chat): it is an
+#                                 outward email once its send path exists, so
+#                                 its SOURCES entry is catch_up False and the
+#                                 registry test forbids it here; the deliberate
+#                                 button is RAIL_JOBS "outcome-capture" above
 # Every label here must exist as a plist in launchd/ (tests assert it).
 RERUN_JOBS = {
     "upwork_scan": "io.etherwise.v3.upwork-scan",
     "upwork_sync": "io.etherwise.v3.upwork-sync",
     "upwork_inbox": "io.etherwise.v3.upwork-inbox",
-    "upwork_outcomes": "io.etherwise.v3.upwork-outcomes",
     "upwork_connects": "io.etherwise.v3.upwork-connects",
+    # the MCP job poller (SOURCES "mcp_feed", 2026-08-25): a read-only,
+    # idempotent INSERT OR IGNORE poll; safe to kick. Never at :40 by hand —
+    # the scheduled run holds the write lock for ~45 s (finding 12).
+    "mcp_shadow_poll": "io.etherwise.v3.upwork-mcp-shadow",
     "crm_mirror": "io.etherwise.v3.crm-mirror",
     "kb_daily": "io.etherwise.v3.kb-daily",
     "loom_fetch": "io.etherwise.v3.kb-loom-fetch",

@@ -163,7 +163,16 @@ WORK_END = time(4, 0)          # 4 AM IST (next day)
 BRIEF_TIMES = (time(11, 0), time(20, 0))          # morning + evening
 SWEEP_INTERVAL_HOURS = 2       # within work hours; empty-skip short-circuit
 INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately (decision #9)
-HOT_LEAD_THRESHOLD = 16
+# HOT BAR 16 -> 20 (Abhijeet, 2026-08-25 19:30, Upwork chat — the reviewed
+# recalibration commit the block below promised). Evidence, live since the
+# connects rail began 07-13: hard-rule survivors by band -> his applications:
+# 22+ 732 -> 33 · 20-21 124 -> 0 · 18-19 130 -> 1 · 16-17 117 -> 1 · 8-15 394 -> 1.
+# The 16-19 band was drafted, carded and digested 247 times for two applications.
+# MCP drift measured at -1 median (not the assumed -2), so the feed itself moves
+# nothing; 20 keeps 35 of 36 matched applications inside 'hot' and cuts the
+# drafted/carded volume ~40% ahead of the MCP flip (~70-90 hot/day at 16).
+# LOOM stays 22: Loom-flag band = 22+, hot band = 20-21.
+HOT_LEAD_THRESHOLD = 20
 LOOM_FLAG_THRESHOLD = 22
 
 # ── Score bands — ONE source (Upwork chat, 2026-08-25, decision 1) ───────────
@@ -173,9 +182,10 @@ LOOM_FLAG_THRESHOLD = 22
 # core/evals/scoring_eval — so "recalibrate 16" would have moved the drafts and
 # the digest but not the cards or the funnel. Every reader now imports these;
 # tests/test_score_bands.py greps the readers for stray literals.
-# VALUES ARE UNCHANGED HERE ON PURPOSE: they move only after the MCP scorecard
-# has measured the drift (MCP applicant counts score ~2 lower) — a second,
-# separate, reviewed commit. Semantics of a stored (post-gate) score:
+# The four cuts were single-sourced first with their values unchanged; the hot
+# bar moved 16 -> 20 in a separate reviewed commit once the MCP scorecard had
+# measured the drift (see HOT_LEAD_THRESHOLD above). Semantics of a stored
+# (post-gate) score:
 #   score <  SCORE_FLOOR                     -> no card ("below band")
 #   SCORE_FLOOR    <= score < SCORE_STANDARD -> Low list
 #   SCORE_STANDARD <= score < HOT            -> Standard list
@@ -791,6 +801,37 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.upwork-scan", "catch_up": True,
      "why": "backs the funnel + carded board; a thin feed silently under-scans"
             " lead-gen"},
+    # ── the Upwork rails that were invisible (Upwork chat, 2026-08-25) ────────
+    # Finding 8 of the Upwork codebase map: upwork_inbox, upwork_outcomes and
+    # the MCP poller had no entry here, so no health line, no catch-up, and the
+    # 08-23 Sunday outcome run silently did not happen. The Upwork tab's rails
+    # strip (docs/upwork/PHASE1_TAB_SPEC.md §3.5/§7) reads these four. NOTE the
+    # registry test binds `catch_up` to actions.RERUN_JOBS both ways: a catch-up
+    # source must be re-runnable from the cockpit, a non-catch-up one must not.
+    {"key": "mcp_feed", "label": "Upwork MCP poll (find_jobs)",
+     "task_name": "mcp_shadow_poll", "max_age_hours": 3,       # hourly at :40
+     "degrade_kinds": (), "critical": False,                    # shadow until the 0.1 flip
+     "backs": "upwork",
+     "launchd_label": "io.etherwise.v3.upwork-mcp-shadow", "catch_up": True,
+     "why": "the MCP job feed; becomes the funnel's only source at the 0.1 flip"},
+    {"key": "upwork_inbox", "label": "Upwork inbox (messages, GraphQL)",
+     "task_name": "upwork_inbox", "max_age_hours": 12,        # 10:15 + 19:15, 9h gap + grace
+     "degrade_kinds": (), "critical": True, "backs": "upwork",
+     "launchd_label": "io.etherwise.v3.upwork-inbox", "catch_up": True,
+     "why": "reply detection for every owed-reply card; stale means cards outlive"
+            " the replies that should have cleared them"},
+    {"key": "upwork_outcomes", "label": "Sunday outcome email",
+     "task_name": "upwork_outcomes", "max_age_hours": 192,    # weekly + a day of grace
+     "degrade_kinds": (), "critical": False, "backs": "upwork", "empty_ok": True,
+     "launchd_label": "io.etherwise.v3.upwork-outcomes", "catch_up": False,   # an email must not repeat
+     "why": "the Loop 2 outcome-reason capture; a week with nothing to ask is a"
+            " clean skip, a week that never ran is not"},
+    {"key": "cos_sweep", "label": "Card sweep (chief of staff)",
+     "task_name": "cos_sweep", "max_age_hours": 10,           # every 2h 12:30-04:30; the overnight gap is 8h
+     "degrade_kinds": (), "critical": True, "backs": "today", "empty_ok": True,
+     "launchd_label": "io.etherwise.v3.cos-sweep", "catch_up": True,
+     "why": "decays every card whose condition is no longer observed; a dead sweep"
+            " means nothing ever auto-clears"},
     # ── money-backing sources (2026-07-20) ───────────────────────────────────
     # A dead sync silently staling the Money tab is the same failure class as
     # the dead connects rail, so the Money numbers get the same guarantee.
@@ -1102,6 +1143,14 @@ CLICKUP_LISTS = {
     "low": "901614356487",
     "invites": "901614356490",
 }
+# Push retry window (finding 13, Upwork chat 2026-08-25): a scan that dies after
+# scoring but before its push loop (08-23 23:09: ClaudeBudgetExceeded at the
+# per-run cap, 20 hot jobs drafted, 0 carded) left its rows 'Drafted' with no
+# card, and nothing ever came back for them — the push loop only ever saw the
+# run's own verdicts. Every scan now also pushes uncarded rows scored within this
+# many days; older ones are the shadow-era backlog (listings long expired) and
+# stay where they are. Same horizon as the cockpit's board window.
+CLICKUP_PUSH_RETRY_DAYS = 7
 
 # ── Upwork ───────────────────────────────────────────────────────────────────
 UPWORK_USER_ID = "1647672547786633216"

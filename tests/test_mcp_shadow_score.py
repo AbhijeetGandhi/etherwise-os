@@ -205,8 +205,13 @@ class TestPass(ShadowScoreCase):
 class TestSummary(ShadowScoreCase):
     def test_two_answers_from_the_table(self):
         with db.connect(self.db_path) as conn:
-            for jid, score, scr in (("a1", 23, None), ("a2", 17, None), ("a3", 9, None),
-                                    ("b1", 16, 18), ("b2", 12, 11), ("b3", 20, 22)):
+            hot, loom = config.HOT_LEAD_THRESHOLD, config.LOOM_FLAG_THRESHOLD
+            # seeded RELATIVE to the live cuts: one loom, one hot-not-loom, one
+            # low; the shared trio drifts -2 with hot agreement on two
+            for jid, score, scr in (("a1", loom + 1, None), ("a2", hot, None),
+                                    ("a3", config.SCORE_FLOOR + 1, None),
+                                    ("b1", hot, hot + 2), ("b2", 12, 11),
+                                    ("b3", loom - 2, loom)):
                 conn.execute("INSERT INTO mcp_shadow_scores (id, score, scraper_score,"
                              " model) VALUES (?,?,?,'m')", (jid, score, scr))
         text = mss.summary(self.db_path)

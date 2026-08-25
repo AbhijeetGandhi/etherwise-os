@@ -319,7 +319,10 @@ class TestScanLive(ScanPipelineCase):
     scored_jobs (NOT the v2 `jobs` table), hot-lead digest EMAILS, and a send
     failure never fails the scan. ClickUp HTTP + SMTP are mocked."""
 
-    def run_live(self, send_mock, score=18):
+    def run_live(self, send_mock, score=None):
+        # the hot bar moved 16 -> 20 on 2026-08-25; a live-path fixture that
+        # pinned 18 as "hot" would have gone quiet without saying why
+        score = config.HOT_LEAD_THRESHOLD if score is None else score
         self.req_calls = []
 
         def fake_req(method, path, tok, body=None):
@@ -353,7 +356,7 @@ class TestScanLive(ScanPipelineCase):
         subject, html = send.call_args[0]
         self.assertIn("1 hot", subject)
         self.assertIn("Make.com Automation Build", html)
-        self.assertIn("score 18", html)
+        self.assertIn(f"score {config.HOT_LEAD_THRESHOLD}", html)
         self.assertIn("app.clickup.com/t/t123", html)
         # live run: nothing shadowed
         self.assertEqual(self.rows("SELECT * FROM shadow_ledger"), [])
@@ -375,6 +378,113 @@ class TestScanLive(ScanPipelineCase):
         send.assert_not_called()
         row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (JID_A,))[0]
         self.assertEqual(row["status"], "ClickUp Created")
+
+
+class TestPushRetry(ScanPipelineCase):
+    """Finding 13 (Upwork chat, 2026-08-25): a scan that died between scoring
+    and its push loop (08-23 23:09, ClaudeBudgetExceeded at the per-run cap
+    after 20 drafts) left its rows 'Drafted' with no card, and no later run
+    ever looked at them. The next run now pushes what an earlier run left
+    uncarded, inside CLICKUP_PUSH_RETRY_DAYS; a failed create is loud, counted,
+    and retried next run instead of failing the scan."""
+
+    LEFT = "2065100000000000011"
+
+    def seed_uncarded(self, days_ago: float, score=None, status="Drafted"):
+        score = config.HOT_LEAD_THRESHOLD if score is None else score
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO scored_jobs (id, title, score, status, loom_flag,"
+                " fetched_at, first_scored_at, job_url, draft_proposal,"
+                " score_breakdown_json, skills_json)"
+                " VALUES (?,?,?,?,0,?,datetime('now', ?),?,?,'{}','[]')",
+                (self.LEFT, "Left behind by a dead run", score, status,
+                 "2026-08-23T17:00:00+00:00", f"-{days_ago * 24:.0f} hours",
+                 f"https://www.upwork.com/jobs/x_~02{self.LEFT}/",
+                 "Drafted proposal text." if status == "Drafted" else None))
+
+    def test_uncarded_leftover_is_carded_by_the_next_run(self):
+        self.seed_uncarded(days_ago=1)
+        result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                               score_map={JID_A: 14})
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.metrics["clickup_retried"], 1)
+        self.assertEqual(result.metrics["clickup_intents"], 2)   # new + leftover
+        keys = {r["entity_key"] for r in self.rows(
+            "SELECT entity_key FROM shadow_ledger WHERE target='clickup'")}
+        self.assertEqual(keys, {JID_A, self.LEFT})
+
+    def test_leftover_outside_the_window_stays_where_it_is(self):
+        self.seed_uncarded(days_ago=config.CLICKUP_PUSH_RETRY_DAYS + 3)
+        result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                               score_map={JID_A: 14})
+        self.assertEqual(result.metrics["clickup_retried"], 0)
+        self.assertEqual(result.metrics["clickup_intents"], 1)
+
+    def test_leftover_below_the_floor_is_not_a_card(self):
+        self.seed_uncarded(days_ago=1, score=config.SCORE_FLOOR - 1,
+                           status="Scored")
+        result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                               score_map={JID_A: 14})
+        self.assertEqual(result.metrics["clickup_retried"], 0)
+
+    def test_live_retry_cards_the_row_and_carries_it_in_the_digest(self):
+        self.seed_uncarded(days_ago=1)                      # hot, drafted, no card
+        send = mock.MagicMock()
+        calls = []
+
+        def fake_req(method, path, tok, body=None):
+            calls.append((method, path))
+            return {"id": "t777", "url": "https://app.clickup.com/t/t777"}
+
+        with mock.patch.dict(config.SHADOW_MODE, {"upwork": False}), \
+             mock.patch.object(sp.clickup_push, "token", return_value="tok"), \
+             mock.patch.object(sp.clickup_push, "req", side_effect=fake_req), \
+             mock.patch.object(sp.notify, "send_gmail", send):
+            result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                                   score_map={JID_A: 14})
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.metrics["clickup_retried"], 1)
+        self.assertEqual(result.metrics["hot"], 0)          # this run's own
+        self.assertEqual(result.metrics["hot_retried"], 1)
+        row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (self.LEFT,))[0]
+        self.assertEqual(row["status"], "ClickUp Created")
+        self.assertEqual(row["clickup_task_id"], "t777")
+        send.assert_called_once()
+        subject, html = send.call_args[0]
+        self.assertIn("carried over", subject)
+        self.assertIn("Left behind by a dead run", html)
+        self.assertIn("app.clickup.com/t/t777", html)
+
+    def test_a_failed_create_is_loud_and_never_fails_the_scan(self):
+        self.seed_uncarded(days_ago=1)
+        send = mock.MagicMock()
+
+        def fake_req(method, path, tok, body=None):
+            if method == "POST":
+                raise RuntimeError("clickup 502")
+            return {"tasks": []}                             # find_existing: none
+
+        with mock.patch.dict(config.SHADOW_MODE, {"upwork": False}), \
+             mock.patch.object(sp.clickup_push, "token", return_value="tok"), \
+             mock.patch.object(sp.clickup_push, "req", side_effect=fake_req), \
+             mock.patch.object(sp.clickup_push.time, "sleep"), \
+             mock.patch.object(sp.notify, "send_gmail", send):
+            result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                                   score_map={JID_A: config.HOT_LEAD_THRESHOLD})
+        self.assertEqual(result.status, "completed")         # the scan survives
+        self.assertEqual(result.metrics["clickup_pushed"], 0)
+        self.assertEqual(result.metrics["clickup_push_failed"], 2)
+        self.assertEqual(result.metrics["clickup_retried"], 0)
+        kinds = [a["kind"] for a in self.anomalies("clickup_push_failed")]
+        self.assertEqual(len(kinds), 2)
+        # both rows stay pushable — the next run's retry window picks them up
+        for jid in (JID_A, self.LEFT):
+            row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (jid,))[0]
+            self.assertIsNone(row["clickup_task_id"])
+            self.assertIn(row["status"], ("Scored", "Drafted"))
+        # the digest still goes out for this run's own hot job (no card link)
+        send.assert_called_once()
 
 
 class TestTabScripts(unittest.TestCase):

@@ -25,7 +25,7 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from core import config, db, notify, runner
@@ -272,12 +272,44 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             {"id": row["id"], "score": verdict["score"] if verdict else None,
              "skip": skip})
 
-    # intended ClickUp tasks (run-scoped by construction: this run's verdicts)
+    # intended ClickUp tasks: this run's verdicts PLUS what an earlier run left
+    # uncarded (finding 13, Upwork chat 2026-08-25). A scan that dies between
+    # scoring and this loop — 08-23 23:09: ClaudeBudgetExceeded at the per-run
+    # cap after 20 drafts — leaves rows 'Drafted'/'Scored' with no card, and
+    # this loop only ever saw the run's own verdicts, so nothing ever came back
+    # for them. Same shape as the 'New' leftovers above: what a crashed run
+    # left half-done, the next run finishes. Bounded to CLICKUP_PUSH_RETRY_DAYS
+    # (config); older uncarded rows are the shadow-era backlog, listings long
+    # expired, and stay put. first_scored_at is SQLite datetime('now') = UTC.
     intents = 0     # shadow-recorded intents
     pushed = 0      # LIVE cards actually created (0 in shadow) — separate metric
+    retried = 0     # of which: leftovers from an earlier run (either mode)
+    push_failed = 0  # rows whose card create failed this run (retried next run)
     icp_hits = []   # ideal-client-profile leads (the tier above 'hot')
     icp_near = []
-    for entry in scored:
+    run_ids = {e["id"] for e in scored}
+    retry_cut = (datetime.now(timezone.utc)
+                 - timedelta(days=config.CLICKUP_PUSH_RETRY_DAYS)
+                 ).strftime("%Y-%m-%d %H:%M:%S")
+    # in shadow mode nothing is ever carded, so "uncarded" would re-select
+    # every row each hour: there, an intent already in the ledger IS the card
+    shadow_guard = (" AND NOT EXISTS (SELECT 1 FROM shadow_ledger l WHERE"
+                    " l.target='clickup' AND l.entity='task'"
+                    f" AND l.entity_key = {TABLE}.id)") if ctx.shadow else ""
+    with db.connect(dbp) as conn:
+        leftovers = [
+            {"id": r["id"], "score": r["score"], "skip": None, "retry": True}
+            for r in conn.execute(
+                f"SELECT id, score FROM {TABLE} WHERE status IN"
+                " ('Scored','Drafted') AND clickup_task_id IS NULL"
+                f" AND score >= ? AND first_scored_at >= ?{shadow_guard}"
+                " ORDER BY first_scored_at",
+                (config.SCORE_FLOOR, retry_cut))
+            if r["id"] not in run_ids]
+    if leftovers:
+        ctx.log(f"push retry: {len(leftovers)} uncarded row(s) scored within"
+                f" {config.CLICKUP_PUSH_RETRY_DAYS}d by an earlier run")
+    for entry in scored + leftovers:
         if (entry["score"] or 0) < config.SCORE_FLOOR:   # below band: no card
             continue
         with db.connect(dbp) as conn:
@@ -314,8 +346,25 @@ def scan(ctx, _sleep=time.sleep) -> dict:
                          "loom": bool(row["loom_flag"])})
             intents += 1
         else:
-            clickup_push.push_one(clickup_push.token(), dbp, row, list_id)
+            # one card's failure must not take the rest of the batch (or the
+            # digest) down with it: push_one already did check-before-retry,
+            # so an exception here is a real miss — log it loud, count it, and
+            # let the retry window above bring the row back next run.
+            try:
+                clickup_push.push_one(clickup_push.token(), dbp, row, list_id)
+            except Exception as exc:                  # noqa: BLE001
+                push_failed += 1
+                ctx.log(f"{row['id']}: ClickUp push FAILED: {exc!r}")
+                ctx.anomaly("clickup_push_failed", "warn",
+                            {"job_id": row["id"], "title": row.get("title"),
+                             "list": clickup_push.LIST_NAMES.get(list_id),
+                             "error": repr(exc)[:300],
+                             "retry_days": config.CLICKUP_PUSH_RETRY_DAYS})
+                continue
             pushed += 1
+        if entry.get("retry"):
+            retried += 1
+            entry["carded"] = True
 
     # ICP hits get their OWN immediate email — they must never be buried in the
     # hourly hot digest (81% of scored jobs are 'hot'; these are the few that
@@ -343,11 +392,17 @@ def scan(ctx, _sleep=time.sleep) -> dict:
 
     hot = [e for e in scored if (e["score"] or 0)
            >= config.HOT_LEAD_THRESHOLD]
+    # a retried hot row never made it into a digest (its run died before this
+    # point), so it rides along in this one — carded now, linked now
+    hot_retried = [e for e in leftovers if (e["score"] or 0)
+                   >= config.HOT_LEAD_THRESHOLD and e.get("carded")]
     digest_status = None
-    if hot:
+    if hot or hot_retried:
         digest = {"subject": f"Upwork scan: {len(scored)} scored,"
-                             f" {len(hot)} hot",
-                  "hot_ids": [e["id"] for e in hot]}
+                             f" {len(hot)} hot"
+                             + (f" (+{len(hot_retried)} carried over)"
+                                if hot_retried else ""),
+                  "hot_ids": [e["id"] for e in hot + hot_retried]}
         if ctx.shadow:
             ctx.record_shadow_write(target="email", operation="send",
                                     entity="digest",
@@ -377,7 +432,9 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             "drafts_ungrounded": ungrounded, "drafts_blocked": blocked,
             "clickup_intents": intents,
             "clickup_pushed": pushed,
-            "hot": len(hot), "digest": digest_status,
+            "clickup_retried": retried, "clickup_push_failed": push_failed,
+            "hot": len(hot), "hot_retried": len(hot_retried),
+            "digest": digest_status,
             "icp": len(icp_hits), "icp_near": len(icp_near),
             "icp_email": icp_status}
 
