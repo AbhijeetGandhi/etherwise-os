@@ -795,6 +795,18 @@ class TestConversations(unittest.TestCase):
         self.assertEqual(s["replies_owed"], counts["owed"])
         self.assertIn("rails_attention", s)
 
+    def test_a_done_conversation_is_named_as_cleared_not_lost(self):
+        from modules.chief_of_staff import nudges as eng
+        from modules.cockpit import actions
+        key = eng.followup_key(None, "Room rA", "rA")
+        actions.nudge(self.db_path, {"item_key": key, "action": "done"})
+        # the action stamps the wall clock, so read the tab on the wall-clock day
+        today = datetime.now(config.TZ).strftime("%Y-%m-%d")
+        tab = data.upwork(self.db_path, today)
+        self.assertNotIn(key, {e["item_key"] for e in tab["inbox"]["conversations"]})
+        cleared = tab["inbox"]["cleared"]
+        self.assertEqual([c["how"] for c in cleared if c["name"] == "Room rA"], ["done"])
+
     def test_timestamp_shapes_share_one_clock(self):
         u = data._utc_dt
         self.assertEqual(u("2026-07-31T06:37:17.390Z").isoformat(), "2026-07-31T06:37:17.390000+00:00")

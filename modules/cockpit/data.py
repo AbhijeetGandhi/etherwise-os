@@ -3213,11 +3213,60 @@ def _upwork_needs_me(db_path, conn, day: str) -> dict:
 _INBOX_ORDER = {"owed": 0, "quiet": 1, "maybe": 2}
 
 
-def _upwork_inbox(needs_me: dict) -> dict:
+def _upwork_cleared_recently(conn, day: str) -> list:
+    """The conversations he closed since yesterday — so an empty inbox can say
+    where they went instead of looking like a dead feed. A Done on a
+    follow-up lives in nudge_state (keyed on the counterparty); a confirmed
+    closure lives on the engine's card. Both lift by themselves the moment the
+    person writes again (_is_actioned compares their newest message with the
+    click), which is what the line tells him."""
+    from modules.chief_of_staff import nudges as _eng
+    since_local = datetime.combine(date.fromisoformat(day) - timedelta(days=1),
+                                   datetime.min.time(), tzinfo=config.TZ)
+    since = since_local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    out, seen = [], set()
+    # the counterparty behind each key form: c:<client> (registry), p:<slug>
+    # (the room's own name, via the same key function that made it), or a
+    # bare room id (older rows)
+    rooms, by_key = {}, {}
+    for r in conn.execute("SELECT id, room_name, client_id FROM threads"
+                          " WHERE room_name IS NOT NULL"):
+        rooms[r["id"]] = r["room_name"]
+        by_key.setdefault(_eng.followup_key(r["client_id"], r["room_name"], r["id"]),
+                          r["room_name"])
+    for r in conn.execute(
+            "SELECT item_key, state, updated_at FROM nudge_state"
+            " WHERE item_key LIKE 'followup:%' AND state IN ('done','dismissed')"
+            " AND updated_at >= ? ORDER BY updated_at DESC", (since,)):
+        key = r["item_key"][len("followup:"):]
+        if key.startswith("c:"):
+            name = _client_label(key[2:]) or key[2:]
+        elif key.startswith("p:"):
+            name = by_key.get(r["item_key"]) or key[2:].replace("-", " ").title()
+        else:
+            name = rooms.get(key) or key
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "how": "done", "at": r["updated_at"]})
+    for r in conn.execute(
+            "SELECT client, title, updated_at FROM nudges WHERE dept='sales'"
+            " AND closure_state='confirmed' AND updated_at >= ?"
+            " ORDER BY updated_at DESC", (since,)):
+        name = r["client"] or (r["title"] or "").replace("Client comms: ", "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "how": "confirmed resolved", "at": r["updated_at"]})
+    return out
+
+
+def _upwork_inbox(needs_me: dict, cleared: Optional[list] = None) -> dict:
     """The Inbox view: the conversation cards of the Upwork queue as PEOPLE,
     longest wait first inside each state (reply owed → gone quiet → probably
     resolved); everything else on the Upwork queue (escalations, Loom flags)
-    is `other` so nothing the builder produced is dropped."""
+    is `other` so nothing the builder produced is dropped; `cleared` names
+    the conversations he closed since yesterday."""
     convos, other = [], []
     for e in needs_me.get("cards", []):
         (convos if e.get("conversation") else other).append(e)
@@ -3228,6 +3277,7 @@ def _upwork_inbox(needs_me: dict) -> dict:
     for e in convos:
         counts[e["conversation"]["state"]["kind"]] += 1
     return {"conversations": convos, "other": other, "counts": counts,
+            "cleared": cleared or [],
             "snoozed": needs_me.get("snoozed"),
             "auto_closed": needs_me.get("auto_closed", 0),
             "hidden_no_provenance": needs_me.get("hidden_no_provenance", 0)}
@@ -3270,9 +3320,10 @@ def upwork(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             "source": source_health.by_backs(
                 source_health.source_health(conn), "applied"),
         }
+        cleared = _upwork_cleared_recently(conn, day)
     finally:
         conn.close()
-    inbox = _upwork_inbox(needs_me)
+    inbox = _upwork_inbox(needs_me, cleared)
     return {
         "as_of": day,
         "bands": {"hot": f"Hot {config.score_band_label('hot')}",

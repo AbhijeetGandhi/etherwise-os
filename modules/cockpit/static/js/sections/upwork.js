@@ -310,6 +310,18 @@ function inboxView(d, ctx) {
     draw();
     out.append(list);
   }
+  const cleared = ib.cleared || [];
+  if (cleared.length) {
+    const done = cleared.filter((c) => c.how === "done").map((c) => c.name);
+    const confirmed = cleared.filter((c) => c.how !== "done").map((c) => c.name);
+    out.append(el("div", "muted small", [
+      "Cleared since yesterday: ",
+      done.length ? el("span", null, [el("b", null, done.join(", ")), " (done)"]) : null,
+      done.length && confirmed.length ? " · " : "",
+      confirmed.length ? el("span", null, [el("b", null, confirmed.join(", ")), " (confirmed resolved)"]) : null,
+      " — each comes back on its own the moment they write again.",
+    ]));
+  }
   if (ib.auto_closed) {
     out.append(el("div", "muted small", `${ib.auto_closed} conversation${ib.auto_closed === 1 ? " was" : "s were"} closed automatically — you had already answered on another channel.`));
   }
