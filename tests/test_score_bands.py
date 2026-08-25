@@ -171,6 +171,34 @@ class TestCockpitBands(unittest.TestCase):
             self.assertEqual({r["score"] for r in triage["rows"]}, {22})
 
 
+class TestClickUpListIds(unittest.TestCase):
+    """The five ClickUp list ids are config-owned (2026-08-25); the script
+    derives its LIST_* names and the reverse map from config.CLICKUP_LISTS."""
+
+    def test_script_lists_come_from_config(self):
+        self.assertEqual(clickup_push.LIST_ICP, config.CLICKUP_LISTS["icp"])
+        self.assertEqual(clickup_push.LIST_HOT, config.CLICKUP_LISTS["hot"])
+        self.assertEqual(clickup_push.LIST_STANDARD, config.CLICKUP_LISTS["standard"])
+        self.assertEqual(clickup_push.LIST_LOW, config.CLICKUP_LISTS["low"])
+        self.assertEqual(clickup_push.LIST_INVITES, config.CLICKUP_LISTS["invites"])
+        self.assertEqual(set(clickup_push.LIST_NAMES.values()),
+                         set(config.CLICKUP_LISTS))
+        self.assertEqual(len(set(config.CLICKUP_LISTS.values())), 5)   # distinct ids
+
+    def test_script_carries_no_list_id_literal(self):
+        src = (ROOT / "scripts/clickup_push.py").read_text()
+        for list_id in config.CLICKUP_LISTS.values():
+            self.assertNotIn(list_id, src, list_id)
+
+    def test_routing_vocabulary_is_complete(self):
+        # every list the router can return has a name for the intent ledger
+        for total, invite, icp in ((16, False, None), (12, False, None),
+                                   (8, False, None), (9, True, None),
+                                   (20, False, "icp")):
+            list_id = clickup_push.list_for_score(total, invite=invite, icp_tier=icp)
+            self.assertIn(list_id, clickup_push.LIST_NAMES)
+
+
 class TestNoLiteralBands(unittest.TestCase):
     def test_readers_carry_no_band_literals(self):
         """The grep that keeps decision 1 true: none of the five readers may

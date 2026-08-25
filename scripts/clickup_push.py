@@ -50,13 +50,14 @@ ENV_FILE = ROOT / "etherwise-os/.credentials/etherwise-os.env"
 API = "https://api.clickup.com/api/v2"
 RATE_SECONDS = 0.65
 
-LIST_ICP = "901615852269"        # ICP / Prime — the top tier (2026-07-13)
-LIST_HOT = "901614356485"
-LIST_STANDARD = "901614356486"
-LIST_LOW = "901614356487"
-LIST_INVITES = "901614356490"
-LIST_NAMES = {LIST_ICP: "icp", LIST_HOT: "hot", LIST_STANDARD: "standard",
-              LIST_LOW: "low", LIST_INVITES: "invites"}
+# list ids live in core/config.py (CLICKUP_LISTS) — one source, never a
+# second copy here (2026-08-25); the names below are the routing vocabulary
+LIST_ICP = config.CLICKUP_LISTS["icp"]        # ICP / Prime — the top tier
+LIST_HOT = config.CLICKUP_LISTS["hot"]
+LIST_STANDARD = config.CLICKUP_LISTS["standard"]
+LIST_LOW = config.CLICKUP_LISTS["low"]
+LIST_INVITES = config.CLICKUP_LISTS["invites"]
+LIST_NAMES = {list_id: name for name, list_id in config.CLICKUP_LISTS.items()}
 
 PUSHABLE_STATUSES = ("Scored", "Drafted")
 

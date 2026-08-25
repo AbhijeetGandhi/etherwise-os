@@ -1092,7 +1092,11 @@ AT_BASE_FINANCES = "appEe3oqHhC7ABAXU"
 
 # ── ClickUp ──────────────────────────────────────────────────────────────────
 CLICKUP_FOLDER_UPWORK = "90169179275"
+# THE list ids (Upwork chat, 2026-08-25): scripts/clickup_push.py used to carry
+# its own copy of these plus the ICP list that existed nowhere else. One dict,
+# read by the script at call time; tests/test_score_bands.py pins the pairing.
 CLICKUP_LISTS = {
+    "icp": "901615852269",       # ICP / Prime — the top tier (2026-07-13)
     "hot": "901614356485",
     "standard": "901614356486",
     "low": "901614356487",

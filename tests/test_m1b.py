@@ -784,8 +784,29 @@ class TestOutcome(M1bCase):
         self.assertTrue(result.metrics["form_url_missing"])
         self.assertEqual(result.metrics["with_links"], 0)
 
-    def test_registry_form_url_pending_parses_empty(self):
-        self.assertEqual(outcome_capture.form_url(), "")
+    def test_registry_form_url_placeholders_parse_empty(self):
+        # PENDING/TBD placeholders read as "no form" — against a fixture
+        # registry, not the live one (the live file got its real link on
+        # 2026-08-25 and this test used to pin the PENDING state)
+        for placeholder in ("PENDING", "TBD", "pending (paste the shr… link)"):
+            reg = self.tmp / f"REGISTRY-{placeholder[:3]}.md"
+            reg.write_text(f"# Rail Registry\n- trigger: x\n- form_url: {placeholder}\n"
+                           "- approval tier: internal\n")
+            with mock.patch.object(outcome_capture, "REGISTRY", reg):
+                self.assertEqual(outcome_capture.form_url(), "", placeholder)
+
+    def test_registry_form_url_real_link_parses(self):
+        reg = self.tmp / "REGISTRY-live.md"
+        reg.write_text("- form_url: https://airtable.com/appX/pagY/form (Airtable"
+                       " form page, verified 2026-08-25)\n")
+        with mock.patch.object(outcome_capture, "REGISTRY", reg):
+            self.assertEqual(outcome_capture.form_url(),
+                             "https://airtable.com/appX/pagY/form")
+
+    def test_live_registry_has_a_form_url(self):
+        # the rail is live only while the real registry carries a link
+        self.assertTrue(outcome_capture.form_url().startswith("https://"),
+                        outcome_capture.form_url())
 
 
 # ── client token rules ────────────────────────────────────────────────────────
