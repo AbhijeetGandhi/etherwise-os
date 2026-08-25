@@ -262,6 +262,88 @@ function badge(id, d) {
   return null;
 }
 
+/* ── "Run now": one button per system, polled to completion ───────────────── */
+
+const RUN_POLL_MS = 4000;
+const RUN_POLL_MAX_MS = 6 * 60 * 1000;      // a paced MCP scan is ~3–4 min
+
+function clock(iso) {
+  // "HH:MM" from any of the DB's timestamp shapes — the same slice fmt.dateTime takes
+  const s = fmt.dateTime(iso);
+  return s === "—" ? "" : s.slice(11);
+}
+
+/**
+ * runButton(ctx, d, task, label) — "Check Upwork now" etc. Kicks the
+ * allowlisted task through /api/rerun, then polls /api/upwork/run until a NEW
+ * run has finished (or the one already in flight has), and re-reads the tab.
+ * If the task is already running (a scheduled run), it does not kick — a
+ * kickstart would kill that run — it just waits for it.
+ */
+function runButton(ctx, d, task, label, opts = {}) {
+  const rail = ((d.rails || {}).items || []).find((r) => r.task_name === task);
+  const allowed = !rail || rail.rerun !== false;
+  const wrap = el("span", "runbtn");
+  // Health has its own "last ran" column (opts.quiet): the line then shows
+  // only while a run is in flight
+  const status = el("span", "muted small runbtn-status",
+    !opts.quiet && rail && (rail.started_at || rail.last_success)
+      ? `last ran ${clock(rail.started_at || rail.last_success)}`
+        + (rail.run_status && rail.run_status !== "completed" ? ` · ${rail.run_status}` : "")
+      : "");
+  let busy = false;
+  const b = btn(label, async () => {
+    if (busy) return;
+    busy = true;
+    const before = await ctx.api("/api/upwork/run?" + qstr({ task })).catch(() => null);
+    const beforeId = before && before.run ? before.run.id : 0;
+    let waitingOnScheduled = false;
+    if (before && before.running) {
+      waitingOnScheduled = true;
+      status.textContent = `already running since ${clock(before.run.started_at)} — waiting for it`;
+    } else {
+      b.disabled = true; b.textContent = "Starting…";
+      let res;
+      try { res = await ctx.post("/api/rerun", { task }); } catch (e) { res = { ok: false, error: String(e.message || e) }; }
+      if (!res || !res.ok) {
+        toast(`${label} could not start: ${(res && res.error) || "see the logs"}`, true);
+        b.disabled = false; b.textContent = label; busy = false;
+        return;
+      }
+      status.textContent = "started — running…";
+    }
+    b.disabled = true; b.textContent = "Running…";
+    const t0 = Date.now();
+    const poll = async () => {
+      let now = null;
+      try { now = await ctx.api("/api/upwork/run?" + qstr({ task })); } catch (e) { now = null; }
+      const run = now && now.run;
+      const fresh = run && (waitingOnScheduled ? run.id >= beforeId : run.id > beforeId);
+      if (fresh && !now.running) {
+        const ok = run.status === "completed" || run.status === "skipped_empty";
+        const what = now.words || label;
+        toast(ok
+          ? `${what}${run.summary ? " — " + run.summary : ""}${run.status === "skipped_empty" ? " — nothing new" : ""}`
+          : `${what}: ${run.status}${run.error ? " — " + run.error : ""}`, !ok);
+        ctx.refresh();                       // re-read the tab; it lands on this same view
+        return;
+      }
+      if (fresh && run.started_at) status.textContent = `running since ${clock(run.started_at)}…`;
+      if (Date.now() - t0 > RUN_POLL_MAX_MS) {
+        toast(`${label}: still running after 6 minutes — check Health later`, true);
+        b.disabled = false; b.textContent = label; busy = false;
+        return;
+      }
+      setTimeout(poll, RUN_POLL_MS);
+    };
+    setTimeout(poll, RUN_POLL_MS);
+  }, { sm: true, variant: opts.variant || "primary", icon: "refresh-cw",
+    title: allowed ? `runs ${task} now` : "not re-runnable from the cockpit" });
+  if (!allowed) b.disabled = true;
+  wrap.append(b, status);
+  return wrap;
+}
+
 /* ── 1. Inbox ─────────────────────────────────────────────────────────────── */
 
 function inboxView(d, ctx) {
@@ -296,7 +378,10 @@ function inboxView(d, ctx) {
   });
   const sn = ib.snoozed || {};
   if (sn.count) chips.appendChild(el("span", "muted small", `${sn.count} snoozed${sn.next_back ? ", back " + fmt.dateShort(sn.next_back) : ""}`));
-  if (n) head.appendChild(chips);
+  const right = el("div", "right");
+  if (n) right.appendChild(chips);
+  right.appendChild(runButton(ctx, d, "upwork_inbox", "Check Upwork now"));
+  head.appendChild(right);
   out.append(head);
 
   if (!n) {
@@ -416,7 +501,7 @@ function flowBlock(d, ctx, state, redraw) {
   const head = el("div", "secrow", [
     el("h3", "sec-title", `This ${noun}'s jobs`),
     el("span", "muted small", `${period.label || key}${period.so_far ? ", so far" : ""}`),
-    el("div", "right", [seg]),
+    el("div", "right", [seg, runButton(ctx, d, "upwork_scan", "Scan for new jobs now")]),
   ]);
 
   const flow = el("div", { class: "flow", style: { gridTemplateColumns: `repeat(${stages.length}, 1fr)` } });
@@ -557,6 +642,7 @@ function connectsBlock(d, ctx, state) {
     el("span", "muted small grow-right", stale
       ? `the connects rail is ${src.status} — these may not be current`
       : "counts only — the money is on the Money tab"),
+    runButton(ctx, d, "upwork_connects", "Update connects", { variant: "ghost" }),
   ]);
   return strip;
 }
@@ -635,9 +721,8 @@ function healthView(d, ctx) {
       } } }, [el("span", "dot " + w.cls), r.label]);
     const action = el("div", "hstack-tight");
     if (r.rerun && r.task_name && r.built !== false) {
-      action.appendChild(btn(attention.includes(r) ? "Run now" : "Re-run",
-        (ev) => ctx.kick("/api/rerun", { task: r.task_name }, ev.currentTarget),
-        { sm: true, variant: attention.includes(r) ? "primary" : "ghost", icon: "refresh-cw" }));
+      action.appendChild(runButton(ctx, d, r.task_name, "Run now",
+        { variant: attention.includes(r) ? "primary" : "ghost", quiet: true }));
     }
     body.appendChild(el("tr", attention.includes(r) ? "attn" : "", [
       el("td", null, el("div", "stack-1", [name, el("span", "small muted", RAIL_WHAT[r.key] || r.why || "")])),

@@ -50,6 +50,8 @@ GET_ROUTES: dict = {
     # every figure on it (?stage=...&week=|month=, ?frm=&to=&kind= for connects)
     "/api/upwork": data.upwork,
     "/api/upwork/rows": data.upwork_rows,
+    # the "Run now" buttons poll this (?task=) after their /api/rerun kick
+    "/api/upwork/run": data.upwork_run_status,
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     # the capture box's poll target (?note_id=N): "is it a card yet, and if not
     # what did the classifier decide instead?" The classifying runs in a child
@@ -124,6 +126,8 @@ QUERY_PARAMS: dict = {
     # /api/upwork/rows — the connects drill's kind (open vocabulary, SQL-bound:
     # the rail's kinds grow with the page; a whitelist would go stale)
     "kind": "connects_history.kind",
+    # /api/upwork/run — a runs.task_name, refused unless in actions.RERUN_JOBS
+    "task": "runs.task_name (allowlisted)",
     "source": "ledger source",
     # /api/activity · /api/activity/run · /api/activity/sources · …/facts
     "day": "IST calendar date, YYYY-MM-DD",

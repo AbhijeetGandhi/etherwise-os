@@ -881,6 +881,10 @@ button.strip-item:hover .v { color: var(--info); }
 .strip .v { font-size: var(--text-lg); font-weight: 600; }
 .grow-right { margin-left: auto; }
 
+/* the "Run now" buttons: the button + its one-line status */
+.runbtn { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.runbtn-status:empty { display: none; }
+
 /* the rails table (Health) */
 .rails-table td:first-child { font-weight: 500; }
 .rail-name { display: inline-flex; align-items: center; text-decoration: none; }

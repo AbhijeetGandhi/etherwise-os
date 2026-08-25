@@ -3491,6 +3491,60 @@ def upwork_rows(db_path: Optional[Path] = None, *,
             "total": len(rows) if total is None else total}
 
 
+# ── "Run now" on the tab: the newest run of one task, cheap enough to poll ──
+# Abhijeet, 2026-08-26 04:00: "add a manual trigger button for every system
+# we have ... I should be able to run it instantly with a button click to get
+# the latest". The kick is the existing allowlisted /api/rerun (launchctl
+# kickstart); THIS is what the button polls afterwards so the tab can say
+# "running since 04:31 …" and re-read itself the moment the run lands,
+# instead of refreshing blind six seconds after the click.
+
+_RUN_TASK_WORDS = {
+    "upwork_inbox": "Checked Upwork for new messages",
+    "upwork_scan": "Scanned for new jobs",
+    "upwork_sync": "Synced proposals and rooms",
+    "upwork_connects": "Updated the connects ledger",
+    "cos_sweep": "Swept the cards",
+}
+
+
+def upwork_run_status(db_path: Optional[Path] = None, *,
+                      task: Optional[str] = None) -> dict:
+    """GET /api/upwork/run?task=<runs.task_name> — the newest run of one
+    allowlisted task: {task, running, run{id,status,started_at,completed_at,
+    duration_ms,summary,error}}. A task outside actions.RERUN_JOBS is an error
+    envelope, never a 500 — the cockpit must not become a run-log browser for
+    arbitrary strings."""
+    from modules.cockpit import actions as _actions
+    if not task or task not in _actions.RERUN_JOBS:
+        return {"error": "unknown task: {!r}".format(task), "task": task,
+                "running": False, "run": None}
+    conn = _ro(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, status, started_at, completed_at, duration_ms,"
+            " metrics_json, error FROM runs WHERE task_name=?"
+            " ORDER BY id DESC LIMIT 1", (task,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"task": task, "running": False, "run": None,
+                "words": _RUN_TASK_WORDS.get(task)}
+    try:
+        metrics = json.loads(row["metrics_json"] or "null")
+    except (TypeError, ValueError):
+        metrics = None
+    return {
+        "task": task, "words": _RUN_TASK_WORDS.get(task),
+        "running": row["status"] == "running",
+        "run": {"id": row["id"], "status": row["status"],
+                "started_at": row["started_at"], "completed_at": row["completed_at"],
+                "duration_ms": row["duration_ms"],
+                "summary": _metrics_summary(metrics),
+                "error": (row["error"] or "")[:200] or None},
+    }
+
+
 def _upwork_attach_outcomes(conn, stage: str, rows: list) -> None:
     """Decorate outcome-stage drill rows with the dated evidence behind the
     flag: the rail's applied date + connects, the proposal's status and room,

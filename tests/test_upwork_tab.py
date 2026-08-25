@@ -571,8 +571,58 @@ class TestUpworkServerParams(CockpitServerCase):
         self.assertNotIn("error", json.loads(body))
 
     def test_new_params_are_registered(self):
-        for p in ("kind", "week", "month", "frm", "to", "stage"):
+        for p in ("kind", "week", "month", "frm", "to", "stage", "task"):
             self.assertIn(p, server.QUERY_PARAMS)
+
+    def test_run_status_is_allowlisted_and_cheap(self):
+        """The "Run now" buttons poll this after their kick. Only a task the
+        cockpit may kick is readable here; anything else is an envelope."""
+        st, body = self.get("/api/upwork/run?task=upwork_inbox")
+        self.assertEqual(st, 200)
+        out = json.loads(body)
+        self.assertEqual(out["task"], "upwork_inbox")
+        self.assertIn("running", out)
+        st, body = self.get("/api/upwork/run?task=rm_-rf")
+        out = json.loads(body)
+        self.assertEqual(st, 200)
+        self.assertIn("error", out)
+        self.assertIsNone(out["run"])
+        self.assertFalse(out["running"])
+
+
+class TestRunStatus(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="upwork-run-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_newest_run_with_its_words_running_flag_and_summary(self):
+        self.assertIsNone(data.upwork_run_status(self.db_path, task="upwork_inbox")["run"])
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO runs (task_name, status, started_at, completed_at,"
+                         " duration_ms, metrics_json) VALUES ('upwork_inbox','completed',"
+                         " '2026-08-26T04:31:00+05:30','2026-08-26T04:31:40+05:30', 40000,"
+                         " '{\"threads\": 120, \"new_messages\": 3}')")
+            conn.execute("INSERT INTO runs (task_name, status, started_at)"
+                         " VALUES ('upwork_inbox','running','2026-08-26T04:45:00+05:30')")
+        out = data.upwork_run_status(self.db_path, task="upwork_inbox")
+        self.assertTrue(out["running"])
+        self.assertEqual(out["run"]["status"], "running")
+        self.assertEqual(out["words"], "Checked Upwork for new messages")
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE runs SET status='completed', completed_at='2026-08-26T04:45:30+05:30',"
+                         " metrics_json='{\"threads\": 121, \"new_messages\": 1}' WHERE status='running'")
+        out = data.upwork_run_status(self.db_path, task="upwork_inbox")
+        self.assertFalse(out["running"])
+        self.assertIn("new_messages 1", out["run"]["summary"])
+        # the allowlist is the registry's, not a second copy
+        from modules.cockpit import actions
+        for task in actions.RERUN_JOBS:
+            self.assertNotIn("error", data.upwork_run_status(self.db_path, task=task))
+        self.assertIn("error", data.upwork_run_status(self.db_path, task="upwork_outcomes"))
 
 
 class TestNoLiteralBandsOnTheTab(unittest.TestCase):
@@ -625,6 +675,12 @@ class TestUpworkSection(unittest.TestCase):
         self.assertNotIn("fetch(", src)                        # ctx.api / ctx.post only
         self.assertIn('ctx.api("/api/upwork")', src)
         self.assertIn("/api/upwork/rows?", src)
+        # "Run now" on every system (his ask, 08-26 04:00): the kick is the
+        # allowlisted /api/rerun and the button polls /api/upwork/run to the end
+        self.assertIn('ctx.post("/api/rerun", { task })', src)
+        self.assertIn("/api/upwork/run?", src)
+        for task in ("upwork_inbox", "upwork_scan", "upwork_connects"):
+            self.assertIn(f'"{task}"', src)
         for k in ("ew_cockpit_upwork_view", "ew_cockpit_upwork_tab", "ew_cockpit_upwork_list"):
             self.assertIn(k, src)                              # state only in these keys
         conv = (STATIC / "js" / "conversation.js").read_text()
