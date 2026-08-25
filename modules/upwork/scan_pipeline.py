@@ -6,7 +6,8 @@ his logged-in Chrome — never an API substitute):
 
   navigate dedicated tab -> feed_bridge extraction -> claim into V3
   scored_jobs -> hard rules (code) -> score via gateway (structured outputs,
-  anchored exemplars) -> drafts >=16 -> INTENDED ClickUp tasks + digest into
+  anchored exemplars) -> drafts >= HOT_LEAD_THRESHOLD -> INTENDED ClickUp
+  tasks + digest into
   shadow_ledger (zero external writes; bin/shadow-diff compares against the
   v4.14.1 Cowork task's actuals daily).
 
@@ -164,7 +165,8 @@ def _digest_html(dbp, hot_ids) -> str:
                          f' — score {r.get("score")}'
                          f'{" · " + client if client else ""}{card}</li>')
     return ("<h2>Hot Upwork leads</h2><ul>" + "\n".join(items) + "</ul>"
-            "<p>Scored ≥16 this scan; drafts are on the ClickUp cards.</p>")
+            f"<p>Scored ≥{config.HOT_LEAD_THRESHOLD} this scan; drafts are on"
+            " the ClickUp cards.</p>")
 
 
 def scan(ctx, _sleep=time.sleep) -> dict:
@@ -276,7 +278,7 @@ def scan(ctx, _sleep=time.sleep) -> dict:
     icp_hits = []   # ideal-client-profile leads (the tier above 'hot')
     icp_near = []
     for entry in scored:
-        if (entry["score"] or 0) < 8:
+        if (entry["score"] or 0) < config.SCORE_FLOOR:   # below band: no card
             continue
         with db.connect(dbp) as conn:
             row = dict(conn.execute(

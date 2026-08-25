@@ -7,7 +7,8 @@ Reads mcp_shadow_jobs and scored_jobs, compares only the window where BOTH ran
 (from the first shadow row onward), and answers the three questions the
 cutover hangs on:
 
-  1. COVERAGE — of the jobs the scraper scored >= HOT (16), how many did the
+  1. COVERAGE — of the jobs the scraper scored >= config.HOT_LEAD_THRESHOLD,
+     how many did the
      shadow ALSO surface? Per feed_source, so the my_feed loss he accepted is
      visible as its own number rather than blended in.
   2. LATENCY — for jobs both saw, who saw them first, by how long?
@@ -53,10 +54,12 @@ def main() -> int:
     print(f"window: last {HOURS}h, clipped to first shadow row {first}")
     print(f"shadow rows: {len(shadow)} · scraper rows in window: {len(scraper)}")
 
-    hot = {i: r for i, r in scraper.items() if (r["score"] or 0) >= 16}
+    hot = {i: r for i, r in scraper.items()
+           if (r["score"] or 0) >= config.HOT_LEAD_THRESHOLD}
     both = [i for i in hot if i in shadow]
     missed = [i for i in hot if i not in shadow]
-    print(f"\n1. COVERAGE of scraper hot (>=16): {len(both)}/{len(hot)}")
+    print(f"\n1. COVERAGE of scraper hot (>={config.HOT_LEAD_THRESHOLD}):"
+          f" {len(both)}/{len(hot)}")
     by_feed: dict = {}
     for i in missed:
         by_feed.setdefault(hot[i]["feed_source"], []).append(i)

@@ -108,9 +108,11 @@ def sample_jobs(db_path=None) -> list:
             " AND sj.score IS NOT NULL ORDER BY sj.id")]
         have = {r["id"] for r in linked}
         fill = []
-        for band_sql, n in (("score >= 22", 12), ("score BETWEEN 16 AND 21", 12),
-                            ("score BETWEEN 12 AND 15", 12),
-                            ("score BETWEEN 8 AND 11", 6)):
+        floor, std, hot, loom = config.SCORE_BANDS
+        for band_sql, n in ((f"score >= {loom}", 12),
+                            (f"score BETWEEN {hot} AND {loom - 1}", 12),
+                            (f"score BETWEEN {std} AND {hot - 1}", 12),
+                            (f"score BETWEEN {floor} AND {std - 1}", 6)):
             rows = [dict(r) for r in conn.execute(
                 f"SELECT *, NULL AS outcome FROM scored_jobs WHERE {band_sql}"
                 " AND score_breakdown_json IS NOT NULL"
@@ -172,25 +174,19 @@ def score_with(model_override, jobs, task_name, db_path=None):
 
 
 def band(score):
-    if score is None:
-        return "?"
-    if score >= 22:
-        return "22+"
-    if score >= 16:
-        return "16-21"
-    if score >= 12:
-        return "12-15"
-    if score >= 8:
-        return "8-11"
-    return "<8"
+    # labels derive from config.SCORE_BANDS ('22+', '16-21', ...) so the eval
+    # report follows a recalibration instead of describing stale cuts
+    return config.score_band_label(config.score_band(score))
 
 
 def model_metrics(jobs, verdicts) -> dict:
     pairs = [(r, verdicts[r["id"]]) for r in jobs
              if verdicts.get(r["id"]) is not None]
     diffs = [v["effective_total"] - r["score"] for r, v in pairs]
-    hot_hist = {r["id"] for r, _ in pairs if r["score"] >= 16}
-    hot_new = {r["id"] for r, v in pairs if v["effective_total"] >= 16}
+    hot_hist = {r["id"] for r, _ in pairs
+                if r["score"] >= config.HOT_LEAD_THRESHOLD}
+    hot_new = {r["id"] for r, v in pairs
+               if v["effective_total"] >= config.HOT_LEAD_THRESHOLD}
     won = [v["effective_total"] for r, v in pairs if r.get("outcome") == "Won"]
     exp = [v["effective_total"] for r, v in pairs
            if r.get("outcome") == "Expired"]

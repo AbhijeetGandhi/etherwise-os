@@ -12,11 +12,14 @@ Hard guards, each emitting a per-id audit line (machine-checkable):
   - fabricated-id pattern (job_id_guard) — NEVER pushed regardless of status
   - status must be Scored|Drafted (never Phantom / New / Skipped)
   - never already-tasked (clickup_task_id set or status 'ClickUp Created')
-  - score >= 8 (below band gets no task by the v2.3 matrix routing)
+  - score >= config.SCORE_FLOOR (below band gets no task by the v2.3 matrix
+    routing)
 
 --dry-run is the DEFAULT; --live is explicit. Routing: invite -> Invites ·
->=16 Hot · 12-15 Standard · 8-11 Low (effective post-gate score is stored in
-`score` by Phase 3, so routing uses it as-is). Payload: verbatim title,
+>= HOT_LEAD_THRESHOLD Hot · >= SCORE_STANDARD Standard · >= SCORE_FLOOR Low —
+the cuts come from core/config.py (SCORE_BANDS), never from literals here
+(effective post-gate score is stored in `score` by Phase 3, so routing uses
+it as-is). Payload: verbatim title,
 job_url FROM THE ROW (never reconstructed), deterministic body; the only LLM
 content is the stored draft. check-before-retry on create errors (v4.11).
 0.65s spacing between API calls.
@@ -34,6 +37,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import job_id_guard  # noqa: E402  (shared fabricated-id patterns)
+
+# the score bands are config-owned (core/config.py SCORE_BANDS); make the v3
+# root importable for the standalone CLI (scan_pipeline already has it)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config  # noqa: E402
 
 ROOT = next(p for p in Path(__file__).resolve().parents
             if (p / "etherwise-os").is_dir())   # workspace root, symlink-safe
@@ -80,11 +88,11 @@ def list_for_score(total, invite: bool, icp_tier=None):
         return LIST_ICP
     if total is None:
         return None
-    if total >= 16:
+    if total >= config.HOT_LEAD_THRESHOLD:
         return LIST_HOT
-    if total >= 12:
+    if total >= config.SCORE_STANDARD:
         return LIST_STANDARD
-    if total >= 8:
+    if total >= config.SCORE_FLOOR:
         return LIST_LOW
     return None
 
@@ -176,8 +184,8 @@ def _guard(row) -> str:
         return "already-tasked"
     if status not in PUSHABLE_STATUSES:
         return f"status={status!r} not pushable"
-    if (row.get("score") or 0) < 8:
-        return "below band (<8 — no task by matrix)"
+    if (row.get("score") or 0) < config.SCORE_FLOOR:
+        return f"below band (<{config.SCORE_FLOOR} — no task by matrix)"
     return ""
 
 
@@ -257,13 +265,21 @@ def attach(db_path, job_id: str, task_id: str, task_url: str) -> None:
         conn.close()
 
 
+def priority_for(row) -> int:
+    """ClickUp priority from the stored score: 1 urgent at the Loom cut or a
+    direct invite, 2 high at the hot cut, else 3 normal (cuts from config)."""
+    score = row.get("score") or 0
+    if score >= config.LOOM_FLAG_THRESHOLD or is_invite(row):
+        return 1
+    return 2 if score >= config.HOT_LEAD_THRESHOLD else 3
+
+
 def push_one(tok: str, db_path, row, list_id: str) -> dict:
     name = task_name(row)
     payload = {
         "name": name,
         "markdown_description": task_body(row),
-        "priority": 1 if (row.get("score") or 0) >= 22 or is_invite(row)
-        else (2 if (row.get("score") or 0) >= 16 else 3),
+        "priority": priority_for(row),
     }
     try:
         task = req("POST", f"/list/{list_id}/task", tok, payload)

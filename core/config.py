@@ -166,6 +166,57 @@ INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately
 HOT_LEAD_THRESHOLD = 16
 LOOM_FLAG_THRESHOLD = 22
 
+# ── Score bands — ONE source (Upwork chat, 2026-08-25, decision 1) ───────────
+# Until this block the four cuts lived as literals in clickup_push (list
+# routing + priority), scan_pipeline (card floor + digest copy), cockpit/data.py
+# (funnel, bands, drills), mcp_shadow_report (the cutover scorecard) and
+# core/evals/scoring_eval — so "recalibrate 16" would have moved the drafts and
+# the digest but not the cards or the funnel. Every reader now imports these;
+# tests/test_score_bands.py greps the readers for stray literals.
+# VALUES ARE UNCHANGED HERE ON PURPOSE: they move only after the MCP scorecard
+# has measured the drift (MCP applicant counts score ~2 lower) — a second,
+# separate, reviewed commit. Semantics of a stored (post-gate) score:
+#   score <  SCORE_FLOOR                     -> no card ("below band")
+#   SCORE_FLOOR    <= score < SCORE_STANDARD -> Low list
+#   SCORE_STANDARD <= score < HOT            -> Standard list
+#   HOT            <= score < LOOM           -> Hot list, draft at scan, digest
+#   LOOM           <= score                  -> Hot + custom-Loom flag, priority 1
+SCORE_FLOOR = 8
+SCORE_STANDARD = 12
+SCORE_BANDS = (SCORE_FLOOR, SCORE_STANDARD, HOT_LEAD_THRESHOLD, LOOM_FLAG_THRESHOLD)
+if list(SCORE_BANDS) != sorted(set(SCORE_BANDS)):
+    raise ValueError(f"SCORE_BANDS must be strictly increasing: {SCORE_BANDS}")
+
+
+def score_band(score) -> str:
+    """Band name for a stored score: 'loom' | 'hot' | 'standard' | 'low' |
+    'below' | 'unscored'. The one place band arithmetic lives."""
+    if score is None:
+        return "unscored"
+    if score >= LOOM_FLAG_THRESHOLD:
+        return "loom"
+    if score >= HOT_LEAD_THRESHOLD:
+        return "hot"
+    if score >= SCORE_STANDARD:
+        return "standard"
+    if score >= SCORE_FLOOR:
+        return "low"
+    return "below"
+
+
+def score_band_label(name: str) -> str:
+    """Human label for a band name, derived from the live cuts ('16-21',
+    '22+', '<8'...) so no report or chart hardcodes a number."""
+    labels = {
+        "loom": f"{LOOM_FLAG_THRESHOLD}+",
+        "hot": f"{HOT_LEAD_THRESHOLD}-{LOOM_FLAG_THRESHOLD - 1}",
+        "standard": f"{SCORE_STANDARD}-{HOT_LEAD_THRESHOLD - 1}",
+        "low": f"{SCORE_FLOOR}-{SCORE_STANDARD - 1}",
+        "below": f"<{SCORE_FLOOR}",
+        "unscored": "?",
+    }
+    return labels[name]
+
 # ── Proposal evidence (modules/upwork/evidence.py, 2026-08-16) ───────────────
 # Deterministic KB retrieval for a draft. Every one of these is a gate, not a
 # preference: the drafter used to be ORDERED to look facts up and, being a

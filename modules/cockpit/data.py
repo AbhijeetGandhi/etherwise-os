@@ -1126,7 +1126,7 @@ _HOURLY_SKIP_Q = ",".join("?" * len(_HOURLY_SKIPS))
 def pipeline(db_path: Optional[Path] = None,
              today: Optional[str] = None) -> dict:
     """Pipeline panel v2 (2026-07-07 accuracy audit) — TRUTHFUL sources only:
-    - funnel per week from scored_jobs (scanned / scored>=8 / carded) — live and
+    - funnel per week from scored_jobs (scanned / scored>=SCORE_FLOOR / carded) — live and
       accurate; 'replied' from the room-sourced proposals (sparse but real).
     - 'applied' is returned as UNAVAILABLE (never a fake 0): proposals are
       room-sourced only and the vendorProposals scope was declined (too costly);
@@ -1155,7 +1155,8 @@ def pipeline(db_path: Optional[Path] = None,
         scanned = week_counts("SELECT fetched_at FROM scored_jobs"
                               " WHERE fetched_at LIKE '20%'")
         scored = week_counts("SELECT first_scored_at FROM scored_jobs"
-                             " WHERE score >= 8 AND first_scored_at LIKE '20%'")
+                             f" WHERE score >= {int(config.SCORE_FLOOR)}"
+                             " AND first_scored_at LIKE '20%'")
         carded = week_counts("SELECT first_scored_at FROM scored_jobs"
                              " WHERE clickup_task_id IS NOT NULL"
                              " AND first_scored_at LIKE '20%'")
@@ -1279,16 +1280,21 @@ def pipeline(db_path: Optional[Path] = None,
         # the OPEN board, windowed to actionable freshness; the uncarded
         # shadow-era backlog (never pushed while ClickUp was shadowed) is
         # reported separately — it must not read as 'to triage'.
+        # band cuts are config-owned (SCORE_BANDS) — bound as parameters, never
+        # written into the SQL as literals (decision 1, 2026-08-25)
+        _floor, _std, _hot = (config.SCORE_FLOOR, config.SCORE_STANDARD,
+                              config.HOT_LEAD_THRESHOLD)
         bands_row = conn.execute(
-            "SELECT SUM(score>=16) hot, SUM(score>=12 AND score<16) standard,"
-            " SUM(score>=8 AND score<12) low FROM scored_jobs"
+            "SELECT SUM(score>=?) hot, SUM(score>=? AND score<?) standard,"
+            " SUM(score>=? AND score<?) low FROM scored_jobs"
             " WHERE status IN ('Scored','Drafted') AND clickup_task_id IS NULL"
-            " AND substr(first_scored_at,1,10) >= ?", (fresh_cut,)).fetchone()
+            " AND substr(first_scored_at,1,10) >= ?",
+            (_hot, _std, _hot, _floor, _std, fresh_cut)).fetchone()
         backlog = conn.execute(
             "SELECT COUNT(*) FROM scored_jobs WHERE status IN"
-            " ('Scored','Drafted') AND clickup_task_id IS NULL AND score>=8"
+            " ('Scored','Drafted') AND clickup_task_id IS NULL AND score>=?"
             " AND (first_scored_at IS NULL OR substr(first_scored_at,1,10) < ?)",
-            (fresh_cut,)).fetchone()[0]
+            (_floor, fresh_cut)).fetchone()[0]
         bands = {"hot": bands_row["hot"] or 0,
                  "standard": bands_row["standard"] or 0,
                  "low": bands_row["low"] or 0,
@@ -1402,7 +1408,7 @@ def pipeline_facts(db_path: Optional[Path] = None,
     return {"jobs": jobs, "applies": applies, "replies": replies,
             "hires": hires, "rail_since": rail_since, "as_of": day,
             "hot_threshold": config.HOT_LEAD_THRESHOLD,
-            "score_floor": 8}
+            "score_floor": config.SCORE_FLOOR}
 
 
 # ── drill-down filter validation ─────────────────────────────────────────────
@@ -1585,7 +1591,8 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
             col = "fetched_at" if stage == "scanned" else "first_scored_at"
             cond, args = wk(col)
             if stage == "scored":
-                cond += " AND score >= 8"
+                cond += " AND score >= ?"
+                args.append(config.SCORE_FLOOR)
             if stage == "carded":
                 cond += " AND clickup_task_id IS NOT NULL"
             q = (f"SELECT id, title, score, status, job_url, clickup_task_url,"
@@ -1635,9 +1642,9 @@ def pipeline_rows(db_path: Optional[Path] = None, *,
                 " substr(first_scored_at,1,10) AS d,"
                 " draft_proposal IS NOT NULL AS has_draft FROM scored_jobs"
                 " WHERE status IN ('Scored','Drafted') AND clickup_task_id IS"
-                " NULL AND score>=16 AND substr(first_scored_at,1,10) >= ?"
+                " NULL AND score>=? AND substr(first_scored_at,1,10) >= ?"
                 " ORDER BY score DESC, first_scored_at DESC LIMIT 300",
-                (fresh_cut,))]
+                (config.HOT_LEAD_THRESHOLD, fresh_cut))]
         elif stage == "threads":
             cond, args = ("", [])
             if status:
