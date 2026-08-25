@@ -1177,6 +1177,14 @@ SMTP_FROM = "contact@etherwise.io"
 
 # ── Cockpit (M2) ──────────────────────────────────────────────────────────────
 COCKPIT_HOST = "127.0.0.1"      # localhost only; never 0.0.0.0
+# Upwork tab (Phase 1, docs/upwork/PHASE1_TAB_SPEC.md §3.2/§3.4, 2026-08-25):
+# the cohort funnel's baseline is POOLED over the completed periods before the
+# current one, and a conversion is typeset as SIGNAL only when its denominator
+# reaches the small-N line (Upwork brief law 6) — below it the % is printed
+# muted with its n and no trend arrow.
+UPWORK_BASELINE_WEEKS = 8
+UPWORK_BASELINE_MONTHS = 3
+UPWORK_SIGNAL_MIN_N = 30
 COCKPIT_PORT = 5051            # v2 dashboard holds :5050 (live)
 COCKPIT_TOKEN_FILE = CREDENTIALS_DIR / "cockpit-token.txt"
 

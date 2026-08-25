@@ -1,0 +1,587 @@
+"""The Upwork tab reader + drills (Phase 1, docs/upwork/PHASE1_TAB_SPEC.md).
+
+Pins the four decisions of 2026-08-25 (brief decision 10): the job-COHORT
+funnel with its closure rule, interviewed = Activated/Hired, won = a contract
+on the job, connects spent = applications + boosts net of boost refunds; the
+"—" tiles for the stages without a spine row; the parity of every figure with
+its drill; the shared card builder feeding Today and the tab; the rails strip
+with `built: False` rows; the query-param guard on the new route.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import tempfile
+import unittest
+from datetime import datetime
+from unittest import mock
+from pathlib import Path
+
+from core import config, db
+from modules.cockpit import data, server
+from tests.test_cockpit import CockpitServerCase, seed_today
+
+ROOT = Path(__file__).resolve().parents[1]
+TODAY = "2026-08-26"            # a Wednesday; the current week is Mon 08-24
+WEEK = "2026-08-24"
+MONTH = "2026-08"
+
+# one synthetic cohort in the current week + one matured cohort four weeks
+# earlier for the baseline. Realistic 19-digit ids (the fabricated-id guard).
+J = [f"20669000000000{n:05d}" for n in range(1, 40)]
+
+
+def _job(conn, jid, day, score=None, skip=None, status="Scored", carded=False,
+         draft=False, loom=False):
+    conn.execute(
+        "INSERT INTO scored_jobs (id, title, score, hard_rule_skip, status,"
+        " clickup_task_id, clickup_task_url, draft_proposal, loom_flag,"
+        " fetched_at, first_scored_at, job_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (jid, f"job {jid[-3:]}", score, skip, status,
+         f"cu{jid[-3:]}" if carded else None,
+         f"https://app.clickup.com/t/cu{jid[-3:]}" if carded else None,
+         "Drafted proposal text." if draft else None, 1 if loom else 0,
+         f"{day}T10:00:00+00:00", f"{day} 10:05:00",
+         f"https://www.upwork.com/jobs/x_~02{jid}/"))
+
+
+def seed_cohort(db_path):
+    hot, loom = config.HOT_LEAD_THRESHOLD, config.LOOM_FLAG_THRESHOLD
+    with db.connect(db_path) as conn:
+        # ── the current-week cohort (fetched 08-24 / 08-25) ──────────────────
+        # 12 fetched: 4 killed by hard rules, 8 passed; of the 8: 5 hot
+        # (2 of them Loom), 3 standard; 3 applied by the rail (2 hot, 1 not),
+        # 2 more applied by CLOSURE (a Hired proposal with no rail row, a
+        # contract with no proposal at all), 3 interviewed (J7 Activated, J10
+        # Hired, J6 inferred from its contract), 2 won.
+        for i in range(4):                               # hard-rule kills
+            _job(conn, J[i], "2026-08-24", score=None, skip="n8n_exclusion",
+                 status="Skipped")
+        for i in range(4, 7):                            # standard 12-19
+            _job(conn, J[i], "2026-08-24", score=hot - 2, status="ClickUp Created",
+                 carded=True)
+        for i in range(7, 10):                           # hot, carded, drafted
+            _job(conn, J[i], "2026-08-25", score=hot, status="ClickUp Created",
+                 carded=True, draft=True)
+        for i in range(10, 12):                          # loom, one missed the push
+            _job(conn, J[i], "2026-08-25", score=loom + 2,
+                 status="Drafted" if i == 11 else "ClickUp Created",
+                 carded=(i != 11), draft=True, loom=True)
+        # rail: applied to J[7], J[8] (hot) and J[4] (standard)
+        for n, jid in enumerate((J[7], J[8], J[4])):
+            conn.execute(
+                "INSERT INTO connects_history (id, event_date, kind, label,"
+                " job_id, job_title, connects_delta) VALUES (?,?,?,?,?,?,?)",
+                (f"ap{n}", "2026-08-25", "applied", "Applied to a job", jid,
+                 "t", -16))
+        # boosts on J[7] (+ a refund), badge, a purchase
+        conn.execute("INSERT INTO connects_history (id, event_date, kind, label,"
+                     " job_id, connects_delta) VALUES ('bo1','2026-08-25','boost',"
+                     " 'Boosted proposal', ?, -100)", (J[7],))
+        conn.execute("INSERT INTO connects_history (id, event_date, kind, label,"
+                     " job_id, connects_delta) VALUES ('br1','2026-08-25',"
+                     " 'boost_refund','Boost refund', ?, 40)", (J[7],))
+        conn.execute("INSERT INTO connects_history (id, event_date, kind, label,"
+                     " connects_delta) VALUES ('bd1','2026-08-25','badge',"
+                     " 'Availability Badge', -1)")
+        conn.execute("INSERT INTO connects_history (id, event_date, kind, label,"
+                     " connects_delta) VALUES ('pu1','2026-08-25','other',"
+                     " 'Added extra Connects', 300)")
+        # proposals: J[7] interviewing (rail-applied), J[10] Hired (contract,
+        # no rail row -> applied + interviewed by closure), J[9] Archived
+        for pid, jid, ust in (("pr7", J[7], "Activated"), ("pr10", J[10], "Hired"),
+                              ("pr9", J[9], "Archived")):
+            conn.execute(
+                "INSERT INTO proposals (id, marketplace_job_id, upwork_status,"
+                " job_title, created_dt, thread_id) VALUES (?,?,?,?,?,?)",
+                (pid, jid, ust, "t", "2026-08-25T12:00:00+0000", f"room_{pid}"))
+        conn.execute(
+            "INSERT INTO contracts (id, job_id, title, upwork_status, start_dt,"
+            " contract_type, hourly_rate) VALUES ('ct10', ?, 'won job', 'ACTIVE',"
+            " '2026-08-25T15:00:00+0000', 'HOURLY', 60)", (J[10],))
+        # J6 (standard, never applied per the rail, no proposal row) got a
+        # contract: applied AND interviewed by closure, both inferred from 'won'
+        conn.execute(
+            "INSERT INTO contracts (id, job_id, title, upwork_status, start_dt,"
+            " contract_type) VALUES ('ct6', ?, 'quiet hire', 'ACTIVE',"
+            " '2026-08-25T16:00:00+0000', 'FIXED')", (J[6],))
+        # a contract started this week whose job was NEVER fetched (outside)
+        conn.execute(
+            "INSERT INTO contracts (id, job_id, title, upwork_status, start_dt,"
+            " contract_type) VALUES ('ctX', '2066900000000099999', 'direct hire',"
+            " 'ACTIVE', '2026-08-24T15:00:00+0000', 'FIXED')")
+        # ── a matured baseline cohort, four weeks earlier (07-27 .. 07-28) ──
+        # 10 fetched, all passed, 5 hot, 2 applied (rail), 1 interviewed, 0 won
+        for i in range(12, 22):
+            _job(conn, J[i], "2026-07-27", score=hot if i < 17 else hot - 3,
+                 status="ClickUp Created", carded=True, draft=(i < 17))
+        for n, jid in enumerate((J[12], J[13])):
+            conn.execute(
+                "INSERT INTO connects_history (id, event_date, kind, label,"
+                " job_id, connects_delta) VALUES (?,?,?,?,?,?)",
+                (f"bp{n}", "2026-07-27", "applied", "Applied to a job", jid, -16))
+        conn.execute(
+            "INSERT INTO proposals (id, marketplace_job_id, upwork_status,"
+            " created_dt) VALUES ('prb', ?, 'Activated', '2026-07-29T12:00:00+0000')",
+            (J[12],))
+        # ── a PRE-RAIL cohort (06-01): must never enter the outcome baselines ─
+        for i in range(22, 27):
+            _job(conn, J[i], "2026-06-01", score=hot, status="ClickUp Created",
+                 carded=True)
+
+
+class UpworkTabCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="upwork-tab-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_cohort(self.db_path)
+        self.out = data.upwork(self.db_path, TODAY)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stage(self, view, k):
+        return next(s for s in self.out["funnel"][view]["stages"] if s["k"] == k)
+
+    def rows(self, **kw):
+        kw.setdefault("_today", TODAY)
+        return data.upwork_rows(self.db_path, **kw)
+
+
+class TestUpworkReader(UpworkTabCase):
+    def test_payload_keys_are_pinned(self):
+        self.assertEqual(set(self.out), {"as_of", "bands", "needs_me", "funnel",
+                                         "rails", "connects", "digest"})
+        self.assertEqual(self.out["as_of"], TODAY)
+        self.assertEqual(set(self.out["funnel"]), {"week", "month"})
+        self.assertFalse(self.out["digest"]["built"])
+
+    def test_band_labels_come_from_config(self):
+        b = self.out["bands"]
+        self.assertEqual(b["hot"], "Hot " + config.score_band_label("hot"))
+        self.assertEqual(b["loom"], "Loom " + config.score_band_label("loom"))
+        self.assertEqual(b["hot_cut"], config.HOT_LEAD_THRESHOLD)
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD",
+                               config.LOOM_FLAG_THRESHOLD - 1):
+            out = data.upwork(self.db_path, TODAY)
+            self.assertEqual(out["bands"]["hot"],
+                             f"Hot {config.LOOM_FLAG_THRESHOLD - 1}-{config.LOOM_FLAG_THRESHOLD - 1}")
+
+    def test_the_eight_stages_in_the_briefs_order(self):
+        ks = [s["k"] for s in self.out["funnel"]["week"]["stages"]]
+        self.assertEqual(ks, ["fetched", "passed", "hot", "applied", "viewed",
+                              "interviewed", "offer", "won"])
+
+    def test_cohort_counts_this_week(self):
+        w = self.out["funnel"]["week"]
+        self.assertEqual(w["period"]["key"], WEEK)
+        self.assertTrue(w["period"]["so_far"])
+        n = {s["k"]: s["n"] for s in w["stages"]}
+        self.assertEqual(n["fetched"], 12)
+        self.assertEqual(n["passed"], 8)
+        self.assertEqual(n["hot"], 5)
+        self.assertEqual(n["applied"], 5)          # 3 by the rail + 2 by closure
+        self.assertEqual(n["interviewed"], 3)      # J7 Activated, J10 Hired, J6 inferred
+        self.assertEqual(n["won"], 2)
+
+    def test_closure_makes_the_outcome_chain_nested_and_says_what_it_inferred(self):
+        applied = self.stage("week", "applied")
+        self.assertEqual(applied["inferred"], 2)    # J10 (proposal), J6 (contract)
+        self.assertEqual(applied["hot_split"], {"hot": 3, "not_hot": 2})
+        self.assertEqual(self.stage("week", "interviewed")["inferred"], 1)   # J6
+        # every later stage is a subset of the earlier one, by construction
+        n = {s["k"]: s["n"] for s in self.out["funnel"]["week"]["stages"] if s["measured"]}
+        self.assertLessEqual(n["won"], n["interviewed"])
+        self.assertLessEqual(n["interviewed"], n["applied"])
+        self.assertLessEqual(n["applied"], n["fetched"])
+        rows = self.rows(stage="applied", week=WEEK)["rows"]
+        byid = {r["id"]: r for r in rows}
+        self.assertEqual(byid[J[10]]["inferred"], "interviewed")   # its Hired proposal
+        self.assertEqual(byid[J[6]]["inferred"], "won")             # its contract
+        self.assertTrue(byid[J[6]]["interview_inferred"])
+        self.assertIsNone(byid[J[7]]["inferred"])
+        self.assertEqual(byid[J[7]]["applied_on"], "2026-08-25")
+        self.assertEqual(byid[J[6]]["contract_id"], "ct6")
+        self.assertEqual(byid[J[10]]["upwork_status"], "Hired")
+
+    def test_hot_sub_lines(self):
+        hot = self.stage("week", "hot")
+        self.assertEqual(hot["label"], f"Hot ≥{config.HOT_LEAD_THRESHOLD}")
+        self.assertEqual(hot["loom"], 2)
+        self.assertEqual(hot["carded"], 4)
+        self.assertEqual(hot["missed_push"], 1)     # J11: Drafted, no card
+        self.assertEqual(self.rows(stage="hot_missed_push", week=WEEK)["total"], 1)
+
+    def test_unmeasured_stages_render_a_dash_with_the_reason_and_no_drill(self):
+        for k in ("viewed", "offer"):
+            st = self.stage("week", k)
+            self.assertFalse(st["measured"])
+            self.assertIsNone(st["n"])                 # never a fabricated 0
+            self.assertTrue(st["reason"])
+            self.assertIsNone(st["drill"])
+            r = self.rows(stage=k, week=WEEK)
+            self.assertIn("not measured", r["error"])
+            self.assertIsNone(r["total"])
+
+    def test_conversion_chain_skips_the_unmeasured_stages(self):
+        inter = self.stage("week", "interviewed")
+        self.assertEqual(inter["of_prev"]["k"], "applied")   # not 'viewed'
+        won = self.stage("week", "won")
+        self.assertEqual(won["of_prev"]["k"], "interviewed")  # not 'offer'
+        self.assertEqual(won["of_prev"]["pct"], 66.7)         # 2 of 3
+
+    def test_applied_step_is_of_the_hot_jobs(self):
+        applied = self.stage("week", "applied")
+        self.assertEqual(applied["of_prev"]["k"], "hot")
+        self.assertEqual(applied["of_prev"]["n_num"], 3)      # applied ∧ hot
+        self.assertEqual(applied["of_prev"]["n_den"], 5)
+        self.assertEqual(applied["of_prev"]["pct"], 60.0)
+
+    def test_baseline_is_pooled_over_completed_weeks_and_rail_covered_only(self):
+        w = self.out["funnel"]["week"]
+        self.assertEqual(w["baseline"]["periods"], config.UPWORK_BASELINE_WEEKS)
+        self.assertEqual(w["baseline"]["rail_since"], "2026-07-27")
+        # 8 weeks before 08-24 = 06-29 .. 08-23: the 07-27 cohort is in, the
+        # 06-01 pre-rail cohort is out of the window entirely
+        self.assertEqual(w["baseline"]["cohort_n"], 10)
+        hot = self.stage("week", "hot")
+        self.assertEqual(hot["baseline"]["n_den"], 10)         # passed, pooled
+        self.assertEqual(hot["baseline"]["pct"], 50.0)
+        applied = self.stage("week", "applied")
+        self.assertEqual(applied["baseline"]["n_den"], 5)      # hot, covered
+        self.assertEqual(applied["baseline"]["pct"], 40.0)     # 2 of 5
+        self.assertEqual(applied["delta_pp"], 20.0)            # 60 - 40
+
+    def test_pre_rail_cohorts_never_enter_an_outcome_baseline(self):
+        # the month view's 3 completed months (May-Jul) include the 06-01
+        # cohort: it counts for the scoring steps, never for applied/won
+        m = self.out["funnel"]["month"]
+        self.assertEqual(m["baseline"]["cohort_n"], 15)         # 10 + 5
+        self.assertEqual(m["baseline"]["cohort_n_covered"], 10)
+        hot = self.stage("month", "hot")
+        self.assertEqual(hot["baseline"]["n_den"], 15)
+        applied = self.stage("month", "applied")
+        self.assertEqual(applied["baseline"]["n_den"], 5)       # hot AND covered
+        self.assertEqual(applied["baseline"]["covered_since"], "2026-07-27")
+
+    def test_no_rail_at_all_means_no_outcome_baseline_not_a_zero(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM connects_history")
+        out = data.upwork(self.db_path, TODAY)
+        applied = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "applied")
+        self.assertIsNone(applied["baseline"]["pct"])
+        self.assertIsNone(applied["delta_pp"])
+        self.assertIsNone(out["funnel"]["week"]["baseline"]["rail_since"])
+        # closure still counts the proposals' and contracts' jobs as applied
+        self.assertEqual(applied["n"], 3)                        # J7, J10, J6
+
+    def test_small_n_is_anecdote_on_either_side(self):
+        # every step here is under the small-N line: no SIGNAL anywhere
+        for s in self.out["funnel"]["week"]["stages"]:
+            if s["measured"] and s.get("of_prev"):
+                self.assertFalse(s["signal"], s["k"])
+        with mock.patch.object(config, "UPWORK_SIGNAL_MIN_N", 5):
+            out = data.upwork(self.db_path, TODAY)
+            hot = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "hot")
+            self.assertTrue(hot["signal"])                       # 8 and 10 >= 5
+            won = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "won")
+            self.assertFalse(won["signal"])                      # 3 and 1 < 5
+
+    def test_contracts_started_line_names_the_wins_outside_the_funnel(self):
+        c = self.out["funnel"]["week"]["contracts_started"]
+        self.assertEqual((c["total"], c["this"], c["earlier"], c["outside"]),
+                         (3, 2, 0, 1))
+        rows = self.rows(stage="contracts_started", week=WEEK)
+        self.assertEqual(rows["total"], 3)
+        tags = {r["id"]: r["cohort"] for r in rows["rows"]}
+        self.assertEqual(tags, {"ct10": "this", "ct6": "this", "ctX": "outside"})
+
+    def test_month_view_uses_the_calendar_month(self):
+        m = self.out["funnel"]["month"]
+        self.assertEqual(m["period"]["key"], MONTH)
+        self.assertEqual((m["period"]["lo"], m["period"]["hi"]),
+                         ("2026-08-01", "2026-08-31"))
+        self.assertEqual(m["baseline"]["periods"], config.UPWORK_BASELINE_MONTHS)
+        self.assertEqual(self.stage("month", "fetched")["n"], 12)
+
+
+class TestUpworkParity(UpworkTabCase):
+    def test_every_measured_stage_equals_its_drill_in_both_views(self):
+        for view, key in (("week", WEEK), ("month", MONTH)):
+            for s in self.out["funnel"][view]["stages"]:
+                if not s["measured"]:
+                    continue
+                r = self.rows(stage=s["k"], **{view: key})
+                self.assertEqual(r["total"], s["n"], (view, s["k"]))
+                self.assertEqual(r["count"], s["n"], (view, s["k"]))
+                self.assertEqual(s["drill"], {"stage": s["k"], view: key})
+
+    def test_hot_sublines_equal_their_drills(self):
+        hot = self.stage("week", "hot")
+        self.assertEqual(self.rows(stage="hot_missed_push", week=WEEK)["total"],
+                         hot["missed_push"])
+
+    def test_connects_tile_equals_the_sum_of_its_rows(self):
+        wk = self.out["connects"]["week"]
+        r = self.rows(stage="connects", frm=wk["lo"], to=wk["hi"])
+        by_kind = {}
+        for row in r["rows"]:
+            by_kind.setdefault(row["kind"], []).append(row["connects_delta"])
+        self.assertEqual(-sum(by_kind["applied"]), wk["applied_cost"])
+        self.assertEqual(-sum(by_kind["boost"]), wk["boost_cost"])
+        self.assertEqual(sum(by_kind["boost_refund"]), wk["boost_refunds"])
+        self.assertEqual(wk["spent_net"],
+                         wk["applied_cost"] + wk["boost_cost"] - wk["boost_refunds"])
+        self.assertEqual(wk["applications"], len(by_kind["applied"]))
+        kind_only = self.rows(stage="connects", frm=wk["lo"], to=wk["hi"], kind="boost")
+        self.assertEqual(kind_only["total"], 1)
+
+    def test_loom_flags_tile_equals_its_drill(self):
+        lf = self.out["needs_me"]["loom_flags"]
+        r = self.rows(stage="loom_flags")
+        self.assertEqual(r["total"], lf["count"])
+        # J10 (Hired, but the rail never saw an application) + J11 (missed push);
+        # the baseline cohort's flagged jobs are outside the 7-day window
+        self.assertEqual({row["id"] for row in r["rows"]}, {J[10], J[11]})
+        self.assertEqual(lf["days"], config.COS_HOTLEAD_RECENT_DAYS)
+        self.assertEqual(lf["icp"], 0)
+
+    def test_drafts_waiting_equals_its_drill(self):
+        dw = self.out["needs_me"]["drafts_waiting"]
+        r = self.rows(stage="drafts_waiting")
+        self.assertEqual(r["total"], dw["count"])
+        # hot + drafted + not applied + fresh: J9 (Archived proposal, never
+        # applied per the rail), J11 (missed push); J7/J8 applied, J10 no rail
+        # row but... no: J10 has no rail row so it counts too
+        self.assertEqual({row["id"] for row in r["rows"]}, {J[9], J[10], J[11]})
+
+
+class TestUpworkConnects(UpworkTabCase):
+    def test_spent_is_applications_plus_boosts_net_of_refunds(self):
+        wk = self.out["connects"]["week"]
+        self.assertEqual(wk["applications"], 3)
+        self.assertEqual(wk["applied_cost"], 48)
+        self.assertEqual(wk["boost_cost"], 100)
+        self.assertEqual(wk["boost_refunds"], 40)
+        self.assertEqual(wk["spent_net"], 108)
+        self.assertEqual(wk["badge"], 1)                     # its own line
+        self.assertEqual(wk["inflows"], 300)                 # never inside spent
+        self.assertEqual(wk["per_application"], 36.0)
+        self.assertEqual(wk["interviews"], 2)                # pr7 + pr10 this week
+        self.assertEqual(wk["per_interview"], 54.0)
+
+    def test_zero_applications_is_a_dash_not_a_division(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM connects_history WHERE kind='applied'")
+        out = data.upwork(self.db_path, TODAY)
+        wk = out["connects"]["week"]
+        self.assertEqual(wk["applications"], 0)
+        self.assertIsNone(wk["per_application"])
+
+    def test_connects_carry_the_rail_verdict(self):
+        src = self.out["connects"]["source"]
+        self.assertEqual(src["key"], "connects_rail")
+        self.assertEqual(src["status"], "down")              # never ran in the fixture
+
+
+class TestUpworkRails(UpworkTabCase):
+    def test_the_briefs_rails_in_order_with_not_built_rows(self):
+        keys = [r["key"] for r in self.out["rails"]["items"]]
+        self.assertEqual(keys, ["scanner", "mcp_feed", "proposals_sync",
+                                "messages_sync", "offers_sync", "applied",
+                                "outcome_email", "clickup_push", "cards_sweep"])
+        offers = next(r for r in self.out["rails"]["items"] if r["key"] == "offers_sync")
+        self.assertFalse(offers["built"])
+        self.assertIsNone(offers["status"])
+        self.assertIn("0.5", offers["reason"])
+        self.assertEqual(self.out["rails"]["not_built"], ["offers_sync"])
+
+    def test_a_rail_that_never_ran_is_down_and_the_strip_says_so(self):
+        scanner = next(r for r in self.out["rails"]["items"] if r["key"] == "scanner")
+        self.assertEqual(scanner["status"], "down")
+        self.assertEqual(scanner["task_name"], "upwork_scan")
+        self.assertTrue(scanner["rerun"])
+        self.assertEqual(self.out["rails"]["worst"], "down")
+
+    def test_latest_run_result_and_rerun_follow_the_registry(self):
+        with db.connect(self.db_path) as conn:
+            now = datetime.now(config.TZ).isoformat()
+            conn.execute("INSERT INTO runs (task_name, started_at, completed_at,"
+                         " status, shadow, metrics_json) VALUES ('upwork_inbox',"
+                         " ?, ?, 'completed', 0, ?)",
+                         (now, now, json.dumps({"threads": 12, "new_messages": 3})))
+        out = data.upwork(self.db_path, TODAY)
+        inbox = next(r for r in out["rails"]["items"] if r["key"] == "messages_sync")
+        self.assertEqual(inbox["status"], "ok")
+        self.assertIn("threads 12", inbox["result"])
+        self.assertTrue(inbox["rerun"])
+        outcome = next(r for r in out["rails"]["items"] if r["key"] == "outcome_email")
+        self.assertFalse(outcome["rerun"])                   # catch_up False -> no button
+
+    def test_clickup_line_is_derived_from_the_scan_and_the_missed_pushes(self):
+        cu = next(r for r in self.out["rails"]["items"] if r["key"] == "clickup_push")
+        self.assertTrue(cu["derived"])
+        self.assertEqual(cu["missed_push"], 1)               # J11, inside the window
+        self.assertEqual(cu["status"], "down")               # no completed scan yet
+        with db.connect(self.db_path) as conn:
+            now = datetime.now(config.TZ).isoformat()
+            conn.execute("INSERT INTO runs (task_name, started_at, completed_at,"
+                         " status, shadow, metrics_json) VALUES ('upwork_scan',"
+                         " ?, ?, 'completed', 0, ?)",
+                         (now, now, json.dumps({"clickup_pushed": 4,
+                                                "clickup_retried": 1,
+                                                "clickup_push_failed": 0})))
+        cu = next(r for r in data.upwork(self.db_path, TODAY)["rails"]["items"]
+                  if r["key"] == "clickup_push")
+        self.assertEqual(cu["result"], "4 carded · 1 retried")
+        self.assertEqual(cu["status"], "degraded")           # a missed push remains
+        self.assertIn("next scan retries", cu["reason"])
+
+    def test_a_source_missing_from_config_is_down_with_the_reason(self):
+        trimmed = tuple(s for s in config.SOURCES if s["key"] != "cos_sweep")
+        with mock.patch.object(config, "SOURCES", trimmed):
+            out = data.upwork(self.db_path, TODAY)
+        sweep = next(r for r in out["rails"]["items"] if r["key"] == "cards_sweep")
+        self.assertEqual(sweep["status"], "down")
+        self.assertIn("not in config.SOURCES", sweep["reason"])
+
+
+class TestUpworkCards(unittest.TestCase):
+    """One engine, two views (decision 5): Today = the shared builder minus
+    Loom flags, sliced; the tab = the builder's Upwork subset, Loom flags in,
+    no cap. A Done or a snooze disappears from both."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="upwork-cards-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_today(self.db_path)
+        from modules.chief_of_staff import nudges as eng
+        now = datetime(2026, 6, 15, tzinfo=config.TZ)
+        eng.write_nudge(self.db_path, source="sales", dept="sales",
+                        kind="hotlead_no_loom", title="Record a Loom: Make build",
+                        dedup_key="hotlead_no_loom:2065400000000000111",
+                        payload={"job_url": "https://www.upwork.com/jobs/~02x/"},
+                        now=now)
+        eng.write_nudge(self.db_path, source="knowledge", dept="knowledge",
+                        kind="stale_dossier", title="Recompile: acme",
+                        dedup_key="stale_dossier:acme",
+                        payload={"cite": "kb/acme"}, now=now)
+        eng.write_nudge(self.db_path, source="commitment", dept="knowledge",
+                        kind="commitment_due", title="Ship the thing",
+                        dedup_key="commitment:c1",
+                        payload={"cite": "fathom/x @ 0"}, now=now)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_today_is_the_builder_minus_loom_flags_sliced(self):
+        today = data.today(self.db_path, today="2026-06-15")
+        built = data._act_now_queue(self.db_path, "2026-06-15",
+                                    include_loom_flags=False)
+        self.assertEqual([e["item_key"] for e in today["queue"]],
+                         [e["item_key"] for e in built["queue"]][:config.TODAY_QUEUE_TOPN])
+        self.assertNotIn("hotlead_no_loom",
+                         {e.get("nudge_kind") for e in today["queue"]})
+
+    def test_the_tab_lists_every_upwork_card_with_loom_flags_and_no_cap(self):
+        nm = data.upwork(self.db_path, "2026-06-15")["needs_me"]
+        kinds = {(e.get("kind"), e.get("nudge_kind")) for e in nm["cards"]}
+        self.assertIn(("followup", None), kinds)                 # the drafts
+        self.assertIn(("nudge", "hotlead_no_loom"), kinds)        # shown here
+        self.assertNotIn(("nudge", "stale_dossier"), kinds)       # not Upwork
+        self.assertNotIn(("nudge", "commitment_due"), kinds)      # not Upwork
+        self.assertEqual(nm["total"], len(nm["cards"]))
+        self.assertEqual(nm["groups"]["loom_flags"], 1)               # the CARD
+        self.assertEqual(nm["loom_flags"]["cards"], 1)
+        self.assertEqual(nm["loom_flags"]["count"], 0)                  # the population (seed_today has no loom_flag rows)
+        self.assertEqual(nm["groups"]["replies_owed"], 2)          # rA + rB
+        self.assertEqual(nm["drafts_waiting"]["days"], config.TODAY_FRESH_LEAD_DAYS)
+        self.assertFalse(nm["offers"]["measured"])
+        with mock.patch.object(config, "TODAY_QUEUE_TOPN", 1):
+            nm1 = data.upwork(self.db_path, "2026-06-15")["needs_me"]
+            self.assertEqual(nm1["total"], nm["total"])            # no cap here
+
+    def _key(self, tid):
+        # follow-up keys are per COUNTERPARTY (nudges.followup_key), never the
+        # bare thread id — the same key form Today posts to /api/nudge
+        from modules.chief_of_staff import nudges as eng
+        return eng.followup_key(None, f"Room {tid}", tid)
+
+    def test_a_done_hides_the_card_in_both_views(self):
+        from modules.cockpit import actions
+        ka, kb = self._key("rA"), self._key("rB")
+        actions.nudge(self.db_path, {"item_key": ka, "action": "done"})
+        today_keys = {e["item_key"] for e in data.today(self.db_path, today="2026-06-15")["queue"]}
+        tab_keys = {e["item_key"] for e in data.upwork(self.db_path, "2026-06-15")["needs_me"]["cards"]}
+        self.assertNotIn(ka, today_keys)
+        self.assertNotIn(ka, tab_keys)
+        self.assertIn(kb, tab_keys)
+
+    def test_a_snooze_hides_until_its_date_and_is_counted(self):
+        from datetime import timedelta
+        from modules.cockpit import actions
+        kb = self._key("rB")
+        # the action dates its snooze from the wall clock; the fixture's
+        # 'today' is earlier than that, so the card is hidden there...
+        actions.nudge(self.db_path, {"item_key": kb, "action": "snooze",
+                                     "snooze_days": 3})
+        nm = data.upwork(self.db_path, "2026-06-15")["needs_me"]
+        self.assertNotIn(kb, {e["item_key"] for e in nm["cards"]})
+        self.assertEqual(nm["snoozed"]["count"], 1)
+        self.assertTrue(nm["snoozed"]["next_back"])
+        # ...and back, counted no longer, once the date has passed (honoured —
+        # the v2 relics at 2099-12-31 were the failure this replaces)
+        after = (datetime.now(config.TZ) + timedelta(days=10)).strftime("%Y-%m-%d")
+        later = data.upwork(self.db_path, after)["needs_me"]
+        self.assertEqual(later["snoozed"]["count"], 0)
+
+
+class TestUpworkServerParams(CockpitServerCase):
+    def test_routes_are_up_and_keyed(self):
+        st, body = self.get("/api/upwork")
+        self.assertEqual(st, 200, body)
+        out = json.loads(body)
+        self.assertEqual(set(out), {"as_of", "bands", "needs_me", "funnel",
+                                    "rails", "connects", "digest"})
+        st, body = self.get(f"/api/upwork/rows?stage=fetched&week={WEEK}")
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(body)["stage"], "fetched")
+
+    def test_bad_filters_come_back_as_error_envelopes_not_500s(self):
+        for q in ("stage=bogus", "stage=fetched&week=lol", "stage=fetched&month=13",
+                  f"stage=fetched&week={WEEK}&month={MONTH}",
+                  "stage=connects&frm=2026-08", "stage=viewed"):
+            st, body = self.get("/api/upwork/rows?" + q)
+            self.assertEqual(st, 200, q)
+            out = json.loads(body)
+            self.assertIn("error", out, q)
+            self.assertEqual(out["rows"], [], q)
+            self.assertIsNone(out["total"], q)
+
+    def test_the_clock_slots_are_unreachable_from_the_url(self):
+        st, body = self.get("/api/upwork?today=2020-01-01")
+        self.assertEqual(st, 200)
+        self.assertNotEqual(json.loads(body)["as_of"], "2020-01-01")
+        st, body = self.get(f"/api/upwork/rows?stage=fetched&week={WEEK}&_today=lol")
+        self.assertEqual(st, 200)
+        self.assertNotIn("error", json.loads(body))
+
+    def test_new_params_are_registered(self):
+        for p in ("kind", "week", "month", "frm", "to", "stage"):
+            self.assertIn(p, server.QUERY_PARAMS)
+
+
+class TestNoLiteralBandsOnTheTab(unittest.TestCase):
+    def test_the_tab_block_compares_against_config_only(self):
+        from tests.test_score_bands import _LITERAL_BAND
+        src = (ROOT / "modules/cockpit/data.py").read_text()
+        start = src.index("# ── Upwork tab (Phase 1")
+        block = src[start:src.index("def _money_source_health")]
+        offenders = [ln for ln in block.splitlines() if _LITERAL_BAND.search(ln)]
+        self.assertEqual(offenders, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

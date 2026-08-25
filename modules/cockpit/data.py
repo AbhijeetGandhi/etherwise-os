@@ -1690,31 +1690,23 @@ def _pause_contradiction(conn, day: str, paused_since: Optional[str]) -> int:
     return n if n >= config.STALE_INTENT_MIN_EVENTS else 0
 
 
-def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
-    """The daily action screen: ONE ruthlessly ranked act-now queue, a paused-
-    aware 'ready when you resume' lead backlog, the source-health line (so a
-    quiet queue reads as genuinely quiet, not a dead feed), and a metrics strip
-    where every number drills and every zero explains itself. Read-only.
-
-    Design bar (2026-07-27): answer 'what do I act on right now?' in one view;
-    respect intent (applications paused since ~Jun 30) rather than nagging with
-    an accumulating guilt pile of hot leads."""
+def _act_now_queue(db_path: Optional[Path], day: str, *,
+                   include_loom_flags: bool = False) -> dict:
+    """THE act-now queue — one engine, two views (Upwork brief decision 5,
+    2026-08-25). Everything that decides whether a card exists and what it
+    says lives here: the founder's decisions from BOTH stores + their
+    forwarding across re-keys, the follow-up cards from pending drafts, the
+    active engine nudges, superseding, dedup, the closure overlay and the
+    provenance law. today() renders the top of it; the Upwork tab renders
+    the Upwork subset of it, Loom flags included (`include_loom_flags` —
+    Today keeps hiding those, they ARE its paused backlog). Moved out of
+    today() verbatim on 2026-08-25; the view rules stayed with the views.
+    """
     from modules.chief_of_staff import decisions as _decisions
     from modules.chief_of_staff import evidence as _evidence
     from modules.chief_of_staff import nudges as _eng
-    day = today or _ist_today()
-    paused, paused_since = _applications_paused(day)
-    pause_conflict_n = 0
-    rail_applied_week = 0
     conn = _ro(db_path)
     try:
-        # intent reconciliation (no-silent-override law): a config pause the
-        # connects rail contradicts is NOT rendered as fact. Computed BEFORE the
-        # paused-aware backlog so both the tile and the backlog reflect observed
-        # reality rather than a possibly-stale founder-intent constant.
-        pause_conflict_n = _pause_contradiction(conn, day, paused_since)
-        if pause_conflict_n:
-            paused = False
         # items the founder has acted on: done/dismissed always hidden;
         # snoozed hidden until snooze_until <= day (B1b local nudge_state).
         #
@@ -1889,84 +1881,6 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                             "topic": r["topic"] or r["room_name"],
                             "body": r["body"], "tier": r["tier"],
                             "thread_url": ROOM_URL.format(tid=r["thread_id"])}]})
-
-        # ── Ready-when-you-resume backlog (paused-aware) ──────────────────────
-        # Applications are deliberately paused, so accumulated hot leads are a
-        # backlog to work through on resume, NOT daily neglect. Preview the best
-        # by ICP-then-score from a FRESH window (older leads have expired on
-        # Upwork — showing 600 dead posts as 'ready' would be a lie), and report
-        # the accumulated total since the pause as honest context.
-        fresh_lo = (date.fromisoformat(day)
-                    - timedelta(days=config.TODAY_FRESH_LEAD_DAYS)).isoformat()
-        _icp_rank = ("CASE icp_tier WHEN 'icp' THEN 2 WHEN 'icp_near' THEN 1"
-                     " ELSE 0 END")
-        # 'awaiting a proposal' = hot AND not yet applied to. Since the live
-        # cutover a hot lead is CARDED within the run (status 'ClickUp Created'),
-        # so carded-ness is NOT the signal — the connects rail's applied job_ids
-        # are. Excluding those keeps the backlog to leads genuinely still open.
-        applied_ids = {r[0] for r in conn.execute(
-            "SELECT DISTINCT job_id FROM connects_history WHERE kind='applied'"
-            " AND job_id IS NOT NULL")}
-        def _not_applied(rows):
-            return [r for r in rows if r["id"] not in applied_ids]
-        backlog_items = _not_applied([dict(r) for r in conn.execute(
-            f"SELECT id, title, score, job_url, icp_tier, clickup_task_url,"
-            f" substr(first_scored_at,1,10) AS d,"
-            f" (draft_proposal IS NOT NULL) AS has_draft FROM scored_jobs"
-            f" WHERE score >= ? AND substr(first_scored_at,1,10) >= ?"
-            f" ORDER BY {_icp_rank} DESC, score DESC, first_scored_at DESC"
-            f" LIMIT ?", (_HOT, fresh_lo, config.TODAY_BACKLOG_TOPN + len(applied_ids)))]
-                                   )[:config.TODAY_BACKLOG_TOPN]
-        # accumulated context since the pause began (or all-time if not paused)
-        acc_lo = paused_since if paused else fresh_lo
-        acc = conn.execute(
-            "SELECT COUNT(*) hot, COALESCE(SUM(icp_tier='icp'),0) icp,"
-            " COALESCE(SUM(icp_tier='icp_near'),0) near FROM scored_jobs"
-            " WHERE score >= ? AND substr(first_scored_at,1,10) >= ?",
-            (_HOT, acc_lo)).fetchone()
-        fresh_count = conn.execute(
-            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND"
-            " substr(first_scored_at,1,10) >= ?", (_HOT, fresh_lo)).fetchone()[0]
-        backlog = {
-            "paused": paused, "paused_since": paused_since,
-            "items": backlog_items, "fresh_count": fresh_count,
-            "fresh_days": config.TODAY_FRESH_LEAD_DAYS,
-            "accumulated": acc["hot"], "accumulated_since": acc_lo,
-            "icp": acc["icp"], "icp_near": acc["near"]}
-
-        # APPLIED = connects rail. The tile's today/week/last_week come from the
-        # ONE shared helper the Pipeline tab also reads, so the two surfaces can
-        # never show different applied numbers again (the proposals-sourced count
-        # rendered 0 while Pipeline's rail showed 8 — two tabs, two numbers).
-        d0 = date.fromisoformat(day)
-        week_lo = (d0 - timedelta(days=6)).isoformat()
-        rail = _rail_applied_windows(conn, day)
-        applied_today = rail["today"]
-        applied_week = rail["week"]
-        applied_last = rail["last_week"]
-        rail_applied_week = applied_week
-        # proposals-sourced week count — NOT rendered; used only to detect and
-        # explain the feed's blindness (it only sees client-answered submissions;
-        # the vendorProposals scope was declined, so submitted-no-reply
-        # applications are permanently invisible to it — a scope limit, not a
-        # broken sync).
-        proposals_week = conn.execute(
-            "SELECT COUNT(*) FROM proposals WHERE"
-            " substr(created_dt,1,10) BETWEEN ? AND ?",
-            (week_lo, day)).fetchone()[0]
-
-        prop_marks = ",".join("?" * len(_TERMINAL_PROP))
-        active_props = conn.execute(
-            f"SELECT COUNT(*) FROM proposals WHERE status NOT IN"
-            f" ({prop_marks}) OR status IS NULL", _TERMINAL_PROP).fetchone()[0]
-        interviews = conn.execute(
-            "SELECT COUNT(*) FROM proposals WHERE status = 'Interview'"
-        ).fetchone()[0]
-        cmarks = ",".join("?" * len(_ACTIVE_CONTRACT))
-        active_contracts = conn.execute(
-            f"SELECT COUNT(*) FROM contracts WHERE upwork_status IN"
-            f" ({cmarks})", _ACTIVE_CONTRACT).fetchone()[0]
-        follow_ups_due = len(follow_ups)
     finally:
         conn.close()
 
@@ -2100,8 +2014,8 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     superseded -= {n["dedup_key"] for n in _visible
                    if _payload[n["dedup_key"]].get("covers")}
     for n in _visible:
-        if n["kind"] == "hotlead_no_loom":
-            continue                        # that IS the paused backlog
+        if n["kind"] == "hotlead_no_loom" and not include_loom_flags:
+            continue                        # Today: that IS the paused backlog
         dk = n["dedup_key"] or ""
         if dk in superseded:
             continue                        # rolled up into an escalation
@@ -2189,6 +2103,121 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         _cl_counts[label] = _cl_counts.get(label, 0) + 1
     clusters = [{"label": k, "count": v}
                 for k, v in sorted(_cl_counts.items(), key=lambda x: -x[1])]
+    return {"queue": queue, "clusters": clusters, "follow_ups": follow_ups,
+            "hidden_no_provenance": len(_hidden_keys),
+            "auto_closed": _auto_closed}
+
+
+def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
+    """The daily action screen: ONE ruthlessly ranked act-now queue, a paused-
+    aware 'ready when you resume' lead backlog, the source-health line (so a
+    quiet queue reads as genuinely quiet, not a dead feed), and a metrics strip
+    where every number drills and every zero explains itself. Read-only.
+
+    Design bar (2026-07-27): answer 'what do I act on right now?' in one view;
+    respect intent (applications paused since ~Jun 30) rather than nagging with
+    an accumulating guilt pile of hot leads."""
+    day = today or _ist_today()
+    paused, paused_since = _applications_paused(day)
+    pause_conflict_n = 0
+    rail_applied_week = 0
+    conn = _ro(db_path)
+    try:
+        # intent reconciliation (no-silent-override law): a config pause the
+        # connects rail contradicts is NOT rendered as fact. Computed BEFORE the
+        # paused-aware backlog so both the tile and the backlog reflect observed
+        # reality rather than a possibly-stale founder-intent constant.
+        pause_conflict_n = _pause_contradiction(conn, day, paused_since)
+        if pause_conflict_n:
+            paused = False
+        # cards: the shared builder (one engine, two views) — decisions from
+        # both stores, follow-ups, engine nudges, dedup, closure, provenance.
+        # Today's view hides Loom flags; see _act_now_queue.
+        _q = _act_now_queue(db_path, day, include_loom_flags=False)
+        follow_ups = _q["follow_ups"]
+
+        # ── Ready-when-you-resume backlog (paused-aware) ──────────────────────
+        # Applications are deliberately paused, so accumulated hot leads are a
+        # backlog to work through on resume, NOT daily neglect. Preview the best
+        # by ICP-then-score from a FRESH window (older leads have expired on
+        # Upwork — showing 600 dead posts as 'ready' would be a lie), and report
+        # the accumulated total since the pause as honest context.
+        fresh_lo = (date.fromisoformat(day)
+                    - timedelta(days=config.TODAY_FRESH_LEAD_DAYS)).isoformat()
+        _icp_rank = ("CASE icp_tier WHEN 'icp' THEN 2 WHEN 'icp_near' THEN 1"
+                     " ELSE 0 END")
+        # 'awaiting a proposal' = hot AND not yet applied to. Since the live
+        # cutover a hot lead is CARDED within the run (status 'ClickUp Created'),
+        # so carded-ness is NOT the signal — the connects rail's applied job_ids
+        # are. Excluding those keeps the backlog to leads genuinely still open.
+        applied_ids = {r[0] for r in conn.execute(
+            "SELECT DISTINCT job_id FROM connects_history WHERE kind='applied'"
+            " AND job_id IS NOT NULL")}
+        def _not_applied(rows):
+            return [r for r in rows if r["id"] not in applied_ids]
+        backlog_items = _not_applied([dict(r) for r in conn.execute(
+            f"SELECT id, title, score, job_url, icp_tier, clickup_task_url,"
+            f" substr(first_scored_at,1,10) AS d,"
+            f" (draft_proposal IS NOT NULL) AS has_draft FROM scored_jobs"
+            f" WHERE score >= ? AND substr(first_scored_at,1,10) >= ?"
+            f" ORDER BY {_icp_rank} DESC, score DESC, first_scored_at DESC"
+            f" LIMIT ?", (_HOT, fresh_lo, config.TODAY_BACKLOG_TOPN + len(applied_ids)))]
+                                   )[:config.TODAY_BACKLOG_TOPN]
+        # accumulated context since the pause began (or all-time if not paused)
+        acc_lo = paused_since if paused else fresh_lo
+        acc = conn.execute(
+            "SELECT COUNT(*) hot, COALESCE(SUM(icp_tier='icp'),0) icp,"
+            " COALESCE(SUM(icp_tier='icp_near'),0) near FROM scored_jobs"
+            " WHERE score >= ? AND substr(first_scored_at,1,10) >= ?",
+            (_HOT, acc_lo)).fetchone()
+        fresh_count = conn.execute(
+            "SELECT COUNT(*) FROM scored_jobs WHERE score >= ? AND"
+            " substr(first_scored_at,1,10) >= ?", (_HOT, fresh_lo)).fetchone()[0]
+        backlog = {
+            "paused": paused, "paused_since": paused_since,
+            "items": backlog_items, "fresh_count": fresh_count,
+            "fresh_days": config.TODAY_FRESH_LEAD_DAYS,
+            "accumulated": acc["hot"], "accumulated_since": acc_lo,
+            "icp": acc["icp"], "icp_near": acc["near"]}
+
+        # APPLIED = connects rail. The tile's today/week/last_week come from the
+        # ONE shared helper the Pipeline tab also reads, so the two surfaces can
+        # never show different applied numbers again (the proposals-sourced count
+        # rendered 0 while Pipeline's rail showed 8 — two tabs, two numbers).
+        d0 = date.fromisoformat(day)
+        week_lo = (d0 - timedelta(days=6)).isoformat()
+        rail = _rail_applied_windows(conn, day)
+        applied_today = rail["today"]
+        applied_week = rail["week"]
+        applied_last = rail["last_week"]
+        rail_applied_week = applied_week
+        # proposals-sourced week count — NOT rendered; used only to detect and
+        # explain the feed's blindness (it only sees client-answered submissions;
+        # the vendorProposals scope was declined, so submitted-no-reply
+        # applications are permanently invisible to it — a scope limit, not a
+        # broken sync).
+        proposals_week = conn.execute(
+            "SELECT COUNT(*) FROM proposals WHERE"
+            " substr(created_dt,1,10) BETWEEN ? AND ?",
+            (week_lo, day)).fetchone()[0]
+
+        prop_marks = ",".join("?" * len(_TERMINAL_PROP))
+        active_props = conn.execute(
+            f"SELECT COUNT(*) FROM proposals WHERE status NOT IN"
+            f" ({prop_marks}) OR status IS NULL", _TERMINAL_PROP).fetchone()[0]
+        interviews = conn.execute(
+            "SELECT COUNT(*) FROM proposals WHERE status = 'Interview'"
+        ).fetchone()[0]
+        cmarks = ",".join("?" * len(_ACTIVE_CONTRACT))
+        active_contracts = conn.execute(
+            f"SELECT COUNT(*) FROM contracts WHERE upwork_status IN"
+            f" ({cmarks})", _ACTIVE_CONTRACT).fetchone()[0]
+        follow_ups_due = len(follow_ups)
+    finally:
+        conn.close()
+
+    queue, clusters = _q["queue"], _q["clusters"]
+    _hidden_keys_n, _auto_closed = _q["hidden_no_provenance"], _q["auto_closed"]
 
     # ruthless: Today shows the sharpest few; the full ranked queue is the
     # Nudges tab. Overflow is stated, never silently dropped.
@@ -2269,7 +2298,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         "sources": sources,
         "captures": captures,
         "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
-        "queue_hidden_no_provenance": len(_hidden_keys),
+        "queue_hidden_no_provenance": _hidden_keys_n,
         "queue_auto_closed": _auto_closed, "clusters": clusters,
         "follow_ups": follow_ups,           # kept for back-compat / counts
         "backlog": backlog,
@@ -2322,6 +2351,740 @@ def today_rows(db_path: Optional[Path] = None, *, which: Optional[str] = None,
         conn.close()
     return {"which": which, "since": lo, "rows": rows, "count": len(rows),
             "total": total}
+
+
+# ── Upwork tab (Phase 1, docs/upwork/PHASE1_TAB_SPEC.md, 2026-08-25) ─────────
+# The channel's cockpit: cards (the shared builder's Upwork subset), a JOB
+# COHORT funnel, the rails strip, connects as counts, a digest slot. Every
+# figure is one predicate that upwork_rows() re-derives, and the parity tests
+# assert they agree. Decisions this block is built on (brief decision 10):
+#   funnel = jobs FETCHED in the period; later stages are jobs of THAT cohort
+#            that reached them, joined on the one job id every table carries;
+#   interviewed = proposals.upwork_status IN ('Activated','Hired');
+#   won = a contract on the job; rooms stay "client replied";
+#   connects spent = applications + boosts net of boost refunds.
+# Nothing here calls a model, nothing writes (the one anomaly the builder may
+# file is the once-a-day provenance warn shared with Today).
+
+UPWORK_STAGES = ("fetched", "passed", "hot", "applied", "viewed",
+                 "interviewed", "offer", "won")
+# the stages with no spine row yet render "—" and are SKIPPED in the
+# conversion chain, never inferred (spec §3.3); the reason is on the tile
+UPWORK_UNMEASURED = {
+    "viewed": "no source until 0.2 — list_freelancer_proposals must carry a"
+              " viewed signal, or the stage is dropped",
+    "offer": "offers are never ingested (finding 3.2) — Phase 0.5",
+}
+# decision 3: Upwork's own 'active' state = the client engaged; Hired keeps
+# the job counted once the interview turned into a contract
+_UPWORK_INTERVIEW_STATUSES = ("Activated", "Hired")
+_UPWORK_DRILL_STAGES = ("fetched", "passed", "hot", "hot_missed_push", "applied",
+                        "interviewed", "won", "contracts_started", "connects",
+                        "drafts_waiting", "loom_flags")
+# the rails strip, in the brief's order: (strip key, label, SOURCES key)
+_UPWORK_RAILS = (
+    ("scanner", "Job feed (scanner)", "scanner"),
+    ("mcp_feed", "MCP poll", "mcp_feed"),
+    ("proposals_sync", "Proposals sync", "upwork_sync"),
+    ("messages_sync", "Messages sync", "upwork_inbox"),
+    ("offers_sync", "Offers sync", None),            # not built (0.5)
+    ("applied", "Applied (connects rail)", "connects_rail"),
+    ("outcome_email", "Outcome email", "upwork_outcomes"),
+    ("clickup_push", "ClickUp push", None),          # derived from the scan
+    ("cards_sweep", "Cards sweep", "cos_sweep"),
+)
+_UPWORK_NOT_BUILT = {"offers_sync": "not built — Phase 0.5 (offers ingestion)"}
+_UPWORK_STAGE_LABELS = {
+    "fetched": "Fetched", "passed": "Passed the hard rules", "hot": "Hot",
+    "applied": "Applied", "viewed": "Viewed by client",
+    "interviewed": "Interviewing", "offer": "Offer received",
+    "won": "Won (contract)",
+}
+_CONNECTS_SPEND_KINDS = ("applied", "boost")
+_CONNECTS_INFLOW_KINDS = ("other", "renewal", "refund")
+
+
+def _upwork_period(view: str, day: str) -> dict:
+    """The current period of a view: ISO week (Monday key) or calendar month."""
+    d0 = date.fromisoformat(day)
+    if view == "week":
+        mon = d0 - timedelta(days=d0.weekday())
+        return {"key": mon.isoformat(), "lo": mon.isoformat(),
+                "hi": (mon + timedelta(days=6)).isoformat(),
+                "label": "week of " + mon.strftime("%d %b"), "so_far": True}
+    first = d0.replace(day=1)
+    nxt = (first.replace(year=first.year + 1, month=1) if first.month == 12
+           else first.replace(month=first.month + 1))
+    return {"key": first.strftime("%Y-%m"), "lo": first.isoformat(),
+            "hi": (nxt - timedelta(days=1)).isoformat(),
+            "label": first.strftime("%b %Y"), "so_far": True}
+
+
+def _upwork_periods_before(view: str, key: str, n: int) -> list:
+    """The n COMPLETED periods before `key`, oldest first — the baseline."""
+    out = []
+    if view == "week":
+        mon = date.fromisoformat(key)
+        for i in range(n, 0, -1):
+            lo = mon - timedelta(weeks=i)
+            out.append({"key": lo.isoformat(), "lo": lo.isoformat(),
+                        "hi": (lo + timedelta(days=6)).isoformat()})
+        return out
+    first = date.fromisoformat(key + "-01")
+    for i in range(n, 0, -1):
+        y, m = first.year, first.month - i
+        while m <= 0:
+            y, m = y - 1, m + 12
+        lo = date(y, m, 1)
+        nxt = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+        out.append({"key": lo.strftime("%Y-%m"), "lo": lo.isoformat(),
+                    "hi": (nxt - timedelta(days=1)).isoformat()})
+    return out
+
+
+def _upwork_period_key(view: str, day_str: str) -> Optional[str]:
+    """The period key a fetched day falls in (for 'earlier cohort' labels)."""
+    try:
+        d = date.fromisoformat(day_str[:10])
+    except (TypeError, ValueError):
+        return None
+    if view == "week":
+        return (d - timedelta(days=d.weekday())).isoformat()
+    return d.strftime("%Y-%m")
+
+
+_UPWORK_FLAGS_SQL = f"""
+    SELECT j.id, j.title, j.score, j.hard_rule_skip, j.status, j.job_url,
+           j.clickup_task_url, j.icp_tier, j.feed_source,
+           j.clickup_task_id IS NOT NULL AS carded,
+           j.draft_proposal IS NOT NULL AS has_draft,
+           substr(j.fetched_at,1,10) AS d,
+           EXISTS (SELECT 1 FROM connects_history h WHERE h.kind='applied'
+                   AND h.job_id = j.id) AS applied_raw,
+           EXISTS (SELECT 1 FROM proposals p WHERE p.marketplace_job_id = j.id
+                   AND p.upwork_status IN ({",".join("?" * len(_UPWORK_INTERVIEW_STATUSES))}))
+               AS interviewed_raw,
+           EXISTS (SELECT 1 FROM contracts c WHERE c.job_id = j.id) AS won
+      FROM scored_jobs j
+     WHERE j.fetched_at LIKE '20%' AND substr(j.fetched_at,1,10) BETWEEN ? AND ?
+     ORDER BY j.fetched_at DESC"""
+
+
+def _upwork_jobs(conn, lo: str, hi: str) -> list:
+    """One row per cohort job with its stage flags, closure applied: a job at a
+    later outcome stage counts at every earlier one (a contract proves an
+    interview proves an application the rail may have missed). `inferred`
+    names the stage that proved it, so the drill can say so."""
+    out = []
+    for r in conn.execute(_UPWORK_FLAGS_SQL, (*_UPWORK_INTERVIEW_STATUSES, lo, hi)):
+        j = dict(r)
+        j["passed"] = j["hard_rule_skip"] is None
+        j["hot"] = j["passed"] and j["score"] is not None \
+            and j["score"] >= config.HOT_LEAD_THRESHOLD
+        j["loom"] = j["passed"] and j["score"] is not None \
+            and j["score"] >= config.LOOM_FLAG_THRESHOLD
+        j["won"] = bool(j["won"])
+        j["interviewed"] = bool(j["interviewed_raw"]) or j["won"]
+        j["applied"] = bool(j["applied_raw"]) or j["interviewed"]
+        j["inferred"] = (None if j["applied_raw"] else
+                         ("interviewed" if j["interviewed_raw"] else
+                          ("won" if j["won"] else None)))
+        j["interview_inferred"] = bool(j["won"] and not j["interviewed_raw"])
+        # the scan's retry selects the same rows (scan_pipeline, finding 13)
+        j["hot_missed_push"] = (j["hot"] and not j["carded"]
+                                and j["status"] in ("Scored", "Drafted"))
+        out.append(j)
+    return out
+
+
+def _upwork_counts(jobs: list) -> dict:
+    return {
+        "fetched": len(jobs),
+        "passed": sum(1 for j in jobs if j["passed"]),
+        "hot": sum(1 for j in jobs if j["hot"]),
+        "loom": sum(1 for j in jobs if j["loom"]),
+        "hot_carded": sum(1 for j in jobs if j["hot"] and j["carded"]),
+        "hot_missed_push": sum(1 for j in jobs if j["hot_missed_push"]),
+        "applied": sum(1 for j in jobs if j["applied"]),
+        "applied_hot": sum(1 for j in jobs if j["applied"] and j["hot"]),
+        "applied_inferred": sum(1 for j in jobs if j["applied"] and j["inferred"]),
+        "interviewed": sum(1 for j in jobs if j["interviewed"]),
+        "interviewed_inferred": sum(1 for j in jobs if j["interview_inferred"]),
+        "won": sum(1 for j in jobs if j["won"]),
+    }
+
+
+# the conversion chain over MEASURED stages: (stage, numerator key,
+# denominator key). applied's step is "of the HOT jobs" (spec §3.3, the hot
+# split) — applied is a subset of fetched, not of hot.
+_UPWORK_STEPS = {
+    "passed": ("fetched", "passed", "fetched"),
+    "hot": ("passed", "hot", "passed"),
+    "applied": ("hot", "applied_hot", "hot"),
+    "interviewed": ("applied", "interviewed", "applied"),
+    "won": ("interviewed", "won", "interviewed"),
+}
+
+
+def _pct(num: int, den: int) -> Optional[float]:
+    return round(100.0 * num / den, 1) if den else None
+
+
+def _upwork_funnel_block(conn, view: str, day: str) -> dict:
+    """One view (week|month): the current cohort's eight stages with their
+    conversions against a POOLED baseline over the completed periods before
+    it, the hot split, the inferred counts, and the contracts context line."""
+    cur = _upwork_period(view, day)
+    n_base = (config.UPWORK_BASELINE_WEEKS if view == "week"
+              else config.UPWORK_BASELINE_MONTHS)
+    base_periods = _upwork_periods_before(view, cur["key"], n_base)
+    jobs = _upwork_jobs(conn, cur["lo"], cur["hi"])
+    counts = _upwork_counts(jobs)
+    base_jobs = _upwork_jobs(conn, base_periods[0]["lo"], base_periods[-1]["hi"]) \
+        if base_periods else []
+    base = _upwork_counts(base_jobs)          # pooled: one big cohort
+    # the outcome steps are only MEASURED for cohorts the connects rail was
+    # already watching (its first row is 2026-07-13). A pre-rail cohort has
+    # applied = 0 by construction, not by observation — pooling it into the
+    # baseline would print "0.7 % of hot jobs applied to" as if measured, the
+    # same fabricated zero the Pipeline tab learned to refuse on 2026-07-14.
+    rail_since = conn.execute(
+        "SELECT MIN(event_date) FROM connects_history WHERE kind='applied'"
+    ).fetchone()[0]
+    base_cov = _upwork_counts([j for j in base_jobs
+                               if rail_since and j["d"] >= rail_since])
+    min_n = config.UPWORK_SIGNAL_MIN_N
+
+    stages = []
+    for k in UPWORK_STAGES:
+        if k in UPWORK_UNMEASURED:
+            stages.append({"k": k, "label": _UPWORK_STAGE_LABELS[k], "n": None,
+                           "measured": False, "reason": UPWORK_UNMEASURED[k],
+                           "of_prev": None, "baseline": None, "delta_pp": None,
+                           "signal": False, "drill": None})
+            continue
+        st = {"k": k, "label": _UPWORK_STAGE_LABELS[k], "n": counts[k],
+              "measured": True, "reason": None, "inferred": 0,
+              "drill": {"stage": k, view: cur["key"]}}
+        if k == "hot":
+            st["label"] = f"Hot ≥{config.HOT_LEAD_THRESHOLD}"
+            st["loom"] = counts["loom"]
+            st["carded"] = counts["hot_carded"]
+            st["missed_push"] = counts["hot_missed_push"]
+        if k == "applied":
+            st["inferred"] = counts["applied_inferred"]
+            st["hot_split"] = {"hot": counts["applied_hot"],
+                               "not_hot": counts["applied"] - counts["applied_hot"]}
+        if k == "interviewed":
+            st["inferred"] = counts["interviewed_inferred"]
+        step = _UPWORK_STEPS.get(k)
+        if step:
+            prev, num, den = step
+            outcome = k in ("applied", "interviewed", "won")
+            pool = base_cov if outcome else base
+            n_den = counts[den]
+            b_den = pool[den]
+            st["of_prev"] = {"k": prev, "n_num": counts[num], "n_den": n_den,
+                             "pct": _pct(counts[num], n_den)}
+            st["baseline"] = {"pct": _pct(pool[num], b_den) if (not outcome or rail_since) else None,
+                              "n_num": pool[num], "n_den": b_den,
+                              "periods": len(base_periods),
+                              "covered_since": rail_since if outcome else None,
+                              "signal": b_den >= min_n}
+            st["delta_pp"] = (round(st["of_prev"]["pct"] - st["baseline"]["pct"], 1)
+                              if st["of_prev"]["pct"] is not None
+                              and st["baseline"]["pct"] is not None else None)
+            # a trend needs BOTH sides of the comparison past the small-N line
+            st["signal"] = n_den >= min_n and b_den >= min_n
+        else:
+            st["of_prev"] = st["baseline"] = st["delta_pp"] = None
+            st["signal"] = counts["fetched"] >= min_n
+        stages.append(st)
+
+    # contracts started in the period, by where their job stands (spec §3.3):
+    # the cohort funnel would silently hide a hire whose job was never fetched
+    started = _upwork_contracts_started(conn, view, cur)
+    return {
+        "period": cur,
+        "baseline": {"periods": len(base_periods), "kind": view,
+                     "lo": base_periods[0]["lo"] if base_periods else None,
+                     "hi": base_periods[-1]["hi"] if base_periods else None,
+                     "cohort_n": base["fetched"], "pooled": True,
+                     "rail_since": rail_since,
+                     "cohort_n_covered": base_cov["fetched"]},
+        "stages": stages,
+        "signal_min_n": min_n,
+        "contracts_started": started,
+    }
+
+
+def _upwork_contracts_started(conn, view: str, period: dict) -> dict:
+    rows = []
+    for r in conn.execute(
+            "SELECT c.id, COALESCE(c.title, c.job_title) AS title,"
+            " c.client_company, c.contract_type, c.hourly_rate, c.upwork_status,"
+            " substr(c.start_dt,1,10) AS d, c.job_id,"
+            " substr(j.fetched_at,1,10) AS fetched_d, j.score, j.job_url"
+            " FROM contracts c LEFT JOIN scored_jobs j ON j.id = c.job_id"
+            " WHERE c.start_dt LIKE '20%' AND substr(c.start_dt,1,10)"
+            " BETWEEN ? AND ? ORDER BY c.start_dt DESC",
+            (period["lo"], period["hi"])):
+        row = dict(r)
+        if not row["fetched_d"]:
+            row["cohort"] = "outside"
+            row["cohort_key"] = None
+        elif period["lo"] <= row["fetched_d"] <= period["hi"]:
+            row["cohort"] = "this"
+            row["cohort_key"] = period["key"]
+        elif row["fetched_d"] < period["lo"]:
+            row["cohort"] = "earlier"
+            row["cohort_key"] = _upwork_period_key(view, row["fetched_d"])
+        else:
+            row["cohort"] = "later"           # fetched after the period? odd, shown
+            row["cohort_key"] = _upwork_period_key(view, row["fetched_d"])
+        rows.append(row)
+    return {"total": len(rows),
+            "this": sum(1 for r in rows if r["cohort"] == "this"),
+            "earlier": sum(1 for r in rows if r["cohort"] == "earlier"),
+            "outside": sum(1 for r in rows if r["cohort"] == "outside"),
+            "drill": {"stage": "contracts_started", view: period["key"]},
+            "note": "outside = the job was never fetched (invite / direct hire"
+                    " / a listing the feed never showed)"}
+
+
+def _upwork_rails(conn, day: str) -> dict:
+    """The rails strip: each rail the brief names, with its source-health
+    verdict, its latest run, and whether the cockpit may re-run it. A rail
+    with no task yet is `built: False` and says so — its absence must never
+    read as health."""
+    from modules.cockpit import actions as _actions
+    health = source_health.source_health(conn)
+    by_key = {s["key"]: s for s in health.get("sources", [])}
+    items = []
+    worst = "ok"
+    for strip_key, label, src_key in _UPWORK_RAILS:
+        it = {"key": strip_key, "label": label, "built": True,
+              "source_key": src_key, "task_name": None, "status": None,
+              "last_success": None, "age_hours": None, "cadence": None,
+              "result": None, "run_id": None, "day": None, "rerun": False,
+              "reason": None}
+        if strip_key in _UPWORK_NOT_BUILT:
+            it.update({"built": False, "reason": _UPWORK_NOT_BUILT[strip_key]})
+            items.append(it)
+            continue
+        if strip_key == "clickup_push":
+            it.update(_upwork_clickup_line(conn))
+            items.append(it)
+            continue
+        src = by_key.get(src_key)
+        if not src:
+            it.update({"status": "down",
+                       "reason": f"{src_key!r} is not in config.SOURCES"})
+            items.append(it)
+            worst = "down"
+            continue
+        task = src["task_name"]
+        it.update({"task_name": task, "status": src["status"],
+                   "last_success": src["last_success"],
+                   "age_hours": src["age_hours"],
+                   "cadence": (f"fresh within {src['max_age_hours']:.0f}h"
+                               if src["max_age_hours"] < 48 else
+                               f"fresh within {src['max_age_hours'] / 24:.0f} days"),
+                   "critical": src["critical"], "why": src.get("why"),
+                   "rerun": task in _actions.RERUN_JOBS})
+        run = conn.execute(
+            "SELECT id, status, started_at, completed_at, metrics_json, error"
+            " FROM runs WHERE task_name=? ORDER BY id DESC LIMIT 1",
+            (task,)).fetchone()
+        if run:
+            try:
+                metrics = json.loads(run["metrics_json"] or "null")
+            except (TypeError, ValueError):
+                metrics = None
+            it.update({
+                "run_id": run["id"], "run_status": run["status"],
+                "day": (run["started_at"] or "")[:10] or None,
+                "started_at": run["started_at"],
+                "result": (_metrics_summary(metrics)
+                           or (run["error"] or "")[:160] or None)})
+        if source_health.STATUS_RANK[src["status"]] > source_health.STATUS_RANK[worst]:
+            worst = src["status"]
+        items.append(it)
+    return {"items": items, "worst": worst,
+            "not_built": [k for k, _l, _s in _UPWORK_RAILS if k in _UPWORK_NOT_BUILT]}
+
+
+def _upwork_clickup_line(conn) -> dict:
+    """Derived: there is no push task — the scan pushes. Its health is the last
+    scan's push metrics plus the hot jobs still without a card inside the
+    retry window (finding 13)."""
+    run = conn.execute(
+        "SELECT id, started_at, metrics_json FROM runs WHERE task_name='upwork_scan'"
+        " AND status='completed' ORDER BY id DESC LIMIT 1").fetchone()
+    cut = (datetime.now(timezone.utc)
+           - timedelta(days=config.CLICKUP_PUSH_RETRY_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    missed = conn.execute(
+        "SELECT COUNT(*) FROM scored_jobs WHERE status IN ('Scored','Drafted')"
+        " AND clickup_task_id IS NULL AND score >= ? AND first_scored_at >= ?",
+        (config.HOT_LEAD_THRESHOLD, cut)).fetchone()[0]
+    out = {"task_name": "upwork_scan", "derived": True, "missed_push": missed,
+           "retry_days": config.CLICKUP_PUSH_RETRY_DAYS, "status": "ok",
+           "cadence": "with each scan"}
+    if run:
+        try:
+            m = json.loads(run["metrics_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            m = {}
+        out.update({"run_id": run["id"], "day": (run["started_at"] or "")[:10] or None,
+                    "started_at": run["started_at"],
+                    "result": f"{m.get('clickup_pushed', 0)} carded"
+                              + (f" · {m.get('clickup_retried')} retried"
+                                 if m.get("clickup_retried") else "")
+                              + (f" · {m.get('clickup_push_failed')} failed"
+                                 if m.get("clickup_push_failed") else "")})
+        if m.get("clickup_push_failed"):
+            out["status"] = "degraded"
+    else:
+        out.update({"status": "down", "reason": "no completed scan yet"})
+    if missed:
+        out["status"] = "degraded" if out["status"] == "ok" else out["status"]
+        out["reason"] = (f"{missed} hot job(s) without a card in the last"
+                         f" {config.CLICKUP_PUSH_RETRY_DAYS} days — the next scan retries")
+    return out
+
+
+def _upwork_connects_window(conn, lo: str, hi: str) -> dict:
+    """Connects as COUNTS for one day window (decision 4): spent = applications
+    + boosts net of boost refunds; badge and inflows are their own lines."""
+    sums = {}
+    for r in conn.execute(
+            "SELECT kind, COUNT(*) n, SUM(connects_delta) s FROM connects_history"
+            " WHERE event_date BETWEEN ? AND ? GROUP BY kind", (lo, hi)):
+        sums[r["kind"]] = {"n": r["n"], "sum": r["s"] or 0}
+    def debit(kind):
+        return -min(0, sums.get(kind, {}).get("sum", 0))
+    def credit(kind):
+        return max(0, sums.get(kind, {}).get("sum", 0))
+    applications = sums.get("applied", {}).get("n", 0)
+    applied_cost, boost_cost = debit("applied"), debit("boost")
+    boost_refunds = credit("boost_refund")
+    spent_net = applied_cost + boost_cost - boost_refunds
+    marks = ",".join("?" * len(_UPWORK_INTERVIEW_STATUSES))
+    interviews = conn.execute(
+        f"SELECT COUNT(*) FROM proposals WHERE upwork_status IN ({marks})"
+        " AND substr(created_dt,1,10) BETWEEN ? AND ?",
+        (*_UPWORK_INTERVIEW_STATUSES, lo, hi)).fetchone()[0]
+    return {
+        "lo": lo, "hi": hi,
+        "applications": applications,
+        "applied_cost": applied_cost, "boost_cost": boost_cost,
+        "boost_refunds": boost_refunds, "spent_net": spent_net,
+        "badge": debit("badge"),
+        "inflows": sum(credit(k) for k in _CONNECTS_INFLOW_KINDS),
+        "per_application": (round(spent_net / applications, 1)
+                            if applications else None),
+        "interviews": interviews,
+        "per_interview": (round(spent_net / interviews, 1)
+                          if interviews else None),
+        "signal_min_n": config.UPWORK_SIGNAL_MIN_N,
+        "drill": {"stage": "connects", "frm": lo, "to": hi},
+    }
+
+
+def _loom_flags_sql() -> str:
+    """The honest Loom-flag population (spec §5.2 ◆): flagged, still open,
+    not applied per the rail, scored inside COS_HOTLEAD_RECENT_DAYS. Measured
+    on 2026-08-25 at 151 jobs in 7 days — a COUNT with a drill, not 151 cards.
+    The engine's hotlead_no_loom card keeps its own (rarer) condition until
+    Abhijeet picks the card's meaning; this tile is the truth either way."""
+    return (
+        "FROM scored_jobs j WHERE j.loom_flag=1"
+        " AND j.status IN ('Scored','Drafted','ClickUp Created')"
+        " AND substr(j.first_scored_at,1,10) >= ? AND NOT EXISTS"
+        " (SELECT 1 FROM connects_history h WHERE h.kind='applied'"
+        "  AND h.job_id = j.id)")
+
+
+def _drafts_waiting_sql() -> tuple:
+    """The 'drafts ready for review' predicate (spec §5.2): hot, a draft on
+    the row, not applied per the rail, scored inside the fresh window. Today's
+    'fresh' backlog (today_rows which=fresh) is the superset — hot and fresh,
+    drafted or not, applied or not; this is the subset a review can act on."""
+    return (
+        "FROM scored_jobs j WHERE j.score >= ? AND j.draft_proposal IS NOT NULL"
+        " AND substr(j.first_scored_at,1,10) >= ? AND NOT EXISTS"
+        " (SELECT 1 FROM connects_history h WHERE h.kind='applied'"
+        "  AND h.job_id = j.id)")
+
+
+def _upwork_needs_me(db_path, conn, day: str) -> dict:
+    """The Upwork subset of the shared act-now queue, Loom flags included, no
+    cap (decision 5); plus the counts the brief's four groups need."""
+    q = _act_now_queue(db_path, day, include_loom_flags=True)
+    cards = [e for e in q["queue"]
+             if e.get("kind") == "followup" or e.get("dept") == "sales"]
+    groups = {"replies_owed": 0, "loom_flags": 0, "escalations": 0, "other": 0}
+    for e in cards:
+        nk = e.get("nudge_kind") or e.get("kind")
+        if nk in ("followup", "owed_reply"):
+            groups["replies_owed"] += 1
+        elif nk == "hotlead_no_loom":
+            groups["loom_flags"] += 1
+        elif nk == "escalate_client":
+            groups["escalations"] += 1
+        else:
+            groups["other"] += 1
+    fresh_lo = (date.fromisoformat(day)
+                - timedelta(days=config.TODAY_FRESH_LEAD_DAYS)).isoformat()
+    drafts = conn.execute(
+        "SELECT COUNT(*) " + _drafts_waiting_sql(),
+        (config.HOT_LEAD_THRESHOLD, fresh_lo)).fetchone()[0]
+    loom_lo = (date.fromisoformat(day)
+               - timedelta(days=config.COS_HOTLEAD_RECENT_DAYS)).isoformat()
+    loom = conn.execute(
+        "SELECT COUNT(*) n, COALESCE(SUM(j.icp_tier='icp'),0) icp "
+        + _loom_flags_sql(), (loom_lo,)).fetchone()
+    snoozed = conn.execute(
+        "SELECT COUNT(*) n, MIN(snooze_until) nxt FROM ("
+        " SELECT snooze_until FROM nudge_state WHERE state='snoozed'"
+        "  AND COALESCE(snooze_until,'') > ?"
+        " UNION ALL SELECT snooze_until FROM nudges WHERE state='snoozed'"
+        "  AND COALESCE(snooze_until,'') > ?)", (day, day)).fetchone()
+    clusters = [{"label": lbl, "count": groups[k]} for k, lbl in (
+        ("replies_owed", "replies owed"), ("loom_flags", "Loom flags"),
+        ("escalations", "escalations"), ("other", "other")) if groups[k]]
+    return {
+        "cards": cards, "total": len(cards), "shown_default": 5,
+        "groups": groups, "clusters": clusters,
+        "hidden_no_provenance": q["hidden_no_provenance"],
+        "auto_closed": q["auto_closed"],
+        "snoozed": {"count": snoozed["n"] or 0,
+                    "next_back": (snoozed["nxt"] or "")[:10] or None},
+        "loom_flags": {"count": loom["n"], "icp": loom["icp"],
+                       "days": config.COS_HOTLEAD_RECENT_DAYS, "since": loom_lo,
+                       "cards": groups["loom_flags"],
+                       "note": "Loom-flagged, still open, not applied, scored in"
+                               f" the last {config.COS_HOTLEAD_RECENT_DAYS} days",
+                       "drill": {"stage": "loom_flags"}},
+        "drafts_waiting": {"count": drafts, "days": config.TODAY_FRESH_LEAD_DAYS,
+                           "since": fresh_lo,
+                           "note": "hot, drafted, not applied, scored in the"
+                                   f" last {config.TODAY_FRESH_LEAD_DAYS} days",
+                           "drill": {"stage": "drafts_waiting"}},
+        "offers": {"count": None, "measured": False,
+                   "reason": "offers rail not built (Phase 0.5)"},
+    }
+
+
+def upwork(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
+    """The Upwork tab (Phase 1). `today` is a positional TEST clock slot, never
+    a request param. Both funnel views and both connects windows are computed
+    here so the toggles are client-side switches with no refetch."""
+    day = today or _ist_today()
+    d0 = date.fromisoformat(day)
+    conn = _ro(db_path)
+    try:
+        needs_me = _upwork_needs_me(db_path, conn, day)
+        funnel = {"week": _upwork_funnel_block(conn, "week", day),
+                  "month": _upwork_funnel_block(conn, "month", day)}
+        rails = _upwork_rails(conn, day)
+        connects = {
+            "week": _upwork_connects_window(
+                conn, (d0 - timedelta(days=6)).isoformat(), day),
+            "month": _upwork_connects_window(conn, d0.replace(day=1).isoformat(), day),
+            "source": source_health.by_backs(
+                source_health.source_health(conn), "applied"),
+        }
+    finally:
+        conn.close()
+    return {
+        "as_of": day,
+        "bands": {"hot": f"Hot {config.score_band_label('hot')}",
+                  "loom": f"Loom {config.score_band_label('loom')}",
+                  "hot_cut": config.HOT_LEAD_THRESHOLD,
+                  "loom_cut": config.LOOM_FLAG_THRESHOLD},
+        "needs_me": needs_me,
+        "funnel": funnel,
+        "rails": rails,
+        "connects": connects,
+        "digest": {"built": False,
+                   "reason": "Phase 2 — the week's Loop cards render here"},
+    }
+
+
+def upwork_rows(db_path: Optional[Path] = None, *,
+                stage: Optional[str] = None,
+                week: Optional[str] = None,
+                month: Optional[str] = None,
+                frm: Optional[str] = None,
+                to: Optional[str] = None,
+                kind: Optional[str] = None,
+                _today: Optional[str] = None) -> dict:
+    """The rows behind every Upwork-tab figure (traceability law). Each stage
+    re-derives the SAME predicate the reader counted, so a figure and its
+    drill can never disagree; the parity tests assert it. `week` (a Monday) or
+    `month` (YYYY-MM) picks the cohort; `frm`/`to` are day bounds for the
+    connects drill; `kind` narrows connects_history.kind. Capped at 300 rows,
+    `total` is the uncapped count. `_today` is a test clock slot."""
+    if stage not in _UPWORK_DRILL_STAGES:
+        if stage in UPWORK_UNMEASURED:
+            return {"error": f"{stage} is not measured yet: {UPWORK_UNMEASURED[stage]}",
+                    "rows": [], "count": 0, "total": None}
+        return _bad_filter("stage", stage, "one of " + "|".join(_UPWORK_DRILL_STAGES))
+    if week and not _is_iso_day(week):
+        return _bad_filter("week", week, "YYYY-MM-DD, the Monday of a funnel week")
+    if month and not _is_iso_month(month):
+        return _bad_filter("month", month, "YYYY-MM")
+    if week and month:
+        return _bad_filter("month", month, "one of week|month, not both")
+    for _p, _v in (("frm", frm), ("to", to)):
+        if _v and not _is_iso_day(_v):
+            return _bad_filter(_p, _v, "YYYY-MM-DD")
+    day = _today or _ist_today()
+    if week:
+        view, period = "week", {"key": week, "lo": week,
+                                "hi": (date.fromisoformat(week) + timedelta(days=6)).isoformat()}
+    elif month:
+        first = date.fromisoformat(month + "-01")
+        nxt = (first.replace(year=first.year + 1, month=1) if first.month == 12
+               else first.replace(month=first.month + 1))
+        view, period = "month", {"key": month, "lo": first.isoformat(),
+                                 "hi": (nxt - timedelta(days=1)).isoformat()}
+    else:
+        view, period = "week", _upwork_period("week", day)
+
+    conn = _ro(db_path)
+    try:
+        rows: list = []
+        total: Optional[int] = None
+        if stage in ("fetched", "passed", "hot", "hot_missed_push", "applied",
+                     "interviewed", "won"):
+            jobs = _upwork_jobs(conn, period["lo"], period["hi"])
+            flag = {"fetched": lambda j: True, "passed": lambda j: j["passed"],
+                    "hot": lambda j: j["hot"],
+                    "hot_missed_push": lambda j: j["hot_missed_push"],
+                    "applied": lambda j: j["applied"],
+                    "interviewed": lambda j: j["interviewed"],
+                    "won": lambda j: j["won"]}[stage]
+            picked = [j for j in jobs if flag(j)]
+            total = len(picked)
+            keep = ("id", "title", "score", "hard_rule_skip", "status", "job_url",
+                    "clickup_task_url", "icp_tier", "feed_source", "d", "carded",
+                    "has_draft", "hot", "applied_raw", "interviewed_raw", "won",
+                    "inferred", "interview_inferred")
+            for j in picked[:300]:
+                row = {k: j.get(k) for k in keep}
+                row["band"] = config.score_band(j["score"])
+                rows.append(row)
+            if stage in ("applied", "interviewed", "won") and rows:
+                _upwork_attach_outcomes(conn, stage, rows)
+        elif stage == "contracts_started":
+            started = conn.execute(
+                "SELECT c.id, COALESCE(c.title, c.job_title) AS title,"
+                " c.client_company, c.contract_type, c.hourly_rate, c.upwork_status,"
+                " substr(c.start_dt,1,10) AS d, c.job_id,"
+                " substr(j.fetched_at,1,10) AS fetched_d, j.score, j.job_url"
+                " FROM contracts c LEFT JOIN scored_jobs j ON j.id = c.job_id"
+                " WHERE c.start_dt LIKE '20%' AND substr(c.start_dt,1,10)"
+                " BETWEEN ? AND ? ORDER BY c.start_dt DESC",
+                (period["lo"], period["hi"])).fetchall()
+            for r in started:
+                row = dict(r)
+                if not row["fetched_d"]:
+                    row["cohort"] = "outside"
+                elif period["lo"] <= row["fetched_d"] <= period["hi"]:
+                    row["cohort"] = "this"
+                elif row["fetched_d"] < period["lo"]:
+                    row["cohort"] = "earlier"
+                else:
+                    row["cohort"] = "later"
+                row["cohort_key"] = (None if row["cohort"] == "outside"
+                                     else _upwork_period_key(view, row["fetched_d"]))
+                rows.append(row)
+            total = len(rows)
+            rows = rows[:300]
+        elif stage == "connects":
+            lo = frm or (date.fromisoformat(day) - timedelta(days=6)).isoformat()
+            hi = to or day
+            cond, args = "", [lo, hi]
+            if kind:
+                cond, args = " AND kind=?", [lo, hi, kind]
+            rows = [dict(r) for r in conn.execute(
+                "SELECT event_date AS d, kind, label, job_title AS title, job_id,"
+                " connects_delta FROM connects_history"
+                f" WHERE event_date BETWEEN ? AND ?{cond}"
+                " ORDER BY event_date DESC, kind LIMIT 300", args)]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM connects_history"
+                f" WHERE event_date BETWEEN ? AND ?{cond}", args).fetchone()[0]
+        elif stage == "loom_flags":
+            loom_lo = (date.fromisoformat(day)
+                       - timedelta(days=config.COS_HOTLEAD_RECENT_DAYS)).isoformat()
+            sql = _loom_flags_sql()
+            rows = [dict(r) for r in conn.execute(
+                "SELECT j.id, j.title, j.score, j.icp_tier, j.status, j.job_url,"
+                " j.clickup_task_url, j.fixed_budget, j.hourly_max,"
+                " substr(j.first_scored_at,1,10) AS d " + sql +
+                " ORDER BY (j.icp_tier='icp') DESC, j.score DESC,"
+                " j.first_scored_at DESC LIMIT 300", (loom_lo,))]
+            for row in rows:
+                row["band"] = config.score_band(row["score"])
+            total = conn.execute("SELECT COUNT(*) " + sql, (loom_lo,)).fetchone()[0]
+        elif stage == "drafts_waiting":
+            fresh_lo = (date.fromisoformat(day)
+                        - timedelta(days=config.TODAY_FRESH_LEAD_DAYS)).isoformat()
+            sql = _drafts_waiting_sql()
+            args = (config.HOT_LEAD_THRESHOLD, fresh_lo)
+            rows = [dict(r) for r in conn.execute(
+                "SELECT j.id, j.title, j.score, j.icp_tier, j.job_url,"
+                " j.clickup_task_url, j.draft_word_count,"
+                " substr(j.first_scored_at,1,10) AS d " + sql +
+                " ORDER BY j.score DESC, j.first_scored_at DESC LIMIT 300", args)]
+            for row in rows:
+                row["band"] = config.score_band(row["score"])
+            total = conn.execute("SELECT COUNT(*) " + sql, args).fetchone()[0]
+    finally:
+        conn.close()
+    return {"stage": stage, "view": view, "period": period.get("key"),
+            "rows": rows, "count": len(rows),
+            "total": len(rows) if total is None else total}
+
+
+def _upwork_attach_outcomes(conn, stage: str, rows: list) -> None:
+    """Decorate outcome-stage drill rows with the dated evidence behind the
+    flag: the rail's applied date + connects, the proposal's status and room,
+    the contract's start. One query per table, keyed on the job id."""
+    ids = [r["id"] for r in rows]
+    marks = ",".join("?" * len(ids))
+    applied = {}
+    for r in conn.execute(
+            "SELECT job_id, MIN(event_date) AS d, SUM(connects_delta) AS delta"
+            f" FROM connects_history WHERE kind='applied' AND job_id IN ({marks})"
+            " GROUP BY job_id", ids):
+        applied[r["job_id"]] = {"applied_on": r["d"], "connects": r["delta"]}
+    props = {}
+    for r in conn.execute(
+            "SELECT marketplace_job_id AS jid, id, upwork_status, status,"
+            " substr(created_dt,1,10) AS created, thread_id FROM proposals"
+            f" WHERE marketplace_job_id IN ({marks})"
+            " ORDER BY created_dt", ids):
+        props[r["jid"]] = {"proposal_id": r["id"], "upwork_status": r["upwork_status"],
+                           "proposal_status": r["status"], "proposal_created": r["created"],
+                           "thread_url": ROOM_URL.format(tid=r["thread_id"])
+                           if r["thread_id"] else None}
+    contracts = {}
+    for r in conn.execute(
+            "SELECT job_id, id, substr(start_dt,1,10) AS d, upwork_status,"
+            f" hourly_rate, contract_type FROM contracts WHERE job_id IN ({marks})"
+            " ORDER BY start_dt", ids):
+        contracts[r["job_id"]] = {"contract_id": r["id"], "contract_start": r["d"],
+                                  "contract_status": r["upwork_status"],
+                                  "hourly_rate": r["hourly_rate"],
+                                  "contract_type": r["contract_type"]}
+    for row in rows:
+        row.update(applied.get(row["id"], {"applied_on": None, "connects": None}))
+        row.update(props.get(row["id"], {}))
+        row.update(contracts.get(row["id"], {}))
 
 
 def _money_source_health(db_path: Optional[Path]) -> Optional[dict]:

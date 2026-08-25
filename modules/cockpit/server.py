@@ -46,6 +46,10 @@ GET_ROUTES: dict = {
     "/api/money/transactions": data.money_transactions,  # drill-down (traceability)
     "/api/pipeline/rows": data.pipeline_rows,            # drill-down (traceability)
     "/api/pipeline/facts": data.pipeline_facts,          # chart source (one row/job)
+    # the Upwork tab (Phase 1): the channel's cockpit + the one drill behind
+    # every figure on it (?stage=...&week=|month=, ?frm=&to=&kind= for connects)
+    "/api/upwork": data.upwork,
+    "/api/upwork/rows": data.upwork_rows,
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     # the capture box's poll target (?note_id=N): "is it a card yet, and if not
     # what did the classifier decide instead?" The classifying runs in a child
@@ -106,17 +110,20 @@ QUERY_PARAMS: dict = {
     "stage": "jobs|scanned|scored|carded|applied|replied|hired|triage|threads",
     "week": "funnel week — the Monday, YYYY-MM-DD",
     "status": "proposal status (threads stage)",
-    "frm": "month window start, YYYY-MM",
-    "to": "month window end, YYYY-MM",
+    "frm": "window start — YYYY-MM on /api/pipeline/rows, YYYY-MM-DD on /api/upwork/rows",
+    "to": "window end — same shape as frm",
     "skip": "hard_rule_skip reason, or __none__/__any__",
     "feed": "feed_source",
     "icp": "icp_tier",
     "score_min": "integer, inclusive",
     "score_max": "integer, exclusive",
     "carded": "1|0",
-    # /api/money/transactions
+    # /api/money/transactions (and the Upwork funnel's month cohort)
     "bucket": "pnl bucket, comma-list",
     "month": "YYYY-MM",
+    # /api/upwork/rows — the connects drill's kind (open vocabulary, SQL-bound:
+    # the rail's kinds grow with the page; a whitelist would go stale)
+    "kind": "connects_history.kind",
     "source": "ledger source",
     # /api/activity · /api/activity/run · /api/activity/sources · …/facts
     "day": "IST calendar date, YYYY-MM-DD",
