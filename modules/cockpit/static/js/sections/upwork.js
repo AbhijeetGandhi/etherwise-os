@@ -566,8 +566,7 @@ function connectsBlock(d, ctx, state) {
 // what each rail DOES, in the words he would use — the registry names the
 // task; this names the job
 const RAIL_WHAT = {
-  scanner: "pulls new jobs every hour at :15, scores them, writes the drafts",
-  mcp_feed: "the Upwork API feed, hourly at :40 — becomes the job feed at the flip",
+  scanner: "pulls new jobs from the Upwork API every hour at :15, scores them, writes the drafts",
   proposals_sync: "your proposals, rooms and messages, every hour",
   messages_sync: "who is waiting on you, at 10:15 and 19:15",
   offers_sync: "offers you receive",

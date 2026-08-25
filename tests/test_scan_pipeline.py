@@ -74,6 +74,10 @@ class ScanPipelineCase(unittest.TestCase):
         self._patches = [
             mock.patch.object(config, "LOG_DIR", self.tmp / "logs"),
             mock.patch.object(config, "LOCK_DIR", self.tmp / "locks"),
+            # these are the CHROME-path tests: pin the provider regardless of
+            # the live switch (flipped to "mcp" on 2026-08-26; the Chrome path
+            # stays in scan_pipeline as the rollback and must keep passing)
+            mock.patch.object(config, "JOB_FEED_PROVIDER", "chrome"),
             mock.patch.object(sp, "ensure_scan_tab",
                               return_value=(111, 3)),
             mock.patch.object(sp, "navigate_tab"),

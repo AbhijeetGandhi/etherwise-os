@@ -224,6 +224,9 @@ class McpScanCase(PacedCase):
             mock.patch.object(config, "LOG_DIR", self.tmp / "logs"),
             mock.patch.object(config, "LOCK_DIR", self.tmp / "locks"),
             mock.patch.object(config, "JOB_FEED_PROVIDER", "mcp"),
+            # the fixtures predate the live cut (set at the 08-26 flip); the
+            # one test about the cut patches its own value
+            mock.patch.object(config, "MCP_CLAIM_SINCE", None),
             mock.patch.object(config, "MCP_MIN_HEALTHY_SURFACED", 2),
             mock.patch.dict(config.SHADOW_MODE, {"upwork": True}),
             # Chrome must never be touched on this provider

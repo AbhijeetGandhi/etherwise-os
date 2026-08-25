@@ -390,7 +390,7 @@ class TestUpworkConnects(UpworkTabCase):
 class TestUpworkRails(UpworkTabCase):
     def test_the_briefs_rails_in_order_with_not_built_rows(self):
         keys = [r["key"] for r in self.out["rails"]["items"]]
-        self.assertEqual(keys, ["scanner", "mcp_feed", "proposals_sync",
+        self.assertEqual(keys, ["scanner", "proposals_sync",
                                 "messages_sync", "offers_sync", "applied",
                                 "outcome_email", "clickup_push", "cards_sweep"])
         offers = next(r for r in self.out["rails"]["items"] if r["key"] == "offers_sync")

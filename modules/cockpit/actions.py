@@ -59,10 +59,8 @@ RERUN_JOBS = {
     "upwork_sync": "io.etherwise.v3.upwork-sync",
     "upwork_inbox": "io.etherwise.v3.upwork-inbox",
     "upwork_connects": "io.etherwise.v3.upwork-connects",
-    # the MCP job poller (SOURCES "mcp_feed", 2026-08-25): a read-only,
-    # idempotent INSERT OR IGNORE poll; safe to kick. Never at :40 by hand —
-    # the scheduled run holds the write lock for ~45 s (finding 12).
-    "mcp_shadow_poll": "io.etherwise.v3.upwork-mcp-shadow",
+    # (mcp_shadow_poll sat here 08-25 → 08-26; the poller retired at the 0.1
+    # flip — the MCP round now runs inside upwork_scan.)
     "crm_mirror": "io.etherwise.v3.crm-mirror",
     "kb_daily": "io.etherwise.v3.kb-daily",
     "loom_fetch": "io.etherwise.v3.kb-loom-fetch",

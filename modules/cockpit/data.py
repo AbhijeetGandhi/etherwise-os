@@ -2714,8 +2714,7 @@ _UPWORK_DRILL_STAGES = ("fetched", "passed", "hot", "hot_missed_push", "applied"
                         "drafts_waiting", "loom_flags")
 # the rails strip, in the brief's order: (strip key, label, SOURCES key)
 _UPWORK_RAILS = (
-    ("scanner", "Job feed (scanner)", "scanner"),
-    ("mcp_feed", "MCP poll", "mcp_feed"),
+    ("scanner", "Job feed (Upwork API)", "scanner"),
     ("proposals_sync", "Proposals sync", "upwork_sync"),
     ("messages_sync", "Messages sync", "upwork_inbox"),
     ("offers_sync", "Offers sync", None),            # not built (0.5)

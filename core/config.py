@@ -794,26 +794,25 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.upwork-connects", "catch_up": True,
      "why": "the applied-truth source; a stale rail makes 'applied' look like a"
             " live 0 when nobody is actually counting"},
-    {"key": "scanner", "label": "Upwork scanner",
+    {"key": "scanner", "label": "Upwork job feed (MCP)",
      "task_name": "upwork_scan", "max_age_hours": 3,
      "degrade_kinds": ("scan_feed_degraded",), "critical": True,
      "backs": "pipeline",
      "launchd_label": "io.etherwise.v3.upwork-scan", "catch_up": True,
-     "why": "backs the funnel + carded board; a thin feed silently under-scans"
-            " lead-gen"},
+     # FLIPPED 2026-08-26 (Phase 0.1): the same task, the same plist, the MCP
+     # standing-query round inside instead of the Chrome scrape (scan_pipeline
+     # dispatches on JOB_FEED_PROVIDER below). The shadow poller that proved
+     # the feed retired the same minute — one MCP budget, one round an hour.
+     "why": "backs the funnel + carded board; a thin MCP round is"
+            " scan_feed_degraded and silently under-scans lead-gen"},
     # ── the Upwork rails that were invisible (Upwork chat, 2026-08-25) ────────
     # Finding 8 of the Upwork codebase map: upwork_inbox, upwork_outcomes and
     # the MCP poller had no entry here, so no health line, no catch-up, and the
     # 08-23 Sunday outcome run silently did not happen. The Upwork tab's rails
-    # strip (docs/upwork/PHASE1_TAB_SPEC.md §3.5/§7) reads these four. NOTE the
+    # table (docs/upwork/PHASE1_TAB_SPEC.md §3.5/§7) reads these. NOTE the
     # registry test binds `catch_up` to actions.RERUN_JOBS both ways: a catch-up
     # source must be re-runnable from the cockpit, a non-catch-up one must not.
-    {"key": "mcp_feed", "label": "Upwork MCP poll (find_jobs)",
-     "task_name": "mcp_shadow_poll", "max_age_hours": 3,       # hourly at :40
-     "degrade_kinds": (), "critical": False,                    # shadow until the 0.1 flip
-     "backs": "upwork",
-     "launchd_label": "io.etherwise.v3.upwork-mcp-shadow", "catch_up": True,
-     "why": "the MCP job feed; becomes the funnel's only source at the 0.1 flip"},
+    # (The `mcp_feed` poller entry lived here 08-25 → 08-26; retired at the flip.)
     {"key": "upwork_inbox", "label": "Upwork inbox (messages, GraphQL)",
      "task_name": "upwork_inbox", "max_age_hours": 12,        # 10:15 + 19:15, 9h gap + grace
      "degrade_kinds": (), "critical": True, "backs": "upwork",
@@ -1162,7 +1161,9 @@ CLICKUP_PUSH_RETRY_DAYS = 7
 # in what they do with a job, only in where the job came from. §5.2 of the
 # Upwork brief: the providers never co-feed one store, so this is a switch,
 # not a merge; the flip is this one line and so is the rollback.
-JOB_FEED_PROVIDER = "chrome"
+# FLIPPED 2026-08-26 03:55 IST on Abhijeet's "let's flip it now" (UPWORK_BRIEF
+# Next actions 1). Rollback: "chrome" — the Chrome path is still in scan_pipeline.
+JOB_FEED_PROVIDER = "mcp"
 # The standing queries (moved here from feeds/shadow_poll.py, where the shadow
 # poller proved them): smart_search = Upwork's profile-skill matching (the
 # best_matches analogue) + the term list mirroring his curated GraphQL
@@ -1193,7 +1194,11 @@ MCP_RATE_LIMIT_WAIT_S = 6.0
 # any moment hold ~100 jobs the scraper never saw; claiming them all would
 # card ~60 stale listings over the first afternoon. ISO-8601 UTC, e.g.
 # "2026-08-26T09:00:00+00:00"; None = no cut (the chrome provider ignores it).
-MCP_CLAIM_SINCE = None
+# Set at the flip (03:55 IST, 26 Aug, on Abhijeet's "flip it now") to the
+# moment of the LAST CHROME SCAN (03:15 IST): everything posted before it was
+# the scraper's to find; everything after is the MCP round's — no gap, no
+# stale backlog.
+MCP_CLAIM_SINCE = "2026-08-25T21:45:00+00:00"
 
 # ── Upwork ───────────────────────────────────────────────────────────────────
 UPWORK_USER_ID = "1647672547786633216"
