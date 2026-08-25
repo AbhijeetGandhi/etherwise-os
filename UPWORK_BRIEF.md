@@ -226,14 +226,27 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 7. **Map location**: `docs/upwork/`; findings mirrored in this brief; finding 1 fixed here.
 
 ## Next actions
-0. (Abhijeet, now) `PYTHONPATH=. python3 -m unittest tests.test_m1b` on the Mac, commit the
-   sync fix; run the snooze UPDATE (decision 6); paste the BUILD_BRIEF line (decision 2);
-   paste the outcome form `shr…` link into `rails/REGISTRY.md`.
-0b. (Abhijeet) Threshold single-sourcing is READY as a proposed diff (decision 1, 04:20 IST):
-   `var/proposed-diffs/2026-08-25-score-bands-single-source.{md,patch}` — 7 files, values
-   unchanged, 11 new tests, `git apply --check` clean against the working tree. Apply per
-   its §C (ends with `bin/cockpit reload`). Two ◆ questions in its §E (ClickUp list-id dedup;
-   show band numbers on the tab or names only).
+0. DONE 2026-08-25 14:30 (Upwork chat, on Abhijeet's "do 1-4"): sync fix committed
+   (`42c9eaf`, live-verified: proposals NULL created_dt 10 → 0, contracts NULL title 59 → 5);
+   score-bands patch applied + committed (`39faf95`; test_score_bands 11, scan/doctor/
+   guardrails 87, cockpit pipeline/today/system/query-guard classes 68 — all green on the
+   Mac's files). Git lock/tmp debris the device VM could not delete was moved to
+   `var/_to_delete/` (safe to `rm -rf`).
+0a. (Abhijeet, three things only a Mac shell can do)
+   - `bin/cockpit reload` — the running cockpit still serves the pre-patch data.py.
+   - the snooze UPDATE (decision 6) — never from Cowork: `sqlite3 var/etherwise.db
+     "UPDATE threads SET snooze_until=NULL, updated_at=datetime('now') WHERE snooze_until
+     IS NOT NULL;"` (14 rows).
+   - the outcome form is published as Airtable form page `pag9IZ4lgwmIZA47g` ("Proposal
+     Outcome", 15 clean reasons); its link should be
+     `https://airtable.com/appgE1QoEOXvbrUE4/pag9IZ4lgwmIZA47g/form` — open it once to
+     confirm it renders, then paste into `rails/REGISTRY.md:23` (`form_url:`). Not written
+     by the chat because the URL could not be fetched to verify (robots).
+0b. (ops chat) paste the sourcing-invariant line (decision 2) + a checkpoint line for
+   `42c9eaf`/`39faf95` into BUILD_BRIEF; run `scripts/mcp_shadow_report.py` (shadow table
+   at 494 jobs, 125 overlapping) — the recalibration VALUES wait on it.
+0c. ◆ two answers for the Upwork chat (patch §E): dedup ClickUp list ids into config? band
+   numbers ("16-21") or names only on the tab?
 1. (ops chat, today) Cutover scorecard → provider path → flip. Then 0.2 → 0.3 → 0.4 → 0.5.
 2. (upwork chat, after 0.2) Phase 1 tab skeleton: health strip + funnel from real tables.
 3. (upwork chat, first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
@@ -253,4 +266,8 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   ClickUp's future, threshold values, Outcome Reason canon, form_url.
 - 2026-08-25 04:20 · Decision 1 built as a proposed diff (config is protected): `SCORE_FLOOR`,
   `SCORE_STANDARD`, `SCORE_BANDS`, `score_band()`, `score_band_label()` in config; five readers
-  bind config; `tests/test_score_bands.py` greps them. Awaiting Abhijeet's apply.
+  bind config; `tests/test_score_bands.py` greps them.
+- 2026-08-25 14:30 · Abhijeet: "do 1-4 from your end" → the chat applied and committed the
+  patch (`39faf95`) and committed the sync fix + map + brief (`42c9eaf`) via the device shell;
+  the DB write (snoozes) and `bin/cockpit reload` stay his (Mac-only by the standing caution
+  / launchctl); form link left for a one-click verification.
