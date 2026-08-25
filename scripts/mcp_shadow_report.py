@@ -104,6 +104,12 @@ def main() -> int:
     print("\nquery yield (first-finder):")
     for q, n in sorted(yield_by.items(), key=lambda kv: -kv[1]):
         print(f"   {n:>4}  {q}")
+
+    # 4. the scored view, once scripts/mcp_shadow_score.py has run (028):
+    #    how many MCP-only jobs would be hot, and the MCP-vs-scraper drift
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import mcp_shadow_score                                     # noqa: E402
+    print("\n4. " + mcp_shadow_score.summary().replace("\n", "\n   "))
     return 0
 
 
