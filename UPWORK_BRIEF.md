@@ -23,10 +23,14 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
 
 - **MCP transport live** (`modules/upwork/feeds/mcp_client.py`) — OAuth 2.1, read-only
   allowlist in code. Shadow poller hourly at :40 (`mcp_shadow_jobs`, 197+ jobs).
-- **Cutover pending**: midday scorecard (`scripts/mcp_shadow_report.py`) on ~18h of
-  US-day data → if scraper-hot coverage holds, build the provider-flag path in
-  scan_pipeline, recalibrate 16/20/22 thresholds (MCP data scores ~2 lower on truer
-  applicant counts), flip in the evening. Scraper plist = one-command rollback.
+- **Cutover pending — the numbers are in (2026-08-25 19:20 IST, 48 h scorecard + the
+  scoring pass, next actions 0d/0e):** coverage of scraper-hot 36/40 · latency +23 min
+  (schedule offset) · drift median −1 (not the assumed −2; 65/82 within ±2; hot agreement
+  60/63) · MCP-only survivors 157 scored, **94 hot (60 %)** ≈ 70–90 extra hot jobs/day
+  against the scraper's ~30/day. The feed is good; the VOLUME is the decision: at today's
+  bands the flip triples drafts + ClickUp cards (+~$2/day against the $4 soft cap) for a
+  band (16–21) he applied to twice in six weeks. Flip + band values wait on his call
+  (Open decisions). Scraper plist = one-command rollback.
 - **Chrome rails still live** (each retires at its module's cutover, per §5.2):
   scanner (`upwork_scan`, :15) and connects (`upwork_connects`, 05:35 — the only applied
   source). Corrected 2026-08-25: the follow-up monitor in v3 is the GraphQL `upwork_inbox`
@@ -187,13 +191,35 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
     (`var/upwork-token-owner` = v3 since 06-30); `PROFILE_RATE_USD = 32.50` and every
     `skills/` file still quote $32.50 vs the $50/$51.50 master reference; §5.2/§5.9 exist
     only in this brief (§4.1 is Upwork's own terms clause).
+12. (19:00) **`shadow_poll` holds the DB write lock across its MCP `get` calls**
+    (`feeds/shadow_poll.py:117-208`: the with-block opens before up to 25 network calls; the
+    18:40 run held it 43 s against the 10 s busy timeout). The scoring pass's run 3 died on it
+    (`database is locked`) and its `runs` row **7068 is stuck 'running'** — the runner could
+    not write the failure either. Fix belongs to 0.1 (collect the gets, then one short write
+    transaction); same house rule as "model calls outside the with-block".
+13. (19:05) **Hot jobs that miss the ClickUp push are never re-pushed**: 20 hot jobs from the
+    08-23 batch sit `status='Drafted'`, no ClickUp id; every other hot job since 08-18 was
+    carded in its own run. The 14 open Loom-flag cards are exactly those 20 (the rule's
+    `clickup_task_id IS NULL` predicate predates the live cutover).
+14. (19:10) **The Sunday outcome email never sends in live mode**: `outcome_capture.capture()`
+    is `if ctx.shadow: record_shadow_write … else: ctx.require_live(…)` and `require_live`
+    is only a guard (`runner.py:104`) — no send call exists. Setting `form_url` (0a) made the
+    links parse; nothing delivers them. Loop 2 has no outcome-reason intake until a send path
+    is built (one `notify.send_gmail` behind the existing interrupt-policy pattern).
 
 ## Open decisions
-- Tab name: "Upwork" vs "Pipeline".
+- ~~Tab name: "Upwork" vs "Pipeline".~~ CLOSED 18:55 — "Upwork", and Pipeline becomes it (decision 10).
 - Skip-review cadence: weekly card vs fold into Monday sales report.
 - Whether ClickUp stays the action queue long-term or the tab absorbs it (decide AFTER the
   tab proves itself — not before).
 - Threshold VALUES (after single-sourcing; decided from the MCP scorecard, not guessed).
+  **Evidence on the table (2026-08-25 19:25, live, since the rail began 07-13):** hard-rule
+  survivors by band → applications: 22+ 732 → 33 · 20–21 124 → 0 · 18–19 130 → 1 · 16–17
+  117 → 1 · 8–15 394 → 1. He applies at the Loom bar: 33 of 36 matched applications were 22+,
+  and the 16–21 band (371 jobs, all drafted and carded) produced 2. MCP drift is −1 median, so
+  the feed does not move the cuts by itself. The question is the hot bar (16 → 20 or 22?) and
+  what "loom" then means — decided by him, the numbers are the proposal. Same decision gates
+  the flip's volume (Current state).
 - Outcome Reason vocabulary: 40 Airtable choices with duplicates (map §9) → one canonical
   set before Loop 2 codes anything.
 - `rails/REGISTRY.md` `form_url`: the Outcome Submissions table + form exist in Airtable
@@ -229,6 +255,15 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 8. (15:30) **Ask here.** All questions to Abhijeet in the working chat; no "ops chat" hand-offs.
 9. (15:30) **ClickUp list ids → config** (`CLICKUP_LISTS` incl. `icp`). **Band labels on the
    tab: numbers and names** ("Hot 16–21", from `config.score_band_label()`).
+10. (18:55) **Phase 1 tab — the four design decisions** (spec: `docs/upwork/PHASE1_TAB_SPEC.md`):
+    **Pipeline BECOMES the Upwork tab** (renamed, digit 2, `#/pipeline` aliased; the cockpit
+    blocks on top, Pipeline's charts below the fold as "Analysis") · **funnel = job cohort**
+    (jobs fetched in the period; later stages joined on the job id; conversion % honest by
+    construction; wins whose job was never fetched on their own line) · **interviewed =
+    `upwork_status IN ('Activated','Hired')`, won = a contract on the job** (rooms stay
+    "client replied") · **connects spent = applications + boosts net of boost refunds**
+    (badge its own line; purchases/renewals/awards out). Viewed and offer render "—" until
+    0.2 / 0.5. Tab name: "Upwork" (the open item is closed by decision 1).
 
 ## Next actions
 0. DONE 2026-08-25 14:30 (Upwork chat, on Abhijeet's "do 1-4"): sync fix committed
@@ -258,13 +293,35 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    (`config.score_band_label()`, never typed in JS).
 0d. **Scorecard (15:40 IST, 48 h from the first shadow row):** coverage of scraper-hot
    29/33 (misses: 23, 23, 21 via best_matches; 24 via my_feed) · latency median +23 min
-   (= the :15/:40 schedule offset) · MCP-only 363 jobs, 132 pass hard rules, none scored
-   yet. ◆ NEXT NUMBER before any flip: score a day of MCP-only survivors (budgeted pass)
-   to learn how many of the 132 are hot — then decide the flip and the band values.
-1. Cutover: scorecard → score the MCP-only set → provider path → flip. Then 0.2 → 0.3 →
-   0.4 → 0.5. (All in this chat now.)
-2. (after 0.2) Phase 1 tab skeleton: health strip + funnel from real tables. The DESIGN can
-   start now.
+   (= the :15/:40 schedule offset) · MCP-only 363 jobs, 132 pass hard rules.
+0e. **Scoring pass (Abhijeet: "run scoring pass", 18:31 IST):** `scripts/mcp_shadow_score.py`
+   + migration 028 `mcp_shadow_scores` (`f83e0b8`) — the pass 027 reserved a NULL `score`
+   for. Two sets, same scorer as the live scan: A. 144 MCP-only hard-rule survivors,
+   B. 81 jobs both feeds scored (drift = mcp − scraper). Writes only the shadow tables;
+   9 runner chunks of ≤25 (`upwork_shadow_score_<n>`); projected $1.83. Re-runnable, skips
+   scored ids. `scripts/mcp_shadow_report.py` prints the two answers as section 4.
+   **RESULT (finished 19:07 IST; 239 calls, $1.78, day's spend $3.09; run 3 of the first
+   attempt died on finding 12 at 18:40, the re-run at 18:43 completed 7/7 chunks):**
+   **A.** 157 MCP-only survivors scored → **94 hot (60 %)**, 37 Loom-band (24 %); bands 22+ 37
+   · 16–21 57 · 12–15 40 · 8–11 23 · <8 0. The scraper's own survivors run 71 % hot over the
+   same 14 days, so MCP-only jobs are a little cooler and there are a LOT of them (~120–150
+   survivors/day, ~70–90 hot/day, vs the scraper's ~30 hot/day). **B.** drift on 82 shared
+   jobs: median −1.0, mean −0.80, 65/82 within ±2 (47 within ±1; one −8, two −5 outliers);
+   hot by scraper 63 · by MCP 62 · by both 60. Section 4 of `mcp_shadow_report.py` carries it.
+   Reading: the feed is trustworthy (90 % scraper-hot coverage, ≤1 point of drift, 95 % hot
+   agreement); the bands are the decision, not the feed (Open decisions → threshold values).
+0f. DONE 19:20 (Abhijeet: "start with phase 1 in the meantime"): **Phase 1 tab DESIGN** —
+   four decisions asked and answered (decision 10), spec written to
+   `docs/upwork/PHASE1_TAB_SPEC.md` (reader payload, the eight stages with their SQL and the
+   closure rule, drills + parity tests, the health strip with a proposed `SOURCES` diff §7,
+   the shared card builder, connects definitions, build order). Findings 12–14 came out of
+   writing it. ◆ awaiting his approval of the spec + the §7 config diff before code.
+1. Cutover: the numbers are in (0d/0e). Remaining: his call on the hot bar (Open decisions)
+   → provider path (0.1) with `shadow_poll`'s lock fix (finding 12) and the push retry
+   (finding 13) → flip. Then 0.2 → 0.3 → 0.4 → 0.5. (All in this chat now.)
+2. Phase 1 build per the spec's §9 order: reader + drills + tests first (no UI, no config),
+   the card builder extraction second, the config diff third, the section + Pipeline rename
+   last. Step 1–2 can start on his "go" for the spec; step 4 lands after 0.2 as agreed.
 3. (first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
 4. (when he says go) Phase 3 applicant pull for the LinkedIn-writer role.
 
@@ -287,3 +344,8 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   patch (`39faf95`) and committed the sync fix + map + brief (`42c9eaf`) via the device shell;
   the DB write (snoozes) and `bin/cockpit reload` stay his (Mac-only by the standing caution
   / launchctl); form link left for a one-click verification.
+- 2026-08-25 18:31–19:25 · "run scoring pass" → migration 028 + `scripts/mcp_shadow_score.py`
+  (`f83e0b8`), pass run twice (lock collision, finding 12), results in 0e. "start with phase 1
+  in the meantime" → the four tab decisions (decision 10) and `docs/upwork/PHASE1_TAB_SPEC.md`.
+  Findings 12–14 recorded. Threshold evidence tabled under Open decisions; the hot bar and
+  the flip volume are one decision, his.
