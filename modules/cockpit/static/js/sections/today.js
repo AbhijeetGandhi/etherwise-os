@@ -327,7 +327,12 @@ function actNow(d, ctx) {
 }
 
 /** one act-now card: a row + an expandable detail panel underneath it */
-function queueCard(it, ctx) {
+/**
+ * ONE card component for the ONE queue (Upwork brief decision 5, 2026-08-25):
+ * the Upwork tab renders its subset of the act-now queue with exactly this,
+ * so the two screens cannot drift in what a card says or what Done/Snooze do.
+ */
+export function queueCard(it, ctx) {
   const wrap = el("div", "qitem");
   const detail = el("div", { class: "q-detail", style: { display: "none" } });
 

@@ -721,3 +721,42 @@ details.group[open] > summary::before { content: "▾ "; }
   .q-actions { justify-content: flex-start; }
   .drill-panel { width: 100vw; }
 }
+
+/* ── Upwork tab (Phase 1, 2026-08-25) ────────────────────────────────────────
+   The cohort funnel reuses .funnel/.funnel-bar above; these are the pieces
+   the Pipeline funnel never needed: an UNMEASURED band (a stage with no data
+   source yet — dashed, empty, never a zero-width "0"), the sub-lines under a
+   band, the contracts context line, the anecdote tone (brief law 6: a small-N
+   figure is printed, just not dressed as a trend) and the rails strip. */
+.funnel-bar-unmeasured {
+  display: block; height: 20px; width: 40%;
+  border: 1px dashed var(--border-strong); border-radius: var(--radius-sm);
+  background: repeating-linear-gradient(90deg, transparent 0 6px, var(--muted) 6px 12px);
+}
+.funnel-sub { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+.funnel-contracts {
+  margin-top: var(--space-3); padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+}
+.anecdote { color: var(--muted-foreground); font-style: italic; }
+.rail-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.rail-item { display: inline-flex; align-items: center; gap: 4px; }
+.rail-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: inherit; font-size: var(--text-xs); line-height: 1;
+  padding: 6px 10px; border-radius: var(--radius-full); cursor: pointer;
+  border: 1px solid var(--border); background: var(--card); color: var(--foreground);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.rail-btn:hover { border-color: var(--border-strong); background: var(--accent); }
+.rail-btn .dot2 { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); flex: none; }
+.rail-btn .st { color: var(--muted-foreground); }
+.rail-btn.ok       { border-color: var(--success-border); background: var(--success-soft); color: var(--success); }
+.rail-btn.ok .dot2 { background: var(--success); }
+.rail-btn.degraded, .rail-btn.stale { border-color: var(--warning-border); background: var(--warning-soft); color: var(--warning); }
+.rail-btn.degraded .dot2, .rail-btn.stale .dot2 { background: var(--warning); }
+.rail-btn.down     { border-color: var(--destructive-border); background: var(--destructive-soft); color: var(--destructive); }
+.rail-btn.down .dot2 { background: var(--destructive); }
+.rail-btn.nobuild  { border-style: dashed; color: var(--muted-foreground); background: none; }
+.rail-btn.ok .st, .rail-btn.degraded .st, .rail-btn.stale .st, .rail-btn.down .st { color: inherit; opacity: .85; }

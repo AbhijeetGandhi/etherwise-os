@@ -44,7 +44,9 @@ const LAST_SECTION_KEY = "ew_cockpit_section";
 
 const SECTIONS = [
   { id: "today", label: "Today", icon: "list-checks", load: () => import("./sections/today.js") },
-  { id: "pipeline", label: "Pipeline", icon: "trending-up", load: () => import("./sections/pipeline.js") },
+  // Pipeline BECAME the Upwork tab (Upwork brief decision 10, 2026-08-25): the
+  // channel's cockpit on top, the old charts below the fold as "Analysis"
+  { id: "upwork", label: "Upwork", icon: "trending-up", load: () => import("./sections/upwork.js") },
   { id: "money", label: "Money", icon: "wallet", load: () => import("./sections/money.js") },
   { id: "clients", label: "Clients", icon: "users", load: () => import("./sections/clients.js") },
   { id: "knowledge", label: "Knowledge", icon: "book-open", load: () => import("./sections/knowledge.js") },
@@ -54,7 +56,7 @@ const SECTIONS = [
 
 // old deep links keep working (Nudges folded into Today, System into Activity,
 // Mapping into Review) — a bookmark must not 404 into an empty screen
-const ALIASES = { nudges: "today", system: "activity", mapping: "review" };
+const ALIASES = { nudges: "today", system: "activity", mapping: "review", pipeline: "upwork" };
 
 const byId = (id) => SECTIONS.find((s) => s.id === id);
 
@@ -457,7 +459,9 @@ function boot() {
   setInterval(() => { if (renderedAt) setStale(renderedAt); }, 30 * 1000);
 
   const { id, params } = parseHash();
-  const start = id || localStorage.getItem(LAST_SECTION_KEY) || "today";
+  // a remembered section may be an old id (pipeline -> upwork): alias it too
+  const remembered = localStorage.getItem(LAST_SECTION_KEY);
+  const start = id || (remembered && (ALIASES[remembered] || remembered)) || "today";
   if (!location.hash) history.replaceState({}, "", "#/" + start);
   show(start, params);
 }

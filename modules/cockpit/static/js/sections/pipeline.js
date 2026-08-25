@@ -202,7 +202,18 @@ const HOURLY_SKIPS = ["hourly_below_30", "low_hourly_rate", "low_hourly"];
 
 /* ── render ───────────────────────────────────────────────────────────────── */
 
-export async function render(root, ctx) {
+/**
+ * The Upwork tab's "Analysis" fold (2026-08-25, Upwork brief decision 10:
+ * Pipeline BECOMES the Upwork tab). Same page, minus the blocks the new tab
+ * now owns — the KPI strip, the win-rate line, the conversion funnel and the
+ * outcomes tiles — so no figure lives in two places.
+ */
+export async function renderAnalysis(root, ctx) {
+  return render(root, ctx, { analysisOnly: true });
+}
+
+export async function render(root, ctx, opts = {}) {
+  const analysisOnly = !!opts.analysisOnly;
   const [d, F] = await Promise.all([
     ctx.api("/api/pipeline"),
     ctx.api("/api/pipeline/facts"),
@@ -306,13 +317,15 @@ export async function render(root, ctx) {
     || [...new Set(jobs.map((j) => j.m).filter(Boolean))].sort().pop() || "";
   const lastM = mAdd(thisM, -1);
 
-  root.append(
-    heading("Pipeline",
-      "— every figure is clickable and the rows behind it are the same rows the"
-      + " bar counted · applied comes from the connects rail, never from a guess"),
-    kpiStrip(d, openRows, { asOf, thisM }),
-    winRateLine(d),
-  );
+  if (!analysisOnly) {
+    root.append(
+      heading("Pipeline",
+        "— every figure is clickable and the rows behind it are the same rows the"
+        + " bar counted · applied comes from the connects rail, never from a guess"),
+      kpiStrip(d, openRows, { asOf, thisM }),
+      winRateLine(d),
+    );
+  }
 
   /* ══ the range-scoped half of the page ══════════════════════════════════ */
 
@@ -428,9 +441,11 @@ export async function render(root, ctx) {
 
   root.appendChild(el("div", "hstack", [
     segHost, customWrap,
-    el("span", "muted small",
-      "everything below is scoped to this range · the KPI strip above is not"
-      + " (it is the live 7/30-day board)"),
+    el("span", "muted small", analysisOnly
+      ? "every chart below is scoped to this range · the funnel above is the cohort view"
+        + " and does not follow it"
+      : "everything below is scoped to this range · the KPI strip above is not"
+        + " (it is the live 7/30-day board)"),
   ]));
 
   const charts = el("div", { class: "stack", style: { gap: "var(--space-6)" } });
@@ -471,8 +486,8 @@ export async function render(root, ctx) {
     const rl = rangeLabel();
 
     charts.append(
-      ...funnelRegion(js, rl),
-      ...outcomesRegion(js, rl),
+      ...(analysisOnly ? [] : funnelRegion(js, rl)),
+      ...(analysisOnly ? [] : outcomesRegion(js, rl)),
       ...scoreRegion(js, rl),
       ...skipRegion(js, rl),
       ...feedRegion(js, rl),

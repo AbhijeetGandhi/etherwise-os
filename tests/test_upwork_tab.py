@@ -10,6 +10,7 @@ with `built: False` rows; the query-param guard on the new route.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -585,3 +586,84 @@ class TestNoLiteralBandsOnTheTab(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── the section (the screen), pinned where Python can see it ─────────────────
+
+STATIC = ROOT / "modules" / "cockpit" / "static"
+
+
+def _node():
+    # the same lookup test_pipeline_funnel uses (launchd/osascript shells on the
+    # Mac carry a minimal PATH; Homebrew's node lives off it)
+    from tests.test_pipeline_funnel import _node as _find
+    return _find()
+
+
+class TestUpworkSection(unittest.TestCase):
+    """The Upwork tab's JS is a browser module; what a Python test can hold it
+    to: it exists, it is registered where Pipeline was (digit 2), the old id is
+    aliased, it names no send route, it imports only the house primitives, the
+    modules it depends on export what it imports, the styles it uses exist,
+    the server serves it as JavaScript, and it parses under node."""
+
+    def test_registered_in_pipelines_slot_with_the_alias(self):
+        app = (STATIC / "js" / "app.js").read_text()
+        ids = re.findall(r'\{ id: "([a-z]+)"', app)
+        self.assertIn("upwork", ids)
+        self.assertNotIn("pipeline", ids)
+        self.assertEqual(ids.index("upwork"), 1)               # keyboard digit 2
+        self.assertRegex(app, r'pipeline: "upwork"')          # #/pipeline still opens
+
+    def test_section_file_imports_house_primitives_only_and_never_sends(self):
+        src = (STATIC / "js" / "sections" / "upwork.js").read_text()
+        imports = re.findall(r'from "([^"]+)"', src)
+        self.assertEqual(set(imports), {"../ui.js", "../drill.js", "./today.js", "./pipeline.js"})
+        self.assertNotIn("/send", src)
+        self.assertNotIn("fetch(", src)                        # ctx.api / ctx.post only
+        self.assertIn('ctx.api("/api/upwork")', src)
+        self.assertIn("/api/upwork/rows?", src)
+        for k in ("ew_cockpit_upwork_view", "ew_cockpit_upwork_analysis"):
+            self.assertIn(k, src)                              # state only in these keys
+
+    def test_dependencies_export_what_the_section_imports(self):
+        today = (STATIC / "js" / "sections" / "today.js").read_text()
+        pipeline = (STATIC / "js" / "sections" / "pipeline.js").read_text()
+        self.assertIn("export function queueCard(", today)
+        self.assertIn("export async function renderAnalysis(", pipeline)
+        # the fold must not re-render the blocks the tab owns
+        self.assertIn("analysisOnly ? [] : funnelRegion", pipeline)
+        self.assertIn("analysisOnly ? [] : outcomesRegion", pipeline)
+
+    def test_styles_the_section_uses_exist(self):
+        css = (STATIC / "css" / "components.css").read_text()
+        for cls in (".funnel-bar-unmeasured", ".funnel-sub", ".funnel-contracts",
+                    ".anecdote", ".rail-strip", ".rail-btn", ".rail-btn.nobuild"):
+            self.assertIn(cls, css, cls)
+        # tokens only — no raw colour in the new block
+        block = css[css.index("Upwork tab (Phase 1"):]
+        self.assertNotRegex(block, r"#[0-9a-fA-F]{3,6}\b")
+
+    def test_no_literal_band_numbers_in_the_section(self):
+        src = (STATIC / "js" / "sections" / "upwork.js").read_text()
+        self.assertNotRegex(src, r"[≥>]=?\s*(16|20|22)\b")     # labels come from the payload
+
+    def test_parses_under_node_as_an_es_module(self):
+        node = _node()
+        if not node:
+            self.skipTest("node not installed")
+        import subprocess
+        for rel in ("js/sections/upwork.js", "js/sections/pipeline.js",
+                    "js/sections/today.js", "js/app.js"):
+            with tempfile.TemporaryDirectory() as td:
+                mjs = Path(td) / "check.mjs"
+                mjs.write_text((STATIC / rel).read_text())
+                r = subprocess.run([node, "--check", str(mjs)], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, f"{rel}: {r.stderr[:400]}")
+
+
+class TestUpworkSectionServed(CockpitServerCase):
+    def test_the_module_is_served_as_javascript(self):
+        st, body = self.get("/static/js/sections/upwork.js")
+        self.assertEqual(st, 200)
+        self.assertIn('export const meta = { title: "Upwork"', body)
