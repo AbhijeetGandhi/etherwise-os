@@ -1180,6 +1180,14 @@ MCP_MAX_GETS_PER_RUN = 25      # detail calls are the expensive half; bound them
 # a search round that surfaces fewer rows than this is a broken feed, not a
 # quiet market (the Chrome twin: MIN_HEALTHY_TILES per feed)
 MCP_MIN_HEALTHY_SURFACED = 20
+# Pacing (measured 2026-08-25 22:41): the server enforces ~12 find_jobs
+# requests/min sustained, refilling continuously; a second round inside the
+# minute after the :40 poll was refused with "Rate limit exceeded ... wait
+# about 5 seconds". A refused query is a silently under-scanned hour, so every
+# call waits this long after the previous one (a 40-call round takes ~3.5 min
+# of an hourly slot) and a refused call is retried once after the advised wait.
+MCP_CALL_INTERVAL_S = 5.0
+MCP_RATE_LIMIT_WAIT_S = 6.0
 # At the flip, posts created BEFORE this instant are never claimed (Abhijeet,
 # 2026-08-25 20:40: "only jobs posted after the flip"). The search pages at
 # any moment hold ~100 jobs the scraper never saw; claiming them all would

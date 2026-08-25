@@ -81,7 +81,70 @@ def verdict(score):
 
 # ── the round ────────────────────────────────────────────────────────────────
 
-class TestFetchNew(unittest.TestCase):
+class PacedCase(unittest.TestCase):
+    """The round paces itself (MCP_CALL_INTERVAL_S); tests replace the sleep
+    with a recorder so a 40-call round does not take 3 minutes to test."""
+
+    def setUp(self):
+        self.sleeps = []
+        self._p = mock.patch.object(mcp_search, "_sleep",
+                                    side_effect=lambda s: self.sleeps.append(s))
+        self._p.start()
+        mcp_search._last_call[0] = 0.0
+
+    def tearDown(self):
+        self._p.stop()
+        mcp_search._last_call[0] = 0.0
+
+
+class TestPacing(PacedCase):
+    def test_every_call_after_the_first_waits_the_interval(self):
+        s = FakeSession()
+        with mock.patch.object(config, "MCP_CALL_INTERVAL_S", 5.0):
+            mcp_search.fetch_new(s, "org", lambda m: None, known=set())
+        find_calls = [c for c in s.calls if c[0] == "find_jobs"]
+        # 1 smart page + 13 terms + 3 gets = 17 find_jobs calls -> 16 waits
+        self.assertEqual(len(find_calls), 17)
+        self.assertEqual(len(self.sleeps), 16)
+        self.assertTrue(all(0 < w <= 5.0 for w in self.sleeps), self.sleeps)
+
+    def test_a_rate_limited_call_is_retried_once_after_the_advised_wait(self):
+        class Limited(FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.refused = 0
+
+            def call(self, tool, args):
+                if args.get("action") == "search" and args["params"]["query"] == "airtable" \
+                        and self.refused == 0:
+                    self.refused += 1
+                    raise RuntimeError("find_jobs: Rate limit exceeded for this tool."
+                                       " Wait about 5 seconds before retrying")
+                return super().call(tool, args)
+
+        s = Limited()
+        logs = []
+        with mock.patch.object(config, "MCP_RATE_LIMIT_WAIT_S", 6.0):
+            out = mcp_search.fetch_new(s, "org", logs.append, known=set())
+        self.assertIn(J_FIXED, {j["id"] for j in out["jobs"]})    # the term still landed
+        self.assertIn(6.0, self.sleeps)
+        self.assertTrue(any("rate-limited" in m for m in logs))
+
+    def test_a_second_refusal_is_the_terms_failure_not_the_rounds(self):
+        class Dead(FakeSession):
+            def call(self, tool, args):
+                if args.get("action") == "search" and args["params"]["query"] == "airtable":
+                    raise RuntimeError("Rate limit exceeded")
+                return super().call(tool, args)
+
+        logs = []
+        out = mcp_search.fetch_new(Dead(), "org", logs.append, known=set())
+        self.assertNotIn(J_FIXED, {j["id"] for j in out["jobs"]})
+        self.assertIn(J_HOURLY, {j["id"] for j in out["jobs"]})   # the rest of the round ran
+        self.assertTrue(any("search 'airtable' failed" in m for m in logs))
+
+
+class TestFetchNew(PacedCase):
     def test_round_normalizes_new_jobs_with_one_get_each(self):
         s = FakeSession()
         out = mcp_search.fetch_new(s, "org", lambda m: None, known=set())
@@ -151,8 +214,9 @@ class TestFetchNew(unittest.TestCase):
 
 # ── the provider inside the scan ─────────────────────────────────────────────
 
-class McpScanCase(unittest.TestCase):
+class McpScanCase(PacedCase):
     def setUp(self):
+        super().setUp()
         self.tmp = Path(tempfile.mkdtemp(prefix="mcp-scan-"))
         self.db_path = self.tmp / "v3.db"
         db.migrate(self.db_path)
@@ -175,6 +239,7 @@ class McpScanCase(unittest.TestCase):
         for p in self._patches:
             p.stop()
         shutil.rmtree(self.tmp, ignore_errors=True)
+        super().tearDown()
 
     def rows(self, sql, args=()):
         with db.connect(self.db_path) as conn:
@@ -302,8 +367,9 @@ class TestScanMcpProvider(McpScanCase):
 
 # ── finding 12: the poller's lock discipline ─────────────────────────────────
 
-class TestPollerHoldsNoLockAcrossTheNetwork(unittest.TestCase):
+class TestPollerHoldsNoLockAcrossTheNetwork(PacedCase):
     def setUp(self):
+        super().setUp()
         self.tmp = Path(tempfile.mkdtemp(prefix="mcp-poll-"))
         self.db_path = self.tmp / "v3.db"
         db.migrate(self.db_path)
@@ -318,6 +384,7 @@ class TestPollerHoldsNoLockAcrossTheNetwork(unittest.TestCase):
         for p in self._patches:
             p.stop()
         shutil.rmtree(self.tmp, ignore_errors=True)
+        super().tearDown()
 
     def test_no_connection_is_open_during_any_mcp_call(self):
         open_depth = {"n": 0}

@@ -14,6 +14,7 @@ MCP_TERM_QUERIES), never literals here.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Optional
 
@@ -21,6 +22,30 @@ from core import config
 from modules.upwork.feeds import mcp_feed
 
 SMART_LABEL = "mcp:smart_search"
+_sleep = time.sleep          # injectable for tests
+_last_call = [0.0]           # monotonic stamp of the previous paced call
+
+
+def paced_call(session, tool: str, args: dict, log: Callable[[str], None]):
+    """session.call with the server's pace respected: wait out
+    MCP_CALL_INTERVAL_S since the previous call, and on a rate-limit refusal
+    wait MCP_RATE_LIMIT_WAIT_S and retry ONCE. Measured 2026-08-25 22:41: the
+    tool allows ~12 find_jobs requests/min sustained; a refused query would
+    otherwise be an hour of silent under-scanning for that term."""
+    gap = config.MCP_CALL_INTERVAL_S - (time.monotonic() - _last_call[0])
+    if gap > 0 and _last_call[0]:
+        _sleep(gap)
+    try:
+        return session.call(tool, args)
+    except Exception as exc:                                     # noqa: BLE001
+        if "rate limit" not in repr(exc).lower():
+            raise
+        log(f"{tool} {args.get('action')}: rate-limited, retrying once after"
+            f" {config.MCP_RATE_LIMIT_WAIT_S:.0f}s")
+        _sleep(config.MCP_RATE_LIMIT_WAIT_S)
+        return session.call(tool, args)
+    finally:
+        _last_call[0] = time.monotonic()
 
 
 def org_uid(session) -> str:
@@ -51,8 +76,9 @@ def search_rows(session, org: str, log: Callable[[str], None]) -> dict:
     for page in range(config.MCP_SMART_PAGES):
         params = {"cursor": cursor} if cursor else {}
         try:
-            res = session.call("find_jobs", {"action": "smart_search",
-                                             "org_uid": org, "params": params})
+            res = paced_call(session, "find_jobs",
+                             {"action": "smart_search", "org_uid": org,
+                              "params": params}, log)
         except Exception as exc:                                 # noqa: BLE001
             log(f"smart_search p{page + 1} failed: {exc!r}")
             break
@@ -64,10 +90,10 @@ def search_rows(session, org: str, log: Callable[[str], None]) -> dict:
 
     for q in config.MCP_TERM_QUERIES:
         try:
-            res = session.call("find_jobs", {
+            res = paced_call(session, "find_jobs", {
                 "action": "search", "org_uid": org,
                 "params": {"query": q, "sort": "recency",
-                           "limit": config.MCP_PER_QUERY_LIMIT}})
+                           "limit": config.MCP_PER_QUERY_LIMIT}}, log)
         except Exception as exc:                                 # noqa: BLE001
             log(f"search {q!r} failed: {exc!r}")
             continue
@@ -79,8 +105,9 @@ def get_row(session, org: str, jid: str, log: Callable[[str], None]):
     """One `get`; None (logged) when it fails — the search row alone still
     passes the hard rules, so a failed get degrades, never aborts."""
     try:
-        return session.call("find_jobs", {"action": "get", "org_uid": org,
-                                          "params": {"id": jid}})
+        return paced_call(session, "find_jobs",
+                          {"action": "get", "org_uid": org, "params": {"id": jid}},
+                          log)
     except Exception as exc:                                     # noqa: BLE001
         log(f"get {jid} failed: {exc!r}")
         return None
