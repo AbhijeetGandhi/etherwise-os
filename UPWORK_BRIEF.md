@@ -30,8 +30,9 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   against the scraper's ~30/day. The feed is good; the VOLUME is the decision: at today's
   bands the flip triples drafts + ClickUp cards (+~$2/day against the $4 soft cap) for a
   band (16–21) he applied to twice in six weeks. **Hot bar moved to 20 at 20:00
-  (`ce45a21`)**; the flip itself still waits on 0.1 (provider path + the poller's lock
-  fix). Scraper plist = one-command rollback.
+  (`ce45a21`)**. **0.1 is BUILT and not flipped (`6b5543e`, 22:38):** the provider path
+  sits behind `config.JOB_FEED_PROVIDER = "chrome"`; flipping is the checklist under Next
+  actions 1 and needs his go. Rollback = the same config line back to "chrome".
 - **Chrome rails still live** (each retires at its module's cutover, per §5.2):
   scanner (`upwork_scan`, :15) and connects (`upwork_connects`, 05:35 — the only applied
   source). Corrected 2026-08-25: the follow-up monitor in v3 is the GraphQL `upwork_inbox`
@@ -196,8 +197,15 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
     (`feeds/shadow_poll.py:117-208`: the with-block opens before up to 25 network calls; the
     18:40 run held it 43 s against the 10 s busy timeout). The scoring pass's run 3 died on it
     (`database is locked`) and its `runs` row 7068 was stuck 'running' (marked failed by
-    hand 19:41 with his OK). Fix belongs to 0.1 (collect the gets, then one short write
-    transaction); same house rule as "model calls outside the with-block". OPEN.
+    hand 19:41 with his OK). **FIXED `6b5543e`** (22:38): the round is `feeds/mcp_search.py`
+    (network only); the poll is one short read → the round → one short write. The 22:40
+    poll ran on it: completed, 40 s, lock held only for the write.
+15. (22:41) **The MCP enforces ~12 `find_jobs` requests/min sustained** ("Rate limit
+    exceeded … wait about 5 seconds", refilling continuously): a dry round right after the
+    :40 poll lost its 14th query. A refused query is a silently under-scanned hour for that
+    term. FIXED in the same evening (`MCP_CALL_INTERVAL_S` 5 s between calls + one retry
+    after `MCP_RATE_LIMIT_WAIT_S`): a 40-call round now takes ~3.5 min of its hourly slot.
+    Also why the poller must retire at the flip — two rounds an hour would share one budget.
 13. (19:05) **Hot jobs that miss the ClickUp push are never re-pushed**: 20 hot jobs from the
     08-23 batch sit `status='Drafted'`, no ClickUp id; every other hot job since 08-18 was
     carded in its own run. The 14 open Loom-flag cards are exactly those 20 (the rule's
@@ -338,6 +346,22 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 0g. DONE 20:00 `ce45a21` — hot bar 20; `SOURCES` + `mcp_feed`/`upwork_inbox`/
    `upwork_outcomes`/`cos_sweep`, `RERUN_JOBS` ± ; push retry (finding 13); outcome email
    sends (finding 14); run 7068 failed. Suite 1,643 OK, doctor 62/0.
+0i. DONE 22:38 `6b5543e` (+ pacing, same evening) — **Phase 0.1 built, not flipped.**
+   `config.JOB_FEED_PROVIDER` ("chrome" today), `MCP_*` bounds moved to config,
+   `MCP_CLAIM_SINCE` (his call: only posts created after the flip get claimed);
+   `feeds/mcp_search.py` = the standing-query round, network-only, paced (finding 15);
+   `scan_pipeline._fetch_chrome` / `_fetch_mcp` behind the switch with ONE shared tail
+   (hard rules → score → draft → card + retry → digest); the MCP path claims through
+   `feed_bridge.process` (Iron-Law validation, fabrication guards) with `feed_source`
+   `mcp:<query>`; a dead session fails loud; a thin round is `scan_feed_degraded`. The
+   poller now shares the round (finding 12 fixed). MCP shapes captured read-only through
+   the chat's Upwork connector (his OK) into `tests/fixtures/mcp/`: **0.2 de-risked** — the
+   proposal node is the GraphQL `vendorProposals` shape the adapter already parses and
+   `marketplaceJobPosting.id` is the one job-id space; **no per-proposal "viewed" flag
+   exists** (the `insights` block is job-level: `proposals_opened/total`), so the Phase 1
+   "viewed" stage is dropped or re-defined at 0.2. Live dry round at 22:41 (no writes):
+   109 surfaced, 60 already in `scored_jobs`, 46 older than the cut, 3 new. 20 provider
+   tests + 6 fixture tests; suite 1,703 → see 0i'. 
 0h. DONE 20:21 `ec5de3d` — **Phase 1 step 1 + the builder half of step 2**: `data.upwork()`
    + `upwork_rows()` on `/api/upwork` + `/api/upwork/rows` (cohort funnel with closure,
    contracts-started line, rails strip, connects, needs-me from the shared
@@ -345,9 +369,17 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    reloaded and serving it (live: week 24 Aug so far — fetched 223 → passed 86 → hot 47 →
    applied 2 → interviewing 1 → won 0; contracts started 1, outside the funnel). The
    Loom-flag RULE change is parked as the ◆ under Open decisions.
-1. Cutover: the numbers are in (0d/0e). Remaining: his call on the hot bar (Open decisions)
-   → provider path (0.1) with `shadow_poll`'s lock fix (finding 12) and the push retry
-   (finding 13) → flip. Then 0.2 → 0.3 → 0.4 → 0.5. (All in this chat now.)
+1. **THE FLIP (needs his go; ~15 min; do it just after a :15 scan, never at :40):**
+   (a) `config.JOB_FEED_PROVIDER = "mcp"` and `MCP_CLAIM_SINCE = "<now, ISO UTC>"`;
+   (b) `launchctl bootout gui/$(id -u) launchd/io.etherwise.v3.upwork-mcp-shadow.plist`
+   (the poller retires — one MCP budget, one round an hour) and drop `mcp_feed` from
+   `SOURCES` + `mcp_shadow_poll` from `RERUN_JOBS`; the `scanner` entry keeps `upwork_scan`
+   (same task name, same plist, MCP inside) — its `why` gets the word "MCP";
+   (c) commit, then watch the next :15 run: `provider: mcp` in its metrics, `feed_source`
+   `mcp:*` on the new rows, no `scan_feed_degraded`, cards + digest as before;
+   (d) leave the Chrome scan tab where it is — `_fetch_chrome` stays in the file as the
+   rollback path (`JOB_FEED_PROVIDER = "chrome"`, no other change).
+   Then 0.2 → 0.3 → 0.4 → 0.5. (All in this chat now.)
 2. Phase 1: steps 1–3 done (0g/0h). Left: the section JS + Pipeline → Upwork rename +
    Analysis fold (spec §2/§6) — agreed for after 0.2, can go earlier on his word — and the
    Loom-flag card decision (◆).
@@ -382,3 +414,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   `ce45a21` (hot bar 20, rails registered, push retry, outcome email sends) and `ec5de3d`
   (the Upwork reader, drills, shared card builder). The Loom-flag rule change he approved
   was measured before shipping (151 jobs → cards) and turned into a question instead.
+- 2026-08-25 20:40–22:50 · "what's next" → 0.1 first, one read-only MCP capture, only
+  post-flip posts at the flip, Loom card "keep as is for now". → `6b5543e` the provider
+  path (not flipped) + fixtures; the rate limit found by the dry round and paced the same
+  evening. The flip is a checklist awaiting his go (Next actions 1).

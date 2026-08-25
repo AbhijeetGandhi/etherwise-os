@@ -173,7 +173,7 @@ malformed-timestamp rows). Every stage below is a predicate over a cohort job `j
 | 2 | `passed` | Passed the hard rules | `j.hard_rule_skip IS NULL` | yes | `passed` |
 | 3 | `hot` | Hot ≥ 16 *(label from config)* | `j.hard_rule_skip IS NULL AND j.score >= :HOT` — sub-line "of which Loom 22+: n" (`>= :LOOM`) | yes | `hot` |
 | 4 | `applied` | Applied | `EXISTS (SELECT 1 FROM connects_history h WHERE h.kind='applied' AND h.job_id = j.id)` **∪ closure** (see below) | yes — stamped with the connects-rail verdict | `applied` |
-| 5 | `viewed` | Viewed by client | no column exists | **no** → "—", reason "no source until 0.2 (`list_freelancer_proposals` must carry a viewed signal)" | — |
+| 5 | `viewed` | Viewed by client | no column exists | **no** → "—". **Measured 22:35 (fixtures/mcp/proposal_get.json): the MCP proposal shape carries NO per-proposal viewed flag; its `insights` block is job-level (`proposals_opened` / `proposals_total` / `shortlisted` across all applicants).** So at 0.2 this stage is either dropped or re-defined as "client is opening proposals on this job" (job-level, from the get's insights) — Abhijeet's call at 0.2 | — |
 | 6 | `interviewed` | Interviewing | `EXISTS (SELECT 1 FROM proposals p WHERE p.marketplace_job_id = j.id AND p.upwork_status IN ('Activated','Hired'))` ∪ closure | yes (sparse: 3 v3-era) | `interviewed` |
 | 7 | `offer` | Offer received | `EXISTS (SELECT 1 FROM offers o WHERE o.job_id = j.id AND o.state <> 'DELETED')` ∪ closure | **no** → "—", reason "offers are never ingested (finding 3.2) — Phase 0.5" | — |
 | 8 | `won` | Won (contract) | `EXISTS (SELECT 1 FROM contracts c WHERE c.job_id = j.id)` | yes | `won` |
