@@ -4,8 +4,10 @@
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
-The general ops chat stays the overview. Write outcomes back to this file at checkpoints;
-never let a decision live only in chat. Build conventions still come from
+Abhijeet's rule (2026-08-25 15:30): every question and decision goes to HIM in the chat
+that is doing the work — nothing is deferred to "the ops chat"; that chat, if it runs, reads
+BUILD_BRIEF like everyone else. Write outcomes back to this file at checkpoints; never let a
+decision live only in chat. Build conventions still come from
 `etherwise-v3/CLAUDE.md`; this brief is the DOMAIN state, not a second manual.
 
 ## Why this exists
@@ -224,6 +226,9 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    updated_at=datetime('now') WHERE snooze_until IS NOT NULL;` — all 14 have no message
    since 2026-05-29, so they re-bucket to hard-skip, nothing resurfaces.
 7. **Map location**: `docs/upwork/`; findings mirrored in this brief; finding 1 fixed here.
+8. (15:30) **Ask here.** All questions to Abhijeet in the working chat; no "ops chat" hand-offs.
+9. (15:30) **ClickUp list ids → config** (`CLICKUP_LISTS` incl. `icp`). **Band labels on the
+   tab: numbers and names** ("Hot 16–21", from `config.score_band_label()`).
 
 ## Next actions
 0. DONE 2026-08-25 14:30 (Upwork chat, on Abhijeet's "do 1-4"): sync fix committed
@@ -244,16 +249,24 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
      `prefill_Proposal` param must land the linked record on this page-style form.
    - on the Mac (3.9): test_score_bands + test_m1b + test_scan_pipeline 78 OK;
      `bin/doctor --offline` 60 PASS / 3 WARN (calendar reminders only) / 0 FAIL.
-   - `var/_to_delete/` holds git lock/tmp debris from the device-VM commits — `rm -rf` it.
-0b. (ops chat) paste the sourcing-invariant line (decision 2) + a checkpoint line for
-   `42c9eaf`/`39faf95` into BUILD_BRIEF; run `scripts/mcp_shadow_report.py` (shadow table
-   at 494 jobs, 125 overlapping) — the recalibration VALUES wait on it.
-0c. ◆ two answers for the Upwork chat (patch §E): dedup ClickUp list ids into config? band
-   numbers ("16-21") or names only on the tab?
-1. (ops chat, today) Cutover scorecard → provider path → flip. Then 0.2 → 0.3 → 0.4 → 0.5.
-2. (upwork chat, after 0.2) Phase 1 tab skeleton: health strip + funnel from real tables.
-3. (upwork chat, first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
-4. (upwork chat, when he says go) Phase 3 applicant pull for the LinkedIn-writer role.
+   - `var/_to_delete/` debris removed (his approval, 15:20).
+0b. DONE 2026-08-25 15:50 (this chat, per his "ask me here" rule): BUILD_BRIEF entry written
+   (top of file: the orientation, the sync bug, the bands, the invariant lift, the scorecard);
+   ClickUp list ids folded into `config.CLICKUP_LISTS` incl. `icp` (`bf13fbd`; the form_url
+   tests now use fixtures). Full suite on the Mac: **1,620 GREEN**.
+0c. ANSWERED: ClickUp ids → config (done); band labels on the tab = numbers AND names
+   (`config.score_band_label()`, never typed in JS).
+0d. **Scorecard (15:40 IST, 48 h from the first shadow row):** coverage of scraper-hot
+   29/33 (misses: 23, 23, 21 via best_matches; 24 via my_feed) · latency median +23 min
+   (= the :15/:40 schedule offset) · MCP-only 363 jobs, 132 pass hard rules, none scored
+   yet. ◆ NEXT NUMBER before any flip: score a day of MCP-only survivors (budgeted pass)
+   to learn how many of the 132 are hot — then decide the flip and the band values.
+1. Cutover: scorecard → score the MCP-only set → provider path → flip. Then 0.2 → 0.3 →
+   0.4 → 0.5. (All in this chat now.)
+2. (after 0.2) Phase 1 tab skeleton: health strip + funnel from real tables. The DESIGN can
+   start now.
+3. (first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
+4. (when he says go) Phase 3 applicant pull for the LinkedIn-writer role.
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated
