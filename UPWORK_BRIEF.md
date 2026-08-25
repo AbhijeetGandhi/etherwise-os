@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 built (flip 2026-08-26 after the 12:15 scan) · Phase 1 BUILT and REDESIGNED (`7279345`, `a10b421`)
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; first MCP round 04:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`)
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -22,23 +22,29 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
 ## Current state (2026-08-25)
 
 - **MCP transport live** (`modules/upwork/feeds/mcp_client.py`) — OAuth 2.1, read-only
-  allowlist in code. Shadow poller hourly at :40 (`mcp_shadow_jobs`, 197+ jobs).
-- **Cutover pending — the numbers are in (2026-08-25 19:20 IST, 48 h scorecard + the
-  scoring pass, next actions 0d/0e):** coverage of scraper-hot 36/40 · latency +23 min
+  allowlist in code. The shadow poller (hourly at :40, `mcp_shadow_jobs`) ran 08-24 → 08-26
+  03:40 and retired at the flip.
+- **The cutover numbers that decided it (2026-08-25 19:20 IST, 48 h scorecard + the
+  scoring pass, next actions 0d/0e; the flip itself is the next bullet):** coverage of scraper-hot 36/40 · latency +23 min
   (schedule offset) · drift median −1 (not the assumed −2; 65/82 within ±2; hot agreement
   60/63) · MCP-only survivors 157 scored, **94 hot (60 %)** ≈ 70–90 extra hot jobs/day
   against the scraper's ~30/day. The feed is good; the VOLUME is the decision: at today's
   bands the flip triples drafts + ClickUp cards (+~$2/day against the $4 soft cap) for a
   band (16–21) he applied to twice in six weeks. **Hot bar moved to 20 at 20:00
-  (`ce45a21`)**. **0.1 is BUILT and not flipped (`6b5543e`, 22:38):** the provider path
-  sits behind `config.JOB_FEED_PROVIDER = "chrome"`; flipping is the checklist under Next
-  actions 1 and needs his go. Rollback = the same config line back to "chrome".
-- **Chrome rails still live** (each retires at its module's cutover, per §5.2):
-  scanner (`upwork_scan`, :15) and connects (`upwork_connects`, 05:35 — the only applied
-  source). Corrected 2026-08-25: the follow-up monitor in v3 is the GraphQL `upwork_inbox`
-  job (10:15/19:15), not Chrome; no win-loss detector exists in v3 — both were Cowork
-  desktop tasks, deprecated in May, and Airtable Communications has had no write since
-  2026-05-20. Recorded as NOT running.
+  (`ce45a21`)**. 0.1 built behind `config.JOB_FEED_PROVIDER` at 22:38 (`6b5543e`).
+- **FLIPPED 2026-08-26 03:46 IST (`534283d`, his "let's flip it now anyways"):** the job
+  feed is the Upwork API — `config.JOB_FEED_PROVIDER = "mcp"`, cut-off `MCP_CLAIM_SINCE` =
+  the last Chrome scan (03:15 IST = `2026-08-25T21:45:00+00:00`); the shadow poller is
+  booted out (plist in `launchd/retired/`, LaunchAgent removed, copy in
+  `var/_retired_agents/`); the `scanner` SOURCES entry is now "Upwork job feed (MCP)", same
+  task `upwork_scan`, same plist, the MCP round inside. First MCP round = the 04:15 scan
+  (result under Next actions 1). Rollback = the one config line back to "chrome".
+- **Chrome rails**: the scanner's Chrome path is RETIRED from the schedule (kept in
+  `scan_pipeline._fetch_chrome` as the rollback); connects (`upwork_connects`, 05:35 — the
+  only applied source) still Chrome until 0.2 decides its replacement. Corrected
+  2026-08-25: the follow-up monitor in v3 is the GraphQL `upwork_inbox` job (10:15/19:15),
+  not Chrome; no win-loss detector exists in v3 — both were Cowork desktop tasks,
+  deprecated in May, and Airtable Communications has had no write since 2026-05-20.
 - **Proposals sync frozen since 9 June** (scope_blocked vendorProposals) — local
   proposals table stale, win-rate wrong. Fix: `list_freelancer_proposals` (tasks #30–33).
   Also (found 2026-08-25, fixed same night — see Codebase findings 1): the hourly
@@ -404,6 +410,14 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    what is left of it is the ◆ list (Loom card meaning, a "viewed" signal at 0.2).
    He has to open `http://127.0.0.1:5051/#/upwork` himself — the chat's Chrome bridge
    refuses 127.0.0.1.
+0l. DONE 2026-08-26 04:12 `7f7d710` (his 04:00 ask: "a manual trigger button for every
+   system … run it instantly with a button click to get the latest") — **Run now on every
+   system**: Inbox "Check Upwork now" (`upwork_inbox`), Jobs "Scan for new jobs now"
+   (`upwork_scan`), the connects strip "Update connects" (`upwork_connects`), every
+   re-runnable Health rail. The kick is the allowlisted `/api/rerun`; the button then polls
+   the new `/api/upwork/run?task=` (`data.upwork_run_status`, RERUN_JOBS-allowlisted) every
+   4 s until a NEW run has finished, says what happened in words and re-reads the tab; a
+   run already in flight is waited for, never kickstarted over. 52 tests, suite 1,721 OK.
 0k. DONE 2026-08-26 00:40 `a10b421` — **the tab REDESIGNED on his verdict** (23:50: "I don't
    like the UI at all … too complicated for me to understand anything … the part that I
    hate most is the client comms and how you represent it — it all should be intuitive").
@@ -428,8 +442,21 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    screen did not say so → `f670e5c`: the Inbox names what was cleared since yesterday
    (`inbox.cleared`, from nudge_state + confirmed closures) and that each comes back the
    moment the person writes again. Suite 1,719 OK.
-1. **THE FLIP (agreed 2026-08-25 night: tomorrow, right after the 12:15 scan, with him in
-   the chat; ~15 min; never at :40). PRE-BUILT 03:40 IST, NOT APPLIED:**
+1. **THE FLIP — DONE 2026-08-26 03:46 IST (`534283d`), on his "let's flip it now anyways so
+   in the morning when I wake up I can check how it went".** Sequence as the runbook: the
+   03:40 poll allowed to finish → poller booted out + LaunchAgent removed (03:44) → patch
+   applied → 147 targeted tests + full suite 1,719 OK + doctor 0 FAIL → cockpit reloaded →
+   committed. **First MCP round = run 7145, 04:15–04:20 (298 s):** `provider: mcp`, 15
+   queries, 116 surfaced, **47 skipped as older than the cut** (the cut = the last Chrome
+   scan, `2026-08-25T21:45:00+00:00` = 03:15 IST — nothing lost between the feeds, nothing
+   stale claimed), **12 new claimed** (`mcp:gohighlevel` 3 · `mcp:claude` 3 ·
+   `mcp:workflow automation` 3 · `mcp:vapi` 1 · `mcp:ai automation` 1 · `mcp:pipedrive` 1;
+   smart_search and the other seven terms surfaced nothing new inside the hour), 9 killed by
+   the hard rules (fixed_below_500 ×5, hourly_below_30 ×3, rate_unstated_low_client ×1),
+   **3 scored → 3 hot (27, 26, 22)**, 2 drafts grounded + 1 BLOCKED by the validator
+   (an unsourced "35"), **3 ClickUp cards pushed, 0 failed, digest sent, 0 anomalies**. The
+   12 rows sit in `scored_jobs` with `feed_source mcp:*`; the Jobs tab counts them. The
+   Chrome scan tab was not touched (rollback path). Pre-flip preparation (03:40):
    `var/patches/2026-08-26_p11_THE_FLIP.patch` (checked clean against HEAD) + the runbook
    `var/patches/2026-08-26_FLIP_RUNBOOK.md` (8 steps, the 13:15 watch list, the one-line
    rollback). The patch = (a)+(b) below plus: the poller plist moved to `launchd/retired/`
@@ -493,3 +520,6 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   part I hate most is the client comms" → three mockups, four answers (decision 12), the tab
   rebuilt as Inbox / Jobs / Health / Analysis with the conversation row shared with Today
   (`a10b421`, 0k). Suite 1,718 OK. Cockpit reloaded; his eyes are the acceptance test.
+- 2026-08-26 03:45–04:20 · "let's flip it now anyways" → THE FLIP at 03:46 (`534283d`),
+  first MCP round 04:15 clean (Next actions 1). "add a manual trigger button for every
+  system" → Run now everywhere (`7f7d710`, 0l). Both watched to completion in the chat.

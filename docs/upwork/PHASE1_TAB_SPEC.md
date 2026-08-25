@@ -597,3 +597,12 @@ total_applicants, draft_word_count and are sorted by score.
 Not changed: the reader's funnel maths (§3), the drills and their parity tests, the rails
 verdicts (§3.5), connects (§3.6), the card seam (§5) — the redesign is presentation plus the
 conversation builder; `needs_me` still ships for the tiles' counts.
+
+**Addendum 2026-08-26 04:12 (`7f7d710`) — Run now.** Every system has a button: Inbox "Check
+Upwork now" (`upwork_inbox`), Jobs "Scan for new jobs now" (`upwork_scan`), the connects strip
+"Update connects" (`upwork_connects`), each re-runnable Health rail "Run now". The kick is the
+allowlisted `/api/rerun`; the button polls `/api/upwork/run?task=` (`data.upwork_run_status`,
+refused outside `actions.RERUN_JOBS`) every 4 s until a NEW run has finished, then toasts the
+outcome in words and re-reads the tab on the same view; a run already in flight is waited for,
+never kickstarted over (a kickstart would kill it). After the flip (`534283d`) the Health table
+has eight rails — the MCP-poll row is gone and the scanner reads "Upwork job feed (MCP)".
