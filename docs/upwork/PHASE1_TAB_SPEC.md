@@ -1,6 +1,6 @@
 # PHASE1_TAB_SPEC.md — the Upwork tab, designed before it is built
 
-**Status:** DRAFT for Abhijeet's approval · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
+**Status:** APPROVED 2026-08-25 19:30 (with the §7 diff; hot bar → 20 the same minute) · steps 1–3 built (`ce45a21`, `ec5de3d`); the section (§2/§6) is the remaining step · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
 **Builds on:** `UPWORK_BRIEF.md` (Phase 1, laws 1–7, decisions 5/6/9), `docs/upwork/CODEBASE_MAP.md`
 §5–§6, `codebase-maps/03_cockpit.md`. Every number in §0 was read from the live DB (read-only) at
 18:45 IST; every file:line was checked in the working tree at `39faf95`+.
@@ -362,7 +362,7 @@ test.
 | Offers awaiting response | count tile, "—" | none (finding 3.2) | — | 0.5: `offer:<id>` card, clears when `offers.state` leaves PENDING |
 | Replies owed / stale threads | cards: follow-up (draft ready) + `owed_reply` + `escalate_client` | drafts ⋈ threads; `rule_owed_replies` (`rules.py:41`) | clears when the draft is sent (`sent_status <> 'pending'`) or the counterparty writes again (`evidence.counterparty` ts > Done) — observed only at 10:15/19:15 by `upwork_inbox` (finding 3.4) | 0.4: hourly reply detection — the Dhanya class of failure closes here |
 | Drafts ready for review | count tile "n proposal drafts waiting" + drill (not cards — counts before lists) | `today_rows(which="fresh")`'s predicate: hot, `draft_proposal IS NOT NULL`, not in the rail's applied ids, scored within `TODAY_FRESH_LEAD_DAYS` | drops when applied (rail) or when the job ages out of the fresh window | 0.2: applied from proposals, not the Chrome rail |
-| 🎥 Custom-Loom flags | cards (`hotlead_no_loom`), hidden on Today, shown here | `rule_hotlead_no_loom` (`rules.py:146`): `loom_flag=1 AND clickup_task_id IS NULL AND status actionable AND scored within 7 d` | decays when the job is carded or ages past 7 d | ◆ nothing observes "a Loom was recorded"; ◆ the `clickup_task_id IS NULL` predicate predates the live cutover — today it fires only for jobs the push missed (all 14 open cards are the 08-23 batch). The honest condition is `loom_flag=1 AND not applied AND fresh`; proposed as a one-line rule change in the build step, with its test |
+| 🎥 Custom-Loom flags | a COUNT tile (`needs_me.loom_flags`: flagged, open, not applied per the rail, scored ≤ 7 d — with its ICP sub-count and a drill) PLUS whatever `hotlead_no_loom` cards the engine holds, shown here and hidden on Today | tile: `_loom_flags_sql()` in `data.py`; cards: `rule_hotlead_no_loom` (`rules.py:146`), still `loom_flag=1 AND clickup_task_id IS NULL AND status actionable AND scored within 7 d` | tile drops when applied or aged out; a card decays when carded or aged past 7 d | **Measured 2026-08-25 20:20 before changing the rule: the honest condition is 151 jobs in 7 days (1 ICP).** As cards that floods the tab and the AM/PM brief's top-N (ranked by money at stake), so the rule was NOT changed; the tile carries the truth. ◆ the card's meaning is Abhijeet's call: ICP-tier only (≈2/month) · retire the kind and keep the tile · all 151. ◆ nothing observes "a Loom was recorded" |
 
 ### 5.3 Actions on a card
 
@@ -495,10 +495,10 @@ The brief's next action 2 says the skeleton is built after 0.2. Nothing in this 
 queue builder and their tests can be built now with no UI risk, and the section + the Pipeline
 rename land when Abhijeet says go. Recommended order:
 
-1. reader + rows + tests (no UI, no config) → commit
-2. `_act_now_queue` extraction + the Loom-flag view move + tests (Today's payload byte-for-byte
-   unchanged — pinned by a fixture test) → commit
-3. config diff (§7) applied by Abhijeet; launchd labels confirmed; doctor green → commit
+1. DONE `ec5de3d` — reader + rows + tests (no UI)
+2. DONE `ec5de3d` — `_act_now_queue` extraction + the Loom-flag view flag (Today's queue
+   pinned equal to the builder's output minus Loom flags); the RULE change parked (§5.2 ◆)
+3. DONE `ce45a21` — config diff (§7) applied by the chat on his approval; doctor green
 4. `upwork.js` + Pipeline → Upwork rename + Analysis fold; `bin/cockpit reload`; Chrome check of
    `#/upwork` and `#/pipeline`; screenshot into the chat → commit
 5. BUILD_BRIEF checkpoint line + brief next-action update
@@ -512,8 +512,8 @@ pipeline.js −380, tests ~400. No migration. No model call anywhere on the tab.
 
 1. Sprite: keep `trending-up` or add an Upwork glyph.
 2. Nav badge for "needs me" — none in Phase 1 (§2); revisit when the tab is the daily screen.
-3. `rule_hotlead_no_loom` predicate (§5.2) — change to `loom_flag=1 AND not applied AND fresh`
-   in step 2, with its test, or leave until 0.2?
+3. `rule_hotlead_no_loom` — the honest predicate is 151 jobs/week (measured); the tab shows
+   the count, the card needs a narrower meaning (ICP-only?) or retirement — see §5.2.
 4. Finding 3.13 — hot jobs that miss the ClickUp push are never re-pushed (20 on 08-23). A retry
    in the next scan is a 10-line change in `scan_pipeline`; belongs to 0.1 or to a small fix now?
 5. "A Loom was recorded" has no observer — the Loom-flag card cannot auto-clear on its real

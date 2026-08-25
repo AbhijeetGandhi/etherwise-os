@@ -29,8 +29,9 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   60/63) · MCP-only survivors 157 scored, **94 hot (60 %)** ≈ 70–90 extra hot jobs/day
   against the scraper's ~30/day. The feed is good; the VOLUME is the decision: at today's
   bands the flip triples drafts + ClickUp cards (+~$2/day against the $4 soft cap) for a
-  band (16–21) he applied to twice in six weeks. Flip + band values wait on his call
-  (Open decisions). Scraper plist = one-command rollback.
+  band (16–21) he applied to twice in six weeks. **Hot bar moved to 20 at 20:00
+  (`ce45a21`)**; the flip itself still waits on 0.1 (provider path + the poller's lock
+  fix). Scraper plist = one-command rollback.
 - **Chrome rails still live** (each retires at its module's cutover, per §5.2):
   scanner (`upwork_scan`, :15) and connects (`upwork_connects`, 05:35 — the only applied
   source). Corrected 2026-08-25: the follow-up monitor in v3 is the GraphQL `upwork_inbox`
@@ -194,32 +195,46 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 12. (19:00) **`shadow_poll` holds the DB write lock across its MCP `get` calls**
     (`feeds/shadow_poll.py:117-208`: the with-block opens before up to 25 network calls; the
     18:40 run held it 43 s against the 10 s busy timeout). The scoring pass's run 3 died on it
-    (`database is locked`) and its `runs` row **7068 is stuck 'running'** — the runner could
-    not write the failure either. Fix belongs to 0.1 (collect the gets, then one short write
-    transaction); same house rule as "model calls outside the with-block".
+    (`database is locked`) and its `runs` row 7068 was stuck 'running' (marked failed by
+    hand 19:41 with his OK). Fix belongs to 0.1 (collect the gets, then one short write
+    transaction); same house rule as "model calls outside the with-block". OPEN.
 13. (19:05) **Hot jobs that miss the ClickUp push are never re-pushed**: 20 hot jobs from the
     08-23 batch sit `status='Drafted'`, no ClickUp id; every other hot job since 08-18 was
     carded in its own run. The 14 open Loom-flag cards are exactly those 20 (the rule's
-    `clickup_task_id IS NULL` predicate predates the live cutover).
+    `clickup_task_id IS NULL` predicate predates the live cutover). **FIXED `ce45a21`**
+    (20:00): every scan also pushes rows scored within `config.CLICKUP_PUSH_RETRY_DAYS` that
+    have no card; a failed create is a warn anomaly + metric, never a failed scan. Live at
+    20:15: `clickup_pushed 28, clickup_retried 23, failed 0` — the 08-23 batch is carded.
 14. (19:10) **The Sunday outcome email never sends in live mode**: `outcome_capture.capture()`
     is `if ctx.shadow: record_shadow_write … else: ctx.require_live(…)` and `require_live`
     is only a guard (`runner.py:104`) — no send call exists. Setting `form_url` (0a) made the
-    links parse; nothing delivers them. Loop 2 has no outcome-reason intake until a send path
-    is built (one `notify.send_gmail` behind the existing interrupt-policy pattern).
+    links parse; nothing delivers them. **FIXED `ce45a21`** (20:00): the live branch sends
+    via `notify.send_gmail`, a failed send fails the run (critical anomaly), one email per
+    week. Still empty until 0.3: every run so far skipped on "no closed proposals" because
+    `proposals.status` has no writer (finding 3). Doctor now says `upwork_outcomes STALE
+    225h` — the plist is loaded; the 08-23 fire simply never happened (Mac asleep).
 
 ## Open decisions
 - ~~Tab name: "Upwork" vs "Pipeline".~~ CLOSED 18:55 — "Upwork", and Pipeline becomes it (decision 10).
 - Skip-review cadence: weekly card vs fold into Monday sales report.
 - Whether ClickUp stays the action queue long-term or the tab absorbs it (decide AFTER the
   tab proves itself — not before).
-- Threshold VALUES (after single-sourcing; decided from the MCP scorecard, not guessed).
-  **Evidence on the table (2026-08-25 19:25, live, since the rail began 07-13):** hard-rule
+- ~~Threshold VALUES~~ DECIDED 19:30 (decision 11): **hot bar 16 → 20, Loom stays 22**
+  (`ce45a21`). The evidence that decided it, kept for the record:
+  **(2026-08-25 19:25, live, since the rail began 07-13):** hard-rule
   survivors by band → applications: 22+ 732 → 33 · 20–21 124 → 0 · 18–19 130 → 1 · 16–17
   117 → 1 · 8–15 394 → 1. He applies at the Loom bar: 33 of 36 matched applications were 22+,
   and the 16–21 band (371 jobs, all drafted and carded) produced 2. MCP drift is −1 median, so
-  the feed does not move the cuts by itself. The question is the hot bar (16 → 20 or 22?) and
-  what "loom" then means — decided by him, the numbers are the proposal. Same decision gates
-  the flip's volume (Current state).
+  the feed does not move the cuts by itself. 20 keeps 35 of 36 matched applications inside
+  hot and cuts the drafted/carded volume ~40 % ahead of the flip.
+- **◆ NEW (20:25) — what the Loom-flag CARD means.** Its rule fires on `loom_flag=1 AND
+  clickup_task_id IS NULL` — since the live cutover that is only "the push missed it"
+  (finding 13), so the 14 cards were an accident and the retry just cleared their cause.
+  The honest condition (flagged, open, not applied, ≤7 d) is **151 jobs right now** — as
+  cards that would flood the tab AND the AM/PM brief's top-N (ranked by money at stake).
+  The tab shows that population as a COUNT tile with a drill (`needs_me.loom_flags`,
+  `ec5de3d`). The card itself: (a) ICP-tier only (≈2/month, actionable), (b) retire the kind
+  and keep the tile, or (c) all 151. Not changed until he picks.
 - Outcome Reason vocabulary: 40 Airtable choices with duplicates (map §9) → one canonical
   set before Loop 2 codes anything.
 - `rails/REGISTRY.md` `form_url`: the Outcome Submissions table + form exist in Airtable
@@ -264,6 +279,10 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
     "client replied") · **connects spent = applications + boosts net of boost refunds**
     (badge its own line; purchases/renewals/awards out). Viewed and offer render "—" until
     0.2 / 0.5. Tab name: "Upwork" (the open item is closed by decision 1).
+11. (19:30) **Hot bar 20** (Loom 22) · spec + §7 config diff approved, applied by the chat ·
+    build order: Phase 1 steps 1–2 now, section + Pipeline rename after 0.2 · approvals:
+    mark run 7068 failed, fix the Loom-flag rule in step 2 (→ became the ◆ above once the
+    population was measured), build the outcome-email send path, the ClickUp push retry.
 
 ## Next actions
 0. DONE 2026-08-25 14:30 (Upwork chat, on Abhijeet's "do 1-4"): sync fix committed
@@ -315,13 +334,23 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    `docs/upwork/PHASE1_TAB_SPEC.md` (reader payload, the eight stages with their SQL and the
    closure rule, drills + parity tests, the health strip with a proposed `SOURCES` diff §7,
    the shared card builder, connects definitions, build order). Findings 12–14 came out of
-   writing it. ◆ awaiting his approval of the spec + the §7 config diff before code.
+   writing it. Approved 19:30 with the §7 diff (decision 11).
+0g. DONE 20:00 `ce45a21` — hot bar 20; `SOURCES` + `mcp_feed`/`upwork_inbox`/
+   `upwork_outcomes`/`cos_sweep`, `RERUN_JOBS` ± ; push retry (finding 13); outcome email
+   sends (finding 14); run 7068 failed. Suite 1,643 OK, doctor 62/0.
+0h. DONE 20:21 `ec5de3d` — **Phase 1 step 1 + the builder half of step 2**: `data.upwork()`
+   + `upwork_rows()` on `/api/upwork` + `/api/upwork/rows` (cohort funnel with closure,
+   contracts-started line, rails strip, connects, needs-me from the shared
+   `_act_now_queue()` extracted out of `today()`), 37 tests, suite 1,680 OK, cockpit
+   reloaded and serving it (live: week 24 Aug so far — fetched 223 → passed 86 → hot 47 →
+   applied 2 → interviewing 1 → won 0; contracts started 1, outside the funnel). The
+   Loom-flag RULE change is parked as the ◆ under Open decisions.
 1. Cutover: the numbers are in (0d/0e). Remaining: his call on the hot bar (Open decisions)
    → provider path (0.1) with `shadow_poll`'s lock fix (finding 12) and the push retry
    (finding 13) → flip. Then 0.2 → 0.3 → 0.4 → 0.5. (All in this chat now.)
-2. Phase 1 build per the spec's §9 order: reader + drills + tests first (no UI, no config),
-   the card builder extraction second, the config diff third, the section + Pipeline rename
-   last. Step 1–2 can start on his "go" for the spec; step 4 lands after 0.2 as agreed.
+2. Phase 1: steps 1–3 done (0g/0h). Left: the section JS + Pipeline → Upwork rename +
+   Analysis fold (spec §2/§6) — agreed for after 0.2, can go earlier on his word — and the
+   Loom-flag card decision (◆).
 3. (first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
 4. (when he says go) Phase 3 applicant pull for the LinkedIn-writer role.
 
@@ -349,3 +378,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   in the meantime" → the four tab decisions (decision 10) and `docs/upwork/PHASE1_TAB_SPEC.md`.
   Findings 12–14 recorded. Threshold evidence tabled under Open decisions; the hot bar and
   the flip volume are one decision, his.
+- 2026-08-25 19:30–20:25 · "any questions or get started?" → four answers (decision 11) →
+  `ce45a21` (hot bar 20, rails registered, push retry, outcome email sends) and `ec5de3d`
+  (the Upwork reader, drills, shared card builder). The Loom-flag rule change he approved
+  was measured before shipping (151 jobs → cards) and turned into a question instead.
