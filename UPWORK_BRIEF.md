@@ -429,7 +429,14 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    (`inbox.cleared`, from nudge_state + confirmed closures) and that each comes back the
    moment the person writes again. Suite 1,719 OK.
 1. **THE FLIP (agreed 2026-08-25 night: tomorrow, right after the 12:15 scan, with him in
-   the chat; ~15 min; never at :40):**
+   the chat; ~15 min; never at :40). PRE-BUILT 03:40 IST, NOT APPLIED:**
+   `var/patches/2026-08-26_p11_THE_FLIP.patch` (checked clean against HEAD) + the runbook
+   `var/patches/2026-08-26_FLIP_RUNBOOK.md` (8 steps, the 13:15 watch list, the one-line
+   rollback). The patch = (a)+(b) below plus: the poller plist moved to `launchd/retired/`
+   (install.sh only loads `launchd/*.plist`), the scanner SOURCES entry relabelled "Upwork
+   job feed (MCP)", the MCP-poll row out of the Health table, the Chrome-path tests pinned to
+   `JOB_FEED_PROVIDER="chrome"` and the provider tests to `MCP_CLAIM_SINCE=None`. Claim cut
+   proposed = 12:15 IST 26 Aug (`2026-08-26T06:45:00+00:00`) — confirm with him at apply.
    (a) `config.JOB_FEED_PROVIDER = "mcp"` and `MCP_CLAIM_SINCE = "<now, ISO UTC>"`;
    (b) `launchctl bootout gui/$(id -u) launchd/io.etherwise.v3.upwork-mcp-shadow.plist`
    (the poller retires — one MCP budget, one round an hour) and drop `mcp_feed` from
