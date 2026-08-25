@@ -175,6 +175,203 @@ class TestSubmittedProposals(M1bCase):
         self.assertEqual(p["client"]["companyName"], "RoomlessCo")
         self.assertEqual(p["createdDateTime"], "2026-06-15T00:00:00Z")
 
+    def test_normalizer_passes_flat_shape_through(self):
+        # a dict that is already flat (tests, pre-normalised callers) survives a
+        # second normalisation unchanged — the normaliser is safe to call twice
+        p = sync_state._vp_node_to_proposal(vp(pid="f1", title="Flat"))
+        self.assertEqual(p["chargeRate"], {"amount": "1200", "currency": "USD"})
+        self.assertEqual(p["job"], {"id": "j1", "title": "Flat"})
+        self.assertEqual(p["client"]["companyName"], "Acme")
+        self.assertEqual(p["client"]["totalSpent"], {"amount": "5000"})
+        self.assertEqual(p["createdDateTime"], "2026-06-01T00:00:00Z")
+        self.assertEqual(p["modifiedDateTime"], "2026-06-10T00:00:00Z")
+        self.assertEqual(p["status"]["status"], "Pending")
+
+
+# ── pass 1 (ROOM_LIST) shape — the 2026-06-30..08-25 NULL-write bug ──────────
+def vp_room_node(pid="rp1", status="Activated", title="Room job", rate="55",
+                 created="2026-07-02T10:00:00Z", modified="2026-08-20T09:00:00Z"):
+    """A vendorProposal node exactly as ROOM_LIST returns it (queries.py:47-60):
+    nested terms/marketplaceJobPosting/auditDetails, NO organization/client."""
+    return {"id": pid, "coverLetter": "cover text",
+            "status": {"status": status},
+            "terms": {"chargeRate": {"rawValue": rate, "currency": "USD",
+                                     "displayValue": f"${rate}"}},
+            "marketplaceJobPosting": {"id": "job-" + pid,
+                                      "content": {"title": title}},
+            "auditDetails": {"createdDateTime": {"rawValue": created},
+                             "modifiedDateTime": {"rawValue": modified}}}
+
+
+def room_list_node(rid="room_a", name="Amanda Thomas, Amanda T", vp=None,
+                   contract=True):
+    """One ROOM_LIST edge node: contract nests the job title under
+    job.content.title and selects no hourlyChargeRate (queries.py:38-46)."""
+    r = {"id": rid, "roomName": name, "topic": "Topic", "roomType": "ROOM",
+         "numUnread": 0, "offerIds": [],
+         "latestStory": {"id": "s1", "message": "hi",
+                         "createdDateTime": "2026-08-20T09:00:00Z"}}
+    if vp is not None:
+        r["vendorProposal"] = vp
+    if contract:
+        r["contract"] = {"id": "c-" + rid, "title": "Airtable build",
+                         "status": "ACTIVE", "contractType": "HOURLY",
+                         "startDateTime": "2026-07-03T00:00:00Z",
+                         "endDateTime": None,
+                         "job": {"id": "job-c", "content": {"title": "Airtable build"}}}
+    return r
+
+
+class FakeRoomClient:
+    """UpworkClient stand-in for sync(): ROOM_LIST -> the given rooms,
+    vendorProposals -> scope error (as live), transactions -> empty envelope."""
+    def __init__(self, rooms):
+        self.rooms = rooms
+
+    def graphql(self, query, variables=None, tolerate_errors=False):
+        if "roomList(" in query:
+            return {"roomList": {"totalCount": len(self.rooms),
+                                 "edges": [{"node": r} for r in self.rooms],
+                                 "pageInfo": {"hasNextPage": False,
+                                              "endCursor": "0"}}}
+        if "vendorProposals(" in query:
+            raise Exception("Query.vendorProposals — doesn't have enough"
+                            " oauth2 permissions/scopes")
+        return {"data": {"transactionHistory": {"transactionDetail": {
+            "transactionHistoryRow": []}}}, "errors": []}
+
+
+class TestRoomListPass(M1bCase):
+    """Pass 1 handed the raw nested node to upsert_proposal from 2026-06-30 to
+    2026-08-25: live DB showed 9/9 v3-era proposals with NULL created_dt,
+    job_title, charge_rate, modified_dt and all 59 contracts with NULL
+    job_title. These pin the normalised path and the fill-or-keep updates."""
+
+    def _sync(self, rooms):
+        return sync_state.sync(_Ctx(self.db_path),
+                               client_factory=lambda: FakeRoomClient(rooms))
+
+    def test_roomlist_pass_populates_proposal_telemetry(self):
+        out = self._sync([room_list_node(vp=vp_room_node())])
+        self.assertEqual(out["proposals"], {"inserted": 1})
+        r = self.rows("SELECT * FROM proposals WHERE id='rp1'")[0]
+        self.assertEqual(r["job_title"], "Room job")
+        self.assertEqual(r["charge_rate"], 55.0)
+        self.assertEqual(r["charge_currency"], "USD")
+        self.assertEqual(r["marketplace_job_id"], "job-rp1")
+        self.assertEqual(r["created_dt"], "2026-07-02T10:00:00Z")
+        self.assertEqual(r["modified_dt"], "2026-08-20T09:00:00Z")
+        self.assertEqual(r["upwork_status"], "Activated")
+        self.assertEqual(r["cover_letter"], "cover text")
+        self.assertEqual(r["thread_id"], "room_a")
+        self.assertEqual(r["client_company"], "Amanda Thomas, Amanda T")
+        self.assertIsNone(r["status"])                 # verdict is 0.3's job
+
+    def test_roomlist_pass_fills_contract_title_from_nested_job(self):
+        self._sync([room_list_node(vp=vp_room_node())])
+        c = self.rows("SELECT * FROM contracts WHERE id='c-room_a'")[0]
+        self.assertEqual(c["job_title"], "Airtable build")
+        self.assertEqual(c["job_id"], "job-c")
+        self.assertEqual(c["upwork_status"], "ACTIVE")
+        self.assertEqual(c["client_company"], "Amanda Thomas, Amanda T")
+        self.assertIsNone(c["hourly_rate"])   # ROOM_LIST selects none; stays NULL
+
+    def test_roomlist_pass_heals_pre_fix_rows(self):
+        # rows as the bug left them: identity + status only, telemetry NULL
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO proposals (id, upwork_status, thread_id,"
+                         " client_company) VALUES ('rp1','Activated','room_a',"
+                         " 'Amanda Thomas, Amanda T')")
+            conn.execute("INSERT INTO proposals (id, upwork_status, status,"
+                         " thread_id) VALUES ('rpw','Hired','Won','room_w')")
+            conn.execute("INSERT INTO contracts (id, upwork_status, thread_id)"
+                         " VALUES ('c-room_a','ACTIVE','room_a')")
+        out = self._sync([
+            room_list_node(vp=vp_room_node()),
+            room_list_node(rid="room_w", name="Won Person", contract=False,
+                           vp=vp_room_node(pid="rpw", status="Hired",
+                                           title="Won job", rate="70",
+                                           created="2026-05-01T00:00:00Z"))])
+        self.assertEqual(out["proposals"],
+                         {"updated": 1, "terminal-preserved": 1})
+        r = self.rows("SELECT * FROM proposals WHERE id='rp1'")[0]
+        self.assertEqual((r["job_title"], r["charge_rate"], r["created_dt"],
+                          r["modified_dt"], r["marketplace_job_id"]),
+                         ("Room job", 55.0, "2026-07-02T10:00:00Z",
+                          "2026-08-20T09:00:00Z", "job-rp1"))
+        w = self.rows("SELECT * FROM proposals WHERE id='rpw'")[0]
+        self.assertEqual(w["status"], "Won")                    # untouched
+        self.assertEqual(w["job_title"], "Won job")             # filled
+        self.assertEqual(w["created_dt"], "2026-05-01T00:00:00Z")
+        self.assertEqual(w["charge_rate"], 70.0)
+        c = self.rows("SELECT job_title FROM contracts WHERE id='c-room_a'")[0]
+        self.assertEqual(c["job_title"], "Airtable build")
+
+    def test_created_dt_is_backfilled_not_overwritten(self):
+        self._sync([room_list_node(vp=vp_room_node(created="2026-07-02T10:00:00Z"))])
+        # a later payload disagreeing on created_dt must not move it; modified moves
+        self._sync([room_list_node(vp=vp_room_node(created="2026-07-09T10:00:00Z",
+                                                   modified="2026-08-21T00:00:00Z"))])
+        r = self.rows("SELECT created_dt, modified_dt FROM proposals WHERE id='rp1'")[0]
+        self.assertEqual(r["created_dt"], "2026-07-02T10:00:00Z")
+        self.assertEqual(r["modified_dt"], "2026-08-21T00:00:00Z")
+
+    def test_update_never_nulls_stored_telemetry(self):
+        # the exact hourly damage: a payload lacking title/rate/dates used to
+        # overwrite stored values with NULL. Now: fill-or-keep.
+        with db.connect(self.db_path) as conn:
+            sync_state.upsert_proposal(conn, vp(pid="keep", status="Pending"), "t1")
+            r = sync_state.upsert_proposal(
+                conn, {"id": "keep", "status": {"status": "Activated"}}, "t1")
+        self.assertEqual(r, "updated")
+        row = self.rows("SELECT * FROM proposals WHERE id='keep'")[0]
+        self.assertEqual(row["upwork_status"], "Activated")     # telemetry moved
+        self.assertEqual(row["job_title"], "Make build")        # kept
+        self.assertEqual(row["charge_rate"], 1200.0)            # kept
+        self.assertEqual(row["created_dt"], "2026-06-01T00:00:00Z")
+        self.assertEqual(row["modified_dt"], "2026-06-10T00:00:00Z")
+        self.assertEqual(row["client_company"], "Acme")         # kept (no room)
+        self.assertEqual(row["cover_letter"], "hello")
+        # unchanged precedence: a room name still names the counterparty
+        with db.connect(self.db_path) as conn:
+            sync_state.upsert_proposal(
+                conn, {"id": "keep", "status": {"status": "Activated"}}, "t1",
+                room_name="Some Person")
+        self.assertEqual(self.rows("SELECT client_company FROM proposals"
+                                   " WHERE id='keep'")[0]["client_company"],
+                         "Some Person")
+
+    def test_terminal_row_fills_missing_telemetry_only(self):
+        with db.connect(self.db_path) as conn:
+            v = vp(pid="won2", status="Hired", title="Original title")
+            sync_state.upsert_proposal(conn, v, "t1")
+            conn.execute("UPDATE proposals SET status='Won', created_dt=NULL"
+                         " WHERE id='won2'")
+            r = sync_state.upsert_proposal(
+                conn, vp(pid="won2", status="Declined", title="Renamed"), "t1")
+        self.assertEqual(r, "terminal-preserved")
+        row = self.rows("SELECT * FROM proposals WHERE id='won2'")[0]
+        self.assertEqual(row["status"], "Won")
+        self.assertEqual(row["upwork_status"], "Declined")
+        self.assertEqual(row["job_title"], "Original title")   # not renamed
+        self.assertEqual(row["created_dt"], "2026-06-01T00:00:00Z")  # filled
+
+    def test_contract_update_keeps_hourly_rate_and_title(self):
+        with db.connect(self.db_path) as conn:
+            sync_state.upsert_contract(
+                conn, {"id": "cK", "title": "Build", "status": "ACTIVE",
+                       "hourlyChargeRate": {"amount": "51.5"},
+                       "job": {"id": "j1", "title": "Build job"}},
+                "t1", profile="personal", room_name="Brandi Jordan")
+            sync_state.upsert_contract(
+                conn, {"id": "cK", "title": "Build", "status": "PAUSED",
+                       "job": {"id": "j1", "content": {}}},
+                "t1", profile="personal", room_name="Brandi Jordan")
+        c = self.rows("SELECT * FROM contracts WHERE id='cK'")[0]
+        self.assertEqual(c["upwork_status"], "PAUSED")
+        self.assertEqual(c["hourly_rate"], 51.5)
+        self.assertEqual(c["job_title"], "Build job")
+
 
 class TestSyncUpserts(M1bCase):
     def test_proposal_stores_iso_not_epoch(self):

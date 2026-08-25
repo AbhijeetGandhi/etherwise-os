@@ -62,7 +62,21 @@ def iso_dt(value) -> Optional[str]:
 
 def upsert_proposal(conn, vp: dict, thread_id: Optional[str],
                     room_name: Optional[str] = None) -> str:
-    """Returns 'inserted' | 'updated' | 'terminal-preserved'."""
+    """Returns 'inserted' | 'updated' | 'terminal-preserved'.
+
+    `vp` is the FLAT proposal dict (`chargeRate`, `job{id,title}`, `client{}`,
+    `createdDateTime`, `modifiedDateTime`) — the shape `_vp_node_to_proposal`
+    produces. Raw GraphQL nodes (ROOM_LIST.vendorProposal, vendorProposals)
+    nest those fields under terms/marketplaceJobPosting/auditDetails and MUST
+    go through the normaliser first: from 2026-06-30 to 2026-08-25 pass 1
+    handed the raw node straight in, so every proposal v3 inserted had NULL
+    created_dt/job_title/charge_rate/modified_dt and the hourly UPDATE
+    re-NULLed the imported rows' title/rate/modified_dt (9 + 26 + 72 rows).
+
+    Telemetry columns are fill-or-keep: a payload that lacks a value never
+    erases one already stored, and created_dt/marketplace_job_id are backfilled
+    when missing so the pre-fix rows heal on their next sync.
+    """
     pid = vp["id"]
     upwork_status = ((vp.get("status") or {}).get("status")
                      if isinstance(vp.get("status"), dict)
@@ -90,22 +104,37 @@ def upsert_proposal(conn, vp: dict, thread_id: Optional[str],
              iso_dt(vp.get("modifiedDateTime")), thread_id))
         return "inserted"
     if exists["status"] in TERMINAL:
-        # mirror non-status telemetry only; the verdict is permanent
+        # mirror non-status telemetry only; the verdict is permanent. Missing
+        # telemetry (title/rate/dates/job id) is filled, never overwritten.
         conn.execute(
-            "UPDATE proposals SET upwork_status=?, modified_dt=?,"
-            " updated_at=datetime('now') WHERE id=? AND status IN"
-            " (?,?,?,?,?)", (upwork_status, iso_dt(vp.get("modifiedDateTime")),
-                             pid, *TERMINAL))
+            """UPDATE proposals SET upwork_status=?,
+               modified_dt=COALESCE(?, modified_dt),
+               created_dt=COALESCE(created_dt, ?),
+               job_title=COALESCE(job_title, ?),
+               charge_rate=COALESCE(charge_rate, ?),
+               marketplace_job_id=COALESCE(marketplace_job_id, ?),
+               updated_at=datetime('now')
+               WHERE id=? AND status IN (?,?,?,?,?)""",
+            (upwork_status, iso_dt(vp.get("modifiedDateTime")),
+             iso_dt(vp.get("createdDateTime")), job.get("title"),
+             money(vp.get("chargeRate")), job.get("id"), pid, *TERMINAL))
         return "terminal-preserved"
     conn.execute(
-        """UPDATE proposals SET upwork_status=?, charge_rate=?,
-           cover_letter=COALESCE(?, cover_letter), job_title=?,
-           client_company=?, modified_dt=?, thread_id=COALESCE(?, thread_id),
+        """UPDATE proposals SET upwork_status=?,
+           charge_rate=COALESCE(?, charge_rate),
+           cover_letter=COALESCE(?, cover_letter),
+           job_title=COALESCE(?, job_title),
+           client_company=COALESCE(?, client_company),
+           modified_dt=COALESCE(?, modified_dt),
+           created_dt=COALESCE(created_dt, ?),
+           marketplace_job_id=COALESCE(marketplace_job_id, ?),
+           thread_id=COALESCE(?, thread_id),
            updated_at=datetime('now')
            WHERE id=? AND (status IS NULL OR status NOT IN (?,?,?,?,?))""",
         (upwork_status, money(vp.get("chargeRate")), vp.get("coverLetter"),
          job.get("title"), client_company,
-         iso_dt(vp.get("modifiedDateTime")), thread_id, pid, *TERMINAL))
+         iso_dt(vp.get("modifiedDateTime")), iso_dt(vp.get("createdDateTime")),
+         job.get("id"), thread_id, pid, *TERMINAL))
     return "updated"
 
 
@@ -120,19 +149,27 @@ def upsert_contract(conn, c: dict, thread_id: Optional[str],
     # is the fallback. Upwork names the PERSON (e.g. 'Amanda Thomas'), not the
     # company brand — a person->company alias (CLIENT_CANONICAL) covers the rest.
     client_company = (c.get("client") or {}).get("companyName") or room_name
+    job = c.get("job") or {}
+    # ROOM_LIST nests the job title (`job { id content { title } }`); the flat
+    # `job.title` form is kept for callers that pre-normalise. Reading only the
+    # flat form left job_title NULL on all 59 contracts (found 2026-08-25).
+    job_title = job.get("title") or (job.get("content") or {}).get("title")
     fields = (c.get("title"), c.get("status"), c.get("contractType"),
               c.get("startDateTime"), c.get("endDateTime"),
               (c.get("hourlyChargeRate") or {}).get("amount"),
-              (c.get("job") or {}).get("id"),
-              (c.get("job") or {}).get("title"),
-              client_company,
+              job.get("id"), job_title, client_company,
               profile, thread_id)
     if exists:
+        # hourly_rate/job_title are fill-or-keep: ROOM_LIST selects no
+        # hourlyChargeRate, so a NULL from the payload must not erase a value
+        # a richer source has stored.
         conn.execute(
             """UPDATE contracts SET title=?, upwork_status=?,
-               contract_type=?, start_dt=?, end_dt=?, hourly_rate=?,
-               job_id=?, job_title=?, client_company=?, profile=?,
-               thread_id=COALESCE(?, thread_id), updated_at=datetime('now')
+               contract_type=?, start_dt=?, end_dt=?,
+               hourly_rate=COALESCE(?, hourly_rate),
+               job_id=?, job_title=COALESCE(?, job_title), client_company=?,
+               profile=?, thread_id=COALESCE(?, thread_id),
+               updated_at=datetime('now')
                WHERE id=?""", (*fields, cid))
         return "updated"
     conn.execute(
@@ -332,23 +369,38 @@ _SCOPE_HINTS = ("vendorproposals", "oauth2 permissions", "scope", "permission")
 
 
 def _vp_node_to_proposal(node: dict) -> dict:
-    """vendorProposals node -> the dict upsert_proposal expects. Field set
-    mirrors ROOM_LIST.vendorProposal (pinned from M3-era introspection)."""
+    """GraphQL proposal node -> the FLAT dict upsert_proposal expects.
+
+    Handles both raw shapes — ROOM_LIST.vendorProposal (pass 1) and the
+    vendorProposals node (pass 2) nest the same fields the same way — and
+    passes an already-flat dict through unchanged, so a caller cannot hand
+    upsert_proposal the wrong shape whichever way it arrives. Every pass
+    must call this; the 2026-06-30..08-25 NULL-write bug was pass 1 skipping it.
+    """
     mjp = node.get("marketplaceJobPosting") or {}
     org = node.get("organization") or {}
     audit = node.get("auditDetails") or {}
+    status = node.get("status")
+    status = status.get("status") if isinstance(status, dict) else status
+    flat_job = node.get("job") or {}
+    flat_client = node.get("client") or {}
     return {
         "id": node["id"],
-        "status": {"status": (node.get("status") or {}).get("status")},
-        "chargeRate": (node.get("terms") or {}).get("chargeRate"),
+        "status": {"status": status},
+        "chargeRate": ((node.get("terms") or {}).get("chargeRate")
+                       or node.get("chargeRate")),
         "coverLetter": node.get("coverLetter"),
-        "job": {"id": mjp.get("id"),
-                "title": (mjp.get("content") or {}).get("title")},
-        "client": {"companyName": org.get("name"),
-                   "country": (org.get("location") or {}).get("country"),
-                   "totalSpent": None},
-        "createdDateTime": (audit.get("createdDateTime") or {}).get("rawValue"),
-        "modifiedDateTime": (audit.get("modifiedDateTime") or {}).get("rawValue"),
+        "job": {"id": mjp.get("id") or flat_job.get("id"),
+                "title": ((mjp.get("content") or {}).get("title")
+                          or flat_job.get("title"))},
+        "client": {"companyName": org.get("name") or flat_client.get("companyName"),
+                   "country": ((org.get("location") or {}).get("country")
+                               or flat_client.get("country")),
+                   "totalSpent": flat_client.get("totalSpent")},
+        "createdDateTime": ((audit.get("createdDateTime") or {}).get("rawValue")
+                            or node.get("createdDateTime")),
+        "modifiedDateTime": ((audit.get("modifiedDateTime") or {}).get("rawValue")
+                             or node.get("modifiedDateTime")),
     }
 
 
@@ -413,7 +465,9 @@ def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14) -> dict:
             room_name = room.get("roomName")
             vp = room.get("vendorProposal")
             if vp and vp.get("id"):
-                r = upsert_proposal(conn, vp, thread_id, room_name=room_name)
+                # normalise the nested ROOM_LIST node first (see upsert_proposal)
+                r = upsert_proposal(conn, _vp_node_to_proposal(vp), thread_id,
+                                    room_name=room_name)
                 metrics["proposals"][r] = metrics["proposals"].get(r, 0) + 1
             c = room.get("contract")
             if c and c.get("id"):
