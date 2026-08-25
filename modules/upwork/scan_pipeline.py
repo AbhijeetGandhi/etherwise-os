@@ -1,15 +1,19 @@
-"""M1a hourly scan pipeline — SHADOW-ONLY until cutover review.
+"""M1a hourly scan pipeline (live since the 2026-07-06 cutover).
 
-Pure-Python orchestration of the same browser feeds (SOURCING INVARIANT,
-2026-06-12, permanent: leads come from the three personalized feed tabs in
-his logged-in Chrome — never an API substitute):
+TWO PROVIDERS, ONE TAIL (Phase 0.1, Upwork chat 2026-08-25; config.JOB_FEED_PROVIDER):
 
-  navigate dedicated tab -> feed_bridge extraction -> claim into V3
-  scored_jobs -> hard rules (code) -> score via gateway (structured outputs,
-  anchored exemplars) -> drafts >= HOT_LEAD_THRESHOLD -> INTENDED ClickUp
-  tasks + digest into
-  shadow_ledger (zero external writes; bin/shadow-diff compares against the
-  v4.14.1 Cowork task's actuals daily).
+  chrome  navigate the dedicated tab -> feed_bridge extraction of the three
+          personalized feed tabs in his logged-in Chrome (the M1 SOURCING
+          INVARIANT of 2026-06-12)
+  mcp     the bounded standing queries against mcp.upwork.com
+          (feeds/mcp_search: smart_search + the term list, one `get` per new
+          job; the invariant was LIFTED for MCP find_jobs on 2026-08-25)
+
+  -> claim into V3 scored_jobs -> hard rules (code) -> score via gateway
+  (structured outputs, anchored exemplars) -> drafts >= HOT_LEAD_THRESHOLD ->
+  ClickUp cards (+ the retry of what an earlier run left uncarded) -> the
+  hot-lead digest. The tail is shared, so the providers can differ only in
+  where a job came from (feed_source), never in what is done with it.
 
 Dedicated-tab contract: the pipeline NEVER touches the user's active tab. It
 finds (or once creates, restoring focus immediately) a tab whose URL carries
@@ -169,8 +173,9 @@ def _digest_html(dbp, hot_ids) -> str:
             " the ClickUp cards.</p>")
 
 
-def scan(ctx, _sleep=time.sleep) -> dict:
-    dbp = ctx.db_path or config.DB_PATH
+def _fetch_chrome(ctx, dbp, _sleep) -> dict:
+    """Provider 'chrome': the three feed tabs. Returns the per-feed metrics;
+    raises loud when every feed redirected (logged out)."""
     tab = ensure_scan_tab()
 
     feeds = {}
@@ -234,6 +239,79 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             f" redirected (e.g. {feeds[redirected[0]]['redirected_to']})."
             " Log into upwork.com in Chrome on the Mac — the scan self-heals"
             " on the next :15 run.")
+    return feeds
+
+
+def _fetch_mcp(ctx, dbp) -> dict:
+    """Provider 'mcp': one bounded standing-query round, then the SAME claim
+    path as Chrome (feed_bridge.process — the Iron-Law validation, the
+    fabrication guards, status 'New'). feed_source = 'mcp:<query>'. Every
+    network call happens before the claim transaction opens (finding 12)."""
+    from modules.upwork.feeds import mcp_client, mcp_search
+    session = mcp_client.MCPSession()
+    try:
+        session.initialize()
+        org = mcp_search.org_uid(session)
+    except Exception as exc:                                     # noqa: BLE001
+        # the MCP twin of "logged out": lead-gen is DOWN until the token is
+        # fixed. Fail LOUD (-> critical anomaly -> interrupt email).
+        raise RuntimeError(
+            f"Upwork MCP session could not start: {exc!r}. Lead-gen is down"
+            " until the OAuth token is repaired (bin/upwork-mcp-auth); the"
+            " scan self-heals on the next :15 run.") from exc
+    with db.connect(dbp) as conn:
+        known = {r["id"] for r in conn.execute(f"SELECT id FROM {TABLE}")}
+    round_ = mcp_search.fetch_new(session, org, ctx.log, known=known,
+                                  claim_since=config.MCP_CLAIM_SINCE)
+    m = round_["metrics"]
+    # DEGRADED-FEED GUARD, the MCP twin of MIN_HEALTHY_TILES: a search round
+    # that surfaces almost nothing is a broken feed (auth, a changed tool
+    # shape, a rate limit), never a quiet market — say so loudly, but score
+    # whatever did arrive.
+    if m["surfaced"] < config.MCP_MIN_HEALTHY_SURFACED:
+        ctx.anomaly("scan_feed_degraded", "critical",
+                    {"provider": "mcp", "surfaced": m["surfaced"],
+                     "min_expected": config.MCP_MIN_HEALTHY_SURFACED,
+                     "note": "the standing-query round surfaced far fewer jobs"
+                             " than a healthy round — check the MCP session"})
+        ctx.log(f"DEGRADED MCP ROUND: {m['surfaced']} surfaced"
+                f" (< {config.MCP_MIN_HEALTHY_SURFACED}) — lead-gen is under-scanning")
+    feeds = {}
+    by_feed: dict = {}
+    for job in round_["jobs"]:
+        by_feed.setdefault(job.get("feed_source") or "mcp", []).append(job)
+    for feed, jobs in by_feed.items():
+        summary = feed_bridge.process(feed, jobs, db_path=dbp, table=TABLE,
+                                      feeds=(feed,))
+        feeds[feed] = {k: summary[k] for k in
+                       ("extracted", "valid", "new", "known", "invalid")}
+        feeds[feed]["source"] = "mcp"
+    # every query the round ran is reported, claimed something or not — a
+    # query that surfaced only known/cut rows still proves it ran
+    for feed, fm in m["by_feed"].items():
+        feeds.setdefault(feed, {"extracted": 0, "valid": 0, "new": 0,
+                                "known": 0, "invalid": 0, "source": "mcp"})
+        feeds[feed]["surfaced"] = fm["extracted"]
+        feeds[feed]["already_known"] = fm["known"]
+        feeds[feed]["skipped_before_cut"] = fm["skipped_before_cut"]
+        feeds[feed]["get_capped"] = fm["get_capped"]
+    ctx.log(f"mcp round: {json.dumps({k: v for k, v in m.items() if k != 'by_feed'})}")
+    if m["skipped_before_cut"]:
+        ctx.log(f"mcp round: {m['skipped_before_cut']} post(s) older than"
+                f" MCP_CLAIM_SINCE={config.MCP_CLAIM_SINCE} not claimed")
+    return feeds
+
+
+def scan(ctx, _sleep=time.sleep) -> dict:
+    dbp = ctx.db_path or config.DB_PATH
+    provider = config.JOB_FEED_PROVIDER
+    if provider == "mcp":
+        feeds = _fetch_mcp(ctx, dbp)
+    elif provider == "chrome":
+        feeds = _fetch_chrome(ctx, dbp, _sleep)
+    else:
+        raise RuntimeError(f"config.JOB_FEED_PROVIDER={provider!r} is neither"
+                           " 'chrome' nor 'mcp' — refusing to guess a feed")
 
     # score everything 'New' — includes leftovers from a crashed prior run
     with db.connect(dbp) as conn:
@@ -424,9 +502,12 @@ def scan(ctx, _sleep=time.sleep) -> dict:
                 digest_status = "send_failed"
 
     if not new_rows and all(f["extracted"] == 0 for f in feeds.values()):
-        raise runner.TaskSkip("no tiles extracted on any feed")
+        raise runner.TaskSkip("no tiles extracted on any feed"
+                              if provider == "chrome" else
+                              "the MCP round surfaced nothing new")
 
-    return {"feeds": feeds, "claimed": sum(f["new"] for f in feeds.values()),
+    return {"provider": provider,
+            "feeds": feeds, "claimed": sum(f["new"] for f in feeds.values()),
             "scored": len(scored), "skipped": len(skipped),
             "drafts": drafted, "drafts_grounded": grounded,
             "drafts_ungrounded": ungrounded, "drafts_blocked": blocked,

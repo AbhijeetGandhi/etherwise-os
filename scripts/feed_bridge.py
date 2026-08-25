@@ -474,9 +474,13 @@ def claim_new(conn, feed: str, job: dict, table: str = "jobs") -> None:
 
 
 def process(feed: str, jobs, db_path=DB, dry_run: bool = False,
-            table: str = "jobs") -> dict:
-    if feed not in FEEDS:
-        sys.exit(f"feed must be one of {FEEDS} (exact, lowercase) — got"
+            table: str = "jobs", feeds=FEEDS) -> dict:
+    """Validate, dedupe, sanity-check and claim a batch under `feed`.
+    `feeds` is the allowed vocabulary: the three Chrome tabs by default; the
+    MCP provider (scan_pipeline._fetch_mcp, 2026-08-25) passes its own
+    'mcp:<query>' label so the same Iron-Law path claims both providers."""
+    if feed not in feeds:
+        sys.exit(f"feed must be one of {feeds} (exact, lowercase) — got"
                  f" {feed!r}")
     extracted = len(jobs)
     jobs = dedupe_batch(jobs)

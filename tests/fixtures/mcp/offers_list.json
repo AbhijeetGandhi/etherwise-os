@@ -1,0 +1,127 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-25 ~20:35 IST (Abhijeet's approval, Upwork chat), personal org 1647672547786633217. Structure verbatim; long free text truncated with ' [...]' so the fixture stays small. Ids are real. Tool: list_offers action=list params={limit:5}. Newest first; freelancer-role states: awaiting_your_acceptance, contract_started, awaiting_client_approval, expired, denied, draft, withdrawn, canceled. The two contracts started 08-17 and 08-24 in v3's contracts table do NOT appear here (newest offer is 07-23) — they are not marketplace offers on the personal org.",
+ "data": {
+  "offersByAttribute": {
+   "offers": [
+    {
+     "id": "112071334",
+     "job": {
+      "content": {
+       "title": "Airtable Configuration and Automation"
+      },
+      "id": "2079940185327676180"
+     },
+     "messageToContractor": "<untrusted_participant_content>\nI'm a CMO seeking assistance with Airtable configuration to enhance my team's operations. [...]\n</untrusted_participant_content>",
+     "offerTerms": {
+      "expectedStartDate": "2026-07-23T00:00:00+0000"
+     },
+     "state": "contract_started",
+     "state_label": "Accepted — contract started",
+     "title": "Airtable Configuration and Automation",
+     "type": "MARKET_PLACE_HOURLY",
+     "vendorProposal": {
+      "user": {
+       "id": "1647672547786633216",
+       "name": "Abhijeet G."
+      }
+     }
+    },
+    {
+     "id": "111865772",
+     "job": {
+      "content": {
+       "title": "AI automation architect(Airtable + make.com + Gohigh level + Evoto"
+      },
+      "id": "2058937200704482542"
+     },
+     "messageToContractor": "<untrusted_participant_content>\nWe are a growing cosmetic surgery and aesthetics practice building an advanced AI-powered operational ecosystem [...]\n</untrusted_participant_content>",
+     "offerTerms": {
+      "expectedStartDate": "2026-06-29T00:00:00+0000"
+     },
+     "state": "contract_started",
+     "state_label": "Accepted — contract started",
+     "title": "AI automation architect(Airtable + make.com + Gohigh level + Evoto",
+     "type": "MARKET_PLACE_FIXED_PRICE",
+     "vendorProposal": {
+      "user": {
+       "id": "1647672547786633216",
+       "name": "Abhijeet G."
+      }
+     }
+    },
+    {
+     "id": "111803696",
+     "job": {
+      "content": {
+       "title": "Make.com Expert Needed for Calendly → Google Calendar Integration"
+      },
+      "id": "2064433136873786022"
+     },
+     "messageToContractor": "<untrusted_participant_content>\nI am looking for a Make.com specialist to review and finalize an existing Calendly to Google Calendar automation. [...]\n</untrusted_participant_content>",
+     "offerTerms": {
+      "expectedStartDate": "2026-06-23T00:00:00+0000"
+     },
+     "state": "contract_started",
+     "state_label": "Accepted — contract started",
+     "title": "Make.com Expert Needed for Calendly → Google Calendar Integration",
+     "type": "MARKET_PLACE_HOURLY",
+     "vendorProposal": {
+      "user": {
+       "id": "1647672547786633216",
+       "name": "Abhijeet G."
+      }
+     }
+    },
+    {
+     "id": "111460287",
+     "job": {
+      "content": {
+       "title": "Make.com Expert Needed — AI-Powered Inbox Triage & Project Logging System"
+      },
+      "id": "2056159162950629131"
+     },
+     "messageToContractor": "<untrusted_participant_content>\nLooking for an experienced Make.com developer to build an AI automation system that ties together several business tools. [...]\n</untrusted_participant_content>",
+     "offerTerms": {
+      "expectedStartDate": "2026-05-18T00:00:00+0000"
+     },
+     "state": "contract_started",
+     "state_label": "Accepted — contract started",
+     "title": "Make.com Expert Needed — AI-Powered Inbox Triage & Project Logging System",
+     "type": "MARKET_PLACE_HOURLY",
+     "vendorProposal": {
+      "user": {
+       "id": "1647672547786633216",
+       "name": "Abhijeet G."
+      }
+     }
+    },
+    {
+     "id": "111216345",
+     "job": {
+      "content": {
+       "title": "GoHighLevel (GHL) + Zapier/Webhooks Expert (Kixie Integration, Real-Time Data, Call Transcriptions)"
+      },
+      "id": "2046722655721299925"
+     },
+     "messageToContractor": "<untrusted_participant_content>\nWe're looking for a highly experienced GoHighLevel (GHL) automation expert [...]\n</untrusted_participant_content>",
+     "offerTerms": {
+      "expectedStartDate": "2026-04-23T00:00:00+0000"
+     },
+     "state": "contract_started",
+     "state_label": "Accepted — contract started",
+     "title": "GoHighLevel (GHL) + Zapier/Webhooks Expert (Kixie Integration, Real-Time Data, Call Transcriptions)",
+     "type": "MARKET_PLACE_HOURLY",
+     "vendorProposal": {
+      "user": {
+       "id": "1647672547786633216",
+       "name": "Abhijeet G."
+      }
+     }
+    }
+   ]
+  }
+ },
+ "hasMore": true,
+ "next_offset": 5,
+ "status": "ok"
+}

@@ -1,0 +1,342 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-25 ~20:35 IST (Abhijeet's approval, Upwork chat), personal org 1647672547786633217. Structure verbatim; long free text truncated with ' [...]' so the fixture stays small. Ids are real. Tool: list_freelancer_proposals action=list params={status:Accepted, sort_field:CREATEDDATETIME, sort_order:DESC, limit:10}. NOTE the rawValue epoch-ms strings were recomputed from displayValue here (identical to the wire values to the millisecond).",
+ "data": {
+  "vendorProposals": {
+   "edges": [
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-24T13:54:11.425Z",
+        "rawValue": "1787579651425"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-24T14:07:37.443Z",
+        "rawValue": "1787580457443"
+       }
+      },
+      "id": "2091886792750665729",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "Expert Airtable Solution Architect"
+       },
+       "id": "2091881079178928768"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 7000.0",
+        "rawValue": "7000.0"
+       },
+       "estimatedDuration": {
+        "id": "3",
+        "label": "1 to 3 months"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-23T23:25:24.576Z",
+        "rawValue": "1787527524576"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-23T23:25:24.576Z",
+        "rawValue": "1787527524576"
+       }
+      },
+      "id": "2091668156895518721",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "Airtable Expert Needed to Build Work Order & Tenant Move In Management System"
+       },
+       "id": "2090865622486570617"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 45.0",
+        "rawValue": "45.0"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-23T23:22:24.893Z",
+        "rawValue": "1787527344893"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-23T23:22:24.893Z",
+        "rawValue": "1787527344893"
+       }
+      },
+      "id": "2091667403253387265",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "Senior AI Automation Specialist — LLMs + Make.com / n8n (Long-term, IC or PM Route)"
+       },
+       "id": "2091139773174847123"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 45.0",
+        "rawValue": "45.0"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-17T21:18:32.454Z",
+        "rawValue": "1787001512454"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-18T18:00:57.583Z",
+        "rawValue": "1787076057583"
+       }
+      },
+      "id": "2089461902148505601",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "Airtable + Twilio Automation Expert Needed to Troubleshoot & Stabilize Existing SMS System"
+       },
+       "id": "2089446685358007253"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 51.5",
+        "rawValue": "51.5"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-17T21:13:08.280Z",
+        "rawValue": "1787001188280"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-18T14:43:23.956Z",
+        "rawValue": "1787064203956"
+       }
+      },
+      "id": "2089460542464098305",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "Lead Management Integration Developer"
+       },
+       "id": "2089436974433892867"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 51.5",
+        "rawValue": "51.5"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-17T20:58:36.767Z",
+        "rawValue": "1787000316767"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-17T20:58:36.767Z",
+        "rawValue": "1787000316767"
+       }
+      },
+      "id": "2089456887073517569",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "CRM & AI Automation Specialist Needed to Automate Business Workflows"
+       },
+       "id": "2089318226619899536"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 45.0",
+        "rawValue": "45.0"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-17T20:54:14.640Z",
+        "rawValue": "1787000054640"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-17T20:54:14.640Z",
+        "rawValue": "1787000054640"
+       }
+      },
+      "id": "2089455787635728385",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "AI Automation Engineer"
+       },
+       "id": "2089239802845264387"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 45.0",
+        "rawValue": "45.0"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-15T22:04:11.057Z",
+        "rawValue": "1786831451057"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-15T22:04:11.057Z",
+        "rawValue": "1786831451057"
+       }
+      },
+      "id": "2088748612951916545",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "AI Automation & Workflow Engineer"
+       },
+       "id": "2088300679731920530"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 45.0",
+        "rawValue": "45.0"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-15T20:31:57.674Z",
+        "rawValue": "1786825917674"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-16T19:23:50.342Z",
+        "rawValue": "1786908230342"
+       }
+      },
+      "id": "2088725404263862272",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "AI Agent for Pharmacy Software Integration"
+       },
+       "id": "2088359720762276308"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 45.0",
+        "rawValue": "45.0"
+       }
+      }
+     }
+    },
+    {
+     "node": {
+      "auditDetails": {
+       "createdDateTime": {
+        "displayValue": "2026-08-13T22:08:52.346Z",
+        "rawValue": "1786658932346"
+       },
+       "modifiedDateTime": {
+        "displayValue": "2026-08-13T22:08:52.346Z",
+        "rawValue": "1786658932346"
+       }
+      },
+      "id": "2088025017034076161",
+      "marketplaceJobPosting": {
+       "content": {
+        "title": "Automation Specialist"
+       },
+       "id": "2087392424207980774"
+      },
+      "status": {
+       "status": "Accepted",
+       "status_label": "Submitted"
+      },
+      "terms": {
+       "chargeRate": {
+        "currency": "USD",
+        "displayValue": "USD 51.5",
+        "rawValue": "51.5"
+       }
+      }
+     }
+    }
+   ],
+   "pageInfo": {
+    "endCursor": "eyJBY3RpdmUiOiIxMCIsIkFyY2hpdmUiOiIwIn0=",
+    "hasNextPage": true
+   },
+   "totalCount": 30
+  }
+ },
+ "hasMore": true,
+ "next_cursor": "eyJBY3RpdmUiOiIxMCIsIkFyY2hpdmUiOiIwIn0=",
+ "status": "ok",
+ "totalCount": 30
+}

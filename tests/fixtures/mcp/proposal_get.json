@@ -1,0 +1,91 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-25 ~20:35 IST (Abhijeet's approval, Upwork chat), personal org 1647672547786633217. Structure verbatim; long free text truncated with ' [...]' so the fixture stays small. Ids are real. Tool: list_freelancer_proposals action=get params={id}. The `insights` block is JOB-level (the other applicants), not a per-proposal viewed flag: there is NO viewed-by-client signal in this shape.",
+ "data": {
+  "vendorProposal": {
+   "auditDetails": {
+    "createdDateTime": {
+     "displayValue": "2026-08-24T13:54:11.425Z",
+     "rawValue": "1787579651425"
+    },
+    "modifiedDateTime": {
+     "displayValue": "2026-08-24T14:07:37.443Z",
+     "rawValue": "1787580457443"
+    }
+   },
+   "id": "2091886792750665729",
+   "marketplaceJobPosting": {
+    "content": {
+     "title": "Expert Airtable Solution Architect"
+    },
+    "id": "2091881079178928768"
+   },
+   "status": {
+    "status": "Accepted",
+    "status_label": "Submitted"
+   },
+   "terms": {
+    "chargeRate": {
+     "currency": "USD",
+     "displayValue": "USD 7000.0",
+     "rawValue": "7000.0"
+    },
+    "estimatedDuration": {
+     "id": "3",
+     "label": "1 to 3 months"
+    }
+   },
+   "proposalCoverLetter": "Hi,\n\nI have spent the last 4+ years designing and architecting Airtable systems, with 200+ bases built across 70+ client engagements. [...]",
+   "questionsAnswers": [
+    {
+     "answer": "Almost bilingual, 9/10. I work directly with US and European clients every day [...]",
+     "question": "<untrusted_participant_content>\nIs your English level Native or almost Bilingual? We're looking for this level (8+/10); a professional level (below 8) will not be accepted.\n</untrusted_participant_content>"
+    },
+    {
+     "answer": "Three recent examples that are relevant: [...]",
+     "question": "<untrusted_participant_content>\nDescribe your recent experience with similar projects\n</untrusted_participant_content>"
+    }
+   ]
+  }
+ },
+ "insights": {
+  "applicants_avg_completed_jobs": 71.212121,
+  "applicants_avg_earnings": 246740.37984848488,
+  "applicants_avg_jss": 0.992760526316,
+  "applicants_avg_jss_messaged": 0,
+  "applicants_avg_jss_over_90": 0.998340909091,
+  "applicants_avg_jss_with_badges": 0.998175,
+  "applicants_avg_years_on_upwork": 5.930890030303,
+  "applicants_top_skills": [
+   {
+    "applicants": 3,
+    "skill": "CRM Automation"
+   },
+   {
+    "applicants": 3,
+    "skill": "Data Engineering"
+   },
+   {
+    "applicants": 2,
+    "skill": "Back-End Development"
+   },
+   {
+    "applicants": 2,
+    "skill": "Facebook Pixel Setup & Optimization"
+   },
+   {
+    "applicants": 2,
+    "skill": "Data Analytics"
+   }
+  ],
+  "computed_at": "2026-08-25T16:33:52.457Z",
+  "messaged": 0,
+  "note": "Averages describe the other applicants for this job, not this proposal. Insights refresh hourly, so they lag a freshly submitted proposal.",
+  "opening_id": "2091881079178928768",
+  "proposals_opened": 0,
+  "proposals_total": 64,
+  "proposals_unopened": 64,
+  "shortlisted": 0
+ },
+ "plan": "Freelancer Plus",
+ "status": "ok"
+}

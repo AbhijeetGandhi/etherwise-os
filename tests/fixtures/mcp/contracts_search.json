@@ -1,0 +1,79 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-25 ~20:35 IST (Abhijeet's approval, Upwork chat), personal org 1647672547786633217. Structure verbatim; long free text truncated with ' [...]' so the fixture stays small. Ids are real. Tool: list_contracts action=search params={contract_statuses:[ACTIVE], limit:3}. Oldest first as returned; `offerId` links a contract to list_offers ids; there is no job id on this shape (the offer carries it).",
+ "data": {
+  "vendorContracts": {
+   "contracts": [
+    {
+     "clientOrganization": {
+      "id": "1429221746529624065",
+      "name": "Dr Rajiv Siotia"
+     },
+     "clientTeam": {
+      "id": "1429221746529624065",
+      "name": "Dr Rajiv Siotia"
+     },
+     "createDate": "2024-12-09T05:13:48.102Z",
+     "deliveryModel": "TALENT_MARKETPLACE",
+     "freelancer": {
+      "id": "1647672547786633216",
+      "name": "Abhijeet G."
+     },
+     "id": "39193235",
+     "offerId": "105250094",
+     "startDate": "2024-12-09T05:13:48.102Z",
+     "status": "ACTIVE",
+     "title": "Email Automation Using Make.com And Airtable"
+    },
+    {
+     "clientOrganization": {
+      "id": "425316083411611648",
+      "name": "Ippon  Technology"
+     },
+     "clientTeam": {
+      "id": "425316083411611648",
+      "name": "Ippon  Technology"
+     },
+     "createDate": "2024-10-28T08:16:04.613Z",
+     "deliveryModel": "TALENT_MARKETPLACE",
+     "freelancer": {
+      "id": "1647672547786633216",
+      "name": "Abhijeet G."
+     },
+     "id": "38819558",
+     "offerId": "104623219",
+     "startDate": "2024-10-28T08:16:04.613Z",
+     "status": "ACTIVE",
+     "title": "Make.com Workflow Specialist Needed for Training Creation"
+    },
+    {
+     "clientOrganization": {
+      "id": "1128285186968596480",
+      "name": "Orama Solutions LLP"
+     },
+     "clientTeam": {
+      "id": "1128285186968596480",
+      "name": "Orama Solutions LLP"
+     },
+     "createDate": "2023-11-13T14:15:25.000Z",
+     "deliveryModel": "TALENT_MARKETPLACE",
+     "freelancer": {
+      "id": "1647672547786633216",
+      "name": "Abhijeet G."
+     },
+     "id": "35435297",
+     "offerId": "27645750",
+     "startDate": "2023-11-13T14:15:25.000Z",
+     "status": "ACTIVE",
+     "title": "Tkinter GUI"
+    }
+   ],
+   "paging": {
+    "limit": 3,
+    "offset": 0
+   }
+  }
+ },
+ "hasMore": true,
+ "next_offset": 3,
+ "status": "ok"
+}

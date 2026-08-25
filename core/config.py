@@ -1152,6 +1152,41 @@ CLICKUP_LISTS = {
 # stay where they are. Same horizon as the cockpit's board window.
 CLICKUP_PUSH_RETRY_DAYS = 7
 
+# ── Job feed provider (Phase 0.1 cutover, Upwork chat 2026-08-25) ────────────
+# THE switch. "chrome" = the three personalized feed tabs in his logged-in
+# Chrome (scan_pipeline._fetch_chrome, the M1 sourcing invariant); "mcp" = the
+# bounded standing queries against mcp.upwork.com (scan_pipeline._fetch_mcp;
+# the invariant was LIFTED for MCP find_jobs on 2026-08-25, recorded in
+# BUILD_BRIEF). Everything after the fetch — hard rules, scoring, drafts,
+# cards, digest — is one shared tail, so the two providers can never diverge
+# in what they do with a job, only in where the job came from. §5.2 of the
+# Upwork brief: the providers never co-feed one store, so this is a switch,
+# not a merge; the flip is this one line and so is the rollback.
+JOB_FEED_PROVIDER = "chrome"
+# The standing queries (moved here from feeds/shadow_poll.py, where the shadow
+# poller proved them): smart_search = Upwork's profile-skill matching (the
+# best_matches analogue) + the term list mirroring his curated GraphQL
+# expression plus the four gaps the 08-24 Test B found. n8n is deliberately
+# absent — the n8n EXCLUSION is a hard rule, not a search. Terms §4.1 bounds:
+# first pages only, one `get` per NEW job, a hard per-run ceiling on gets.
+MCP_TERM_QUERIES = (
+    "make.com", "airtable", "gohighlevel", "vapi", "claude",
+    "ai automation", "workflow automation", "zapier", "twilio",
+    "pipedrive", "activecampaign", "clay outreach", "automated reports",
+)
+MCP_SMART_PAGES = 2            # smart_search page 1 + 2 (profile-matched)
+MCP_PER_QUERY_LIMIT = 10       # server max per page anyway
+MCP_MAX_GETS_PER_RUN = 25      # detail calls are the expensive half; bound them
+# a search round that surfaces fewer rows than this is a broken feed, not a
+# quiet market (the Chrome twin: MIN_HEALTHY_TILES per feed)
+MCP_MIN_HEALTHY_SURFACED = 20
+# At the flip, posts created BEFORE this instant are never claimed (Abhijeet,
+# 2026-08-25 20:40: "only jobs posted after the flip"). The search pages at
+# any moment hold ~100 jobs the scraper never saw; claiming them all would
+# card ~60 stale listings over the first afternoon. ISO-8601 UTC, e.g.
+# "2026-08-26T09:00:00+00:00"; None = no cut (the chrome provider ignores it).
+MCP_CLAIM_SINCE = None
+
 # ── Upwork ───────────────────────────────────────────────────────────────────
 UPWORK_USER_ID = "1647672547786633216"
 UPWORK_ORGS = {
