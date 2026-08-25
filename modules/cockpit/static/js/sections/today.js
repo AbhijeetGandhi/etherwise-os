@@ -44,6 +44,10 @@ import {
   linkNum, extLink, emptyState, notice, expander, toast, copyText,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
+// ONE conversation row for both screens (Upwork brief, 2026-08-25 night):
+// a follow-up / owed-reply card renders as a person with their last message,
+// the draft and one state word — here and on Upwork › Inbox alike.
+import { conversationRow, act, closure } from "../conversation.js";
 
 export const meta = { title: "Today", hint: "what to act on right now" };
 
@@ -332,7 +336,8 @@ function actNow(d, ctx) {
  * the Upwork tab renders its subset of the act-now queue with exactly this,
  * so the two screens cannot drift in what a card says or what Done/Snooze do.
  */
-export function queueCard(it, ctx) {
+export function queueCard(it, ctx, opts = {}) {
+  if (it.conversation) return conversationRow(it, ctx, opts);
   const wrap = el("div", "qitem");
   const detail = el("div", { class: "q-detail", style: { display: "none" } });
 
@@ -606,39 +611,8 @@ function queueDetail(it) {
   return inner;
 }
 
-/* ── actions (drafts only — nothing here sends anything) ──────────────────── */
-
-/**
- * The queue mixes two action systems: follow-ups live in the local nudge_state
- * suppression (item_key 'followup:<key>' → /api/nudge), M4 nudges live in the
- * real nudges table (dedup_key → /api/cos-nudge). Route by kind, or the action
- * is recorded in the wrong place and the card comes straight back.
- */
-async function act(item, action, snoozeDays, ctx) {
-  try {
-    if (item.kind === "nudge") {
-      const body = { dedup_key: String(item.item_key).replace(/^nudge:/, ""), action };
-      if (snoozeDays) body.snooze_days = snoozeDays;
-      await ctx.post("/api/cos-nudge", body);
-    } else {
-      const body = { item_key: item.item_key, action };
-      if (snoozeDays) body.snooze_days = snoozeDays;
-      await ctx.post("/api/nudge", body);
-    }
-    ctx.refresh();
-  } catch (e) {
-    toast("That action did not stick: " + String(e.message || e), true);
-  }
-}
-
-async function closure(item, action, ctx) {
-  try {
-    await ctx.post("/api/card/closure", { item_key: item.item_key, action });
-    ctx.refresh();
-  } catch (e) {
-    toast("Could not record that: " + String(e.message || e), true);
-  }
-}
+/* ── actions: act() and closure() live in ../conversation.js — the one
+   place both screens post Done / Snooze / closure from ──────────────── */
 
 /* ── the merged Nudges overflow ───────────────────────────────────────────── */
 

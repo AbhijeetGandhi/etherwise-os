@@ -152,8 +152,9 @@ class UpworkTabCase(unittest.TestCase):
 
 class TestUpworkReader(UpworkTabCase):
     def test_payload_keys_are_pinned(self):
-        self.assertEqual(set(self.out), {"as_of", "bands", "needs_me", "funnel",
-                                         "rails", "connects", "digest"})
+        self.assertEqual(set(self.out), {"as_of", "bands", "summary", "inbox",
+                                         "needs_me", "funnel", "rails", "connects",
+                                         "digest"})
         self.assertEqual(self.out["as_of"], TODAY)
         self.assertEqual(set(self.out["funnel"]), {"week", "month"})
         self.assertFalse(self.out["digest"]["built"])
@@ -544,8 +545,8 @@ class TestUpworkServerParams(CockpitServerCase):
         st, body = self.get("/api/upwork")
         self.assertEqual(st, 200, body)
         out = json.loads(body)
-        self.assertEqual(set(out), {"as_of", "bands", "needs_me", "funnel",
-                                    "rails", "connects", "digest"})
+        self.assertEqual(set(out), {"as_of", "bands", "summary", "inbox", "needs_me",
+                                    "funnel", "rails", "connects", "digest"})
         st, body = self.get(f"/api/upwork/rows?stage=fetched&week={WEEK}")
         self.assertEqual(st, 200)
         self.assertEqual(json.loads(body)["stage"], "fetched")
@@ -618,27 +619,43 @@ class TestUpworkSection(unittest.TestCase):
     def test_section_file_imports_house_primitives_only_and_never_sends(self):
         src = (STATIC / "js" / "sections" / "upwork.js").read_text()
         imports = re.findall(r'from "([^"]+)"', src)
-        self.assertEqual(set(imports), {"../ui.js", "../drill.js", "./today.js", "./pipeline.js"})
+        self.assertEqual(set(imports), {"../ui.js", "../drill.js", "./today.js",
+                                        "./pipeline.js", "../conversation.js"})
         self.assertNotIn("/send", src)
         self.assertNotIn("fetch(", src)                        # ctx.api / ctx.post only
         self.assertIn('ctx.api("/api/upwork")', src)
         self.assertIn("/api/upwork/rows?", src)
-        for k in ("ew_cockpit_upwork_view", "ew_cockpit_upwork_analysis"):
+        for k in ("ew_cockpit_upwork_view", "ew_cockpit_upwork_tab", "ew_cockpit_upwork_list"):
             self.assertIn(k, src)                              # state only in these keys
+        conv = (STATIC / "js" / "conversation.js").read_text()
+        self.assertEqual(set(re.findall(r'from "([^"]+)"', conv)), {"./ui.js"})
+        self.assertNotIn("/send", conv)
+        self.assertNotIn("fetch(", conv)
 
     def test_dependencies_export_what_the_section_imports(self):
         today = (STATIC / "js" / "sections" / "today.js").read_text()
         pipeline = (STATIC / "js" / "sections" / "pipeline.js").read_text()
         self.assertIn("export function queueCard(", today)
         self.assertIn("export async function renderAnalysis(", pipeline)
+        conv = (STATIC / "js" / "conversation.js").read_text()
+        for fn in ("export function conversationRow(", "export async function act(",
+                   "export async function closure("):
+            self.assertIn(fn, conv)
+        # ONE card component: Today delegates its conversation cards to the row
+        self.assertIn('from "../conversation.js"', today)
+        self.assertIn("if (it.conversation) return conversationRow(it, ctx, opts);", today)
+        self.assertNotIn("async function act(", today)          # no second copy
         # the fold must not re-render the blocks the tab owns
         self.assertIn("analysisOnly ? [] : funnelRegion", pipeline)
         self.assertIn("analysisOnly ? [] : outcomesRegion", pipeline)
 
     def test_styles_the_section_uses_exist(self):
         css = (STATIC / "css" / "components.css").read_text()
-        for cls in (".funnel-bar-unmeasured", ".funnel-sub", ".funnel-contracts",
-                    ".anecdote", ".rail-strip", ".rail-btn", ".rail-btn.nobuild"):
+        for cls in (".subtab", ".subtab .n.hot", ".up-lede", ".fchip.on",
+                    ".cv-row", ".cv-state.owed", ".cv-state.quiet", ".cv-state.maybe",
+                    ".cv-quote.ours", ".cv-bubble.out", ".cv-draftbox",
+                    ".flow", ".stage .bar", ".callout.ok", ".strip",
+                    ".rails-table", "tr.attn td", ".dot.warn"):
             self.assertIn(cls, css, cls)
         # tokens only — no raw colour in the new block
         block = css[css.index("Upwork tab (Phase 1"):]
@@ -654,12 +671,140 @@ class TestUpworkSection(unittest.TestCase):
             self.skipTest("node not installed")
         import subprocess
         for rel in ("js/sections/upwork.js", "js/sections/pipeline.js",
-                    "js/sections/today.js", "js/app.js"):
+                    "js/sections/today.js", "js/conversation.js", "js/app.js"):
             with tempfile.TemporaryDirectory() as td:
                 mjs = Path(td) / "check.mjs"
                 mjs.write_text((STATIC / rel).read_text())
                 r = subprocess.run([node, "--check", str(mjs)], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, f"{rel}: {r.stderr[:400]}")
+
+
+def _visible_strings(src: str) -> str:
+    """The section's user-facing text: string literals, comments stripped."""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    src = re.sub(r"^\s*//.*$", "", src, flags=re.M)
+    src = re.sub(r'\bkey: "[^"]*"', "", src)               # column keys are field names, not copy
+    src = re.sub(r"\$\{[^}]*\}", "", src)                   # ${expr} is code, not copy
+    return " ".join(a or b for a, b in re.findall(r'"([^"\n]*)"|`([^`]*)`', src))
+
+
+class TestPlainWordsOnTheTab(unittest.TestCase):
+    """Abhijeet, 2026-08-25: "too complicated for me to understand anything".
+    The redesign's rule: no statistics vocabulary in anything the screen
+    prints. Comments may say "baseline"; the screen says "usually"."""
+
+    def test_no_statistics_vocabulary_in_the_sections_strings(self):
+        for rel in ("js/sections/upwork.js", "js/conversation.js"):
+            text = _visible_strings((STATIC / rel).read_text()).lower()
+            for word in ("baseline", "anecdote", "cohort", "n ≥", " pp ", "pooled",
+                         "provenance law", "closure rule"):
+                self.assertNotIn(word, text, f"{rel} prints {word!r}")
+            self.assertIn("usually", text) if rel.endswith("upwork.js") else None
+
+
+class TestConversations(unittest.TestCase):
+    """The client-comms card as a PERSON (data._conversation): who they are
+    and what they are to us, the last thing they actually said, the draft, one
+    state word with its days — derived from the same evidence the card carried,
+    plus the message text and the draft row. One builder feeds Today and the
+    Upwork inbox."""
+
+    DAY = "2026-06-15"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="upwork-convo-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_today(self.db_path)
+        with db.connect(self.db_path) as conn:
+            # rA: they wrote last (owed) — on Upwork, with a draft written the
+            # day BEFORE their message (stale by construction)
+            conn.executemany(
+                "INSERT INTO messages (id, thread_id, message, created_dt,"
+                " sender_user_name, direction) VALUES (?,?,?,?,?,?)", [
+                    ("mA1", "rA", "Can you send the scope doc?", "2026-06-08T09:00:00.000Z", "Ann A.", "inbound"),
+                    ("mA2", "rA", "On it — tomorrow.", "2026-06-08T10:00:00.000Z", "Abhijeet G.", "outbound"),
+                    ("mA3", "rA", "Any update on the <http://x.io|scope> doc?", "2026-06-10T09:00:00.000Z", "Ann A.", "inbound"),
+                    ("mA4", "rA", None, "2026-06-10T09:30:00.000Z", None, "system"),
+                    # rB: WE wrote last (gone quiet)
+                    ("mB1", "rB", "Thanks, will review.", "2026-06-04T09:00:00.000Z", "Bob B.", "inbound"),
+                    ("mB2", "rB", "Here is the revised estimate.", "2026-06-05T09:00:00.000Z", "Abhijeet G.", "outbound"),
+                ])
+            conn.execute("UPDATE drafts SET generated_at='2026-06-09 04:45:00',"
+                         " body=\"Here's a draft:\n\n---\n\nHi Ann, the scope doc is attached.\n\n---\""
+                         " WHERE thread_id='rA'")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _convo(self, tid):
+        q = data._act_now_queue(self.db_path, self.DAY, include_loom_flags=True)
+        for e in q["queue"]:
+            if e.get("kind") == "followup" and tid in (e.get("detail") or {}).get("thread_ids", []):
+                return e
+        self.fail(f"no follow-up card for {tid}")
+
+    def test_reply_owed_reads_their_last_message_and_flags_the_older_draft(self):
+        e = self._convo("rA")
+        c = e["conversation"]
+        self.assertEqual(c["who"]["initials"], "RR")                  # "Room rA"
+        self.assertEqual(c["state"]["kind"], "owed")
+        self.assertEqual(c["state"]["label"], "Reply owed")
+        self.assertEqual(c["state"]["days"], 5)                       # 06-10 → 06-15
+        self.assertEqual(c["their"]["channel"], "upwork")
+        self.assertEqual(c["their"]["text"], "Any update on the http://x.io doc?")
+        self.assertEqual(c["their"]["sender"], "Ann A.")
+        self.assertEqual(c["ours"]["text"], "On it — tomorrow.")
+        # the draft, without the writer's preamble and fences
+        self.assertEqual(c["draft"]["body"], "Hi Ann, the scope doc is attached.")
+        self.assertTrue(c["draft"]["stale"])                           # 06-09 < 06-10
+        self.assertIn("read that first", c["draft"]["stale_note"])
+        # the open row: bubbles oldest → newest, system rows dropped
+        th = c["threads"][0]
+        self.assertEqual([m["who"] for m in th["messages"]], ["them", "you", "them"])
+        self.assertEqual(th["url"], e["thread_url"])
+        self.assertEqual(c["relationship"]["label"], "Lead")           # no contract row
+        self.assertEqual(c["links"]["upwork"], e["thread_url"])
+        self.assertIsNone(c["links"]["email"])
+
+    def test_gone_quiet_reads_our_last_message_and_counts_from_it(self):
+        c = self._convo("rB")["conversation"]
+        self.assertEqual(c["state"]["kind"], "quiet")
+        self.assertEqual(c["state"]["days"], 10)                      # 06-05 → 06-15
+        self.assertEqual(c["ours"]["text"], "Here is the revised estimate.")
+        self.assertEqual(c["draft"]["kind"], "follow-up")
+        self.assertFalse(c["draft"]["stale"])
+
+    def test_both_screens_carry_the_same_conversation(self):
+        today = data.today(self.db_path, today=self.DAY)
+        tab = data.upwork(self.db_path, self.DAY)
+        t_by = {e["item_key"]: e for e in today["queue"] if e.get("conversation")}
+        i_by = {e["item_key"]: e for e in tab["inbox"]["conversations"]}
+        self.assertTrue(t_by)
+        for k, e in t_by.items():
+            self.assertIn(k, i_by)
+            self.assertEqual(e["conversation"], i_by[k]["conversation"])
+        # inbox order: reply owed before gone quiet; counts add up
+        kinds = [e["conversation"]["state"]["kind"] for e in tab["inbox"]["conversations"]]
+        self.assertEqual(kinds, sorted(kinds, key=lambda k: {"owed": 0, "quiet": 1, "maybe": 2}[k]))
+        counts = tab["inbox"]["counts"]
+        self.assertEqual(counts["all"], len(kinds))
+        self.assertEqual(counts["owed"] + counts["quiet"] + counts["maybe"], counts["all"])
+        s = tab["summary"]
+        self.assertEqual(s["people_waiting"], counts["owed"] + counts["quiet"])
+        self.assertEqual(s["replies_owed"], counts["owed"])
+        self.assertIn("rails_attention", s)
+
+    def test_timestamp_shapes_share_one_clock(self):
+        u = data._utc_dt
+        self.assertEqual(u("2026-07-31T06:37:17.390Z").isoformat(), "2026-07-31T06:37:17.390000+00:00")
+        self.assertEqual(u("2026-08-22T08:37:35-07:00").isoformat(), "2026-08-22T15:37:35+00:00")
+        self.assertEqual(u("2026-07-31 13:45:23").isoformat(), "2026-07-31T13:45:23+00:00")
+        self.assertIsNone(u("not a date"))
+        self.assertIsNone(u(None))
+        self.assertEqual(data._initials("Royan Stomberg, Ryan Stomberg"), "RS")
+        self.assertEqual(data._initials("Globaltize LLC"), "GL")
+        self.assertEqual(data._draft_text("Here's a draft reply:\n\n---\n\nHey there.\n\n---"), "Hey there.")
 
 
 class TestUpworkSectionServed(CockpitServerCase):

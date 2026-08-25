@@ -6,6 +6,7 @@ nothing invented.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import subprocess
 import time
@@ -15,6 +16,8 @@ from typing import Optional
 
 from core import config, doctor_checks, registry, source_health
 from core.airtable_client import AirtableClient
+
+logger = logging.getLogger("etherwise.cockpit.data")
 
 _STATUS_ORDER = {"Active": 0, "Paused": 1, "Lead": 2, "Ended": 3, "Past": 4}
 _clients_cache = {"at": 0.0, "data": None}   # 60s TTL — Airtable is external
@@ -1929,7 +1932,7 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
             "kind": "followup", "urgency": urg,
             "title": (f"Client comms: {f['topic']}" if client_card
                       else f["topic"]),
-            "client": f.get("client"),
+            "client": f.get("client"), "client_id": f.get("client_id"),
             "tier": f["tier"], "bucket": f["bucket"],
             "age_days": f["age_days"], "draft": f["draft"],
             "thread_url": f["thread_url"], "item_key": f["item_key"],
@@ -1954,6 +1957,7 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
                        # Collapsing two of a person's threads must not make the
                        # second room's written reply unreachable.
                        "drafts": f["drafts"],
+                       "thread_ids": list(f["thread_ids"]),
                        "thread_urls": [ROOM_URL.format(tid=t)
                                        for t in f["thread_ids"]]}}
         # PROVABLE cross-channel closure -> the existing "possibly resolved"
@@ -2027,11 +2031,14 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
         # derive the client + detail for the clickable card
         client, detail = None, {"kind": n["kind"].replace("_", " ")}
         if dk.startswith("followup:"):
-            tid = (pl.get("thread_ids") or [pl.get("thread_id")])[0]
+            tids = [t for t in (pl.get("thread_ids") or [pl.get("thread_id")]) if t]
+            tid = tids[0] if tids else None
             client = (_client_label(pl.get("client_id"))
                       or room_client.get(tid or "") or None)
             detail.update({"client": client,
                            "thread_url": ROOM_URL.format(tid=tid) if tid else None,
+                           "thread_urls": [ROOM_URL.format(tid=t) for t in tids],
+                           "thread_ids": tids,
                            "idle_days": pl.get("idle_days")})
         elif dk.startswith("commitment:"):
             ci = commit_info.get(dk.split(":", 1)[1]) or {}
@@ -2040,11 +2047,19 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
                            "source": ci.get("source_cite"), "client": client})
         else:
             detail.update({"job_url": pl.get("job_url"), "cite": pl.get("cite")})
-        queue.append({
+        entry = {
             "kind": "nudge", "nudge_kind": n["kind"], "urgency": n["urgency_live"],
             "title": n["title"], "action": n.get("action"), "due": n.get("due"),
             "dept": n["dept"], "client": client,
-            "item_key": f"nudge:{n['dedup_key']}", "detail": detail})
+            "item_key": f"nudge:{n['dedup_key']}", "detail": detail}
+        if n["kind"] == "owed_reply":
+            # the engine's card carries the same cross-channel evidence the
+            # follow-up card does; the conversation view reads it from here
+            entry.update({"evidence": pl.get("evidence"),
+                          "engagement": pl.get("engagement"),
+                          "age_days": pl.get("idle_days"),
+                          "client_id": pl.get("client_id")})
+        queue.append(entry)
     # rank, then collapse to one card per (client, intent): a follow-up card is
     # preferred over a bare owed_reply nudge for the same thread (it has the draft)
     queue.sort(key=lambda e: (-e["urgency"], 0 if e["kind"] == "followup" else 1))
@@ -2103,9 +2118,325 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
         _cl_counts[label] = _cl_counts.get(label, 0) + 1
     clusters = [{"label": k, "count": v}
                 for k, v in sorted(_cl_counts.items(), key=lambda x: -x[1])]
+    # every conversation card gets its person-shaped view (who, what they said,
+    # the draft, the state) — ONE builder feeds Today and the Upwork inbox
+    _attach_conversations(db_path, queue, day)
     return {"queue": queue, "clusters": clusters, "follow_ups": follow_ups,
             "hidden_no_provenance": len(_hidden_keys),
             "auto_closed": _auto_closed}
+
+
+# ── conversations: the client-comms card as a person, not a paragraph ────────
+#
+# Abhijeet, 2026-08-25 night, on the first Upwork tab: "the part that I hate
+# most is the client comms and how you represent it — it should be intuitive,
+# not a lot of data laid out without any structure". The card used to be a
+# title plus one machine sentence ("last heard from them 2026-08-21 on email;
+# last from us 2026-08-24 on fathom"). This block turns the SAME facts into the
+# shape a person reads a conversation in: who they are and what they are to
+# us, the last thing they actually said (their words, where, when), the draft
+# that is waiting, and one state word with a number of days. Nothing here is
+# a new claim — every field is derived from the evidence the card already
+# carried, plus the message text and the draft row the card only linked to.
+
+_CHANNEL_NAMES = {"upwork": "Upwork", "email": "email", "slack": "Slack",
+                  "fathom": "a call", "loom": "a Loom"}
+_CONVO_MESSAGES = 4          # bubbles per room in the open row
+_CONVO_STATE_LABELS = {"owed": "Reply owed", "quiet": "Gone quiet",
+                       "maybe": "Probably resolved"}
+
+
+def _int_or_none(v) -> Optional[int]:
+    try:
+        return int(v) if v is not None and str(v).strip() != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _initials(name: Optional[str]) -> str:
+    words = [w for w in _re.split(r"[\s,·|/]+", str(name or "").strip()) if w[:1].isalpha()]
+    if not words:
+        return "?"
+    return "".join(w[0] for w in words[:2]).upper()
+
+
+def _utc_dt(ts) -> Optional[datetime]:
+    """One comparable clock for the three timestamp shapes this DB holds:
+    "…T06:37:17.390Z" (messages), "…T08:37:35-07:00" (evidence), and the
+    naive "2026-07-31 13:45:23" (drafts.generated_at = SQLite's UTC now).
+    A naive value is read as UTC. Unparseable → None, never a guess."""
+    if not ts:
+        return None
+    s = str(ts).strip().replace(" ", "T")
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    # trim sub-second digits to what fromisoformat accepts on 3.9 (3 or 6)
+    m = _re.match(r"^(.*T\d\d:\d\d:\d\d)\.(\d+)(.*)$", s)
+    if m:
+        frac = m.group(2)
+        frac = (frac + "000000")[:6] if len(frac) > 3 else (frac + "000")[:3]
+        s = f"{m.group(1)}.{frac}{m.group(3)}"
+    try:
+        d = datetime.fromisoformat(s)
+    except ValueError:
+        try:
+            d = datetime.fromisoformat(s[:19])
+        except ValueError:
+            return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc)
+
+
+def _days_before(day: str, ts) -> Optional[int]:
+    """Whole IST days between a timestamp and the board's day (never < 0)."""
+    d = _utc_dt(ts)
+    if d is None:
+        return None
+    local = d.astimezone(config.TZ).date()
+    return max(0, (date.fromisoformat(day) - local).days)
+
+
+def _clean_text(text: Optional[str], limit: int = 600) -> Optional[str]:
+    if not text:
+        return None
+    t = _re.sub(r"<@[^|>]*\|([^>]*)>", r"\1", str(text))       # <@id|Name> → Name
+    t = _re.sub(r"<(https?://[^|>]+)\|[^>]*>", r"\1", t)         # <url|label> → url
+    t = _re.sub(r"[ \t]+", " ", t).strip()
+    return t[:limit] + ("…" if len(t) > limit else "")
+
+
+def _draft_text(body: Optional[str]) -> Optional[str]:
+    """The draft as it should be pasted: without the model's preamble line
+    ("Here's a draft:") and the --- fences the writer wraps it in."""
+    if not body:
+        return None
+    t = str(body).strip()
+    t = _re.sub(r"^\s*(here'?s|here is)\b[^\n]*\n", "", t, flags=_re.I)
+    parts = [p.strip() for p in t.split("\n---") if p.strip()]
+    if parts:
+        t = parts[0] if len(parts) == 1 else max(parts, key=len)
+    t = t.strip().strip("-").strip()
+    return t or None
+
+
+def _relationship(conn, eng: dict, thread_ids: list) -> dict:
+    """What this person is to us, from the contracts table first and the
+    proposal row second — never from the card's kind."""
+    if eng.get("contract_id"):
+        if eng.get("active"):
+            return {"label": "Active client", "tone": "client",
+                    "since": eng.get("since"), "contract_id": eng["contract_id"],
+                    "title": eng.get("title")}
+        if eng.get("state") == "paused":
+            return {"label": "Client (paused)", "tone": "paused",
+                    "since": eng.get("since"), "contract_id": eng["contract_id"],
+                    "title": eng.get("title")}
+        return {"label": "Past client", "tone": "past", "since": eng.get("since"),
+                "contract_id": eng["contract_id"], "title": eng.get("title")}
+    if thread_ids:
+        marks = ",".join("?" * len(thread_ids))
+        row = conn.execute(
+            f"SELECT p.upwork_status FROM threads t JOIN proposals p"
+            f" ON p.id = t.proposal_id WHERE t.id IN ({marks})"
+            " AND p.upwork_status IS NOT NULL ORDER BY p.created_dt DESC LIMIT 1",
+            thread_ids).fetchone()
+        if row and row["upwork_status"] in _UPWORK_INTERVIEW_STATUSES:
+            return {"label": "Interviewing", "tone": "lead", "since": None,
+                    "contract_id": None, "title": None}
+    return {"label": "Lead", "tone": "lead", "since": None, "contract_id": None,
+            "title": None}
+
+
+def _conversation(conn, e: dict, day: str) -> Optional[dict]:
+    dt = e.get("detail") or {}
+    thread_ids = [t for t in (dt.get("thread_ids") or []) if t]
+    ev = e.get("evidence") or {}
+    eng = e.get("engagement") or {}
+    client_id = e.get("client_id")
+
+    # ── the rooms, their last messages, their pending drafts ─────────────────
+    threads = []
+    for tid in thread_ids:
+        t = conn.execute(
+            "SELECT id, room_name, topic, awaiting_reply_from, latest_message_dt"
+            " FROM threads WHERE id=?", (tid,)).fetchone()
+        msgs = [dict(m) for m in conn.execute(
+            "SELECT direction, sender_user_name, created_dt, message FROM messages"
+            " WHERE thread_id=? AND direction IN ('inbound','outbound')"
+            " AND message IS NOT NULL AND TRIM(message) != ''"
+            " ORDER BY created_dt DESC LIMIT ?", (tid, _CONVO_MESSAGES))]
+        msgs.reverse()
+        dr = conn.execute(
+            "SELECT body, word_count, generated_at, draft_kind FROM drafts"
+            " WHERE thread_id=? AND sent_status='pending'"
+            " ORDER BY generated_at DESC LIMIT 1", (tid,)).fetchone()
+        threads.append({
+            "id": tid, "url": ROOM_URL.format(tid=tid),
+            "topic": (t["topic"] or t["room_name"]) if t else None,
+            "room_name": t["room_name"] if t else None,
+            "latest": (msgs[-1]["created_dt"] if msgs else
+                       (t["latest_message_dt"] if t else None)),
+            "messages": [{
+                "who": "you" if m["direction"] == "outbound" else "them",
+                "sender": m["sender_user_name"], "at": m["created_dt"],
+                "text": _clean_text(m["message"])} for m in msgs],
+            "draft": ({"body": _draft_text(dr["body"]),
+                       "words": _int_or_none(dr["word_count"]),
+                       "written": dr["generated_at"], "kind": dr["draft_kind"]}
+                      if dr else None),
+        })
+    # the most recently active room first: it is the one the row speaks for
+    _floor = datetime.min.replace(tzinfo=timezone.utc)
+    threads.sort(key=lambda th: _utc_dt(th["latest"]) or _floor, reverse=True)
+
+    # ── the last thing THEY said, and the last thing WE did ──────────────────
+    inbound = [(m["at"], m, th) for th in threads for m in th["messages"] if m["who"] == "them"]
+    outbound = [(m["at"], m, th) for th in threads for m in th["messages"] if m["who"] == "you"]
+    inbound.sort(key=lambda x: _utc_dt(x[0]) or datetime.min.replace(tzinfo=timezone.utc))
+    outbound.sort(key=lambda x: _utc_dt(x[0]) or datetime.min.replace(tzinfo=timezone.utc))
+    last_in = inbound[-1] if inbound else None
+    last_out = outbound[-1] if outbound else None
+
+    their = None
+    if last_in:
+        their = {"channel": "upwork", "at": last_in[0], "sender": last_in[1]["sender"],
+                 "text": last_in[1]["text"], "room": last_in[2]["topic"], "link": last_in[2]["url"]}
+    ev_ts, ev_ch = ev.get("ts"), (ev.get("channel") or "").lower()
+    ev_dt = _utc_dt(ev_ts)
+    if ev_dt and ev_ch and ev_ch != "upwork" and (
+            their is None or (_utc_dt(their["at"]) or ev_dt) < ev_dt):
+        # the newest word from them is on another channel — say which, and
+        # show the one line we hold for it (a mail subject, a call title)
+        note = None
+        link = None
+        sender = None
+        if ev_ch == "email" and client_id:
+            row = conn.execute(
+                "SELECT subject, author, permalink, ts FROM events WHERE client_id=?"
+                " AND source='email' AND ts IS NOT NULL ORDER BY ts DESC LIMIT 1",
+                (client_id,)).fetchone()
+            if row:
+                author = (row["author"] or "").lower()
+                sender = row["author"]
+                link = row["permalink"]
+                if author.endswith("@email.upwork.com"):
+                    note = ("an Upwork notification email — the message itself is"
+                            " in a room the sync does not read yet")
+                    sender = None
+                subj = _clean_text(row["subject"], 140)
+                text = subj
+            else:
+                text = None
+        else:
+            text = None
+        their = {"channel": ev_ch, "at": ev_ts, "sender": sender, "text": text,
+                 "subject": True, "note": note, "link": link, "room": None}
+    ours = None
+    if last_out:
+        ours = {"channel": "upwork", "at": last_out[0], "text": last_out[1]["text"],
+                "room": last_out[2]["topic"]}
+    o_ts, o_ch = ev.get("ours_ts"), (ev.get("ours_channel") or "").lower()
+    o_dt = _utc_dt(o_ts)
+    if o_dt and o_ch and o_ch != "upwork" and (ours is None or (_utc_dt(ours["at"]) or o_dt) < o_dt):
+        title = None
+        if o_ch in ("fathom", "loom") and client_id:
+            row = conn.execute(
+                "SELECT title FROM sources WHERE client_id=? AND source_type=?"
+                " ORDER BY occurred_dt DESC LIMIT 1", (client_id, o_ch)).fetchone()
+            title = _clean_text(row["title"], 120) if row else None
+        ours = {"channel": o_ch, "at": o_ts, "text": None, "title": title, "room": None}
+
+    # ── the state: one word and a number of days ─────────────────────────────
+    their_dt = _utc_dt(their["at"]) if their else None
+    ours_dt = _utc_dt(ours["at"]) if ours else None
+    # `days` always counts from the message the row SHOWS, so the number and
+    # the quote agree; the engine's oldest-unanswered age rides along as
+    # `oldest_days` when it is older (Rocky: "Awesome" today in the contract
+    # room, and a 31 Jul question still unanswered in the proposal room).
+    oldest = e.get("age_days")
+    if e.get("possibly_resolved"):
+        state = "maybe"
+        days = _days_before(day, their["at"]) if their else oldest
+    elif their_dt and (ours_dt is None or ours_dt < their_dt):
+        state = "owed"
+        days = _days_before(day, their["at"])
+        if days is None:
+            days = oldest
+    elif ours_dt:
+        state = "quiet"
+        days = _days_before(day, ours["at"])
+    else:
+        state = "owed" if (e.get("bucket") in ("owed", "unmatched-owed")
+                           or e.get("nudge_kind") == "owed_reply") else "quiet"
+        days = oldest
+    oldest_days = (oldest if (oldest is not None and days is not None
+                              and oldest > days and state == "owed") else None)
+
+    # ── the draft: which one, and is it older than what they last said ───────
+    primary = next((th for th in threads if th["draft"]), None)
+    draft = None
+    if primary and primary["draft"]:
+        d = primary["draft"]
+        written = _utc_dt(d["written"])
+        stale = bool(written and their_dt and written < their_dt
+                     and their.get("channel") != "upwork"
+                     or (written and last_in and written < (_utc_dt(last_in[0]) or written)))
+        draft = {
+            "body": d["body"], "words": d["words"], "written": d["written"],
+            "kind": "follow-up" if (d["kind"] or "").startswith("follow") else "reply",
+            "thread_url": primary["url"], "topic": primary["topic"],
+            "stale": stale,
+            "stale_note": (f"written before their last message ({_CHANNEL_NAMES.get(their['channel'], their['channel'])}"
+                           f" {(_utc_dt(their['at']) or datetime.now(timezone.utc)).astimezone(config.TZ).strftime('%-d %b')}) — read that first"
+                           if stale and their else None),
+        }
+    elif e.get("draft"):
+        draft = {"body": _draft_text(e["draft"]), "words": None, "written": None,
+                 "kind": "reply", "thread_url": e.get("thread_url"), "topic": None,
+                 "stale": False, "stale_note": None}
+
+    rel = _relationship(conn, eng, thread_ids)
+    name = e.get("client") or (threads[0]["room_name"] if threads else None) or "Unknown"
+    context = rel.get("title") or (threads[0]["topic"] if threads else None)
+    extra = [th for th in threads[1:]]
+    note = None
+    if len(threads) > 1:
+        others = ", ".join(t["topic"] for t in extra if t.get("topic")) or f"{len(extra)} more"
+        note = f"{len(threads)} rooms with {name.split(',')[0]} — also: {others}"
+    return {
+        "who": {"name": name, "initials": _initials(name), "client_id": client_id,
+                "context": context},
+        "relationship": rel,
+        "state": {"kind": state, "label": _CONVO_STATE_LABELS[state], "days": days,
+                  "oldest_days": oldest_days},
+        "their": their, "ours": ours,
+        "draft": draft,
+        "threads": threads,
+        "note": note,
+        "links": {"upwork": threads[0]["url"] if threads else e.get("thread_url"),
+                  "email": ((their or {}).get("link")
+                            if (their or {}).get("channel") == "email" else None)},
+    }
+
+
+def _attach_conversations(db_path, queue: list, day: str) -> None:
+    """Add `conversation` to every follow-up / owed-reply card in place."""
+    targets = [e for e in queue
+               if e.get("kind") == "followup" or e.get("nudge_kind") == "owed_reply"]
+    if not targets:
+        return
+    conn = _ro(db_path)
+    try:
+        for e in targets:
+            try:
+                e["conversation"] = _conversation(conn, e, day)
+            except sqlite3.Error as exc:            # a missing table on an old DB
+                logger.warning("conversation view skipped for %s: %s",
+                               e.get("item_key"), exc)
+                e["conversation"] = None
+    finally:
+        conn.close()
 
 
 def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
@@ -2456,6 +2787,9 @@ def _upwork_period_key(view: str, day_str: str) -> Optional[str]:
 _UPWORK_FLAGS_SQL = f"""
     SELECT j.id, j.title, j.score, j.hard_rule_skip, j.status, j.job_url,
            j.clickup_task_url, j.icp_tier, j.feed_source,
+           j.client_country, j.client_total_spent, j.client_hires,
+           j.hourly_min, j.hourly_max, j.fixed_budget, j.total_applicants,
+           j.draft_word_count,
            j.clickup_task_id IS NOT NULL AS carded,
            j.draft_proposal IS NOT NULL AS has_draft,
            substr(j.fetched_at,1,10) AS d,
@@ -2876,6 +3210,47 @@ def _upwork_needs_me(db_path, conn, day: str) -> dict:
     }
 
 
+_INBOX_ORDER = {"owed": 0, "quiet": 1, "maybe": 2}
+
+
+def _upwork_inbox(needs_me: dict) -> dict:
+    """The Inbox view: the conversation cards of the Upwork queue as PEOPLE,
+    longest wait first inside each state (reply owed → gone quiet → probably
+    resolved); everything else on the Upwork queue (escalations, Loom flags)
+    is `other` so nothing the builder produced is dropped."""
+    convos, other = [], []
+    for e in needs_me.get("cards", []):
+        (convos if e.get("conversation") else other).append(e)
+    convos.sort(key=lambda e: (
+        _INBOX_ORDER.get(e["conversation"]["state"]["kind"], 9),
+        -(e["conversation"]["state"]["days"] or 0)))
+    counts = {"all": len(convos), "owed": 0, "quiet": 0, "maybe": 0}
+    for e in convos:
+        counts[e["conversation"]["state"]["kind"]] += 1
+    return {"conversations": convos, "other": other, "counts": counts,
+            "snoozed": needs_me.get("snoozed"),
+            "auto_closed": needs_me.get("auto_closed", 0),
+            "hidden_no_provenance": needs_me.get("hidden_no_provenance", 0)}
+
+
+def _upwork_summary(inbox: dict, funnel: dict, rails: dict) -> dict:
+    """The one sentence under the tab heading — the numbers a glance needs."""
+    wk = {s["k"]: s for s in (funnel.get("week") or {}).get("stages", [])}
+    n = lambda k: (wk.get(k) or {}).get("n")
+    attention = [r for r in rails.get("items", [])
+                 if r.get("built") is not False and r.get("status") not in (None, "ok")]
+    c = inbox["counts"]
+    return {"people_waiting": c["owed"] + c["quiet"],
+            "replies_owed": c["owed"], "gone_quiet": c["quiet"],
+            "probably_resolved": c["maybe"],
+            "hot_week": n("hot"), "applied_week": n("applied"),
+            "interviewing_week": n("interviewed"), "won_week": n("won"),
+            "contracts_started_week": ((funnel.get("week") or {})
+                                       .get("contracts_started") or {}).get("total"),
+            "rails_attention": len(attention),
+            "rails_attention_labels": [r["label"] for r in attention]}
+
+
 def upwork(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     """The Upwork tab (Phase 1). `today` is a positional TEST clock slot, never
     a request param. Both funnel views and both connects windows are computed
@@ -2897,12 +3272,15 @@ def upwork(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         }
     finally:
         conn.close()
+    inbox = _upwork_inbox(needs_me)
     return {
         "as_of": day,
         "bands": {"hot": f"Hot {config.score_band_label('hot')}",
                   "loom": f"Loom {config.score_band_label('loom')}",
                   "hot_cut": config.HOT_LEAD_THRESHOLD,
                   "loom_cut": config.LOOM_FLAG_THRESHOLD},
+        "summary": _upwork_summary(inbox, funnel, rails),
+        "inbox": inbox,
         "needs_me": needs_me,
         "funnel": funnel,
         "rails": rails,
@@ -2971,7 +3349,13 @@ def upwork_rows(db_path: Optional[Path] = None, *,
             keep = ("id", "title", "score", "hard_rule_skip", "status", "job_url",
                     "clickup_task_url", "icp_tier", "feed_source", "d", "carded",
                     "has_draft", "hot", "applied_raw", "interviewed_raw", "won",
-                    "inferred", "interview_inferred")
+                    "inferred", "interview_inferred",
+                    # the Jobs table's client + budget cells (redesign, 08-25)
+                    "client_country", "client_total_spent", "client_hires",
+                    "hourly_min", "hourly_max", "fixed_budget", "total_applicants",
+                    "draft_word_count")
+            # highest score first: the list answers "what is worth my time"
+            picked.sort(key=lambda j: (-(j.get("score") or 0), j.get("d") or ""))
             for j in picked[:300]:
                 row = {k: j.get(k) for k in keep}
                 row["band"] = config.score_band(j["score"])
@@ -3023,7 +3407,11 @@ def upwork_rows(db_path: Optional[Path] = None, *,
             sql = _loom_flags_sql()
             rows = [dict(r) for r in conn.execute(
                 "SELECT j.id, j.title, j.score, j.icp_tier, j.status, j.job_url,"
-                " j.clickup_task_url, j.fixed_budget, j.hourly_max,"
+                " j.clickup_task_url, j.fixed_budget, j.hourly_min, j.hourly_max,"
+                " j.client_country, j.client_total_spent, j.client_hires,"
+                " j.total_applicants, j.draft_word_count,"
+                " j.clickup_task_id IS NOT NULL AS carded,"
+                " j.draft_proposal IS NOT NULL AS has_draft,"
                 " substr(j.first_scored_at,1,10) AS d " + sql +
                 " ORDER BY (j.icp_tier='icp') DESC, j.score DESC,"
                 " j.first_scored_at DESC LIMIT 300", (loom_lo,))]
@@ -3036,8 +3424,11 @@ def upwork_rows(db_path: Optional[Path] = None, *,
             sql = _drafts_waiting_sql()
             args = (config.HOT_LEAD_THRESHOLD, fresh_lo)
             rows = [dict(r) for r in conn.execute(
-                "SELECT j.id, j.title, j.score, j.icp_tier, j.job_url,"
-                " j.clickup_task_url, j.draft_word_count,"
+                "SELECT j.id, j.title, j.score, j.icp_tier, j.status, j.job_url,"
+                " j.clickup_task_url, j.draft_word_count, j.fixed_budget,"
+                " j.hourly_min, j.hourly_max, j.client_country,"
+                " j.client_total_spent, j.client_hires, j.total_applicants,"
+                " j.clickup_task_id IS NOT NULL AS carded, 1 AS has_draft,"
                 " substr(j.first_scored_at,1,10) AS d " + sql +
                 " ORDER BY j.score DESC, j.first_scored_at DESC LIMIT 300", args)]
             for row in rows:
