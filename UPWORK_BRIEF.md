@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 built (flip 2026-08-26 after the 12:15 scan) · Phase 1 BUILT (`7279345`)
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 built (flip 2026-08-26 after the 12:15 scan) · Phase 1 BUILT and REDESIGNED (`7279345`, `a10b421`)
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -43,10 +43,12 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   proposals table stale, win-rate wrong. Fix: `list_freelancer_proposals` (tasks #30–33).
   Also (found 2026-08-25, fixed same night — see Codebase findings 1): the hourly
   roomList pass was writing NULL telemetry into every proposal it touched.
-- **The Upwork tab is live** (2026-08-25 night, `ec5de3d` + `7279345`): digit 2 in the
-  cockpit, `#/upwork` (`#/pipeline` aliases to it), reader `/api/upwork`, drills
-  `/api/upwork/rows`. Spec: `docs/upwork/PHASE1_TAB_SPEC.md`. The Phase 2 digest slot is
-  drawn as not-built; the rails strip already answers "are the rails working".
+- **The Upwork tab is live** (2026-08-25 night, `ec5de3d` + `7279345`, redesigned
+  `a10b421`): digit 2 in the cockpit, `#/upwork` (`#/pipeline` aliases to it), four sub-tabs
+  — **Inbox** (conversations as people, the row Today shares), **Jobs** (the flow, the job
+  lists, connects), **Health** (rails in words), **Analysis** (the old charts). Reader
+  `/api/upwork`, drills `/api/upwork/rows`. Spec: `docs/upwork/PHASE1_TAB_SPEC.md` (§11 =
+  the shape as built). The Phase 2 digest slot is not drawn until Phase 2 exists.
 - **Codebase map** (2026-08-25): `docs/upwork/CODEBASE_MAP.md` + `docs/upwork/codebase-maps/`
   — rails, tables as they really are, verified findings, the tab recipe, the card seam,
   Phase 0–3 readiness. Read it before touching code in this chat.
@@ -302,6 +304,11 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
     build order: Phase 1 steps 1–2 now, section + Pipeline rename after 0.2 · approvals:
     mark run 7068 failed, fix the Loom-flag rule in step 2 (→ became the ◆ above once the
     population was measured), build the outcome-email send path, the ClickUp push retry.
+12. (2026-08-26 00:05, on three mockups) **The tab's shape**: build it like the mockups —
+    **Inbox · Jobs · Health · Analysis** as sub-tabs inside Upwork · **Inbox opens first** ·
+    conversation rows **first one open, the rest collapsed** · **the same rows on Today**
+    (one component, one queue). Standing rule from his verdict: plain words on every
+    screen — no statistics vocabulary; a comparison reads "usually N %".
 
 ## Next actions
 0. DONE 2026-08-25 14:30 (Upwork chat, on Abhijeet's "do 1-4"): sync fix committed
@@ -397,6 +404,25 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    what is left of it is the ◆ list (Loom card meaning, a "viewed" signal at 0.2).
    He has to open `http://127.0.0.1:5051/#/upwork` himself — the chat's Chrome bridge
    refuses 127.0.0.1.
+0k. DONE 2026-08-26 00:40 `a10b421` — **the tab REDESIGNED on his verdict** (23:50: "I don't
+   like the UI at all … too complicated for me to understand anything … the part that I
+   hate most is the client comms and how you represent it — it all should be intuitive").
+   Three mockups sent, four answers (decision 12), then built: **Inbox · Jobs · Health ·
+   Analysis** as sub-tabs of one page (`#/upwork?view=…`, remembered; Inbox opens first).
+   Inbox = one **conversation row per person** (`static/js/conversation.js`, the SAME row
+   Today renders): who they are and what they are to us, the last thing they said (their
+   words, where, when — a mail subject with a Gmail link when the newest word is an
+   email), the draft waiting (flagged when it predates their message), one state word
+   with its days (reply owed / gone quiet / probably resolved), Open on Upwork / Copy
+   draft / Done / Snooze; click → the last messages as bubbles + the full draft. Jobs =
+   the flow as six plain numbers ("usually 44 %" in grey, an arrow only when the change is
+   real), the contracts that started with where they came from, the job lists as an
+   inline table, connects as a strip. Health = every rail in words with Run now. Copy
+   rule pinned by a test: no "baseline / anecdote / cohort / n ≥ / pp" on the screen.
+   Server side: `data._conversation()` (one clock for the three timestamp shapes),
+   `upwork()` gains `inbox` + `summary`; the job rows carry client/budget/draft length.
+   49 tests, suite **1,718 OK**, cockpit reloaded. The first cut's rails strip and
+   funnel bands are gone; spec §1/§6 now describe the OLD layout — §11 records the new.
 1. **THE FLIP (agreed 2026-08-25 night: tomorrow, right after the 12:15 scan, with him in
    the chat; ~15 min; never at :40):**
    (a) `config.JOB_FEED_PROVIDER = "mcp"` and `MCP_CLAIM_SINCE = "<now, ISO UTC>"`;
@@ -451,3 +477,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   let's build the UI then" → the flip is scheduled for 2026-08-26 after the 12:15 scan with
   him present; the Phase 1 section built and committed tonight (`7279345`, 0j). Pipeline is
   now the Upwork tab; its charts live in the Analysis fold.
+- 2026-08-25 23:50 – 08-26 00:40 · "I don't like the UI at all … too complicated … the
+  part I hate most is the client comms" → three mockups, four answers (decision 12), the tab
+  rebuilt as Inbox / Jobs / Health / Analysis with the conversation row shared with Today
+  (`a10b421`, 0k). Suite 1,718 OK. Cockpit reloaded; his eyes are the acceptance test.

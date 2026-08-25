@@ -1,6 +1,6 @@
 # PHASE1_TAB_SPEC.md — the Upwork tab, designed before it is built
 
-**Status:** BUILT — approved 2026-08-25 19:30 (with the §7 diff; hot bar → 20 the same minute); steps 1–3 `ce45a21` + `ec5de3d`, step 4 (the section, §2/§6) `7279345` at 23:20; open items are the ◆ list in §10 · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
+**Status:** BUILT, then REDESIGNED on Abhijeet's verdict — approved 2026-08-25 19:30 (with the §7 diff; hot bar → 20 the same minute); steps 1–3 `ce45a21` + `ec5de3d`, step 4 (the section) `7279345` at 23:20; **the shape as it is now is §11 (`a10b421`, 08-26 00:40) — §1 and §6 describe the first cut**; open items are the ◆ list in §10 · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
 **Builds on:** `UPWORK_BRIEF.md` (Phase 1, laws 1–7, decisions 5/6/9), `docs/upwork/CODEBASE_MAP.md`
 §5–§6, `codebase-maps/03_cockpit.md`. Every number in §0 was read from the live DB (read-only) at
 18:45 IST; every file:line was checked in the working tree at `39faf95`+.
@@ -531,3 +531,69 @@ write lock across up to 25 MCP `get` calls (`feeds/shadow_poll.py:117-208`; 43 s
 the 10 s busy timeout) — the scoring pass's run 3 died on it and its `runs` row 7068 is stuck
 'running'; **3.13** hot jobs that miss the ClickUp push are never re-pushed (20 on 08-23);
 **3.14** the outcome email never sends.
+
+---
+
+## 11. As redesigned (2026-08-26 00:40, `a10b421`) — this supersedes §1 and §6
+
+Abhijeet on the first cut (23:50): *"I don't like the UI at all. It is too complicated for me to
+understand anything … the part that I hate most is the client comms and how you represent it —
+it all should be intuitive, not just a lot of data laid out without any structure."* Three mockups
+were sent; his four answers are brief decision 12. What the tab is now:
+
+**Four sub-tabs on one page** (`#/upwork?view=inbox|jobs|health|analysis`, remembered in
+`ew_cockpit_upwork_tab`; one fetch of `/api/upwork`, switched client-side). Under the heading,
+one sentence: *"3 people are waiting on you · 53 hot jobs this week, 2 applied, 1 interviewing,
+1 contract started · 1 rail needs attention"* — each part jumps to its tab. Tab badges: Inbox =
+people waiting (red when a reply is owed), Jobs = hot this week, Health = rails needing a look.
+
+**Inbox** (opens first). One **conversation row per person** — `static/js/conversation.js`,
+the same component Today's queue renders for its follow-up / owed-reply cards (`queueCard`
+delegates when `it.conversation` exists):
+
+| Line | What it shows | Source (`data._conversation`) |
+|---|---|---|
+| who | initials avatar · name · the job/contract title · a relationship tag (Active client · since …, Client (paused), Past client, Interviewing, Lead) | `client`/`room_name`; `engagement` (contracts) first, the thread's proposal status second |
+| state chip | **Reply owed · N days** (they wrote last) · **Gone quiet · N days** (we wrote last) · **Probably resolved** (answered on another channel — the old `possibly_resolved`) | days counted from the message the row SHOWS; the engine's oldest-unanswered age rides along as `oldest_days` ("an older question of theirs has waited 26 days in their other room") |
+| the quote | their last message — their words, sender, channel, date; when the newest word is an email: *Email from x: "subject"* with an *open in Gmail* link (an `@email.upwork.com` author is named as a notification, not a message) | `messages` (inbound, non-system) vs `evidence.ts/channel`; `events` for the mail subject/permalink; `sources` for a call title |
+| the draft line | *Draft ready (55 words): "…"* — flagged **written before their last message — read that first** when it predates their newest word | newest pending `drafts` row per room; `_draft_text` strips the writer's "Here's a draft:" + `---` fences |
+| buttons | Open on Upwork · Copy draft · Done · Snooze 3d — or, for probably resolved, **Done — nothing owed** / Keep open / Open on Upwork | the same `/api/nudge`, `/api/cos-nudge`, `/api/card/closure` routes as before |
+| open row | every room, most recent first: the last four messages as chat bubbles (them left, you right) + the full draft with Copy and the room link | `threads[].messages`, `threads[].draft` |
+
+Filter chips: All · Reply owed · Gone quiet · Probably resolved (only those with a count) +
+the snoozed count. Order: owed → quiet → maybe, longest wait first; the first row open, the rest
+collapsed (his answer). Everything else on the Upwork queue (escalations, Loom flags) sits under
+it as the plain cards, never dropped. Empty state names whether the rails are fresh.
+
+**Jobs.** This week / this month toggle. The flow as six plain numbers — Fetched → Passed the
+rules → Hot (score 20+) → Applied → Interviewing → Won — each a button to its rows; under each
+number *"39% of fetched · usually 44%"* and an arrow ONLY when `stage.signal` is true (the
+server's both-sides-past-the-line rule, never named on the screen). Unmeasured stages (viewed,
+offer) are not drawn; one grey footnote says what is not tracked yet and why. The contracts that
+started this period are a green callout with where they came from (this period's jobs / an
+earlier period's / not through the job feed at all). Job lists as chips → an inline table (12
+rows + "show all"): Hot this week · Drafts to review · Loom-worthy · Applied · Interviewing ·
+Won, columns Job · Score · Client (country · spend · hires) · Budget · Draft · Card · Applied.
+Connects as a strip (used, applications, per application, interviews) — counts only.
+
+**Health.** A banner when anything needs a look; a table of every rail: name + what it does in
+his words · last ran (wall clock + relative) · **OK / Late / Needs a look / Not running / Not
+built yet** with the reason · Run now where `RERUN_JOBS` allows. A rail's name opens its last
+run in Activity.
+
+**Analysis.** `pipeline.renderAnalysis` as its own tab (no expander).
+
+**Copy rule** (pinned by `TestPlainWordsOnTheTab`): no *baseline, anecdote, cohort, n ≥, pp,
+pooled* in anything the section prints. Comments may say them; the screen says "usually".
+
+**Payload additions**: `inbox` {conversations, other, counts{all, owed, quiet, maybe}, snoozed,
+auto_closed, hidden_no_provenance} · `summary` {people_waiting, replies_owed, gone_quiet,
+probably_resolved, hot_week, applied_week, interviewing_week, won_week,
+contracts_started_week, rails_attention, rails_attention_labels} · every follow-up / owed-reply
+queue entry carries `conversation` (both `today()` and `upwork()`) · cohort job rows carry
+client_country, client_total_spent, client_hires, hourly_min/max, fixed_budget,
+total_applicants, draft_word_count and are sorted by score.
+
+Not changed: the reader's funnel maths (§3), the drills and their parity tests, the rails
+verdicts (§3.5), connects (§3.6), the card seam (§5) — the redesign is presentation plus the
+conversation builder; `needs_me` still ships for the tiles' counts.
