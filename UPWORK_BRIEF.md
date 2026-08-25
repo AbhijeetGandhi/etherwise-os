@@ -423,6 +423,11 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    `upwork()` gains `inbox` + `summary`; the job rows carry client/budget/draft length.
    49 tests, suite **1,718 OK**, cockpit reloaded. The first cut's rails strip and
    funnel bands are gone; spec §1/§6 now describe the OLD layout — §11 records the new.
+   His verdict (00:55): **"I like the UI better now"** — and "I don't see anything in the
+   inbox yet": it was empty because he had cleared every conversation at 23:33, and the
+   screen did not say so → `f670e5c`: the Inbox names what was cleared since yesterday
+   (`inbox.cleared`, from nudge_state + confirmed closures) and that each comes back the
+   moment the person writes again. Suite 1,719 OK.
 1. **THE FLIP (agreed 2026-08-25 night: tomorrow, right after the 12:15 scan, with him in
    the chat; ~15 min; never at :40):**
    (a) `config.JOB_FEED_PROVIDER = "mcp"` and `MCP_CLAIM_SINCE = "<now, ISO UTC>"`;
