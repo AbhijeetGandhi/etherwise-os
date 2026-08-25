@@ -20,7 +20,7 @@ Every repeatable business operation is a rail: ONE structured entry point (Airta
 - intake: Airtable "Outcome Submissions" table (form-created rows: linked Proposal [prefilled+hidden], Outcome Reason, Outcome Notes)
 - executor: Airtable automation on form submission → writes Outcome Reason/Notes onto the linked Proposals record, marks submission Done
 - prefill params: `prefill_Proposal=<airtable_record_id>&hide_Proposal=true&prefill_Source=sunday-email&hide_Source=true`
-- form_url: PENDING (Abhijeet creates via Omni agent — prompt delivered Day 6; paste the shr… link here)
+- form_url: https://airtable.com/appgE1QoEOXvbrUE4/pag9IZ4lgwmIZA47g/form (Airtable form page "Proposal Outcome" on Outcome Submissions, verified rendering 2026-08-25; the prefill params below apply to this page URL — check the first Sunday email's link lands with the Proposal filled)
 - approval tier: internal (his own CRM via his own form — auto-run)
 - idempotency: one submission per proposal per week; composer only lists proposals with empty status_reason
 - failure routing: composer failure → critical anomaly → notify; automation failure visible as intake rows stuck without Done

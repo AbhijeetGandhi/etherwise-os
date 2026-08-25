@@ -232,16 +232,19 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    guardrails 87, cockpit pipeline/today/system/query-guard classes 68 — all green on the
    Mac's files). Git lock/tmp debris the device VM could not delete was moved to
    `var/_to_delete/` (safe to `rm -rf`).
-0a. (Abhijeet, three things only a Mac shell can do)
-   - `bin/cockpit reload` — the running cockpit still serves the pre-patch data.py.
-   - the snooze UPDATE (decision 6) — never from Cowork: `sqlite3 var/etherwise.db
-     "UPDATE threads SET snooze_until=NULL, updated_at=datetime('now') WHERE snooze_until
-     IS NOT NULL;"` (14 rows).
-   - the outcome form is published as Airtable form page `pag9IZ4lgwmIZA47g` ("Proposal
-     Outcome", 15 clean reasons); its link should be
-     `https://airtable.com/appgE1QoEOXvbrUE4/pag9IZ4lgwmIZA47g/form` — open it once to
-     confirm it renders, then paste into `rails/REGISTRY.md:23` (`form_url:`). Not written
-     by the chat because the URL could not be fetched to verify (robots).
+0a. DONE 2026-08-25 15:05 natively on the Mac (Abhijeet approved shell access; Terminal is
+   click-only for agents, so the "Control your Mac" osascript `do shell script` was used):
+   - `bin/cockpit reload` → new pid 36712; `/api/pipeline/facts` now serves `score_floor`
+     from config.
+   - snoozes: 14 → 0 (`audit_log` carries one `hand` row per thread, source of truth for the
+     revert); `PRAGMA quick_check` ok. They re-bucket at the 19:15 poll.
+   - outcome form: `https://airtable.com/appgE1QoEOXvbrUE4/pag9IZ4lgwmIZA47g/form` renders
+     "Proposal Outcome" (checked in Chrome) → written to `rails/REGISTRY.md:23`;
+     `outcome_capture.form_url()` parses it. ◆ watch the first Sunday email: the
+     `prefill_Proposal` param must land the linked record on this page-style form.
+   - on the Mac (3.9): test_score_bands + test_m1b + test_scan_pipeline 78 OK;
+     `bin/doctor --offline` 60 PASS / 3 WARN (calendar reminders only) / 0 FAIL.
+   - `var/_to_delete/` holds git lock/tmp debris from the device-VM commits — `rm -rf` it.
 0b. (ops chat) paste the sourcing-invariant line (decision 2) + a checkpoint line for
    `42c9eaf`/`39faf95` into BUILD_BRIEF; run `scripts/mcp_shadow_report.py` (shadow table
    at 494 jobs, 125 overlapping) — the recalibration VALUES wait on it.
