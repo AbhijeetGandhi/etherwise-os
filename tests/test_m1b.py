@@ -742,6 +742,83 @@ class TestPollTask(M1bCase):
         self.assertEqual(payload["items"][0]["intent"]["intent"], "new_lead")
 
 
+class TestPollRefreshesStaleDrafts(M1bCase):
+    """A pending draft that predates the client's newest message answers an
+    older message. Abhijeet, 2026-08-26 04:48, on the Inbox after "Check
+    Upwork now": "it is not pulling the latest" — Nabil's 20:16 message sat
+    under a draft written on the 19th, because the poll skipped every room
+    that already had a pending draft in the same bucket."""
+
+    def _poll(self, stories, fake_draft="Fresh draft for the new message."):
+        r = room(rid="r1", proposal_status="Pending", latest_hours=1)
+        list_resp = {"roomList": {"edges": [{"node": r}]}}
+        stories_resp = {"room": {"stories": {"edges": [{"node": st} for st in stories]}}}
+        fake_client = mock.Mock()
+        fake_client.graphql.side_effect = [list_resp, {"data": stories_resp}]
+
+        def fake_claude(**kw):
+            if kw.get("schema"):
+                return gw.GatewayResult(text="{}", parsed={"intent": "new_lead", "summary": "s"},
+                                        model="m", route="payg", usage={}, cost_usd=0.001,
+                                        stop_reason="end_turn", duration_ms=5)
+            return gw.GatewayResult(text=fake_draft, parsed=None, model="m", route="payg",
+                                    usage={}, cost_usd=0.001, stop_reason="end_turn", duration_ms=5)
+        with mock.patch.object(runner, "claude_call", side_effect=lambda **kw: fake_claude(**kw)):
+            return runner.run_task(
+                poll_inbox.TASK_NAME,
+                lambda ctx: poll_inbox.poll(ctx, client_factory=lambda **k: fake_client),
+                module="upwork", db_path=self.db_path)
+
+    def test_a_newer_client_message_supersedes_the_waiting_draft(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name, topic) VALUES ('r1','Room','Topic')")
+            conn.execute("INSERT INTO drafts (thread_id, draft_kind, tier, body, word_count,"
+                         " sent_status, generated_at) VALUES ('r1','owed','HOT',"
+                         " 'Old draft for the old message', 6, 'pending', '2026-08-19 04:45:00')")
+        stories = [
+            {"id": "s1", "message": "we sent", "createdDateTime": "2026-08-18T16:58:00.000Z",
+             "user": {"id": config.UPWORK_USER_ID, "name": "A"}},
+            {"id": "s2", "message": "old ask", "createdDateTime": "2026-08-18T20:00:00.000Z",
+             "user": {"id": "client9", "name": "C"}},
+            {"id": "s3", "message": "I sent you an email with a brief",
+             "createdDateTime": "2026-08-25T14:46:17.390Z", "user": {"id": "client9", "name": "C"}},
+        ]
+        result = self._poll(stories)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.metrics["drafts_refreshed"], 1)
+        self.assertEqual(result.metrics["drafts"], 1)
+        drafts = self.rows("SELECT body, sent_status FROM drafts ORDER BY id")
+        self.assertEqual([(d["body"][:9], d["sent_status"]) for d in drafts],
+                         [("Old draft", "superseded"), ("Fresh dra", "pending")])
+
+    def test_a_draft_newer_than_their_last_message_is_kept(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name, topic) VALUES ('r1','Room','Topic')")
+            conn.execute("INSERT INTO drafts (thread_id, draft_kind, tier, body, word_count,"
+                         " sent_status, generated_at) VALUES ('r1','owed','HOT',"
+                         " 'Still the right draft', 4, 'pending', '2026-08-25 15:00:00')")
+        stories = [
+            {"id": "s1", "message": "we sent", "createdDateTime": "2026-08-18T16:58:00.000Z",
+             "user": {"id": config.UPWORK_USER_ID, "name": "A"}},
+            {"id": "s3", "message": "their newest", "createdDateTime": "2026-08-25T14:46:17.390Z",
+             "user": {"id": "client9", "name": "C"}},
+        ]
+        result = self._poll(stories)
+        self.assertEqual(result.metrics["drafts_refreshed"], 0)
+        self.assertEqual(result.metrics["drafts"], 0)
+        self.assertEqual([d["sent_status"] for d in self.rows("SELECT sent_status FROM drafts")],
+                         ["pending"])
+
+    def test_the_clock_helper(self):
+        self.assertTrue(poll_inbox.draft_predates("2026-08-19 04:45:00", "2026-08-25T14:46:17.390Z"))
+        self.assertFalse(poll_inbox.draft_predates("2026-08-25 15:00:00", "2026-08-25T14:46:17.390Z"))
+        self.assertTrue(poll_inbox.draft_predates("2026-08-25 15:00:00", "2026-08-25T21:00:00+05:30"))
+        self.assertFalse(poll_inbox.draft_predates("2026-08-25 15:00:00", "2026-08-25T19:00:00+05:30"))
+        self.assertFalse(poll_inbox.draft_predates(None, "2026-08-25T14:46:17Z"))
+        self.assertFalse(poll_inbox.draft_predates("2026-08-25 15:00:00", None))
+        self.assertFalse(poll_inbox.draft_predates("garbage", "2026-08-25T14:46:17Z"))
+
+
 # ── outcome composer ──────────────────────────────────────────────────────────
 class TestOutcome(M1bCase):
     def seed_proposal(self, pid, status="Lost", reason=None, rec="recABC"):

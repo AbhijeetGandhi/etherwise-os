@@ -17,6 +17,7 @@ hard line regardless of shadow.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Optional
@@ -253,11 +254,35 @@ def draft_followup(ctx, conn, room: dict, bucket: str, tier: str) -> str:
 
 # ── task ──────────────────────────────────────────────────────────────────────
 
+def draft_predates(generated_at, newest_inbound) -> bool:
+    """True when a pending draft was written BEFORE the client's newest
+    message — i.e. it answers an older message. drafts.generated_at is
+    SQLite's UTC `datetime('now')` ("YYYY-MM-DD HH:MM:SS"); messages.created_dt
+    is Upwork's ISO instant ("…T14:46:17.390Z" or with an offset). Unparseable
+    on either side → False (keep the draft; never churn on a guess)."""
+    if not generated_at or not newest_inbound:
+        return False
+    try:
+        g = datetime.strptime(str(generated_at)[:19], "%Y-%m-%d %H:%M:%S")
+        g = g.replace(tzinfo=timezone.utc)
+        n = str(newest_inbound).strip()
+        if n.endswith("Z"):
+            n = n[:-1] + "+00:00"
+        n = re.sub(r"(\.\d{3})\d+", r"\1", n)            # 3.9: 3 or 6 fraction digits
+        i = datetime.fromisoformat(n)
+        if i.tzinfo is None:
+            i = i.replace(tzinfo=timezone.utc)
+        return g < i
+    except (TypeError, ValueError):
+        return False
+
+
 def poll(ctx, client_factory=UpworkClient) -> dict:
     dbp = ctx.db_path or config.DB_PATH
     client = client_factory()
     metrics = {"threads": 0, "new_messages": 0, "buckets": {}, "tiers": {},
-               "drafts": 0, "intents": 0, "stale_drafts_cleared": 0}
+               "drafts": 0, "drafts_refreshed": 0, "intents": 0,
+               "stale_drafts_cleared": 0}
 
     data = client.graphql(queries.ROOM_LIST, {"first": 200, "after": "0"})
     rooms = [(e.get("node") or e)
@@ -316,11 +341,22 @@ def poll(ctx, client_factory=UpworkClient) -> dict:
             continue
         with db.connect(dbp) as conn:
             pending = conn.execute(
-                "SELECT 1 FROM drafts WHERE thread_id=? AND"
-                " sent_status='pending' AND draft_kind=?",
+                "SELECT generated_at FROM drafts WHERE thread_id=? AND"
+                " sent_status='pending' AND draft_kind=?"
+                " ORDER BY generated_at DESC LIMIT 1",
                 (room["id"], bucket)).fetchone()
-        if pending:
+            newest_in = conn.execute(
+                "SELECT MAX(created_dt) FROM messages WHERE thread_id=?"
+                " AND direction='inbound'", (room["id"],)).fetchone()[0]
+        if pending and not draft_predates(pending["generated_at"], newest_in):
             continue          # same bucket, draft already waiting — no churn
+        if pending:
+            # THEY WROTE AGAIN after the draft was written: the waiting draft
+            # answers an older message. Found 2026-08-26 04:48 by Abhijeet on
+            # the Inbox ("it is not pulling the latest"): Nabil's 20:16 message
+            # sat under a draft from the 19th. Supersede and draft afresh —
+            # the write below marks every pending draft on the room superseded.
+            metrics["drafts_refreshed"] += 1
         with db.connect(dbp) as conn_r:
             intent = None
             if bucket in ("owed", "unmatched-owed"):
