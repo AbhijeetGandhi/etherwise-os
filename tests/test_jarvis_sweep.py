@@ -415,6 +415,58 @@ class ImapLowBaseRateTests(SweepTests):
         self.assertEqual(metrics["imap_excluded_no_signal"], 0)
         self.assertTrue(metrics["reconciled"])
 
+    def test_a_prospects_mail_is_linked_to_their_upwork_room_and_queued(self):
+        """David Séjourné, 2026-08-24: the brief for the first workflow arrived
+        in the 01 inbox from a man mid-conversation on Upwork ("David S."), and
+        the low-base-rate rule excluded it. A sender who matches an active
+        room's counterparty is a positive signal: queued, linked, named."""
+        from datetime import datetime, timedelta, timezone
+        recent = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        with db.connect(self.dbp) as conn:
+            conn.execute("INSERT INTO threads (id, room_name, topic) VALUES"
+                         " ('room_dng', 'Nabil Tayeb Cherif, Recherches Super Nova Inc.', 'N8N or Make.com Workflow Expert')")
+            conn.execute("INSERT INTO messages (id, thread_id, message, created_dt, sender_user_name,"
+                         " direction) VALUES ('m1','room_dng','I sent you an email with a brief',?, 'David S.', 'inbound')",
+                         (recent,))
+        # the IMAP rail's transport prepends the raw From:/Subject: lines to
+        # the body (imap_rail.py) — the display name lives there, not in
+        # events.author (the bare address)
+        frm = "=?UTF-8?B?RGF2aWQgU8Opam91cm7DqQ==?= <david@dng.ai>"
+        p = _imap_event("dng1", frm, "DNG: Workflow to create // clustering",
+                        f"From: {frm}\nSubject: DNG: Workflow to create // clustering\n\n"
+                        "Hi Abhijeet, please find the material for the first workflow.")
+        metrics, ctx = self._run_marker({}, [p])
+        eid = f"evt:email:{INBOX_STEM}:dng1"
+        r = self._state(eid)
+        self.assertEqual(r["state"], "queued")
+        self.assertEqual(metrics["room_linked"], 1)
+        self.assertEqual(metrics["imap_excluded_no_signal"], 0)
+        self.assertEqual(ctx.claude_calls, [])            # deterministic — no proposer call
+        with db.connect(self.dbp) as conn:
+            link = conn.execute("SELECT thread_id, how, matched_name FROM room_links WHERE event_id=?", (eid,)).fetchone()
+            ev = conn.execute("SELECT proposal_evidence FROM events WHERE id=?", (eid,)).fetchone()
+        self.assertEqual((link["thread_id"], link["how"], link["matched_name"]), ("room_dng", "name-match", "David S."))
+        self.assertIn("Recherches Super Nova", ev["proposal_evidence"])
+        self.assertTrue(metrics["reconciled"])
+
+    def test_two_different_people_with_the_same_name_link_nothing(self):
+        from datetime import datetime, timedelta, timezone
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        with db.connect(self.dbp) as conn:
+            # two DIFFERENT clients (different room names) whose contact is a David S.
+            for rid, name in (("room_a", "Acme Corp"), ("room_b", "Other Co")):
+                conn.execute("INSERT INTO threads (id, room_name) VALUES (?, ?)", (rid, name))
+            conn.execute("INSERT INTO messages (id, thread_id, message, created_dt, sender_user_name, direction)"
+                         " VALUES ('a1','room_a','hi',?, 'David S.', 'inbound')", (recent,))
+            conn.execute("INSERT INTO messages (id, thread_id, message, created_dt, sender_user_name, direction)"
+                         " VALUES ('b1','room_b','hi',?, 'David S.', 'inbound')", (recent,))
+        frm = "David Stone <david@somewhere.io>"
+        p = _imap_event("amb1", frm, "Hello", f"From: {frm}\nSubject: Hello\n\na brief")
+        metrics, ctx = self._run_marker({}, [p])
+        r = self._state(f"evt:email:{INBOX_STEM}:amb1")
+        self.assertEqual(r["state"], "excluded")            # falls through to the old rule
+        self.assertEqual(metrics["room_linked"], 0)
+
     def test_personal_deterministic_match_still_maps(self):
         # a registry-domain sender in a personal inbox is a positive signal ->
         # mapped without a proposer call (deterministic path is unchanged)

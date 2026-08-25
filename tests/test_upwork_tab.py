@@ -863,6 +863,26 @@ class TestConversations(unittest.TestCase):
         cleared = tab["inbox"]["cleared"]
         self.assertEqual([c["how"] for c in cleared if c["name"] == "Room rA"], ["done"])
 
+    def test_a_linked_email_shows_on_the_row_and_becomes_their_last_word_when_newer(self):
+        """David's brief (room_links): the row names the email; when it is newer
+        than their Upwork message it IS their last word, with the Gmail link."""
+        from modules.upwork import room_link
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO events (id, source, native_id, ts, author, subject, state, text, permalink)"
+                         " VALUES ('evt:email:x:1','email','1','2026-06-12T09:00:00+00:00','ann@x.io',"
+                         " 'The scope doc','queued','From: Ann Adams <ann@x.io>\n\nHere is the scope doc.','https://mail/1')")
+            room_link.record(conn, "evt:email:x:1", {"thread_id": "rA", "how": "name-match", "matched_name": "Ann A."})
+        c = self._convo("rA")["conversation"]
+        self.assertEqual(c["their"]["channel"], "email")           # 06-12 > the 06-10 Upwork message
+        self.assertEqual(c["their"]["text"], "The scope doc")
+        self.assertEqual(c["their"]["link"], "https://mail/1")
+        self.assertEqual(c["their"]["sender"], "Ann Adams")
+        self.assertEqual(c["state"]["kind"], "owed")
+        self.assertEqual(c["state"]["days"], 3)                    # counted from the email
+        self.assertEqual([m["subject"] for m in c["emails"]], ["The scope doc"])
+        self.assertEqual(c["emails"][0]["body"], "Here is the scope doc.")
+        self.assertEqual(c["links"]["email"], "https://mail/1")
+
     def test_timestamp_shapes_share_one_clock(self):
         u = data._utc_dt
         self.assertEqual(u("2026-07-31T06:37:17.390Z").isoformat(), "2026-07-31T06:37:17.390000+00:00")

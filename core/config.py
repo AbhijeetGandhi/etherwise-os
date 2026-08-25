@@ -1233,6 +1233,15 @@ COCKPIT_HOST = "127.0.0.1"      # localhost only; never 0.0.0.0
 UPWORK_BASELINE_WEEKS = 8
 UPWORK_BASELINE_MONTHS = 3
 UPWORK_SIGNAL_MIN_N = 30
+# Prospect mail ↔ Upwork room (2026-08-26, Abhijeet: "link it to the
+# conversation and use it"): an email whose sender matches the counterparty of
+# an Upwork room active within this many days is queued (never excluded as
+# no-client-signal), linked in room_links, shown on the conversation row and
+# handed to the draft-writer. The match is deterministic — Upwork shows clients
+# as "First L.", so first name + surname initial against the mail's display
+# name; an ambiguous match (two rooms, two people) links nothing.
+UPWORK_ROOM_LINK_DAYS = 30
+UPWORK_ROOM_LINK_MAIL_CHARS = 1500   # of a linked email's body the draft-writer sees
 COCKPIT_PORT = 5051            # v2 dashboard holds :5050 (live)
 COCKPIT_TOKEN_FILE = CREDENTIALS_DIR / "cockpit-token.txt"
 

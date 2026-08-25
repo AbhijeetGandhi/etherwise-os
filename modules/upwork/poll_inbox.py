@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core import config, db, runner
-from modules.upwork import queries
+from modules.upwork import queries, room_link
 from modules.upwork.upwork_client import UpworkClient
 
 TASK_NAME = "upwork_inbox"
@@ -241,13 +241,23 @@ def draft_followup(ctx, conn, room: dict, bucket: str, tier: str) -> str:
                       f" {m['message'][:400]}" for m in reversed(msgs))
     kind = "reply to the client's last message" \
         if bucket in ("owed", "unmatched-owed") else "gentle follow-up"
+    # the emails this person sent outside Upwork (room_links, 2026-08-26):
+    # without them the writer answered "I don't see the email" to a client
+    # who had sent the brief the day before
+    mail = room_link.linked_mail(conn, [room["id"]], limit=2)
+    mail_block = ""
+    if mail:
+        mail_block = "\n\nEmails this client sent Abhijeet outside Upwork (newest first):\n" + "\n".join(
+            f"[email {str(m['at'])[:10]}] subject: {m['subject'] or '(none)'}\n{m['body']}"
+            for m in mail) + ("\nTreat these as received — never say the email is missing;"
+                              " reply to what they contain.")
     result = ctx.claude(
         model_key="drafting",
         system=("You draft Upwork messages for Abhijeet Gandhi (Etherwise,"
                 " automation agency). Direct, warm, concise (<120 words),"
                 " no fluff, ends with a concrete next step. DRAFT ONLY —"
                 " never claims to have sent anything."),
-        user_content=f"Thread ({tier}, {bucket}):\n{convo}\n\nWrite a {kind}.",
+        user_content=f"Thread ({tier}, {bucket}):\n{convo}{mail_block}\n\nWrite a {kind}.",
         purpose=f"draft {bucket} {room['id']}", max_output_tokens=400)
     return result.text.strip()
 
@@ -348,7 +358,13 @@ def poll(ctx, client_factory=UpworkClient) -> dict:
             newest_in = conn.execute(
                 "SELECT MAX(created_dt) FROM messages WHERE thread_id=?"
                 " AND direction='inbound'", (room["id"],)).fetchone()[0]
-        if pending and not draft_predates(pending["generated_at"], newest_in):
+            # …and their newest email linked to this room (room_links) — a
+            # brief that arrived after the draft is the same "they wrote again"
+            newest_mail = conn.execute(
+                "SELECT MAX(e.ts) FROM room_links l JOIN events e ON e.id = l.event_id"
+                " WHERE l.thread_id=?", (room["id"],)).fetchone()[0]
+        if pending and not (draft_predates(pending["generated_at"], newest_in)
+                            or draft_predates(pending["generated_at"], newest_mail)):
             continue          # same bucket, draft already waiting — no churn
         if pending:
             # THEY WROTE AGAIN after the draft was written: the waiting draft

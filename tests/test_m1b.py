@@ -16,7 +16,7 @@ from unittest import mock
 
 from core import config, db, runner
 from core import claude_gateway as gw
-from modules.upwork import outcome_capture, poll_inbox, sync_state
+from modules.upwork import room_link, outcome_capture, poll_inbox, sync_state
 from modules.upwork import upwork_client
 
 
@@ -817,6 +817,109 @@ class TestPollRefreshesStaleDrafts(M1bCase):
         self.assertFalse(poll_inbox.draft_predates(None, "2026-08-25T14:46:17Z"))
         self.assertFalse(poll_inbox.draft_predates("2026-08-25 15:00:00", None))
         self.assertFalse(poll_inbox.draft_predates("garbage", "2026-08-25T14:46:17Z"))
+
+
+class TestRoomLink(M1bCase):
+    """A prospect's email tied to their Upwork room (modules/upwork/room_link)."""
+
+    def _room(self, rid, name, days_ago=1, room_name="Room"):
+        at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO threads (id, room_name, topic) VALUES (?,?,?)", (rid, room_name, "t"))
+            conn.execute("INSERT INTO messages (id, thread_id, message, created_dt, sender_user_name, direction)"
+                         " VALUES (?,?,?,?,?,'inbound')", (f"{rid}-{name}", rid, "hi", at, name))
+
+    def test_sender_name_reads_the_from_header_first(self):
+        first, initial, display = room_link.sender_name(
+            "david@dng.ai", "From: =?UTF-8?B?RGF2aWQgU8Opam91cm7DqQ==?= <david@dng.ai>\nSubject: x\n\nbody")
+        self.assertEqual((first, initial, display), ("david", "s", "David Séjourné"))
+        self.assertEqual(room_link.sender_name("rocky.choy@mooymedia.com", None)[:2], ("rocky", "c"))
+        self.assertEqual(room_link.sender_name("nabil@nova.ca", "From: nabil@nova.ca\n")[:2], ("nabil", None))
+        self.assertEqual(room_link.upwork_name("David S."), ("david", "s"))
+        self.assertEqual(room_link.upwork_name("Nabil Tayeb Cherif"), ("nabil", "c"))
+
+    def test_match_first_name_and_initial_inside_the_window(self):
+        self._room("room_dng", "David S.", days_ago=2, room_name="Nabil Tayeb Cherif, Recherches Super Nova Inc.")
+        self._room("room_old", "David S.", days_ago=90)          # outside the window
+        with db.connect(self.db_path) as conn:
+            link = room_link.match_event(conn, {"author": "david@dng.ai",
+                                                "text": "From: David Séjourné <david@dng.ai>\n\nhi"})
+            self.assertEqual(link["thread_id"], "room_dng")
+            self.assertEqual(link["how"], "name-match")
+            # a different initial is a different person
+            self.assertIsNone(room_link.match_event(conn, {"author": "david@x.io", "text": "From: David Brown <david@x.io>\n"}))
+            # a bare address still matches on the first name alone (weaker rule, named)
+            weak = room_link.match_event(conn, {"author": "david@x.io", "text": None})
+            self.assertEqual((weak["thread_id"], weak["how"]), ("room_dng", "name-match-first-only"))
+            # nobody in any room
+            self.assertIsNone(room_link.match_event(conn, {"author": "zoe@x.io", "text": "From: Zoe Q <zoe@x.io>\n"}))
+
+    def test_same_person_two_rooms_takes_the_newest_two_people_link_nothing(self):
+        self._room("room_a", "David S.", days_ago=5)
+        self._room("room_b", "David S.", days_ago=1)
+        with db.connect(self.db_path) as conn:
+            link = room_link.match_event(conn, {"author": "david@x.io", "text": "From: David Stone <david@x.io>\n"})
+            self.assertEqual(link["thread_id"], "room_b")
+        self._room("room_c", "David Smith", days_ago=1, room_name="Other Co")   # a second David S…
+        with db.connect(self.db_path) as conn:
+            self.assertIsNone(room_link.match_event(conn, {"author": "david@x.io", "text": "From: David Stone <david@x.io>\n"}))
+
+    def test_backfill_links_and_queues_the_excluded_mail(self):
+        self._room("room_dng", "David S.", days_ago=2, room_name="Recherches Super Nova Inc.")
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO events (id, source, native_id, ts, author, subject, state, text,"
+                         " exclude_reason, permalink) VALUES ('evt:email:x:1','email','1',?,"
+                         " 'david@dng.ai','DNG: Workflow to create','excluded',"
+                         " 'From: David Séjourné <david@dng.ai>\nSubject: DNG: Workflow to create\n\nHi Abhijeet, the material is in the drive.',"
+                         " 'imap-low-base-rate:no-client-signal','https://mail/1')",
+                         ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),))
+            out = room_link.backfill(conn)
+            self.assertEqual(out["examined"], 1)
+            self.assertEqual([l["thread_id"] for l in out["linked"]], ["room_dng"])
+            ev = conn.execute("SELECT state, proposal_evidence FROM events WHERE id='evt:email:x:1'").fetchone()
+            self.assertEqual(ev["state"], "queued")
+            self.assertIn("Recherches Super Nova", ev["proposal_evidence"])
+            mails = room_link.linked_mail(conn, ["room_dng"])
+            self.assertEqual(mails[0]["sender"], "David Séjourné")
+            self.assertEqual(mails[0]["subject"], "DNG: Workflow to create")
+            self.assertEqual(mails[0]["body"], "Hi Abhijeet, the material is in the drive.")
+            # idempotent
+            self.assertEqual(room_link.backfill(conn)["examined"], 0)
+
+    def test_the_drafter_is_shown_the_linked_mail(self):
+        self._room("room_dng", "David S.", days_ago=1)
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO events (id, source, native_id, ts, author, subject, state, text)"
+                         " VALUES ('evt:email:x:2','email','2',?, 'david@dng.ai','DNG: Workflow to create','queued',"
+                         " 'From: David Séjourné <david@dng.ai>\n\nPlease find the brief in the drive folder.')",
+                         ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),))
+            room_link.record(conn, "evt:email:x:2", {"thread_id": "room_dng", "how": "name-match", "matched_name": "David S."})
+        seen = {}
+
+        class Ctx:
+            def claude(self, **kw):
+                seen.update(kw)
+                return gw.GatewayResult(text="Thanks David — got the brief.", parsed=None, model="m",
+                                        route="payg", usage={}, cost_usd=0.001, stop_reason="end_turn", duration_ms=5)
+        with db.connect(self.db_path) as conn:
+            text = poll_inbox.draft_followup(Ctx(), conn, {"id": "room_dng"}, "owed", "HOT")
+        self.assertEqual(text, "Thanks David — got the brief.")
+        self.assertIn("DNG: Workflow to create", seen["user_content"])
+        self.assertIn("Please find the brief in the drive folder.", seen["user_content"])
+        self.assertIn("never say the email is missing", seen["user_content"])
+
+    def test_a_linked_mail_newer_than_the_draft_refreshes_it(self):
+        """Their brief arrived by email AFTER the draft — same as writing again on Upwork."""
+        self._room("r1", "David S.", days_ago=10)
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE threads SET room_name='Room', topic='Topic' WHERE id='r1'")
+            conn.execute("INSERT INTO drafts (thread_id, draft_kind, tier, body, word_count, sent_status, generated_at)"
+                         " VALUES ('r1','owed','HOT','Old draft', 2, 'pending', '2026-08-19 04:45:00')")
+            conn.execute("INSERT INTO events (id, source, native_id, ts, author, subject, state, text)"
+                         " VALUES ('evt:email:x:3','email','3','2026-08-24T19:08:00+05:30','david@dng.ai','the brief','queued',"
+                         " 'From: David Séjourné <david@dng.ai>\n\nbrief attached')")
+            room_link.record(conn, "evt:email:x:3", {"thread_id": "r1", "how": "name-match", "matched_name": "David S."})
+        self.assertTrue(poll_inbox.draft_predates("2026-08-19 04:45:00", "2026-08-24T19:08:00+05:30"))
 
 
 # ── outcome composer ──────────────────────────────────────────────────────────

@@ -212,9 +212,26 @@ function draftBox(d, url) {
 }
 
 /** the open panel: every room this person holds, most recent first */
+function mailPanel(mails) {
+  const box = el("div", "cv-room");
+  box.appendChild(el("div", "cv-lbl", [`Email${mails.length === 1 ? "" : "s"} they sent you outside Upwork`]));
+  const bubbles = el("div", "cv-bubbles");
+  mails.forEach((m) => {
+    bubbles.appendChild(el("div", "cv-bubble in mail", [
+      el("span", "strong", m.subject || "(no subject)"),
+      el("span", "txt", short(m.body || "", 600)),
+      el("span", "m", [`${m.sender || m.author || "them"} · email · ${fmt.dateTimeShort(m.at)}`,
+        m.link ? [" · ", extLink(m.link, "open in Gmail")] : null]),
+    ]));
+  });
+  box.appendChild(bubbles);
+  return box;
+}
+
 function threadPanel(c) {
   const panel = el("div", "cv-thread");
   const threads = c.threads || [];
+  if (c.emails && c.emails.length) panel.appendChild(mailPanel(c.emails));
   if (!threads.length) {
     panel.appendChild(el("div", "muted small", "No Upwork room is linked to this card."));
     if (c.draft && c.draft.body) panel.appendChild(draftBox(c.draft, c.links && c.links.upwork));
@@ -267,6 +284,15 @@ export function conversationRow(it, ctx, opts = {}) {
   if (st.kind === "maybe") main.appendChild(maybeLine(c));
   else if (st.kind === "quiet") main.appendChild(oursLine(c) || theirLine(c));
   else main.appendChild(theirLine(c));
+
+  const mails = c.emails || [];
+  if (mails.length && !(c.their && c.their.channel === "email")) {
+    const m = mails[0];
+    main.appendChild(el("div", "cv-meta", [
+      `Also by email, ${fmt.dateShort(m.at)}: `, el("i", null, `“${short(m.subject || "(no subject)", 90)}”`),
+      m.link ? [" · ", extLink(m.link, "open in Gmail")] : null,
+    ]));
+  }
 
   if (st.kind === "owed" && st.oldest_days != null) {
     main.appendChild(el("div", "cv-meta warn",

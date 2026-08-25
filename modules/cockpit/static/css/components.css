@@ -833,6 +833,8 @@ details.group[open] > summary::before { content: "▾ "; }
 .cv-bubble.in  { background: var(--card); border: 1px solid var(--border); border-bottom-left-radius: 4px; align-self: flex-start; }
 .cv-bubble.out { background: var(--primary); color: var(--primary-foreground); border-bottom-right-radius: 4px; align-self: flex-end; }
 .cv-bubble .m { font-size: 11px; opacity: .65; }
+.cv-bubble.mail { max-width: 88%; border-style: dashed; }
+.cv-bubble.mail .strong { font-weight: 600; }
 .cv-draftbox { margin-top: var(--space-3); border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 12px 14px; background: var(--card); }
 .cv-draftbody { white-space: pre-wrap; font-size: var(--text-sm); line-height: 1.55; margin-bottom: var(--space-3); }
 

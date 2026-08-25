@@ -2347,6 +2347,20 @@ def _conversation(conn, e: dict, day: str) -> Optional[dict]:
             title = _clean_text(row["title"], 120) if row else None
         ours = {"channel": o_ch, "at": o_ts, "text": None, "title": title, "room": None}
 
+    # ── the emails THEY sent outside Upwork, tied to these rooms ─────────────
+    # (room_links, 2026-08-26 — David's brief). The newest one becomes "their
+    # last word" when it is newer than their Upwork message; every one is
+    # listed for the open row and named on the collapsed one.
+    from modules.upwork import room_link as _rl
+    mails = _rl.linked_mail(conn, thread_ids, limit=5)
+    if mails:
+        newest = mails[0]
+        newest_dt = _utc_dt(newest["at"])
+        if newest_dt and (their is None or (_utc_dt(their["at"]) or newest_dt) < newest_dt):
+            their = {"channel": "email", "at": newest["at"], "sender": newest["sender"],
+                     "text": _clean_text(newest["subject"], 140), "subject": True,
+                     "note": None, "link": newest["link"], "room": None}
+
     # ── the state: one word and a number of days ─────────────────────────────
     their_dt = _utc_dt(their["at"]) if their else None
     ours_dt = _utc_dt(ours["at"]) if ours else None
@@ -2413,6 +2427,8 @@ def _conversation(conn, e: dict, day: str) -> Optional[dict]:
         "their": their, "ours": ours,
         "draft": draft,
         "threads": threads,
+        "emails": [{"at": m["at"], "sender": m["sender"], "subject": m["subject"],
+                    "body": m["body"], "link": m["link"]} for m in mails],
         "note": note,
         "links": {"upwork": threads[0]["url"] if threads else e.get("thread_url"),
                   "email": ((their or {}).get("link")

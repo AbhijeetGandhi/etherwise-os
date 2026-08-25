@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core import config, db, registry, runner              # noqa: E402
 from modules.jarvis import events, gmail_rail, imap_rail, mapping   # noqa: E402
+from modules.upwork import room_link                       # noqa: E402
 from modules.jarvis import resweep                          # noqa: E402
 from modules.jarvis import sender_rules                     # noqa: E402
 from modules.knowledge import email_poll as ep             # noqa: E402
@@ -142,7 +143,7 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
     # 3a. MAP deterministic: registry match, then domain-echo (both zero-LLM) ───
     with db.connect(dbp) as conn:
         held = [dict(r) for r in events.held_for_run(conn, ctx.run_id)]
-        mapped = echoed = 0
+        mapped = echoed = room_linked = 0
         still_held = []
         for ev in held:
             cid = mapping.match_deterministic(reg, ev["author"])
@@ -154,6 +155,21 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
                 events.set_queued(conn, ev["id"], echo["proposed_client_id"],
                                   echo["confidence"], echo["evidence"])
                 echoed += 1
+                continue
+            # A PROSPECT'S MAIL (2026-08-26): the sender is the counterparty of
+            # an Upwork room active this month. That is a positive signal even
+            # with no registry client behind it — the low-base-rate rule below
+            # would otherwise exclude it, which is how David Séjourné's brief
+            # vanished. Linked in room_links (the Upwork tab and the
+            # draft-writer read that), queued for Review like any real mail.
+            link = room_link.match_event(conn, ev)
+            if link:
+                room_link.record(conn, ev["id"], link)
+                room = conn.execute("SELECT room_name FROM threads WHERE id=?",
+                                    (link["thread_id"],)).fetchone()
+                events.set_queued(conn, ev["id"], link["client_id"], 0.9,
+                                  room_link.evidence(link, room["room_name"] if room else None))
+                room_linked += 1
                 continue
             still_held.append(ev)
 
@@ -223,7 +239,8 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
     return {"collected": len(collected), "inserted": inserted,
             "mapped": counts["mapped"], "queued": counts["queued"],
             "held": counts["held"], "excluded": counts["excluded"],
-            "domain_echoed": echoed, "proposer_calls": len(proposals),
+            "domain_echoed": echoed, "room_linked": room_linked,
+            "proposer_calls": len(proposals),
             "imap_excluded_no_signal": imap_excluded,
             "filed_by_intent": filed,
             "imap_inboxes": len(imap_new_cursors), "imap_skipped": imap_skipped,
