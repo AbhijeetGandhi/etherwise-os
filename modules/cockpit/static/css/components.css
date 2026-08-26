@@ -866,6 +866,9 @@ details.group[open] > summary::before { content: "▾ "; }
 .callout .ico { flex: none; margin-top: 2px; }
 .callout.ok { background: var(--success-soft); border-color: var(--success-border); }
 .callout.ok .ico { color: var(--success); }
+.callout.names { color: var(--foreground); }
+.callout .names-line { margin: 0; }
+.callout .names-line a { font-weight: 600; }
 .foot { margin: 0; line-height: 1.5; }
 .up-table .pad { padding: var(--space-3) var(--space-4); }
 .score-cell { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }

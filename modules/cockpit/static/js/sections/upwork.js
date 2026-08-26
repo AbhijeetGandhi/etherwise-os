@@ -159,15 +159,37 @@ const OUTCOME_COLS = [
   { key: "d", label: "Fetched", render: (r) => el("span", "muted", fmt.dateShort(r.d)) },
 ];
 
-const CONTRACT_COLS = [
-  { key: "title", label: "Contract", render: (r) => el("span", null, r.title || r.id) },
+/** where an interview or a contract came from, in words */
+const cameThrough = (noun) => (r) => {
+  if (r.via === "repeat") return pill("a repeat client", "ok");
+  if (r.cohort === "outside") return pill("came to us (no job of ours behind it)", "warn");
+  const where = r.cohort === "this" ? `this ${noun}'s jobs` : `jobs of ${r.cohort_key || "an earlier " + noun}`;
+  return pill(r.via === "client" ? `${where}, hired on a new posting` : where, "outline");
+};
+
+const jobBehind = (r) => (r.job_title
+  ? (r.job_url ? extLink(r.job_url, r.job_title, { title: "the job we applied to" }) : el("span", null, r.job_title))
+  : el("span", "muted", "—"));
+
+const contractCols = (noun) => [
+  { key: "title", label: "Contract",
+    render: (r) => (r.url ? extLink(r.url, r.title || r.id, { title: "open the room on Upwork" }) : el("span", null, r.title || r.id)) },
   { key: "client_company", label: "Client", cls: "muted" },
-  { key: "cohort", label: "Came through",
-    render: (r) => pill(r.cohort === "outside" ? "not the job feed"
-      : r.cohort === "this" ? "this period's jobs" : `jobs of ${r.cohort_key || "an earlier period"}`,
-    r.cohort === "outside" ? "warn" : "outline") },
+  { key: "cohort", label: "Came through", render: cameThrough(noun) },
+  { key: "job_title", label: "The job behind it", render: jobBehind },
   { key: "contract_type", label: "Type", cls: "muted" },
   { key: "d", label: "Started", render: (r) => el("span", "muted", fmt.dateShort(r.d)) },
+];
+
+const peopleCols = (noun) => [
+  { key: "who", label: "Who",
+    render: (r) => (r.url ? extLink(r.url, r.who, { title: "open the room on Upwork" }) : el("span", null, r.who)) },
+  { key: "d", label: "Started talking", render: (r) => el("span", "muted", fmt.dateShort(r.d)) },
+  { key: "cohort", label: "Came through", render: cameThrough(noun) },
+  { key: "job_title", label: "The job behind it", render: jobBehind },
+  { key: "then", label: "Then",
+    render: (r) => (r.contract_start ? el("span", "pos", `hired ${fmt.dateShort(r.contract_start)}`)
+      : el("span", "muted", r.upwork_status === "Archived" ? "went quiet (proposal archived)" : "still talking")) },
 ];
 
 const CONNECTS_COLS = [
@@ -240,8 +262,8 @@ function lede(s, d, go) {
   if (s.probably_resolved) parts.push(el("span", "muted", ` (+${s.probably_resolved} probably resolved)`));
   parts.push(el("span", "muted", " · "));
   parts.push(jump(`${fmt.num(s.hot_week)} hot jobs`, "jobs"),
-    el("span", "muted", ` this week, ${fmt.num(s.applied_week)} applied, ${fmt.num(s.interviewing_week)} interviewing`
-      + (s.contracts_started_week ? `, ${s.contracts_started_week} contract${s.contracts_started_week === 1 ? "" : "s"} started` : "")));
+    el("span", "muted", ` this week, ${fmt.num(s.applied_week)} applied, ${fmt.num(s.interviewing_week)} interview${s.interviewing_week === 1 ? "" : "s"} started`
+      + (s.won_week ? `, ${s.won_week} contract${s.won_week === 1 ? "" : "s"} won` : "")));
   parts.push(el("span", "muted", " · "));
   parts.push(s.rails_attention
     ? jump(`${s.rails_attention} rail${s.rails_attention === 1 ? "" : "s"} need${s.rails_attention === 1 ? "s" : ""} attention`, "health")
@@ -440,9 +462,40 @@ const LIST_DEFS = [
   { id: "drafts_waiting", label: "Drafts to review", period: false, cols: JOB_COLS, count: (f, d) => ((d.needs_me || {}).drafts_waiting || {}).count },
   { id: "loom_flags", label: "Loom-worthy", period: false, cols: JOB_COLS, count: (f, d) => ((d.needs_me || {}).loom_flags || {}).count },
   { id: "applied", label: "Applied", period: true, cols: OUTCOME_COLS, count: (f) => stageN(f, "applied") },
-  { id: "interviewed", label: "Interviewing", period: true, cols: OUTCOME_COLS, count: (f) => stageN(f, "interviewed") },
-  { id: "won", label: "Won", period: true, cols: OUTCOME_COLS, count: (f) => stageN(f, "won") },
+  { id: "interviewed", label: "Interviewing", period: true, cols: peopleCols, count: (f) => stageN(f, "interviewed") },
+  { id: "won", label: "Won", period: true, cols: contractCols, count: (f) => stageN(f, "won") },
 ];
+
+/** "1 from this week's jobs · 1 a repeat client" — the split under a tile */
+function sourceWords(src, noun) {
+  const parts = [];
+  if (!src) return parts;
+  if (src.this) parts.push(`${fmt.num(src.this)} from this ${noun}'s jobs`);
+  if (src.earlier) parts.push(`${fmt.num(src.earlier)} from earlier jobs`);
+  if (src.repeat) parts.push(`${fmt.num(src.repeat)} ${src.repeat === 1 ? "a repeat client" : "repeat clients"}`);
+  if (src.outside) parts.push(`${fmt.num(src.outside)} came to us`);
+  return parts;
+}
+
+const firstName = (who) => String(who || "").split(",")[0].trim();
+
+/** "Won this month: Royan Stomberg (17 Aug, this month's jobs) · Rocky Choy (24 Aug, repeat client)" */
+function namesLine(label, names, noun) {
+  if (!names || !names.length) return null;
+  const items = [];
+  names.forEach((n, i) => {
+    const how = n.via === "repeat" ? "a repeat client"
+      : n.cohort === "outside" ? "came to us"
+        : n.cohort === "this" ? `this ${noun}'s jobs` : "earlier jobs";
+    const bits = [fmt.dateShort(n.d), how];
+    if (n.via === "client") bits.push("hired on a new posting");
+    if (n.contract_start) bits.push(`hired ${fmt.dateShort(n.contract_start)}`);
+    if (i) items.push(el("span", "muted", " · "));
+    items.push(n.url ? extLink(n.url, firstName(n.who), { title: n.who }) : el("b", null, firstName(n.who)));
+    items.push(el("span", "muted", ` (${bits.join(", ")})`));
+  });
+  return el("p", "small names-line", [el("b", null, `${label}: `), ...items]);
+}
 
 function stageN(f, k) {
   const s = (f.stages || []).find((x) => x.k === k);
@@ -508,26 +561,30 @@ function flowBlock(d, ctx, state, redraw) {
   const fetched = stageN(f, "fetched") || 0;
   const labels = { fetched: "Fetched", passed: "Passed the rules", hot: `Hot (score ${d.bands && d.bands.hot_cut != null ? d.bands.hot_cut + "+" : ""})`, applied: "Applied", interviewed: "Interviewing", won: "Won" };
   const prevWord = { passed: "fetched", hot: "passed", applied: "hot", interviewed: "applied", won: "interviewing" };
+  // the last two tiles count what HAPPENED this period, from wherever it came
+  // (an invite, a repeat client, a hire on a new posting) — the split says so
+  const happened = { interviewed: "started talking", won: "contracts started" };
   stages.forEach((s, i) => {
     let sub;
     if (s.k === "fetched") sub = [`new jobs seen this ${noun}`];
-    else if (s.k === "interviewed") {
-      const ap = stageN(f, "applied") || 0;
-      sub = s.n ? [`${fmt.num(s.n)} of the ${fmt.num(ap)} applied`] : [ap ? "none of the applied yet" : "nothing applied yet"];
-    } else if (s.k === "won") {
-      const iv = stageN(f, "interviewed") || 0;
-      sub = s.n ? [`${fmt.num(s.n)} of ${fmt.num(iv)} interviewing`] : [`none yet from this ${noun}`];
+    else if (happened[s.k]) {
+      const words = sourceWords(s.sources, noun);
+      sub = s.n ? [words.join(" · ") || `${happened[s.k]} this ${noun}`] : [`none this ${noun} yet`];
     } else sub = stageSub(s, prevWord[s.k], f) || [""];
     const pct = fetched ? Math.max(1.5, (100 * (s.n || 0)) / fetched) : 0;
+    const isPeople = s.k === "interviewed";
+    const isContracts = s.k === "won";
     const card = el("button", {
       class: "stage" + (s.k === "won" && !s.n ? " dim" : ""), type: "button",
-      attrs: { title: `${labels[s.k] || s.label}: ${fmt.num(s.n)} — click for the jobs` },
+      attrs: { title: `${labels[s.k] || s.label}: ${fmt.num(s.n)} — click for ${isPeople ? "who" : isContracts ? "which" : "the jobs"}` },
       on: { click: () => openRows(ctx, `${labels[s.k] || s.label} — ${period.label || key}`,
         Object.assign({ stage: s.k }, periodParam),
-        ["applied", "interviewed", "won"].includes(s.k) ? OUTCOME_COLS : JOB_COLS,
-        { subtitle: `jobs fetched this ${noun} that reached "${labels[s.k] || s.label}"`,
-          facets: [{ label: "band", allLabel: "All bands", of: (r) => r.band },
-            { label: "feed", allLabel: "All feeds", of: (r) => r.feed_source }] }) },
+        isPeople ? peopleCols(noun) : isContracts ? contractCols(noun) : s.k === "applied" ? OUTCOME_COLS : JOB_COLS,
+        isPeople ? { subtitle: `people who started talking to us this ${noun}, and where each came from`, time: (r) => r.d }
+          : isContracts ? { subtitle: `contracts that started this ${noun}, and where each came from`, time: (r) => r.d }
+            : { subtitle: `jobs fetched this ${noun} that reached "${labels[s.k] || s.label}"`,
+              facets: [{ label: "band", allLabel: "All bands", of: (r) => r.band },
+                { label: "feed", allLabel: "All feeds", of: (r) => r.feed_source }] }) },
     }, [
       el("div", "l", labels[s.k] || s.label),
       el("div", "v", fmt.num(s.n)),
@@ -540,26 +597,18 @@ function flowBlock(d, ctx, state, redraw) {
 
   const blocks = [head, flow];
 
-  // the contracts that started — the wins the flow would hide
-  const c = f.contracts_started || {};
-  if (c.total) {
-    const where = [];
-    if (c.this) where.push(`${c.this} from this ${noun}'s jobs`);
-    if (c.earlier) where.push(`${c.earlier} from an earlier ${noun}'s jobs`);
-    if (c.outside) where.push(`${c.outside} not through the job feed at all (an invite, a direct hire, or a client conversation)`);
-    blocks.push(el("div", "callout ok", [
+  // the names behind the last two numbers — who, when, where from
+  const won = stages.find((s) => s.k === "won") || {};
+  const iv = stages.find((s) => s.k === "interviewed") || {};
+  const wonLine = namesLine(`Won this ${noun}`, won.names, noun);
+  const ivLine = namesLine(`Interviews this ${noun}`, iv.names, noun);
+  if (wonLine || ivLine) {
+    blocks.push(el("div", "callout ok names", [
       icon("circle-check", { size: 16 }),
-      el("div", null, [
-        el("button", { class: "linktext strong", type: "button",
-          on: { click: () => openRows(ctx, `Contracts started — ${period.label || key}`,
-            Object.assign({ stage: "contracts_started" }, periodParam), CONTRACT_COLS,
-            { subtitle: "each contract and where it came from", time: (r) => r.d }) } },
-        `${fmt.num(c.total)} contract${c.total === 1 ? "" : "s"} started this ${noun}`),
-        el("span", "muted", ` — ${where.join(" · ")}. Click to see which.`),
-      ]),
+      el("div", "stack-1", [wonLine, ivLine].filter(Boolean)),
     ]));
   } else {
-    blocks.push(el("div", "muted small", `No contract started this ${noun} yet.`));
+    blocks.push(el("div", "muted small", `No interview or contract started this ${noun} yet.`));
   }
 
   const notes = [];
@@ -599,10 +648,11 @@ function listsBlock(d, ctx, state) {
       host.appendChild(emptyState(`Nothing in "${title}" right now.`, { icon: "circle-check" }));
       return;
     }
-    host.appendChild(table({ columns: def.cols, rows: rows.slice(0, TABLE_PEEK), wrapClass: "flush" }));
+    const cols = typeof def.cols === "function" ? def.cols(noun) : def.cols;
+    host.appendChild(table({ columns: cols, rows: rows.slice(0, TABLE_PEEK), wrapClass: "flush" }));
     host.appendChild(el("div", "card-foot hstack", [
-      el("span", "muted small", `${fmt.num(Math.min(TABLE_PEEK, rows.length))} of ${fmt.num(total)} · sorted by score`),
-      total > TABLE_PEEK ? btn(`show all ${fmt.num(total)}`, () => openRows(ctx, title, params, def.cols,
+      el("span", "muted small", `${fmt.num(Math.min(TABLE_PEEK, rows.length))} of ${fmt.num(total)}${typeof def.cols === "function" ? ", newest first" : " · sorted by score"}`),
+      total > TABLE_PEEK ? btn(`show all ${fmt.num(total)}`, () => openRows(ctx, title, params, cols,
         { subtitle: def.period ? `${period.label || period.key}` : null,
           facets: [{ label: "band", allLabel: "All bands", of: (r) => r.band },
             { label: "ICP", allLabel: "All tiers", of: (r) => r.icp_tier || "none" }] }),

@@ -2712,6 +2712,27 @@ def today_rows(db_path: Optional[Path] = None, *, which: Optional[str] = None,
 #   connects spent = applications + boosts net of boost refunds.
 # Nothing here calls a model, nothing writes (the one anomaly the builder may
 # file is the once-a-day provenance warn shared with Today).
+#
+# AMENDED 2026-08-26 05:40 (Abhijeet, 05:20, asleep — recorded as a decision
+# for him in UPWORK_BRIEF): "it says 0 won this month, which is incorrect, we
+# at least got 2 … and more than one interview this week". The cohort funnel
+# only counted a win when the CONTRACT carried the FETCHED job's id, so a
+# client who hired us on a fresh posting after our proposal (Royan Stomberg,
+# 17 Aug: proposal on job …411922, contract on job …535633) and a client who
+# came back or invited us (Rocky Choy, 24 Aug) were both "outside the funnel"
+# — a line under the flow, not the number. Two changes:
+#   1. the last two tiles count WHAT HAPPENED in the period, from wherever it
+#      came: Interviewing = interviews that started (an INTERVIEW room a client
+#      opened), Won = contracts that started; each split into "from this
+#      period's jobs / from earlier jobs / invited or came to us". The feed's
+#      own conversion (the cohort's share) stays in the payload as `cohort_n`
+#      + `of_prev` for the "usually" comparisons; closure holds inside the
+#      cohort, not across the split (a direct hire has no interview row).
+#   2. a cohort job is also interviewed when an INTERVIEW room exists on its
+#      proposal (the proposal may be Archived after a hire elsewhere), and won
+#      when the SAME CLIENT (proposals.client_company = contracts.client_company)
+#      started a contract on or after the job was fetched — Upwork clients
+#      routinely hire on a new posting. `won_via` says which rule fired.
 
 UPWORK_STAGES = ("fetched", "passed", "hot", "applied", "viewed",
                  "interviewed", "offer", "won")
@@ -2727,7 +2748,9 @@ UPWORK_UNMEASURED = {
 _UPWORK_INTERVIEW_STATUSES = ("Activated", "Hired")
 _UPWORK_DRILL_STAGES = ("fetched", "passed", "hot", "hot_missed_push", "applied",
                         "interviewed", "won", "contracts_started", "connects",
-                        "drafts_waiting", "loom_flags")
+                        "drafts_waiting", "loom_flags",
+                        # the feed's own share of the last two tiles (cohort jobs)
+                        "cohort_interviewed", "cohort_won")
 # the rails strip, in the brief's order: (strip key, label, SOURCES key)
 _UPWORK_RAILS = (
     ("scanner", "Job feed (Upwork API)", "scanner"),
@@ -2811,9 +2834,15 @@ _UPWORK_FLAGS_SQL = f"""
            EXISTS (SELECT 1 FROM connects_history h WHERE h.kind='applied'
                    AND h.job_id = j.id) AS applied_raw,
            EXISTS (SELECT 1 FROM proposals p WHERE p.marketplace_job_id = j.id
-                   AND p.upwork_status IN ({",".join("?" * len(_UPWORK_INTERVIEW_STATUSES))}))
+                   AND (p.upwork_status IN ({",".join("?" * len(_UPWORK_INTERVIEW_STATUSES))})
+                        OR EXISTS (SELECT 1 FROM threads t WHERE t.proposal_id = p.id
+                                   AND t.room_type = 'INTERVIEW')))
                AS interviewed_raw,
-           EXISTS (SELECT 1 FROM contracts c WHERE c.job_id = j.id) AS won
+           EXISTS (SELECT 1 FROM contracts c WHERE c.job_id = j.id) AS won_job,
+           EXISTS (SELECT 1 FROM contracts c JOIN proposals p ON p.marketplace_job_id = j.id
+                   WHERE c.job_id IS NOT j.id AND c.client_company IS NOT NULL
+                   AND c.client_company = p.client_company
+                   AND substr(c.start_dt,1,10) >= substr(j.fetched_at,1,10)) AS won_client
       FROM scored_jobs j
      WHERE j.fetched_at LIKE '20%' AND substr(j.fetched_at,1,10) BETWEEN ? AND ?
      ORDER BY j.fetched_at DESC"""
@@ -2823,7 +2852,9 @@ def _upwork_jobs(conn, lo: str, hi: str) -> list:
     """One row per cohort job with its stage flags, closure applied: a job at a
     later outcome stage counts at every earlier one (a contract proves an
     interview proves an application the rail may have missed). `inferred`
-    names the stage that proved it, so the drill can say so."""
+    names the stage that proved it, so the drill can say so. `won_via` is
+    "job" (the contract carries the job id) or "client" (the same client hired
+    us on another posting after we applied here)."""
     out = []
     for r in conn.execute(_UPWORK_FLAGS_SQL, (*_UPWORK_INTERVIEW_STATUSES, lo, hi)):
         j = dict(r)
@@ -2832,7 +2863,9 @@ def _upwork_jobs(conn, lo: str, hi: str) -> list:
             and j["score"] >= config.HOT_LEAD_THRESHOLD
         j["loom"] = j["passed"] and j["score"] is not None \
             and j["score"] >= config.LOOM_FLAG_THRESHOLD
-        j["won"] = bool(j["won"])
+        j["won_via"] = ("job" if j["won_job"] else
+                        ("client" if j["won_client"] else None))
+        j["won"] = j["won_via"] is not None
         j["interviewed"] = bool(j["interviewed_raw"]) or j["won"]
         j["applied"] = bool(j["applied_raw"]) or j["interviewed"]
         j["inferred"] = (None if j["applied_raw"] else
@@ -2903,6 +2936,11 @@ def _upwork_funnel_block(conn, view: str, day: str) -> dict:
     base_cov = _upwork_counts([j for j in base_jobs
                                if rail_since and j["d"] >= rail_since])
     min_n = config.UPWORK_SIGNAL_MIN_N
+    # what HAPPENED in the period, from wherever it came (the amendment above):
+    # the last two tiles print these totals; the cohort's share is `cohort_n`
+    started = _upwork_contracts_started(conn, view, cur)
+    interviews = _upwork_interviews_started(conn, view, cur)
+    happened = {"interviewed": interviews, "won": started}
 
     stages = []
     for k in UPWORK_STAGES:
@@ -2915,6 +2953,13 @@ def _upwork_funnel_block(conn, view: str, day: str) -> dict:
         st = {"k": k, "label": _UPWORK_STAGE_LABELS[k], "n": counts[k],
               "measured": True, "reason": None, "inferred": 0,
               "drill": {"stage": k, view: cur["key"]}}
+        if k in happened:
+            h = happened[k]
+            st["n"] = h["total"]
+            st["cohort_n"] = counts[k]
+            st["sources"] = {"this": h["this"], "earlier": h["earlier"],
+                             "repeat": h["repeat"], "outside": h["outside"]}
+            st["names"] = h["names"]
         if k == "hot":
             st["label"] = f"Hot ≥{config.HOT_LEAD_THRESHOLD}"
             st["loom"] = counts["loom"]
@@ -2952,7 +2997,6 @@ def _upwork_funnel_block(conn, view: str, day: str) -> dict:
 
     # contracts started in the period, by where their job stands (spec §3.3):
     # the cohort funnel would silently hide a hire whose job was never fetched
-    started = _upwork_contracts_started(conn, view, cur)
     return {
         "period": cur,
         "baseline": {"periods": len(base_periods), "kind": view,
@@ -2963,42 +3007,172 @@ def _upwork_funnel_block(conn, view: str, day: str) -> dict:
                      "cohort_n_covered": base_cov["fetched"]},
         "stages": stages,
         "signal_min_n": min_n,
-        "contracts_started": started,
+        "contracts_started": {k: v for k, v in started.items() if k != "rows"},
+        "interviews_started": {k: v for k, v in interviews.items() if k != "rows"},
     }
 
 
+def _upwork_tag_cohort(row: dict, view: str, period: dict) -> None:
+    """this / earlier / later / outside from the row's `fetched_d` (the day
+    the feed fetched the job the outcome came from; None = never fetched)."""
+    fd = row.get("fetched_d")
+    if not fd:
+        row["cohort"] = "outside"
+        row["cohort_key"] = None
+    elif period["lo"] <= fd <= period["hi"]:
+        row["cohort"] = "this"
+        row["cohort_key"] = period["key"]
+    elif fd < period["lo"]:
+        row["cohort"] = "earlier"
+        row["cohort_key"] = _upwork_period_key(view, fd)
+    else:
+        row["cohort"] = "later"           # fetched after the period? odd, shown
+        row["cohort_key"] = _upwork_period_key(view, fd)
+
+
+def _upwork_client_job(conn, client_company: Optional[str], before_day: Optional[str]) -> Optional[dict]:
+    """The newest fetched job on which WE proposed to this client (by the
+    client string Upwork prints on both the proposal and the contract), fetched
+    no later than `before_day`. The join that catches "hired on a new posting"."""
+    if not client_company:
+        return None
+    r = conn.execute(
+        "SELECT j.id, j.title, j.score, j.job_url, substr(j.fetched_at,1,10) AS fetched_d"
+        " FROM proposals p JOIN scored_jobs j ON j.id = p.marketplace_job_id"
+        " WHERE p.client_company = ? AND j.fetched_at LIKE '20%'"
+        " AND (? IS NULL OR substr(j.fetched_at,1,10) <= ?)"
+        " ORDER BY j.fetched_at DESC LIMIT 1", (client_company, before_day, before_day)).fetchone()
+    return dict(r) if r else None
+
+
+def _upwork_prior_contract(conn, client_company: Optional[str], before_day: Optional[str]) -> bool:
+    """Did this client already have a contract with us before `before_day`?
+    A hire from a client who came back is a repeat, whatever job the feed
+    once showed for them."""
+    if not client_company or not before_day:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM contracts WHERE client_company = ? AND start_dt LIKE '20%'"
+        " AND substr(start_dt,1,10) < ? LIMIT 1", (client_company, before_day)).fetchone() is not None
+
+
+def _upwork_sources(rows: list) -> dict:
+    """The split under a tile: this period's jobs / earlier jobs / repeat
+    clients / outside the feed (invited, came to us)."""
+    return {"this": sum(1 for r in rows if r["cohort"] == "this"),
+            "earlier": sum(1 for r in rows if r["cohort"] in ("earlier", "later")
+                           and r.get("via") != "repeat"),
+            "repeat": sum(1 for r in rows if r.get("via") == "repeat"),
+            "outside": sum(1 for r in rows if r["cohort"] == "outside"
+                           and r.get("via") != "repeat")}
+
+
+def _upwork_outcome_names(rows: list, who: str, when: str) -> list:
+    """The short list the flow prints under a tile: who, the day, where from."""
+    return [{"who": r.get(who) or r.get("title") or r.get("id"), "d": r.get(when),
+             "cohort": r.get("cohort"), "cohort_key": r.get("cohort_key"),
+             "via": r.get("via"), "job_title": r.get("job_title"),
+             "url": r.get("url"), "contract_start": r.get("contract_start")}
+            for r in rows]
+
+
 def _upwork_contracts_started(conn, view: str, period: dict) -> dict:
+    """Contracts that started in the period, each tagged with where it came
+    from: the contract's own job when the feed fetched it, else the newest
+    job we proposed to the same client on (hired on a new posting), else
+    outside the feed (an invite, a direct hire, a client who came back)."""
     rows = []
     for r in conn.execute(
             "SELECT c.id, COALESCE(c.title, c.job_title) AS title,"
             " c.client_company, c.contract_type, c.hourly_rate, c.upwork_status,"
-            " substr(c.start_dt,1,10) AS d, c.job_id,"
-            " substr(j.fetched_at,1,10) AS fetched_d, j.score, j.job_url"
+            " substr(c.start_dt,1,10) AS d, c.job_id, c.thread_id,"
+            " substr(j.fetched_at,1,10) AS fetched_d, j.score, j.job_url,"
+            " j.title AS job_title"
             " FROM contracts c LEFT JOIN scored_jobs j ON j.id = c.job_id"
             " WHERE c.start_dt LIKE '20%' AND substr(c.start_dt,1,10)"
             " BETWEEN ? AND ? ORDER BY c.start_dt DESC",
             (period["lo"], period["hi"])):
         row = dict(r)
+        row["via"] = "job" if row["fetched_d"] else None
         if not row["fetched_d"]:
-            row["cohort"] = "outside"
-            row["cohort_key"] = None
-        elif period["lo"] <= row["fetched_d"] <= period["hi"]:
-            row["cohort"] = "this"
-            row["cohort_key"] = period["key"]
-        elif row["fetched_d"] < period["lo"]:
-            row["cohort"] = "earlier"
-            row["cohort_key"] = _upwork_period_key(view, row["fetched_d"])
-        else:
-            row["cohort"] = "later"           # fetched after the period? odd, shown
-            row["cohort_key"] = _upwork_period_key(view, row["fetched_d"])
+            hit = _upwork_client_job(conn, row["client_company"], row["d"])
+            if hit:
+                row.update({"fetched_d": hit["fetched_d"], "score": hit["score"],
+                            "job_url": hit["job_url"], "job_title": hit["title"],
+                            "via_job_id": hit["id"], "via": "client"})
+        _upwork_tag_cohort(row, view, period)
+        if row["cohort"] != "this" and _upwork_prior_contract(conn, row["client_company"], row["d"]):
+            row["via"] = "repeat"
+        row["url"] = ROOM_URL.format(tid=row["thread_id"]) if row["thread_id"] else None
         rows.append(row)
-    return {"total": len(rows),
-            "this": sum(1 for r in rows if r["cohort"] == "this"),
-            "earlier": sum(1 for r in rows if r["cohort"] == "earlier"),
-            "outside": sum(1 for r in rows if r["cohort"] == "outside"),
+    src = _upwork_sources(rows)
+    return {"total": len(rows), **src,
             "drill": {"stage": "contracts_started", view: period["key"]},
+            "names": _upwork_outcome_names(rows, "client_company", "d"),
+            "rows": rows,
             "note": "outside = the job was never fetched (invite / direct hire"
-                    " / a listing the feed never showed)"}
+                    " / a listing the feed never showed); repeat = the client"
+                    " had a contract with us before"}
+
+
+def _upwork_interviews_started(conn, view: str, period: dict) -> dict:
+    """Interviews that started in the period: an INTERVIEW room (Upwork opens
+    one when a client answers a proposal, invites us, or sends an offer)
+    whose first message falls in the period — one per person, the room that
+    carries our proposal preferred. Tagged like contracts: the proposal's job
+    when the feed fetched it, else the same-client join, else outside."""
+    rooms = [dict(r) for r in conn.execute(
+        "SELECT t.id, t.room_name, t.proposal_id, t.contract_id, t.client_id,"
+        " substr(COALESCE(MIN(m.created_dt), t.first_seen_at),1,10) AS d,"
+        " p.marketplace_job_id AS job_id, p.upwork_status, p.client_company AS p_client,"
+        " c.client_company AS c_client, substr(c.start_dt,1,10) AS contract_start,"
+        " substr(j.fetched_at,1,10) AS fetched_d, j.score, j.job_url, j.title AS job_title"
+        " FROM threads t LEFT JOIN messages m ON m.thread_id = t.id"
+        " LEFT JOIN proposals p ON p.id = t.proposal_id"
+        " LEFT JOIN contracts c ON c.id = t.contract_id"
+        " LEFT JOIN scored_jobs j ON j.id = COALESCE(p.marketplace_job_id, c.job_id)"
+        " WHERE t.room_type = 'INTERVIEW' GROUP BY t.id"
+        " HAVING d BETWEEN ? AND ? ORDER BY d DESC, t.proposal_id IS NULL",
+        (period["lo"], period["hi"]))]
+    by_person: dict = {}
+    for r in rooms:
+        key = _re.sub(r"\s+", " ", (r["room_name"] or r["id"]).strip().lower())
+        cur = by_person.get(key)
+        if cur is None or (not cur.get("proposal_id") and r.get("proposal_id")):
+            if cur:                       # keep the earliest day, the best room
+                r["d"] = min(r["d"], cur["d"])
+                r["contract_start"] = r.get("contract_start") or cur.get("contract_start")
+            by_person[key] = r
+        elif r.get("contract_start") and not cur.get("contract_start"):
+            cur["contract_start"] = r["contract_start"]
+    rows = []
+    for r in sorted(by_person.values(), key=lambda x: x["d"], reverse=True):
+        row = {"id": r["id"], "who": r["room_name"] or r["id"], "d": r["d"],
+               "proposal_id": r["proposal_id"], "upwork_status": r["upwork_status"],
+               "contract_start": r["contract_start"], "job_id": r["job_id"],
+               "fetched_d": r["fetched_d"], "score": r["score"],
+               "job_url": r["job_url"], "job_title": r["job_title"],
+               "via": "job" if r["fetched_d"] else None,
+               "url": ROOM_URL.format(tid=r["id"])}
+        if not row["fetched_d"]:
+            hit = _upwork_client_job(conn, r["p_client"] or r["c_client"], row["d"])
+            if hit:
+                row.update({"fetched_d": hit["fetched_d"], "score": hit["score"],
+                            "job_url": hit["job_url"], "job_title": hit["title"],
+                            "job_id": hit["id"], "via": "client"})
+        _upwork_tag_cohort(row, view, period)
+        if row["cohort"] != "this" and _upwork_prior_contract(
+                conn, r["c_client"] or r["p_client"], row["d"]):
+            row["via"] = "repeat"
+        rows.append(row)
+    src = _upwork_sources(rows)
+    return {"total": len(rows), **src,
+            "drill": {"stage": "interviewed", view: period["key"]},
+            "names": _upwork_outcome_names(rows, "who", "d"),
+            "rows": rows,
+            "note": "an interview = a room the client opened (a reply to our"
+                    " proposal, an invitation, or an offer); outside = no job"
+                    " of ours behind it"}
 
 
 def _upwork_rails(conn, day: str) -> dict:
@@ -3402,20 +3576,20 @@ def upwork_rows(db_path: Optional[Path] = None, *,
         rows: list = []
         total: Optional[int] = None
         if stage in ("fetched", "passed", "hot", "hot_missed_push", "applied",
-                     "interviewed", "won"):
+                     "cohort_interviewed", "cohort_won"):
             jobs = _upwork_jobs(conn, period["lo"], period["hi"])
             flag = {"fetched": lambda j: True, "passed": lambda j: j["passed"],
                     "hot": lambda j: j["hot"],
                     "hot_missed_push": lambda j: j["hot_missed_push"],
                     "applied": lambda j: j["applied"],
-                    "interviewed": lambda j: j["interviewed"],
-                    "won": lambda j: j["won"]}[stage]
+                    "cohort_interviewed": lambda j: j["interviewed"],
+                    "cohort_won": lambda j: j["won"]}[stage]
             picked = [j for j in jobs if flag(j)]
             total = len(picked)
             keep = ("id", "title", "score", "hard_rule_skip", "status", "job_url",
                     "clickup_task_url", "icp_tier", "feed_source", "d", "carded",
                     "has_draft", "hot", "applied_raw", "interviewed_raw", "won",
-                    "inferred", "interview_inferred",
+                    "won_via", "inferred", "interview_inferred",
                     # the Jobs table's client + budget cells (redesign, 08-25)
                     "client_country", "client_total_spent", "client_hires",
                     "hourly_min", "hourly_max", "fixed_budget", "total_applicants",
@@ -3426,31 +3600,16 @@ def upwork_rows(db_path: Optional[Path] = None, *,
                 row = {k: j.get(k) for k in keep}
                 row["band"] = config.score_band(j["score"])
                 rows.append(row)
-            if stage in ("applied", "interviewed", "won") and rows:
+            if stage in ("applied", "cohort_interviewed", "cohort_won") and rows:
                 _upwork_attach_outcomes(conn, stage, rows)
-        elif stage == "contracts_started":
-            started = conn.execute(
-                "SELECT c.id, COALESCE(c.title, c.job_title) AS title,"
-                " c.client_company, c.contract_type, c.hourly_rate, c.upwork_status,"
-                " substr(c.start_dt,1,10) AS d, c.job_id,"
-                " substr(j.fetched_at,1,10) AS fetched_d, j.score, j.job_url"
-                " FROM contracts c LEFT JOIN scored_jobs j ON j.id = c.job_id"
-                " WHERE c.start_dt LIKE '20%' AND substr(c.start_dt,1,10)"
-                " BETWEEN ? AND ? ORDER BY c.start_dt DESC",
-                (period["lo"], period["hi"])).fetchall()
-            for r in started:
-                row = dict(r)
-                if not row["fetched_d"]:
-                    row["cohort"] = "outside"
-                elif period["lo"] <= row["fetched_d"] <= period["hi"]:
-                    row["cohort"] = "this"
-                elif row["fetched_d"] < period["lo"]:
-                    row["cohort"] = "earlier"
-                else:
-                    row["cohort"] = "later"
-                row["cohort_key"] = (None if row["cohort"] == "outside"
-                                     else _upwork_period_key(view, row["fetched_d"]))
-                rows.append(row)
+        elif stage in ("won", "contracts_started"):
+            # what happened: the contracts that started in the period (the
+            # Won tile and the line under the flow read the same rows)
+            rows = _upwork_contracts_started(conn, view, period)["rows"]
+            total = len(rows)
+            rows = rows[:300]
+        elif stage == "interviewed":
+            rows = _upwork_interviews_started(conn, view, period)["rows"]
             total = len(rows)
             rows = rows[:300]
         elif stage == "connects":
@@ -3596,6 +3755,21 @@ def _upwork_attach_outcomes(conn, stage: str, rows: list) -> None:
         row.update(applied.get(row["id"], {"applied_on": None, "connects": None}))
         row.update(props.get(row["id"], {}))
         row.update(contracts.get(row["id"], {}))
+        if row.get("won_via") == "client" and not row.get("contract_id"):
+            # the same client hired us on another posting: name that contract
+            r = conn.execute(
+                "SELECT c.id, substr(c.start_dt,1,10) AS d, c.upwork_status,"
+                " c.hourly_rate, c.contract_type, COALESCE(c.title, c.job_title) AS title"
+                " FROM contracts c JOIN proposals p ON p.client_company = c.client_company"
+                " WHERE p.marketplace_job_id = ? AND c.client_company IS NOT NULL"
+                " AND substr(c.start_dt,1,10) >= ? ORDER BY c.start_dt LIMIT 1",
+                (row["id"], row.get("d") or "")).fetchone()
+            if r:
+                row.update({"contract_id": r["id"], "contract_start": r["d"],
+                            "contract_status": r["upwork_status"],
+                            "hourly_rate": r["hourly_rate"],
+                            "contract_type": r["contract_type"],
+                            "contract_title": r["title"]})
 
 
 def _money_source_health(db_path: Optional[Path]) -> Optional[dict]:

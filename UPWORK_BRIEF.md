@@ -454,6 +454,29 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    `healthy` and off the Inbox. Suite 1,733 OK, cockpit reloaded.
    ◆ The match is name-based; a client whose Upwork name and email name differ ("Bob" vs
    "Robert", a company address) will not link — the Review queue is the safety net.
+0o. DONE 2026-08-26 06:15 (overnight item 3, his 05:20: "it says 0 won this month which is
+   incorrect, we at least got 2 … I know we had more than 1 interview this week") — **the
+   Jobs flow's last two tiles now count what happened.** Diagnosis on the live DB: the
+   cohort funnel (decision 10) counted a win only when the CONTRACT carried the FETCHED
+   job's id. Royan Stomberg / Globaltize: our proposal sat on job …411922 (fetched 13 Aug,
+   score 28), the client hired us on 17 Aug on a fresh posting …535633 the feed never saw
+   → contract "outside the funnel", the proposal now `Archived` → not even interviewed.
+   Rocky Choy: a June client, back on 24 Aug (new room, straight to a contract) → outside.
+   Interviews: the tile needed `proposals.upwork_status` Activated/Hired on a cohort job,
+   so Jarrod Roback (24 Aug) counted and Rocky did not. **Decision taken (his to overturn):**
+   (1) Interviewing = interviews that started in the period — an INTERVIEW room a client
+   opened (reply / invitation / offer), one per person; Won = contracts that started in
+   the period; each split *from this period's jobs · earlier jobs · repeat clients · came
+   to us*, the names under the flow; the feed's own share stays as `cohort_n` with its own
+   drill. (2) Attribution widened: a cohort job is interviewed when an INTERVIEW room sits
+   on its proposal, won when the same client (`client_company` on proposal = contract)
+   started a contract after the fetch; an earlier contract with the client = repeat.
+   Result: month → Interviewing 5, Won 2 (Royan, from this month's jobs, hired on a new
+   posting; Rocky, a repeat client); week → 2 and 1. **TCC / Brandi Jordan is July by the
+   DB** (contract 44099615 started 15 Jul; the room holds that one contract id) — if a
+   second TCC contract exists, the hourly ROOM_LIST sync cannot see it: `list_contracts`
+   (MCP plan, next actions 5) is the fix. Spec addendum written. 56 tests in
+   test_upwork_tab (+3: the rooms rule, the new-posting hire, the repeat client).
 0k. DONE 2026-08-26 00:40 `a10b421` — **the tab REDESIGNED on his verdict** (23:50: "I don't
    like the UI at all … too complicated for me to understand anything … the part that I
    hate most is the client comms and how you represent it — it all should be intuitive").

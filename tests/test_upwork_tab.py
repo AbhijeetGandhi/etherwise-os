@@ -6,6 +6,13 @@ on the job, connects spent = applications + boosts net of boost refunds; the
 "—" tiles for the stages without a spine row; the parity of every figure with
 its drill; the shared card builder feeding Today and the tab; the rails strip
 with `built: False` rows; the query-param guard on the new route.
+
+Amended 2026-08-26 ("0 won this month is incorrect"): the Interviewing and
+Won tiles count what HAPPENED in the period from wherever it came (an
+INTERVIEW room a client opened; a contract that started), split by source;
+the cohort's own share stays as `cohort_n`; a cohort job is also interviewed
+when an INTERVIEW room exists on its proposal and won when the same client
+hired us on another posting after we applied.
 """
 from __future__ import annotations
 
@@ -109,8 +116,28 @@ def seed_cohort(db_path):
         # a contract started this week whose job was NEVER fetched (outside)
         conn.execute(
             "INSERT INTO contracts (id, job_id, title, upwork_status, start_dt,"
-            " contract_type) VALUES ('ctX', '2066900000000099999', 'direct hire',"
-            " 'ACTIVE', '2026-08-24T15:00:00+0000', 'FIXED')")
+            " contract_type, client_company) VALUES ('ctX', '2066900000000099999',"
+            " 'direct hire', 'ACTIVE', '2026-08-24T15:00:00+0000', 'FIXED', 'Xavier X')")
+        # the rooms Upwork opens when a client talks: one per proposal that
+        # got an answer (J7 Activated, J10 Hired, J9 Archived AFTER a
+        # conversation), one for the direct hire (ctX, no proposal), one for
+        # the quiet hire (ct6); Dhanya's old room from June must not count
+        for tid, ptype, pid, cid, name, first in (
+                ("room_pr7", "INTERVIEW", "pr7", None, "Paula P", "2026-08-25T13:00:00Z"),
+                ("room_pr10", "INTERVIEW", "pr10", "ct10", "Tina T", "2026-08-25T14:00:00Z"),
+                ("room_pr9", "INTERVIEW", "pr9", None, "Nina N", "2026-08-25T13:30:00Z"),
+                ("room_ctX", "INTERVIEW", None, "ctX", "Xavier X", "2026-08-24T14:00:00Z"),
+                ("room_ct6", "INTERVIEW", None, "ct6", "Sixto S", "2026-08-25T15:30:00Z"),
+                ("room_old", "INTERVIEW", None, None, "Olga O", "2026-06-29T10:00:00Z")):
+            conn.execute(
+                "INSERT INTO threads (id, room_name, room_type, proposal_id,"
+                " contract_id, first_seen_at) VALUES (?,?,?,?,?,?)",
+                (tid, name, ptype, pid, cid, first[:19].replace("T", " ")))
+            conn.execute(
+                "INSERT INTO messages (id, thread_id, message, created_dt,"
+                " sender_user_name, direction) VALUES (?,?,?,?,?,?)",
+                (f"m_{tid}", tid, "hello", first, name, "inbound"))
+        conn.execute("UPDATE proposals SET client_company = 'Nina N' WHERE id='pr9'")
         # ── a matured baseline cohort, four weeks earlier (07-27 .. 07-28) ──
         # 10 fetched, all passed, 5 hot, 2 applied (rail), 1 interviewed, 0 won
         for i in range(12, 22):
@@ -183,17 +210,30 @@ class TestUpworkReader(UpworkTabCase):
         self.assertEqual(n["fetched"], 12)
         self.assertEqual(n["passed"], 8)
         self.assertEqual(n["hot"], 5)
-        self.assertEqual(n["applied"], 5)          # 3 by the rail + 2 by closure
-        self.assertEqual(n["interviewed"], 3)      # J7 Activated, J10 Hired, J6 inferred
-        self.assertEqual(n["won"], 2)
+        # applied: 3 by the rail + 3 by closure (J10 Hired, J6 contract, J9's
+        # room — the client talked, then archived the proposal)
+        self.assertEqual(n["applied"], 6)
+        # the last two tiles count what HAPPENED this week, from wherever:
+        # 5 people started talking (J7, J9, J10, the direct hire, the quiet
+        # hire — Olga's June room does not count), 3 contracts started
+        self.assertEqual(n["interviewed"], 5)
+        self.assertEqual(n["won"], 3)
+        # the feed's own share of each (the cohort): J7, J9, J10, J6 / J10, J6
+        self.assertEqual(self.stage("week", "interviewed")["cohort_n"], 4)
+        self.assertEqual(self.stage("week", "won")["cohort_n"], 2)
+        self.assertEqual(self.stage("week", "interviewed")["sources"],
+                         {"this": 4, "earlier": 0, "repeat": 0, "outside": 1})
+        self.assertEqual(self.stage("week", "won")["sources"],
+                         {"this": 2, "earlier": 0, "repeat": 0, "outside": 1})
 
     def test_closure_makes_the_outcome_chain_nested_and_says_what_it_inferred(self):
         applied = self.stage("week", "applied")
-        self.assertEqual(applied["inferred"], 2)    # J10 (proposal), J6 (contract)
-        self.assertEqual(applied["hot_split"], {"hot": 3, "not_hot": 2})
+        self.assertEqual(applied["inferred"], 3)    # J10 (proposal), J6 (contract), J9 (room)
+        self.assertEqual(applied["hot_split"], {"hot": 4, "not_hot": 2})
         self.assertEqual(self.stage("week", "interviewed")["inferred"], 1)   # J6
-        # every later stage is a subset of the earlier one, by construction
-        n = {s["k"]: s["n"] for s in self.out["funnel"]["week"]["stages"] if s["measured"]}
+        # inside the cohort every later stage is a subset of the earlier one
+        n = {s["k"]: s.get("cohort_n", s["n"])
+             for s in self.out["funnel"]["week"]["stages"] if s["measured"]}
         self.assertLessEqual(n["won"], n["interviewed"])
         self.assertLessEqual(n["interviewed"], n["applied"])
         self.assertLessEqual(n["applied"], n["fetched"])
@@ -231,14 +271,14 @@ class TestUpworkReader(UpworkTabCase):
         self.assertEqual(inter["of_prev"]["k"], "applied")   # not 'viewed'
         won = self.stage("week", "won")
         self.assertEqual(won["of_prev"]["k"], "interviewed")  # not 'offer'
-        self.assertEqual(won["of_prev"]["pct"], 66.7)         # 2 of 3
+        self.assertEqual(won["of_prev"]["pct"], 50.0)         # cohort: 2 of 4
 
     def test_applied_step_is_of_the_hot_jobs(self):
         applied = self.stage("week", "applied")
         self.assertEqual(applied["of_prev"]["k"], "hot")
-        self.assertEqual(applied["of_prev"]["n_num"], 3)      # applied ∧ hot
+        self.assertEqual(applied["of_prev"]["n_num"], 4)      # applied ∧ hot
         self.assertEqual(applied["of_prev"]["n_den"], 5)
-        self.assertEqual(applied["of_prev"]["pct"], 60.0)
+        self.assertEqual(applied["of_prev"]["pct"], 80.0)
 
     def test_baseline_is_pooled_over_completed_weeks_and_rail_covered_only(self):
         w = self.out["funnel"]["week"]
@@ -253,7 +293,7 @@ class TestUpworkReader(UpworkTabCase):
         applied = self.stage("week", "applied")
         self.assertEqual(applied["baseline"]["n_den"], 5)      # hot, covered
         self.assertEqual(applied["baseline"]["pct"], 40.0)     # 2 of 5
-        self.assertEqual(applied["delta_pp"], 20.0)            # 60 - 40
+        self.assertEqual(applied["delta_pp"], 40.0)            # 80 - 40
 
     def test_pre_rail_cohorts_never_enter_an_outcome_baseline(self):
         # the month view's 3 completed months (May-Jul) include the 06-01
@@ -276,7 +316,7 @@ class TestUpworkReader(UpworkTabCase):
         self.assertIsNone(applied["delta_pp"])
         self.assertIsNone(out["funnel"]["week"]["baseline"]["rail_since"])
         # closure still counts the proposals' and contracts' jobs as applied
-        self.assertEqual(applied["n"], 3)                        # J7, J10, J6
+        self.assertEqual(applied["n"], 4)                        # J7, J9, J10, J6
 
     def test_small_n_is_anecdote_on_either_side(self):
         # every step here is under the small-N line: no SIGNAL anywhere
@@ -288,7 +328,7 @@ class TestUpworkReader(UpworkTabCase):
             hot = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "hot")
             self.assertTrue(hot["signal"])                       # 8 and 10 >= 5
             won = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "won")
-            self.assertFalse(won["signal"])                      # 3 and 1 < 5
+            self.assertFalse(won["signal"])                      # 4 and 1 < 5
 
     def test_contracts_started_line_names_the_wins_outside_the_funnel(self):
         c = self.out["funnel"]["week"]["contracts_started"]
@@ -298,6 +338,80 @@ class TestUpworkReader(UpworkTabCase):
         self.assertEqual(rows["total"], 3)
         tags = {r["id"]: r["cohort"] for r in rows["rows"]}
         self.assertEqual(tags, {"ct10": "this", "ct6": "this", "ctX": "outside"})
+        # the Won tile reads the same rows, and names them
+        self.assertEqual(self.rows(stage="won", week=WEEK)["total"], 3)
+        won = self.stage("week", "won")
+        self.assertEqual([n["who"] for n in won["names"]], ["quiet hire", "won job", "Xavier X"])
+        self.assertEqual([n["cohort"] for n in won["names"]], ["this", "this", "outside"])
+
+    def test_interviews_are_the_rooms_clients_opened_this_period(self):
+        """Abhijeet, 2026-08-26: "I know we had more than 1 interview this
+        week" — the tile counts every INTERVIEW room a client opened in the
+        period (a reply, an invitation, an offer), one per person, tagged
+        with where it came from; an old room that is still active does not
+        count as new; a proposal the client archived AFTER talking still was
+        an interview."""
+        iv = self.stage("week", "interviewed")
+        self.assertEqual(iv["n"], 5)
+        names = {n["who"]: n for n in iv["names"]}
+        self.assertEqual(set(names), {"Paula P", "Tina T", "Nina N", "Xavier X", "Sixto S"})
+        self.assertEqual(names["Xavier X"]["cohort"], "outside")
+        self.assertEqual(names["Tina T"]["contract_start"], "2026-08-25")   # → hired
+        self.assertIsNone(names["Paula P"]["contract_start"])
+        rows = self.rows(stage="interviewed", week=WEEK)
+        self.assertEqual(rows["total"], 5)
+        by = {r["who"]: r for r in rows["rows"]}
+        self.assertEqual(by["Nina N"]["upwork_status"], "Archived")
+        self.assertEqual(by["Nina N"]["job_id"], J[9])
+        self.assertEqual(by["Nina N"]["cohort"], "this")
+        self.assertTrue(by["Paula P"]["url"].endswith("room_pr7/"))
+        self.assertEqual(self.out["funnel"]["week"]["interviews_started"]["total"], 5)
+        # the month view: the same five (all in August)
+        self.assertEqual(self.stage("month", "interviewed")["n"], 5)
+
+    def test_a_client_who_hires_on_a_new_posting_is_a_win_of_the_job_we_applied_to(self):
+        """Royan Stomberg, 17 Aug: our proposal sat on job A (fetched 13 Aug);
+        the client hired us on a fresh posting B the feed never saw. The
+        contract carries B, so the cohort of A showed 0 won and the contract
+        was "outside the funnel". The same-client join fixes both."""
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE proposals SET client_company = 'Roy R',"
+                         " upwork_status = 'Archived' WHERE id = 'pr7'")
+            conn.execute(
+                "INSERT INTO contracts (id, job_id, title, upwork_status, start_dt,"
+                " contract_type, client_company) VALUES ('ctR', '2066900000000088888',"
+                " 'new posting hire', 'ACTIVE', '2026-08-26T09:00:00+0000', 'HOURLY', 'Roy R')")
+        out = data.upwork(self.db_path, TODAY)
+        won = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "won")
+        self.assertEqual(won["n"], 4)
+        self.assertEqual(won["cohort_n"], 3)                 # J10, J6, J7 via the client
+        self.assertEqual(won["sources"]["this"], 3)
+        rows = self.rows(stage="cohort_won", week=WEEK)["rows"]
+        j7 = next(r for r in rows if r["id"] == J[7])
+        self.assertEqual(j7["won_via"], "client")
+        self.assertEqual(j7["contract_id"], "ctR")            # named in the drill
+        # the contract row says which job it came through, and how
+        crow = next(r for r in self.rows(stage="won", week=WEEK)["rows"] if r["id"] == "ctR")
+        self.assertEqual((crow["cohort"], crow["via"], crow["via_job_id"]), ("this", "client", J[7]))
+        # a client with no proposal of ours on any fetched job stays outside
+        ctx = next(r for r in self.rows(stage="won", week=WEEK)["rows"] if r["id"] == "ctX")
+        self.assertEqual(ctx["cohort"], "outside")
+
+    def test_a_client_who_comes_back_is_a_repeat_not_the_feed(self):
+        """Rocky Choy, 24 Aug: a June contract, then a new one in August with
+        no new job of ours behind it — a repeat client, not "from the jobs of
+        June" and not "came to us"."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO contracts (id, job_id, title, upwork_status, start_dt,"
+                " contract_type, client_company) VALUES ('ctX0', NULL, 'the first one',"
+                " 'ENDED', '2026-06-10T09:00:00+0000', 'FIXED', 'Xavier X')")
+        out = data.upwork(self.db_path, TODAY)
+        won = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "won")
+        self.assertEqual(won["sources"], {"this": 2, "earlier": 0, "repeat": 1, "outside": 0})
+        self.assertEqual(next(n for n in won["names"] if n["who"] == "Xavier X")["via"], "repeat")
+        iv = next(s for s in out["funnel"]["week"]["stages"] if s["k"] == "interviewed")
+        self.assertEqual(iv["sources"]["repeat"], 1)
 
     def test_month_view_uses_the_calendar_month(self):
         m = self.out["funnel"]["month"]
@@ -318,6 +432,9 @@ class TestUpworkParity(UpworkTabCase):
                 self.assertEqual(r["total"], s["n"], (view, s["k"]))
                 self.assertEqual(r["count"], s["n"], (view, s["k"]))
                 self.assertEqual(s["drill"], {"stage": s["k"], view: key})
+                if "cohort_n" in s:                 # the feed's share has its own drill
+                    rc = self.rows(stage="cohort_" + s["k"], **{view: key})
+                    self.assertEqual(rc["total"], s["cohort_n"], (view, s["k"]))
 
     def test_hot_sublines_equal_their_drills(self):
         hot = self.stage("week", "hot")

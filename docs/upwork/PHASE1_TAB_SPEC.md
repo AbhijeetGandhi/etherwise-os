@@ -620,3 +620,30 @@ says the email is missing. Separately, `poll_inbox` now supersedes a pending dra
 the client's newest inbound message (Upwork or linked mail) and redrafts the room — the row's
 "draft predates their message" flag should only ever be seen between a new message and the next
 poll (or a press of "Check Upwork now").
+
+**Addendum 2026-08-26 06:10 — Interviewing and Won count what happened (a decision taken while
+he slept; recorded in UPWORK_BRIEF for his review).** His 05:20 message: "it says 0 won this
+month, which is incorrect — we at least got 2 … and more than one interview this week". The
+cohort funnel (decision 10) only counted a win when the contract carried the FETCHED job's id,
+so Royan Stomberg (proposal on the job fetched 13 Aug, hired 17 Aug on a fresh posting) and
+Rocky Choy (a June client who came back on 24 Aug) were "outside the funnel" — a grey line,
+not the number. Now: (1) the **Interviewing** tile = interviews that started in the period (an
+INTERVIEW room a client opened: a reply to our proposal, an invitation, an offer), one per
+person; the **Won** tile = contracts that started in the period; both split into *from this
+period's jobs · from earlier jobs · repeat clients · came to us*, with the names under the flow
+(who, the day, where from, "hired on a new posting", "hired 17 Aug"). The feed's own share of
+each stays in the payload as `cohort_n` (+ `of_prev`/`baseline` for the "usually" line, which
+the screen no longer prints for these two — n is single digits and the sources mix) and has
+its own drill (`cohort_interviewed`, `cohort_won`); closure holds inside the cohort, not across
+the split (a direct hire has no interview row). (2) Cohort attribution widened: a job is also
+interviewed when an INTERVIEW room exists on its proposal (the client talked, then archived it),
+and won when the SAME CLIENT — `proposals.client_company = contracts.client_company`, the string
+Upwork prints on both — started a contract on or after the job was fetched (`won_via: "client"`).
+A client with an earlier contract of ours is a **repeat** whatever job the feed once showed. Drill
+`interviewed` = the people rows (who · started talking · came through · the job behind it ·
+then); `won` = the contracts rows (same as `contracts_started`). Live on the 25 Aug snapshot:
+month → Interviewing 5 (Julie Heffernan, John Bohan, Royan Stomberg → hired, Jarrod Roback,
+Rocky Choy → hired), Won 2 (Royan, this month's jobs, hired on a new posting; Rocky, repeat);
+week of 24 Aug → Interviewing 2, Won 1. TCC (Brandi Jordan) is NOT in August by the DB: its
+contract (44099615) started 15 July — if a second TCC contract exists, the ROOM_LIST sync cannot
+see it (one contract id per room), which is the `list_contracts` use case in the MCP plan.
