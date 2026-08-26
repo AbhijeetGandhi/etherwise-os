@@ -22,9 +22,14 @@ HOW (the inbox poll, after ingesting; also "Check Upwork now"):
      At most UPWORK_PROMISE_MAX_PER_RUN extractor calls per poll (the first
      run after deploy sees a week of outbound mail); the rest wait.
   3. AUTO-CLEAR (UI law 5 — every card carries an observed clear condition):
-     a LATER outbound message in the same room marks the promise done at the
-     next poll — following up IS the delivery of "I'll let you know". The
-     sweep then clears the card. Done by hand on Today works as before.
+     for a REPLY-TYPE promise ("I'll let you know", "get back to you", "ping
+     you", "send it over", "reply", "call you") a LATER outbound message in
+     the same room marks it done at the next poll — following up IS the
+     delivery. A DELIVERABLE ("build the zap by Thursday", "walk Amanda
+     through the demo") stays until Done by hand or its due date: a reply is
+     not the thing promised (Abhijeet, 26 Aug 16:30: "reply-type promises
+     only" — the first rule closed "fix the HubSpot trigger" on a thank-you).
+     is_reply_type() is the line between the two.
 
 Nothing here sends anything. A failure in this pass is a metric on the poll
 (`promise_errors`), never a failed inbox run: the cursor does not move past a
@@ -173,15 +178,32 @@ def record(conn: sqlite3.Connection, msg: dict, c: dict) -> bool:
         return False
 
 
+# the verbs that make a promise a REPLY — the next message in the room is its
+# delivery. Anything else is a deliverable and waits for Done or its due date.
+_WHO = r"(?:you|them|him|her|back|(?-i:[A-Z])\w+)"       # a pronoun or a Name, not "the"
+_REPLY_RE = re.compile(
+    r"\b(let (?:\w+ ){1,3}know|get back|ping|reply|respond|revert|"
+    rf"update {_WHO}|keep {_WHO} (?:posted|updated|in the loop)|"
+    rf"send|share|forward|follow[- ]up|circle back|confirm|call {_WHO}|"
+    rf"message {_WHO}|write back|inform|notify|check in|touch base|reach out)\b", re.I)
+
+
+def is_reply_type(text: Optional[str]) -> bool:
+    """Is this promise discharged by writing back? "Review the brief and let
+    David know" → yes; "Deliver the weekly report zap by Thursday" → no."""
+    return bool(_REPLY_RE.search(" ".join((text or "").split())))
+
+
 def auto_close(conn: sqlite3.Connection) -> int:
-    """A later outbound message in the same room = the promise was followed
-    up. Marks such open Upwork promises done; returns how many."""
+    """A later outbound message in the same room = a REPLY-TYPE promise was
+    followed up. Marks such open Upwork promises done; returns how many.
+    Deliverables are left alone."""
     closed = 0
     for r in conn.execute(
-            "SELECT id, source_cite FROM commitments WHERE state='open'"
+            "SELECT id, text, source_cite FROM commitments WHERE state='open'"
             " AND who='us' AND source_cite LIKE ?", (SOURCE_PREFIX + "%",)):
         parsed = parse_cite(r["source_cite"])
-        if not parsed or not parsed[1]:
+        if not parsed or not parsed[1] or not is_reply_type(r["text"]):
             continue
         room, mid = parsed
         later = conn.execute(

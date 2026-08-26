@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; rounds 04:15, 05:15, 06:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`) · the overnight list of 26 Aug DONE (0o, 0p, 0r, next actions 5) — his review pending
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; rounds 04:15, 05:15, 06:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`) · the overnight list of 26 Aug DONE (0o, 0p, 0r, next actions 5) — his review pending · 16:12 answers: captures taken, promises reply-type only, **use case A built and scheduled** (`upwork_financials` 06:05 daily, `<p29>`) — five ◆ under Next actions 5
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -41,10 +41,17 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   (result under Next actions 1). Rollback = the one config line back to "chrome".
 - **Chrome rails**: the scanner's Chrome path is RETIRED from the schedule (kept in
   `scan_pipeline._fetch_chrome` as the rollback); connects (`upwork_connects`, 05:35 — the
-  only applied source) still Chrome until 0.2 decides its replacement. Corrected
+  only applied source) still Chrome; its MCP replacement runs in SHADOW inside
+  `upwork_financials` (06:05) since 26 Aug evening — `MCP_CONNECTS_SINCE` flips it. Corrected
   2026-08-25: the follow-up monitor in v3 is the GraphQL `upwork_inbox` job (10:15/19:15),
   not Chrome; no win-loss detector exists in v3 — both were Cowork desktop tasks,
   deprecated in May, and Airtable Communications has had no write since 2026-05-20.
+- **Upwork money (26 Aug evening)**: `upwork_financials` (MCP, daily 06:05, both orgs — the
+  agency answers through the MCP where GraphQL never did) writes the ledger under the CSV's
+  own canonical key; `upwork_mcp_rows` (030) is its audit twin; `bin/doctor` "upwork mcp
+  twins" is the CSV-retirement criterion (2/2 clean completed weeks → the Money import card
+  goes audit-only). Withdrawal legs booked as transfers and MCP rows invoice-dated — both
+  his 17:10 answers (Next actions 5). First live run 17:15 (below).
 - **Proposals sync frozen since 9 June** (scope_blocked vendorProposals) — local
   proposals table stale, win-rate wrong. Fix: `list_freelancer_proposals` (tasks #30–33).
   Also (found 2026-08-25, fixed same night — see Codebase findings 1): the hourly
@@ -527,6 +534,18 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    the sweep, **six promise cards on Today** with Open on Upwork (`99f2eb8`: a dated Upwork
    promise is carded by the Upwork branch too — named, with the room; its own date kept).
    Model spend for the day at 10:35: $1.08 of $4 over 107 calls.
+   **16:30 his answer to the ◆: "Reply-type promises only" → done (`<p29>`).**
+   `promises.is_reply_type()` — let X know / get back / ping / reply / respond / revert /
+   update X / keep X posted / send / share / forward / follow up / circle back / confirm /
+   call X / message X / write back / inform / notify / check in / touch base / reach out
+   (X = a pronoun or a Name, so "update the sheet" and "the welcome message" are not
+   replies). `auto_close` clears only those on his next message in the room; a deliverable
+   ("Deliver the weekly report zap by Thursday", "Walk Amanda through the demo") stays until
+   Done or its date, and its card says "Mark Done here when it is delivered — a reply alone
+   does not clear it" (payload `auto_clears`). Of the six open today: Jarrod's proposal,
+   Carly's breakdown and David's "let him know" are reply-type; Amanda's walkthrough and
+   Dhanya's two zaps are deliverables. The four promises the old rule already closed
+   (Rocky's HubSpot fix etc.) stay closed — history, not re-opened. 16 tests.
 0r. DONE 2026-08-26 06:29 (overnight item 1, his 05:20: "I like the way you built UI for the
    upwork tab or at least the direction you headed. I want UI of all the tabs improved now in
    the same way") — **the other six tabs, in the Upwork tab's style.** Mockups first
@@ -660,6 +679,87 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    `connects_history`. `config.MCP_FINANCIALS_LOOKBACK_DAYS = 14`. NOT scheduled (no plist,
    no SOURCES entry, not in RERUN_JOBS — a test pins that). 9 tests. The fixtures from his
    three OKs (§12 items 2, 3, 5) pin the mapping; then the plist and the SOURCES entry.
+   **16:12 "what's the plan now?" → three answers: "Yes — the three for transactions +
+   connects", "Reply-type promises only", "Finish use case A — retire the CSV import".**
+   16:20: the four captures run read-only on his account (list_accounts; transactions on
+   the personal org and on the agency org, 1–26 Aug, limit 200; connects_balance limit 10)
+   → `tests/fixtures/mcp/` (structure verbatim, ids and amounts real, rows dropped for
+   size). What they settled: the agency ANSWERS (org `1910033523997712724`, role string
+   `FL_AGENCY` — the module looked for `AGENCY`, fixed); every row has an amount; the row is
+   the GraphQL `transactionHistoryRow`; the MCP dates rows by INVOICE date (08-16 for the
+   10–16 Aug week) where the CSV carries the PAYMENT date (08-26 for the same rows); the
+   connects usage rows have NO label (DEBIT / REFUND_CREDIT, an instant, a `~02` job or
+   null), and the Chrome rail's `event_date` is the UTC day of that instant.
+   **BUILT AND SCHEDULED (evening, `<p29>`): `upwork_financials`, daily 06:05 IST.**
+   `orgs()` FL_AGENCY; `signed_minor` = the ledger's rule + "an explicitly negative MCP row
+   stays negative"; a NEW row gets `type` the way the CSV importer types it
+   (`CSV_TYPE_MAP`: Hourly → Hourly Earning, Membership Fee → Connect Purchase as the 83
+   API-era rows read), `pnl_bucket` on insert, `fx_rate '1'`, `assignment_company`, source
+   `Upwork-MCP`, profile spelled `Personal`/`Agency` like the ledger; an EXISTING row is
+   updated (status), never twinned — the fixture run against the live ledger's own rows
+   reproduces every CSV sign (Service Fee −2400, WHT −24, Hourly +24000, connects −4500,
+   Agency Plus −1999, the card settlement +4500 → bucket transfer, withdrawal −233514).
+   Withdrawal legs go in as `transfer` rows on his 17:10 word (below).
+   Migration 030 `upwork_mcp_rows` = every row the rail read (profile, type, signed amount,
+   invoice date, outcome inserted/updated/quarantined, first/last seen) — the
+   MCP side of the tie-out; `bin/doctor` "upwork mcp twins" reads the CSV exports on disk
+   against it: every CSV ref the rail could have seen (id ≥ the smallest it read) must have
+   a twin with the same signed amount; reported for the last two completed weeks — **2/2
+   clean = the Money import card goes audit-only** (WARN otherwise, never FAIL). Connects in
+   SHADOW inside the same run (`MCP_CONNECTS_SINCE = None`): the ten newest usage rows
+   mapped onto the rail's kinds (badge = DEBIT −1 no job; two debits on one job at one
+   instant = proposal + boost; a refund on a job with a boost on record = boost_refund) and
+   compared with the Chrome rail's rows — the fixture's 10 rows twin 9 of the live rail's
+   (the tenth is the 26 Aug badge the 05:35 scrape had not seen). SOURCES `upwork_financials`
+   (critical, backs money, 30 h), RERUN_JOBS + Run now, task words. The scan's start-failure
+   text now says network vs auth (`mcp_client.start_failure_kind`; the 12:15 DNS outage had
+   said "repair the OAuth token"). 25 tests (`tests/test_mcp_financials.py`).
+   DECIDED 17:10 — **dates:** MCP-inserted rows carry the invoice date (the only date the
+   MCP gives; his 3 Aug accrual choice for the P&L month); CSV-inserted rows keep the
+   payment date; a boundary week (an invoice of 26 Jul paid 5 Aug) lands in July when the
+   MCP inserts it first; nothing is fabricated. **Withdrawals:** the ledger's last
+   withdrawal row was 27 May — since Phase 1b the CSV importer HELD new Withdrawal /
+   Withdrawal Fee legs "for Phase 2" and nothing ever released them; the rail now books
+   them as transfers (the CSV importer still holds its own — the rail inserts first from
+   here on, so that hold no longer bites).
+   ◆ **For him — two ledger readings the captures exposed** (CSV-path rows, untouched):
+   `941421323` (the $45 Visa payment for 300 connects, CSV type "Payment") is bucketed
+   **revenue** — the MCP's `ARPayment` type would make it `transfer`; and the two
+   "Subscription Renewal Charges" rows (−$19.99 each) are **uncategorized** where the MCP's
+   `Membership Fee` reads platform_fee. One-line rules in `pnl.bucket` fix both; his call
+   because they move his P&L (+$45 revenue out; $39.98 into platform fees).
+   ◆ **For him — the weekly `summary` tie-out** (plan step 3) needs §12 call 4 approved: one
+   read of `get_freelancer_financials summary` on the personal org, 1–26 Aug.
+   ◆ **For him — the Chrome connects rail.** After a few mornings of `connects.twins ==
+   shadow_rows` in the run metrics, set `MCP_CONNECTS_SINCE` to a day and retire
+   `io.etherwise.v3.upwork-connects` the same day — the last Chrome rail.
+   ◆ **For him — the GraphQL sync's transactions pass** has inserted nothing since 24 June
+   and logs `errors_agency 1` every hour; with this rail live it is redundant on the money
+   side (proposals/contracts/rooms stay). Retire that pass, or leave it as a second reader.
+   **17:10 his three answers: run it now once · invoice date, as built · insert the
+   withdrawals as transfers** → the hold removed before the first run (a Withdrawal is a
+   `Withdrawal`/`transfer` row signed negative like the 65 older ones, its fee `Other`/
+   `transfer`; finance-doctor's #7 is N/A, so it stays GREEN).
+   **First live run 17:15, run 7232, completed (four read-only calls):** personal 22 rows in
+   the 12–26 Aug window, all UPDATED (his 25 Aug CSV import had every one); agency 21 rows,
+   19 updated + **2 inserted — the 26 Aug withdrawal pair, −$2,335.14 / −$0.99, bucket
+   transfer, fx 1, status SUCCESS** (the ledger's first withdrawal since 27 May); no
+   quarantine, nothing without an id; 43 rows in `upwork_mcp_rows`. Connects (shadow): 10
+   usage rows, balance 256 paid / 0 free, **twins 9 of 10** with the Chrome rail (the tenth
+   is the 26 Aug 09:39Z badge, newer than the 05:35 scrape). Two things the run taught,
+   both fixed before the commit: the lone-debit rule read the −18 proposal of 23 Aug as a
+   boost because its own Chrome twin said "applied" (a prior-kind lookup now excludes the
+   event itself); and the twins check drew its coverage line at the smallest id the rail
+   had read, which the MCP's loose date filter pushed back to 2 Aug — so it asked for a twin
+   of a 10 Aug connects purchase the 12 Aug window never held. The line is now the rail's
+   earliest window floor (sync_cursors `upwork_financials_floor`, set to 2026-08-12 by hand
+   for run 7232), and a completed week only counts as "in view" when every invoice it could
+   have paid was invoiced after that floor (14 days' margin) — without that the check said
+   "can go audit-only" on the rail's first morning. It now reads **20 CSV rows since 10 Aug
+   all twinned with matching amounts, 22 older rows predate the rail, 0 of the two completed
+   weeks fully in view — keep the CSV import until 2026-09-14.** No invoice dated after
+   18 Aug exists on either org yet — the 17–23 Aug week has not been invoiced by Upwork as
+   of 17:15.
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated
@@ -716,3 +816,12 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   surveyed for use cases — transactions first, to replace the CSV import; (3) the Jobs
   numbers "0 won this month / 1 interviewing" are wrong (TCC/Brandi Jordan, Globaltize/
   Royan won; more than one interview this week).
+- 2026-08-26 16:12–16:30 · "ok so what's the plan now? where are we. do you need any inputs
+  from me or what?" → status (flip holds, DNS outage 12:15–13:15 self-healed, promises live,
+  $1.65 spent) and three questions → "Yes — the three for transactions + connects" (the
+  captures, 16:20), "Reply-type promises only" (0p), "Finish use case A — retire the CSV
+  import" (Next actions 5, `<p29>`: the rail built and scheduled, migration 030, the twins
+  doctor check, connects in shadow). Config diff (SOURCES entry, `MCP_CONNECTS_SINCE`,
+  comments) applied under his standing approval. Five ◆ decisions recorded under 5 (dates,
+  withdrawals, two ledger readings, the summary call, the Chrome connects rail) — asked,
+  not assumed.

@@ -1,0 +1,172 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~16:20 IST (Abhijeet's approval, Upwork chat: 'the three for transactions + connects'). Structure verbatim; ids and amounts real; a few rows dropped for size, none altered. Tool: get_freelancer_financials action=transactions org_uid=1647672547786633217 (TALENT) params={from_date:2026-08-01,to_date:2026-08-26,limit:200}. total_count 32; 12 rows kept here: the four row kinds (APInvoice Hourly, APAdjustment Service Fee / WHT, ARInvoice Membership Fee, ARPayment Payment). NOTE the dates are INVOICE dates (2026-08-16 for the 10-16 Aug week) where the CSV import carries the PAYMENT date (2026-08-26 for the same rows).",
+ "data": {
+  "transactionHistory": {
+   "transactionDetail": {
+    "transactionHistoryRow": [
+     {
+      "accountingSubtype": "Service Fee",
+      "assignmentCompanyName": "Amanda T",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "Service Fee\nContract ID: 44145310\nContract title: Airtable Configuration and Automation\nClient: Amanda T\nAmount: \n$240.00 USD x 10% = $24.00 USD\nNotes: Invoice from Upwork for T944447932",
+      "recordId": "944448040",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "-24.00",
+       "rawValue": "-24.00"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APAdjustment"
+     },
+     {
+      "accountingSubtype": "WHT",
+      "assignmentCompanyName": "Amanda T",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "Withholding Tax (IN) - Ref ID 944448026\nCountry: IN\nAmount: $240.00 USD x 0.1% = $0.24 USD",
+      "recordId": "944448033",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "-0.24",
+       "rawValue": "-0.24"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APAdjustment"
+     },
+     {
+      "accountingSubtype": "Hourly",
+      "assignmentCompanyName": "Amanda T",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "(44145310) Amanda T - 6:00 hrs @ $40.00/hr - 08/10/2026 - 08/16/2026",
+      "recordId": "944448026",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "240.00",
+       "rawValue": "240.00"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APInvoice"
+     },
+     {
+      "accountingSubtype": "Service Fee",
+      "assignmentCompanyName": "NETFLY",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "Service Fee\nContract ID: 43495766\nContract title: GoHighLevel (GHL) + Zapier/Webhooks Expert (Kixie Integration, Real-Time Data, Call Transcriptions)\nClient: NETFLY\nAmount: \n$81.00 USD x 10% = $8.10 USD\nNotes: Invoice from Upwork for T944268803",
+      "recordId": "944268922",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "-8.10",
+       "rawValue": "-8.10"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APAdjustment"
+     },
+     {
+      "accountingSubtype": "WHT",
+      "assignmentCompanyName": "NETFLY",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "Withholding Tax (IN) - Ref ID 944268907\nCountry: IN\nAmount: $81.00 USD x 0.1% = $0.08 USD",
+      "recordId": "944268913",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "-0.08",
+       "rawValue": "-0.08"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APAdjustment"
+     },
+     {
+      "accountingSubtype": "Hourly",
+      "assignmentCompanyName": "NETFLY",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "(43495766) NETFLY - 2:00 hrs @ $40.50/hr - 08/10/2026 - 08/16/2026",
+      "recordId": "944268907",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "81.00",
+       "rawValue": "81.00"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APInvoice"
+     },
+     {
+      "accountingSubtype": "Membership Fee",
+      "description": "Fees for additional Connects (300).",
+      "recordId": "944697095",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "45.00",
+       "rawValue": "45.00"
+      },
+      "transactionCreationDate": "2026-08-17T00:00:00+0000",
+      "type": "ARInvoice"
+     },
+     {
+      "accountingSubtype": "Membership Fee",
+      "description": "Subscription Renewal Charges",
+      "recordId": "941695727",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "19.99",
+       "rawValue": "19.99"
+      },
+      "transactionCreationDate": "2026-08-07T00:00:00+0000",
+      "type": "ARInvoice"
+     },
+     {
+      "accountingSubtype": "Membership Fee",
+      "description": "Fees for additional Connects (300).",
+      "recordId": "941421345",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "45.00",
+       "rawValue": "45.00"
+      },
+      "transactionCreationDate": "2026-08-05T00:00:00+0000",
+      "type": "ARInvoice"
+     },
+     {
+      "accountingSubtype": "Payment",
+      "description": "Payment - Visa 3368",
+      "paymentStatus": "SUCCESS",
+      "recordId": "941421323",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "45.00",
+       "rawValue": "45.00"
+      },
+      "transactionCreationDate": "2026-08-05T00:00:00+0000",
+      "type": "ARPayment"
+     },
+     {
+      "accountingSubtype": "Hourly",
+      "assignmentCompanyName": "Amanda T",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "(44145310) Amanda T - 10:10 hrs @ $40.00/hr - 07/27/2026 - 08/02/2026",
+      "recordId": "940917308",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "406.67",
+       "rawValue": "406.67"
+      },
+      "transactionCreationDate": "2026-08-02T00:00:00+0000",
+      "type": "APInvoice"
+     },
+     {
+      "accountingSubtype": "Membership Fee",
+      "description": "Fees for additional Connects (300).",
+      "recordId": "940147248",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "45.00",
+       "rawValue": "45.00"
+      },
+      "transactionCreationDate": "2026-08-02T00:00:00+0000",
+      "type": "ARInvoice"
+     }
+    ]
+   }
+  }
+ },
+ "status": "ok",
+ "total_count": 32
+}

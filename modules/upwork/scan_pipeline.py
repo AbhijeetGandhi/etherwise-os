@@ -253,12 +253,15 @@ def _fetch_mcp(ctx, dbp) -> dict:
         session.initialize()
         org = mcp_search.org_uid(session)
     except Exception as exc:                                     # noqa: BLE001
-        # the MCP twin of "logged out": lead-gen is DOWN until the token is
-        # fixed. Fail LOUD (-> critical anomaly -> interrupt email).
+        # the MCP twin of "logged out": lead-gen is DOWN until this is fixed.
+        # Fail LOUD (-> critical anomaly -> interrupt email) and say WHICH
+        # kind of broken: the 26 Aug DNS outage was reported as a token to
+        # repair, and the token was fine (mcp_client.start_failure_kind).
+        kind = mcp_client.start_failure_kind(exc)
         raise RuntimeError(
-            f"Upwork MCP session could not start: {exc!r}. Lead-gen is down"
-            " until the OAuth token is repaired (bin/upwork-mcp-auth); the"
-            " scan self-heals on the next :15 run.") from exc
+            f"Upwork MCP session could not start ({kind}): {exc!r} —"
+            f" {mcp_client.START_FAILURE_ADVICE[kind]}. Lead-gen is down"
+            " until then; the scan retries on the next :15 run.") from exc
     with db.connect(dbp) as conn:
         known = {r["id"] for r in conn.execute(f"SELECT id FROM {TABLE}")}
     round_ = mcp_search.fetch_new(session, org, ctx.log, known=known,

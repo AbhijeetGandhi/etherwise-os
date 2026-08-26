@@ -94,6 +94,44 @@ class MCPCallError(Exception):
     pass
 
 
+# Why a session could not start, in the words the runbook needs. The scan's
+# failure text used to say "repair the OAuth token (bin/upwork-mcp-auth)" for
+# EVERY start failure; during the 26 Aug 12:15-13:15 IST DNS outage
+# (gaierror "nodename nor servname provided") that sent a human to fix a token
+# that was fine. A network failure self-heals and needs nobody; an auth
+# failure needs the auth script; anything else needs the log.
+START_FAILURE_ADVICE = {
+    "network": "the Mac could not reach mcp.upwork.com (DNS/network) —"
+               " nothing to repair, the next run self-heals",
+    "auth": "the OAuth token was refused — run bin/upwork-mcp-auth",
+    "unknown": "cause unclear — read the log before touching the token",
+}
+
+
+def start_failure_kind(exc: BaseException) -> str:
+    """'network' | 'auth' | 'unknown' for an exception raised while a session
+    was starting (initialize / list_accounts). Walks the cause chain: urllib
+    wraps the socket error, our MCPCallError wraps an HTTP 401/403."""
+    import re as _re
+    import socket
+    import urllib.error as _ue
+    seen, e = [], exc
+    while e is not None and len(seen) < 8 and e not in seen:
+        seen.append(e)
+        e = e.__cause__ or e.__context__
+    for e in seen:
+        if isinstance(e, MCPAuthError):
+            return "auth"
+        if isinstance(e, MCPCallError) and _re.search(r"\bmcp (401|403)\b", str(e)):
+            return "auth"
+        if isinstance(e, _ue.HTTPError):
+            return "auth" if e.code in (401, 403) else "unknown"
+        if isinstance(e, (socket.gaierror, socket.timeout, TimeoutError,
+                          ConnectionError, _ue.URLError)):
+            return "network"
+    return "unknown"
+
+
 # ── credential files ─────────────────────────────────────────────────────────
 
 def client_id() -> str:

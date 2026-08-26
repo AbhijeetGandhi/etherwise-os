@@ -49,6 +49,24 @@ amounts on every row, and a tie-out.
 
 ## 3. Use case A — transactions and the weekly summary (replaces the CSV import)
 
+> **STATUS 2026-08-26 evening — BUILT AND SCHEDULED.** Captures 1, 2, 3 and 5 below were run
+> at ~16:20 IST on his OK ("the three for transactions + connects") and pinned in
+> `tests/fixtures/mcp/`; `modules/upwork/feeds/mcp_financials.py` reads both orgs daily at
+> 06:05 IST (task `upwork_financials`, SOURCES key `upwork_financials`, migration 030
+> `upwork_mcp_rows`, doctor check "upwork mcp twins"). What the captures settled:
+> the agency answers (org `1910033523997712724`, role string **`FL_AGENCY`**); every row has
+> an amount; the row IS the GraphQL `transactionHistoryRow` (recordId, type, accountingSubtype,
+> description, transactionAmount{rawValue signed}, transactionCreationDate, paymentStatus on
+> payments, assignmentCompanyName); `total_count` is honest and the `from_date` filter loose.
+> Two things the plan did not know: the MCP dates rows by **invoice date** where the CSV carries
+> the **payment date** (~10 days later for hourly) — MCP-inserted rows are invoice-dated (his
+> accrual month), CSV-inserted rows keep their payment date, nothing is fabricated; and
+> withdrawal legs are **held** exactly as the CSV importer holds them (the ledger's last
+> withdrawal row is 27 May) — both are decisions for him in UPWORK_BRIEF. Step 3 (the weekly
+> `summary` tie-out) still needs call 4 approved; step 4 (the Money import card audit-only)
+> waits for two clean weeks of the twins check. The connects half (use case B) runs in
+> **shadow** inside the same rail until `MCP_CONNECTS_SINCE` is set.
+
 **Tool:** `get_freelancer_financials` — actions `transactions`, `summary`, `connects_balance`,
 `timesheets`; every action takes `org_uid` (from `list_accounts`), so the **agency is a second
 org, not a failing ACE** — the one thing the GraphQL path cannot do today.
@@ -90,6 +108,17 @@ agency org answers at all through this token. Two calls: `transactions` on each 
 window, limit 200. One `summary` call (personal, August) for the tie-out shape.
 
 ## 4. Use case B — connects (retires the last Chrome rail)
+
+> **STATUS 2026-08-26 evening — IN SHADOW inside `upwork_financials`.** Capture 5 answered the
+> unknowns: the usage row has **no label** (`transactionType` DEBIT | REFUND_CREDIT, an
+> instant, `amount.rawValue`, `jobPost{jobId '~02…', jobTitle}` or null); the event time is an
+> **instant** and the Chrome rail's `event_date` is its **UTC day** (checked on the 23–24 Aug
+> rows). The kind is read from the shape (badge = DEBIT −1 without a job; two debits on one
+> job at one instant = the proposal and its boost; a refund on a job with a boost on record =
+> boost_refund) and compared with the Chrome rail's rows every morning — the run's
+> `connects.twins`/`untwinned` says whether the reading agrees. The day he sets
+> `MCP_CONNECTS_SINCE` the MCP writes from that day on and the Chrome plist goes to
+> `launchd/retired/` the same day (law 2). Paged (`hasNextPage`), 10 rows per read.
 
 **Tool:** the same `get_freelancer_financials`, action `connects_balance` — "current balance
 breakdown (free, paid, rollover) and recent connects transactions with job titles", `limit`
@@ -226,13 +255,15 @@ concern, and every call is one `runs` row with a health line.
 (the chat's `mcp__Upwork__*` connector reaches his real account; each result goes to
 `tests/fixtures/mcp/` with free text truncated, as on 25 Aug):**
 
-1. `list_accounts` — the org_uids (personal, agency) — no params.
-2. `get_freelancer_financials transactions` on the **personal** org, `from_date 2026-08-01`,
-   `to_date 2026-08-26`, `limit 200` — the row shape and the amount question.
-3. the same on the **agency** org — whether the token reaches the agency at all.
+1. ~~`list_accounts`~~ — **DONE 26 Aug 16:20** → `tests/fixtures/mcp/accounts.json`.
+2. ~~`get_freelancer_financials transactions`, personal~~ — **DONE** →
+   `financials_transactions_personal.json` (12 of 32 rows kept).
+3. ~~the same on the agency org~~ — **DONE** → `financials_transactions_agency.json` (9 of 27);
+   the agency answers.
 4. `get_freelancer_financials summary`, personal, `2026-08-01`…`2026-08-26` — the tie-out
-   shape.
-5. `get_freelancer_financials connects_balance`, `limit 10` — the usage row shape (job id?).
+   shape. **Still needs his OK** (asked in UPWORK_BRIEF).
+5. ~~`get_freelancer_financials connects_balance`, `limit 10`~~ — **DONE** →
+   `connects_balance.json` (verbatim; no labels, see §4).
 6. `list_contracts search`, agency org, `contract_statuses ["ACTIVE"]`, `limit 10` — the TCC
    answer and the contract shape.
 7. `get_freelancer_dashboard check` — the heartbeat's shape.

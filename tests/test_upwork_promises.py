@@ -214,6 +214,33 @@ class TestAutoClear(PromiseCase):
             self.assertEqual(promises.auto_close(conn), 0)
         self.assertEqual(self.rows("SELECT state FROM commitments WHERE dedup_key='commitment:f1'")[0]["state"], "open")
 
+    def test_a_deliverable_is_not_cleared_by_a_reply(self):
+        """Abhijeet, 26 Aug 16:30: reply-type promises only. "Deliver the zap by
+        Thursday" survives a thank-you in the room; "let David know" does not."""
+        self.msg("out1", "room_tcc", "I'll deliver the weekly report zap by Thursday and let you know", hours_ago=5)
+        with db.connect(self.db_path) as conn:
+            promises.record(conn, {"id": "out1", "thread_id": "room_tcc", "client_id": "the-cradle-company"},
+                            {"text": "Deliver the automated weekly report zap by Thursday", "due": "2026-08-27"})
+            promises.record(conn, {"id": "out1", "thread_id": "room_tcc", "client_id": "the-cradle-company"},
+                            {"text": "Let Brandi know when the zap is live", "due": None})
+        self.msg("out2", "room_tcc", "Thanks Brandi, on it", hours_ago=1)
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(promises.auto_close(conn), 1)
+        states = {r["text"][:7]: r["state"] for r in self.rows("SELECT text, state FROM commitments")}
+        self.assertEqual(states, {"Deliver": "open", "Let Bra": "done"})
+
+    def test_reply_type_is_the_verb_not_the_length(self):
+        yes = ("Review the workflow brief email and let David know", "Send the proposal to Jarrod in the morning",
+               "Will ping Mustafa as soon as a window is found", "I'll get back to you by Friday",
+               "Keep you posted on the timeline", "Update Rocky once the fix is in", "Let the team know when it is live")
+        no = ("Deliver the manually triggered zap for a specific week by Friday",
+              "Walk Amanda through the demo interface for the campaign calendar feature on a rescheduled call",
+              "Fix the incorrect HubSpot trigger and set it up correctly", "Assist Rocky with simplybook.me integration",
+              "Update the automation to use the new sheet", "Fix the welcome message template",
+              "Stay in the call for the next 20 minutes waiting for Carly")
+        self.assertEqual([t for t in yes if not promises.is_reply_type(t)], [])
+        self.assertEqual([t for t in no if promises.is_reply_type(t)], [])
+
 
 class TestTodayCard(PromiseCase):
     def test_an_undated_upwork_promise_is_a_card_now_due_in_two_days(self):
@@ -259,6 +286,19 @@ class TestTodayCard(PromiseCase):
         self.assertEqual(cards[0]["title"], "You promised Brandi Jordan: Send the register")
         self.assertEqual(cards[0]["payload"]["room_id"], "room_tcc")
         self.assertFalse(cards[0]["payload"]["undated"])
+        # "send" is reply-type: the card says the next message clears it
+        self.assertTrue(cards[0]["payload"]["auto_clears"])
+        self.assertIn("clears this by itself", cards[0]["action"])
+
+    def test_a_deliverable_card_says_a_reply_does_not_clear_it(self):
+        self.msg("out1", "room_tcc", "I'll have the zap done by Thursday", hours_ago=2)
+        with db.connect(self.db_path) as conn:
+            promises.record(conn, {"id": "out1", "thread_id": "room_tcc", "client_id": "the-cradle-company"},
+                            {"text": "Deliver the weekly report zap", "due": "2026-08-27"})
+        cards = rules.rule_commitments_due(self.db_path, now=self.now.astimezone(config.TZ))
+        self.assertEqual(len(cards), 1)
+        self.assertFalse(cards[0]["payload"]["auto_clears"])
+        self.assertIn("Mark Done here when it is delivered", cards[0]["action"])
 
     def test_today_hands_the_room_to_the_card(self):
         from modules.cockpit import data as cdata

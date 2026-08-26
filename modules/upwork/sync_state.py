@@ -315,8 +315,11 @@ def _resolve_missing_amount(conn, canonical: str) -> None:
     ledger.resolve_missing_amount(conn, canonical)
 
 
-def upsert_transaction(conn, row: dict, profile: str) -> str:
-    """Idempotent transaction upsert. Fixes the M1-cutover bugs:
+def upsert_transaction(conn, row: dict, profile: str, amount_minor=None) -> str:
+    """Idempotent transaction upsert. `amount_minor`, when given, is the
+    caller's already-signed integer (the MCP rail signs its own rows — its
+    payload carries a sign the GraphQL rows never did); otherwise the sign
+    rule below decides. Fixes the M1-cutover bugs:
       #2 stub-twin minter: key on the CANONICAL namespace `upwork:<recordId>`
          (record_id=<rid>, canonical_key=upwork:<rid>) — the SAME identity the CSV
          import uses — so a re-sync DEDUPS against the canonical/CSV row instead of
@@ -329,7 +332,7 @@ def upsert_transaction(conn, row: dict, profile: str) -> str:
          When a later sync supplies the amount it inserts AND resolves the entry."""
     rid = row.get("recordId") or row.get("id")
     canonical = f"upwork:{rid}" if rid else None
-    amt = _signed_amount_minor(row)
+    amt = amount_minor if amount_minor is not None else _signed_amount_minor(row)
     existing = conn.execute(
         "SELECT record_id FROM transactions WHERE canonical_key=? OR record_id=?",
         (canonical, rid)).fetchone() if rid else None

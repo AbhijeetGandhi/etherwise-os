@@ -1,55 +1,116 @@
-"""Upwork financials through the MCP — transactions, the weekly summary, the
-connects ledger (use cases A and B in docs/upwork/MCP_USE_CASES.md).
+"""Upwork financials through the MCP — the transactions rail that replaces the
+CSV import, and the connects usage read (use cases A and B in
+docs/upwork/MCP_USE_CASES.md).
 
-STATUS 2026-08-26 (built overnight on Abhijeet's "if we can access transactions
-data then the import feature … can completely be replaced with mcp"): the
-REQUEST side is built to the tool reference (`get_freelancer_financials`:
-actions transactions / summary / connects_balance, per `org_uid`, dated
-windows of at most 53 weeks, `limit` up to 200); the RESPONSE side is one
-mapping function per row kind (`transaction_row`, `connects_event`), written
-tolerant of the two spellings the Upwork surfaces use (the GraphQL
-`transactionHistoryRow` keys and their snake_case twins) and PINNED BY A
-FIXTURE the moment he OKs the capture calls (plan §12). Until then this module
-is importable and tested on synthetic payloads, and NOT scheduled: no plist,
-no SOURCES entry, nothing calls `run()` on a clock.
+STATUS 2026-08-26 evening. Built overnight to the tool reference on Abhijeet's
+"if we can access transactions data then the import feature … can completely
+be replaced with mcp"; PINNED at 16:20 IST by four captures he approved
+("the three for transactions + connects"): tests/fixtures/mcp/accounts.json,
+financials_transactions_{personal,agency}.json, connects_balance.json. The
+agency answers through the MCP (org 1910033523997712724, role FL_AGENCY) where
+the GraphQL accounting entity had refused every hour since June. Scheduled
+daily at 06:05 IST (launchd/io.etherwise.v3.upwork-financials.plist, SOURCES
+key upwork_financials) on his "Finish use case A — retire the CSV import".
 
-NETWORK ONLY inside the fetch functions (the mcp_search rule: never an MCP
-call inside an open write transaction); `run()` fetches everything first and
-writes once through `sync_state.upsert_transaction` — the SAME canonical key
-(`upwork:<recordId>`) the CSV import and the GraphQL sync use, so an MCP row
-never twins a CSV row: it updates it. Source tag `Upwork-MCP` on the rows this
-path inserts. Read-only on Upwork, by the transport's allowlist.
+THE ROW, as the MCP hands it (GraphQL `transactionHistoryRow`):
+  recordId · type APInvoice|APAdjustment|ARInvoice|ARPayment|APPayment ·
+  accountingSubtype Hourly|Service Fee|WHT|Membership Fee|Payment|Withdrawal|
+  Withdrawal Fee · description · transactionAmount{rawValue signed} ·
+  transactionCreationDate = the INVOICE date · paymentStatus (payments only) ·
+  assignmentCompanyName.
+Two facts the ledger has to live with:
+  * DATES. The CSV export carries the PAYMENT date (an 08-16 hourly invoice is
+    an 08-26 CSV row); the MCP carries the invoice date and nothing else. A row
+    the MCP inserts is dated by invoice — the accrual month he chose for the
+    P&L on 2026-08-03 (pnl_month) — and a row the CSV inserted first keeps its
+    payment date. Never a fabricated date. Recorded as a decision for him in
+    UPWORK_BRIEF.
+  * SIGNS. The MCP signs its rows from the Upwork balance's point of view for
+    the AP side (fees negative, earnings positive) but AR rows and withdrawals
+    come positive; the ledger's rule (sync_state._signed_amount_minor: debit
+    types/subtypes negative) reproduces the CSV's signs for every kind seen,
+    and an explicitly negative MCP row stays negative whatever its label.
+
+WHAT run() DOES, network first, one write transaction after (the mcp_search
+rule — never an MCP call inside an open transaction):
+  1. list_accounts → the personal (TALENT) and agency (FL_AGENCY) orgs;
+  2. `transactions` per org over the last MCP_FINANCIALS_LOOKBACK_DAYS (limit
+     200; a `total_count` above it splits the window once, then reports);
+  3. every row through sync_state.upsert_transaction under the SAME canonical
+     key the CSV and GraphQL rows use (`upwork:<recordId>`) — an MCP row never
+     twins a CSV row, it updates it; a NEW row is tagged source 'Upwork-MCP',
+     typed like the CSV importer types it (upwork_csv.CSV_TYPE_MAP) and
+     bucketed (pnl.bucket) on insert so the Money tab reads it the same hour.
+     Withdrawal legs go in as `transfer` rows (signed negative like the 65
+     older withdrawal rows; excluded from the P&L) on his 26 Aug 17:10 word —
+     the CSV importer had HELD them since Phase 1b and the ledger's last
+     withdrawal was 27 May; counted as transfer_legs;
+  4. every row read lands in `upwork_mcp_rows` (migration 030) — the MCP side
+     of the CSV tie-out bin/doctor runs ("upwork mcp twins");
+  5. `connects_balance` (personal) → the newest usage rows mapped onto
+     connects_history's vocabulary. SHADOW while config.MCP_CONNECTS_SINCE is
+     None: compared against the Chrome rail's rows (a twin = same UTC day,
+     delta, job), never inserted. Set the day and rows from that day on are
+     written — the Chrome rail must stop the same day (law 2: never both).
+
+Read-only on Upwork by the transport's allowlist. The weekly `summary`
+tie-out (plan step 3) waits for his OK on that call.
 """
 from __future__ import annotations
 
 import hashlib
+import json
+import sys
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Callable, Optional
 
-from core import config, db
+from core import config, db, runner
+from modules.finance import pnl
+from modules.finance.importers import upwork_csv
 from modules.upwork import sync_state
 from modules.upwork.feeds import mcp_search
 
 TOOL = "get_freelancer_financials"
 SOURCE = "Upwork-MCP"
 TASK_NAME = "upwork_financials"
+FLOOR_CURSOR = "upwork_financials_floor"      # sync_cursors: the earliest window floor read
+
+# role string on list_accounts -> the org slot. The agency's role is
+# FL_AGENCY (fixture accounts.json); CLIENT is the hiring side, not money in.
+ROLE_PROFILE = {"TALENT": "personal", "FL_AGENCY": "agency", "AGENCY": "agency"}
+# the ledger's spelling of the profile (1,731 'Personal' / 47 'Agency' rows;
+# 17 stray lowercase ones from an earlier sync are the exception, not the rule)
+PROFILE_LABEL = {"personal": "Personal", "agency": "Agency"}
+
+# the withdrawal class (principal + its fee). bin/finance-import-upwork HELD
+# these "for Phase 2" since 2026-06-25 and nothing released them — the
+# ledger's last withdrawal row was 27 May. Abhijeet, 26 Aug 17:10: "insert them
+# as transfers" — signed negative (sync_state's rule), pnl_bucket 'transfer'
+# (transfers.is_transfer_leg), excluded from the P&L; counted as transfer_legs.
+TRANSFER_SUBTYPES = frozenset({"Withdrawal", "Withdrawal Fee"})
+
+# connects usage: the labels the Chrome rail stored for the same events, so
+# connects_history._kind and every reader see one vocabulary
+LABELS = {"applied": "Applied to job", "boost": "Connects bid for boosted proposal.",
+          "boost_refund": "Boost connects returned (outbid)", "refund": "Connects returned",
+          "badge": "Availability Badge", "purchase": "Connects purchased"}
+JOB_PREFIX = "~02"
+# a proposal costs single- to low double-digit connects; a boost is the bigger
+# bid. Used ONLY when the refunded job has no earlier debit on record.
+_PROPOSAL_MAX_CONNECTS = 30
 
 
 # ── accounts ─────────────────────────────────────────────────────────────────
 
 def orgs(session) -> dict:
-    """{"personal": org_uid, "agency": org_uid|None} from list_accounts: the
-    TALENT account is the person, an AGENCY account is the agency. The agency
-    is a second ORG here — the GraphQL sync's failing accounting entity was the
-    same organisation reached the wrong way."""
+    """{"personal": org_uid, "agency": org_uid|None} from list_accounts."""
     accounts = (session.call("list_accounts", {}) or {}).get("accounts") or []
     out = {"personal": None, "agency": None}
     for a in accounts:
-        role = str(a.get("role") or "").upper()
-        if role == "TALENT" and not out["personal"]:
-            out["personal"] = str(a.get("org_uid"))
-        elif role == "AGENCY" and not out["agency"]:
-            out["agency"] = str(a.get("org_uid"))
+        profile = ROLE_PROFILE.get(str(a.get("role") or "").upper())
+        if profile and not out[profile] and a.get("org_uid"):
+            out[profile] = str(a["org_uid"])
     if not out["personal"]:
         raise RuntimeError("no TALENT account on this token")
     return out
@@ -63,46 +124,74 @@ def _window(days: int, today: Optional[date] = None) -> tuple:
     return lo.isoformat(), hi.isoformat()
 
 
-def fetch_transactions(session, org: str, frm: str, to: str, log: Callable[[str], None],
-                       limit: int = 200) -> dict:
-    """The transactions of one org in [frm, to] (max 53 weeks): {rows, total,
-    truncated}. `total_count` above `limit` is reported, never silently
-    dropped — the caller narrows the window."""
+def _transactions_call(session, org: str, frm: str, to: str, log, limit: int) -> dict:
     res = mcp_search.paced_call(session, TOOL, {
         "action": "transactions", "org_uid": org,
         "params": {"from_date": frm, "to_date": to, "limit": limit}}, log) or {}
     rows = _rows_of(res)
+    if not rows and set(res) == {"text"}:
+        raise RuntimeError(f"{TOOL} transactions {org}: not a transactions answer:"
+                           f" {str(res['text'])[:160]!r}")
     total = res.get("total_count")
     if total is None:
         total = len(rows)
-    truncated = bool(total > len(rows))
-    if truncated:
-        log(f"{TOOL} transactions {org} {frm}..{to}: {total} exist, {len(rows)} returned")
-    return {"rows": rows, "total": total, "truncated": truncated}
+    return {"rows": rows, "total": int(total)}
+
+
+def fetch_transactions(session, org: str, frm: str, to: str, log: Callable[[str], None],
+                       limit: int = 200) -> dict:
+    """The transactions of one org in [frm, to] (max 53 weeks): {rows, total,
+    truncated, calls}. A `total_count` above `limit` splits the window once
+    (two halves, merged by recordId); still above it, `truncated` is True and
+    the caller says so — never a silent drop."""
+    got = _transactions_call(session, org, frm, to, log, limit)
+    calls = 1
+    if got["total"] > len(got["rows"]):
+        log(f"{TOOL} transactions {org} {frm}..{to}: {got['total']} exist,"
+            f" {len(got['rows'])} returned — splitting the window")
+        lo, hi = date.fromisoformat(frm), date.fromisoformat(to)
+        mid = lo + (hi - lo) // 2
+        merged, truncated = {}, False
+        for a, b in ((lo.isoformat(), mid.isoformat()),
+                     ((mid + timedelta(days=1)).isoformat(), hi.isoformat())):
+            part = _transactions_call(session, org, a, b, log, limit)
+            calls += 1
+            truncated = truncated or part["total"] > len(part["rows"])
+            for r in part["rows"]:
+                merged.setdefault(str(_pick(r, "recordId", "record_id", "id")), r)
+        for r in got["rows"]:
+            merged.setdefault(str(_pick(r, "recordId", "record_id", "id")), r)
+        rows = list(merged.values())
+        return {"rows": rows, "total": max(got["total"], len(rows)),
+                "truncated": truncated, "calls": calls}
+    return {"rows": got["rows"], "total": got["total"], "truncated": False, "calls": calls}
 
 
 def fetch_summary(session, org: str, frm: str, to: str, log: Callable[[str], None]) -> dict:
-    """The weekly financial summary for the window: per-client earned /
-    billed / fee / tax and the overall totals. `earnings_available: false`
-    comes back with a note — relayed, never read as zero."""
+    """The weekly financial summary for the window (per-client earned / billed
+    / fee / tax). NOT called by run() — the capture needs his OK first."""
     return mcp_search.paced_call(session, TOOL, {
         "action": "summary", "org_uid": org,
         "params": {"from_date": frm, "to_date": to}}, log) or {}
 
 
 def fetch_connects(session, org: str, log: Callable[[str], None], limit: int = 10) -> dict:
-    """The connects balance (free / paid / rollover) and the newest usage
-    rows with job titles — the Chrome rail's page, as data."""
+    """The connects balance (free / paid / rollover) and the newest usage rows
+    (the tool's ceiling is 10)."""
     return mcp_search.paced_call(session, TOOL, {
         "action": "connects_balance", "org_uid": org,
         "params": {"limit": max(1, min(10, limit))}}, log) or {}
 
 
-def _rows_of(res: dict) -> list:
-    """The list of transaction rows wherever the envelope keeps it."""
+def _rows_of(res) -> list:
+    """The transaction rows wherever the envelope keeps them. Live shape:
+    data.transactionHistory.transactionDetail.transactionHistoryRow."""
     if not isinstance(res, dict):
         return []
-    for key in ("transactions", "rows", "data", "items"):
+    th = ((res.get("transactionHistory") or {}).get("transactionDetail") or {})
+    if isinstance(th, dict) and isinstance(th.get("transactionHistoryRow"), list):
+        return th["transactionHistoryRow"]
+    for key in ("transactions", "rows", "items", "data"):
         v = res.get(key)
         if isinstance(v, list):
             return v
@@ -110,13 +199,10 @@ def _rows_of(res: dict) -> list:
             inner = _rows_of(v)
             if inner:
                 return inner
-    th = ((res.get("transactionHistory") or {}).get("transactionDetail") or {})
-    if isinstance(th, dict) and isinstance(th.get("transactionHistoryRow"), list):
-        return th["transactionHistoryRow"]
     return []
 
 
-# ── the row mapping (the part the fixture pins) ──────────────────────────────
+# ── the row mapping (pinned by the fixtures) ─────────────────────────────────
 
 def _pick(raw: dict, *names):
     for n in names:
@@ -126,12 +212,11 @@ def _pick(raw: dict, *names):
 
 
 def transaction_row(raw: dict) -> Optional[dict]:
-    """One MCP transaction → the shape `sync_state.upsert_transaction` reads
-    (the GraphQL `transactionHistoryRow` keys): recordId, type,
-    accountingSubtype, description, amount{rawValue,currency},
-    createdDateTime, fullyPaidDateTime, status. Tolerates the snake_case
-    twins. Returns None when no id can be found — a row without an identity
-    cannot be deduped and is skipped with a metric, never inserted."""
+    """One MCP transaction → the shape sync_state.upsert_transaction reads
+    (recordId, type, accountingSubtype, description, amount{rawValue,
+    currency}, createdDateTime, fullyPaidDateTime, status) plus `company`.
+    None when no id can be found — a row without an identity cannot be
+    deduped and is skipped with a metric, never inserted."""
     rid = _pick(raw, "recordId", "record_id", "id", "transactionId", "transaction_id")
     if rid is None:
         return None
@@ -153,102 +238,62 @@ def transaction_row(raw: dict) -> Optional[dict]:
         "fullyPaidDateTime": sync_state.iso_dt(_pick(raw, "fullyPaidDate", "fullyPaidDateTime",
                                                       "fully_paid_at")),
         "status": _pick(raw, "paymentStatus", "status", "payment_status"),
-        "assignmentCompanyName": _pick(raw, "assignmentCompanyName", "client", "client_name"),
+        "company": _pick(raw, "assignmentCompanyName", "client", "client_name"),
     }
 
 
-def connects_event(raw: dict, today: Optional[date] = None) -> Optional[dict]:
-    """One connects usage row → a `connects_history` event (the Chrome rail's
-    shape): id, event_date, kind, label, job_id, job_title, connects_delta.
-    The kind rule is the rail's own (`connects_history._kind`) so the two
-    sources agree on what "applied" means; the canonical id hashes the same
-    fields the rail hashes, so an event seen by both is one row."""
-    from modules.upwork import connects_history as ch
-    delta = _pick(raw, "connects", "amount", "delta", "connects_delta", "quantity")
+def signed_minor(row: dict) -> Optional[int]:
+    """The ledger's signed integer minor units for an MCP row: the CSV
+    convention (sync_state._signed_amount_minor — Service Fee / WHT /
+    Membership Fee / withdrawals negative, earnings and card payments
+    positive), and an explicitly negative MCP row stays negative whatever its
+    label. None when the MCP gave no amount (the upsert quarantines it)."""
+    raw = (row.get("amount") or {}).get("rawValue")
+    if raw in (None, ""):
+        return None
+    minor = sync_state._signed_amount_minor(row)
+    if minor is None:
+        return None
     try:
-        delta = int(str(delta).replace("+", "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    label = str(_pick(raw, "action", "label", "description", "type") or "").strip()[:120]
-    if not label:
-        return None
-    when = _pick(raw, "date", "event_date", "createdDateTime", "created_at")
-    try:
-        day = sync_state.iso_dt(when)[:10] if when else (today or datetime.now(timezone.utc).date()).isoformat()
-        date.fromisoformat(day)
-    except (TypeError, ValueError):
-        return None
-    job = raw.get("job") if isinstance(raw.get("job"), dict) else {}
-    job_id = _pick(raw, "job_id", "jobId") or _pick(job, "id")
-    job_title = _pick(raw, "job_title", "jobTitle") or _pick(job, "title")
-    if isinstance(job_title, dict):
-        job_title = job_title.get("title")
-    cid = hashlib.md5(f"{day}|{delta}|{label.upper()}|{job_id or ''}|1".encode("utf-8")).hexdigest()[:16]
-    return {"id": cid, "event_date": day, "kind": ch._kind(label, delta, job_id),
-            "label": label, "job_id": str(job_id) if job_id else None,
-            "job_title": str(job_title)[:160] if job_title else None,
-            "connects_delta": delta}
+        negative = Decimal(str(raw).replace(",", "").strip()) < 0
+    except InvalidOperation:
+        negative = False
+    return -abs(minor) if negative else minor
 
 
-# ── the pass (fetch everything, then write once) ─────────────────────────────
-
-def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
-        today: Optional[date] = None) -> dict:
-    """Transactions for every org over the look-back window → the
-    transactions table via the audited upsert; the connects usage rows →
-    connects_history. Metrics per org: fetched / inserted / updated /
-    quarantined / no_id / truncated. NOT SCHEDULED until the fixtures pin the
-    mapping (docs/upwork/MCP_USE_CASES.md §12)."""
-    from modules.upwork.feeds.mcp_client import MCPSession
-    lookback = lookback_days if lookback_days is not None else config.MCP_FINANCIALS_LOOKBACK_DAYS
-    frm, to = _window(lookback, today)
-    session = (session_factory or MCPSession)()
-    if hasattr(session, "initialize"):
-        session.initialize()
-    who = orgs(session)
-    fetched = {}
-    for profile, org in who.items():
-        if not org:
-            continue
-        fetched[profile] = fetch_transactions(session, org, frm, to, ctx.log)
-    connects = fetch_connects(session, who["personal"], ctx.log)
-
-    metrics = {"window": [frm, to], "transactions": {}, "connects": {}}
-    dbp = ctx.db_path or config.DB_PATH
-    with db.connect(dbp) as conn:
-        for profile, got in fetched.items():
-            m = {"fetched": len(got["rows"]), "inserted": 0, "updated": 0,
-                 "quarantined": 0, "no_id": 0, "truncated": got["truncated"],
-                 "total": got["total"]}
-            for raw in got["rows"]:
-                row = transaction_row(raw)
-                if row is None:
-                    m["no_id"] += 1
-                    continue
-                r = sync_state.upsert_transaction(conn, row, profile)
-                m["inserted" if r == "inserted" else "updated" if r == "updated" else "quarantined"] += 1
-                if r == "inserted":
-                    conn.execute("UPDATE transactions SET source=? WHERE record_id=?",
-                                 (SOURCE, row["recordId"]))
-            metrics["transactions"][profile] = m
-        events = [e for e in (connects_event(x, today) for x in _usage_rows(connects)) if e]
-        new = 0
-        for e in events:
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO connects_history (id, event_date, kind, label,"
-                " job_id, job_title, connects_delta) VALUES (?,?,?,?,?,?,?)",
-                (e["id"], e["event_date"], e["kind"], e["label"], e["job_id"],
-                 e["job_title"], e["connects_delta"]))
-            new += cur.rowcount
-        metrics["connects"] = {"rows": len(events), "new": new,
-                               "balance": _balance_of(connects),
-                               "all_new": bool(events) and new == len(events)}
-    return metrics
+def ledger_type(row: dict) -> str:
+    """The ledger's `type` for an MCP row — the CSV importer's map on the
+    accounting subtype (Hourly → Hourly Earning, Membership Fee → Connect
+    Purchase, as the 83 API-era membership rows already read), 'Other' for
+    the rest, exactly as a CSV row of the same kind is typed."""
+    return upwork_csv.CSV_TYPE_MAP.get((row.get("accountingSubtype") or "").strip(), "Other")
 
 
-def _usage_rows(res: dict) -> list:
+def is_transfer_leg(row: dict) -> bool:
+    return ((row.get("accountingSubtype") or "").strip() in TRANSFER_SUBTYPES
+            or (row.get("type") or "").strip() == "APPayment")
+
+
+def as_stored(row: dict) -> dict:
+    """The transactions-row view pnl.bucket reads, for the row as this rail
+    stores it (type from ledger_type, upwork_type = the API type)."""
+    return {"type": ledger_type(row), "upwork_type": row.get("type"),
+            "accounting_subtype": row.get("accountingSubtype"),
+            "description": row.get("description"), "source": SOURCE, "category": None}
+
+
+def bucket_for(row: dict) -> str:
+    return pnl.bucket(as_stored(row))
+
+
+# ── connects usage (the Chrome rail's vocabulary) ────────────────────────────
+
+def _usage_rows(res) -> list:
     if not isinstance(res, dict):
         return []
+    uh = res.get("usage_history")
+    if isinstance(uh, dict) and isinstance(uh.get("transactions"), list):
+        return uh["transactions"]
     for key in ("history", "usage", "transactions", "recent", "rows", "items"):
         v = res.get(key)
         if isinstance(v, list):
@@ -256,13 +301,275 @@ def _usage_rows(res: dict) -> list:
     return []
 
 
-def _balance_of(res: dict) -> Optional[dict]:
+def _balance_of(res) -> Optional[dict]:
     if not isinstance(res, dict):
         return None
     bal = res.get("balance")
     if isinstance(bal, dict):
-        return bal
+        out = {"total": _pick(bal, "connectsBalance", "total"),
+               "free": _pick(bal, "connectsBalanceFree", "free"),
+               "paid": _pick(bal, "connectsBalancePaid", "paid"),
+               "rollover": _pick(bal, "rolloverBalance", "rollover")}
+        return {k: v for k, v in out.items() if v is not None} or None
     if isinstance(bal, (int, float)):
         return {"total": bal}
-    out = {k: res[k] for k in ("total", "free", "paid", "rollover") if k in res}
-    return out or None
+    return None
+
+
+def _job_id(raw: dict) -> Optional[str]:
+    jp = raw.get("jobPost") if isinstance(raw.get("jobPost"), dict) else {}
+    jid = _pick(jp, "jobId", "id") or _pick(raw, "job_id", "jobId")
+    if not jid:
+        return None
+    jid = str(jid).strip()
+    return jid[len(JOB_PREFIX):] if jid.startswith(JOB_PREFIX) else jid
+
+
+def _job_title(raw: dict) -> Optional[str]:
+    jp = raw.get("jobPost") if isinstance(raw.get("jobPost"), dict) else {}
+    t = _pick(jp, "jobTitle", "title") or _pick(raw, "job_title", "jobTitle")
+    return str(t)[:160] if t else None
+
+
+def _delta(raw: dict) -> Optional[int]:
+    amt = raw.get("amount")
+    v = _pick(amt, "rawValue", "displayValue", "value") if isinstance(amt, dict) else amt
+    try:
+        return int(Decimal(str(v).replace("+", "").replace(",", "").strip()))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _prior_kinds(conn, job_id: str, day: Optional[str] = None, delta: Optional[int] = None) -> set:
+    """The kinds already on record for a job — OTHER events than the one being
+    classified (same day + delta = its own twin from the Chrome rail, or its
+    own row from a previous read; the first live run read the -18 proposal
+    of 23 Aug as a boost because its Chrome twin said 'applied')."""
+    if conn is None or not job_id:
+        return set()
+    return {r["kind"] for r in conn.execute(
+        "SELECT DISTINCT kind FROM connects_history WHERE job_id=?"
+        " AND NOT (event_date = ? AND connects_delta = ?)",
+        (job_id, day or "", delta if delta is not None else 0))}
+
+
+def connects_events(res, conn=None) -> list:
+    """The usage rows of a connects_balance answer → connects_history-shaped
+    events: id, event_date (the UTC day — what the Chrome rail stored for the
+    same events, checked on the 23-24 Aug rows), kind, label, job_id (the
+    digits after '~02', as the rail's link parser keeps them), job_title,
+    connects_delta, at (the instant).
+
+    The MCP row carries no label, so the kind is read from the shape:
+      DEBIT, no job, -1                → badge
+      DEBIT with a job                 → applied; when two debits share the
+                                          job and the instant the smaller is
+                                          the proposal, the larger its boost;
+                                          a lone debit on a job that already
+                                          has an applied row is a boost
+      REFUND_CREDIT with a job         → boost_refund when the job has a boost
+                                          on record (or the amount is bigger
+                                          than a proposal costs), else refund
+      a credit without a job           → purchase
+      anything else                    → other (kept raw, label = the type)"""
+    rows = []
+    for raw in _usage_rows(res):
+        delta = _delta(raw)
+        when = sync_state.iso_dt(_pick(raw, "createdDateTime", "created_at", "date")) or ""
+        if delta is None or len(when) < 10:
+            continue
+        rows.append({"at": when, "day": when[:10], "delta": delta,
+                     "tt": str(_pick(raw, "transactionType", "type") or "").upper(),
+                     "job_id": _job_id(raw), "job_title": _job_title(raw)})
+    rows.sort(key=lambda r: (r["at"], r["delta"]))
+    applied_seen = set()
+    out = []
+    for r in rows:
+        job, delta, tt = r["job_id"], r["delta"], r["tt"]
+        if delta < 0 and job:
+            pair = [x for x in rows if x is not r and x["job_id"] == job
+                    and x["at"] == r["at"] and x["delta"] < 0]
+            if pair and any(abs(x["delta"]) < abs(delta) for x in pair):
+                kind = "boost"
+            elif pair:
+                kind = "applied"
+            elif job in applied_seen or "applied" in _prior_kinds(conn, job, r["day"], delta):
+                kind = "boost"
+            else:
+                kind = "applied"
+            if kind == "applied":
+                applied_seen.add(job)
+        elif delta < 0 and delta == -1:
+            kind = "badge"
+        elif delta > 0 and job:
+            prior = _prior_kinds(conn, job, r["day"], delta)
+            kind = ("boost_refund" if "boost" in prior
+                    else "refund" if "applied" in prior and abs(delta) <= _PROPOSAL_MAX_CONNECTS
+                    else "boost_refund" if abs(delta) > _PROPOSAL_MAX_CONNECTS
+                    else "refund")
+        elif delta > 0 and tt not in ("REFUND_CREDIT",):
+            kind = "purchase"
+        else:
+            kind = "other"
+        label = LABELS.get(kind) or (tt or "other")
+        cid = hashlib.md5(f"mcp|{r['at']}|{delta}|{job or ''}".encode("utf-8")).hexdigest()[:16]
+        out.append({"id": cid, "event_date": r["day"], "kind": kind, "label": label,
+                    "job_id": job, "job_title": r["job_title"], "connects_delta": delta,
+                    "at": r["at"]})
+    return out
+
+
+def connects_twin(conn, e: dict) -> bool:
+    """Does the Chrome rail already hold this event? Same UTC day, same
+    delta, same job (or both without one) — the id cannot match (the rail
+    hashes its label), the shape can."""
+    if e.get("job_id"):
+        row = conn.execute(
+            "SELECT 1 FROM connects_history WHERE event_date=? AND connects_delta=?"
+            " AND job_id=? LIMIT 1", (e["event_date"], e["connects_delta"], e["job_id"])).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT 1 FROM connects_history WHERE event_date=? AND connects_delta=?"
+            " AND job_id IS NULL LIMIT 1", (e["event_date"], e["connects_delta"])).fetchone()
+    return row is not None
+
+
+# ── the audit twin (migration 030) ───────────────────────────────────────────
+
+def record_seen(conn, row: dict, profile: str, outcome: str, amount_minor) -> None:
+    conn.execute(
+        "INSERT INTO upwork_mcp_rows (record_id, profile, upwork_type, accounting_subtype,"
+        " amount_minor, currency, invoice_dt, status, company, outcome)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(record_id) DO UPDATE SET last_seen_at=datetime('now'),"
+        " seen_runs=seen_runs+1, status=COALESCE(excluded.status, status),"
+        " amount_minor=COALESCE(amount_minor, excluded.amount_minor),"
+        " outcome=CASE WHEN outcome='quarantined' THEN excluded.outcome ELSE outcome END",
+        (row["recordId"], profile, row.get("type"), row.get("accountingSubtype"),
+         amount_minor, (row.get("amount") or {}).get("currency"), row.get("createdDateTime"),
+         row.get("status"), row.get("company"), outcome))
+
+
+# ── the pass (fetch everything, then write once) ─────────────────────────────
+
+_UNSET = object()
+
+
+def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
+        today: Optional[date] = None, connects_since=_UNSET) -> dict:
+    """Transactions for every org over the look-back window → the ledger via
+    the audited upsert + upwork_mcp_rows; the connects usage rows → shadow
+    compare (or connects_history from config.MCP_CONNECTS_SINCE on).
+    Metrics per org: fetched / inserted / updated / transfer_legs /
+    quarantined / no_id / total / truncated."""
+    from modules.upwork.feeds import mcp_client
+    lookback = lookback_days if lookback_days is not None else config.MCP_FINANCIALS_LOOKBACK_DAYS
+    since = config.MCP_CONNECTS_SINCE if connects_since is _UNSET else connects_since
+    frm, to = _window(lookback, today)
+    session = (session_factory or mcp_client.MCPSession)()
+    try:
+        if hasattr(session, "initialize"):
+            session.initialize()
+        who = orgs(session)
+    except Exception as exc:                                     # noqa: BLE001
+        kind = mcp_client.start_failure_kind(exc)
+        raise RuntimeError(
+            f"Upwork MCP session could not start ({kind}): {exc!r} —"
+            f" {mcp_client.START_FAILURE_ADVICE[kind]}. The ledger read waits"
+            " for the next run.") from exc
+    fetched = {}
+    for profile, org in who.items():
+        if org:
+            fetched[profile] = fetch_transactions(session, org, frm, to, ctx.log)
+    if not who.get("agency"):
+        ctx.anomaly("financials_no_agency", "warn",
+                    {"note": "list_accounts returned no FL_AGENCY org — the agency"
+                             " ledger was not read this run", "orgs": who})
+    connects = fetch_connects(session, who["personal"], ctx.log)
+
+    metrics = {"window": [frm, to], "transactions": {}, "connects": {}}
+    dbp = ctx.db_path or config.DB_PATH
+    with db.connect(dbp) as conn:
+        # the earliest window floor the rail has ever read from: every invoice
+        # dated on or after it has been in view (bin/doctor's twins check
+        # draws its coverage line there — a CSV row older than that predates
+        # the rail and is never a missing twin)
+        conn.execute(
+            "INSERT INTO sync_cursors (name, value, updated_at) VALUES (?,?,datetime('now'))"
+            " ON CONFLICT(name) DO UPDATE SET value=MIN(value, excluded.value),"
+            " updated_at=datetime('now')", (FLOOR_CURSOR, frm))
+        for slot, got in fetched.items():
+            profile = PROFILE_LABEL.get(slot, slot)
+            m = {"fetched": len(got["rows"]), "inserted": 0, "updated": 0, "transfer_legs": 0,
+                 "quarantined": 0, "no_id": 0, "truncated": got["truncated"],
+                 "total": got["total"], "calls": got["calls"]}
+            for raw in got["rows"]:
+                row = transaction_row(raw)
+                if row is None:
+                    m["no_id"] += 1
+                    continue
+                amt = signed_minor(row)
+                if is_transfer_leg(row):
+                    m["transfer_legs"] += 1
+                r = sync_state.upsert_transaction(conn, row, profile, amount_minor=amt)
+                outcome = r if r in ("inserted", "updated") else "quarantined"
+                m[outcome] += 1
+                if r == "inserted":
+                    conn.execute(
+                        "UPDATE transactions SET source=?, type=?, pnl_bucket=?, fx_rate='1',"
+                        " assignment_company=COALESCE(assignment_company, ?)"
+                        " WHERE record_id=?",
+                        (SOURCE, ledger_type(row), bucket_for(row), row.get("company"),
+                         row["recordId"]))
+                record_seen(conn, row, profile, outcome, amt)
+            if got["truncated"]:
+                ctx.anomaly("financials_truncated", "warn",
+                            {"profile": profile, "total": got["total"], "returned": m["fetched"],
+                             "window": [frm, to],
+                             "note": "more rows exist than one read returns — narrow"
+                                     " MCP_FINANCIALS_LOOKBACK_DAYS or page"})
+            metrics["transactions"][slot] = m
+
+        events = connects_events(connects, conn)
+        kinds, twins, inserted, would = {}, 0, 0, 0
+        for e in events:
+            kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
+            if since and e["event_date"] >= since:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO connects_history (id, event_date, kind, label,"
+                    " job_id, job_title, connects_delta) VALUES (?,?,?,?,?,?,?)",
+                    (e["id"], e["event_date"], e["kind"], e["label"], e["job_id"],
+                     e["job_title"], e["connects_delta"]))
+                inserted += cur.rowcount
+            else:
+                would += 1
+                twins += 1 if connects_twin(conn, e) else 0
+        metrics["connects"] = {
+            "rows": len(events), "kinds": kinds, "balance": _balance_of(connects),
+            "mode": "live" if since else "shadow", "since": since,
+            "inserted": inserted, "shadow_rows": would, "twins": twins,
+            "untwinned": would - twins,
+            "oldest": min((e["event_date"] for e in events), default=None),
+            "all_new": bool(events) and (inserted if since else (would - twins)) == len(events)}
+        ctx.log(f"connects: {len(events)} usage rows {kinds}, {metrics['connects']['mode']},"
+                f" twins {twins}/{would}, inserted {inserted}, balance {_balance_of(connects)}")
+    for profile, m in metrics["transactions"].items():
+        ctx.log(f"{profile}: {m['fetched']} rows ({m['total']} exist) — inserted {m['inserted']},"
+                f" updated {m['updated']}, transfer legs {m['transfer_legs']},"
+                f" quarantined {m['quarantined']}, no id {m['no_id']}")
+    return metrics
+
+
+def task(ctx) -> dict:
+    return run(ctx)
+
+
+def main() -> int:
+    result = runner.run_task(TASK_NAME, task, module="upwork")
+    print(json.dumps({"run_id": result.run_id, "status": result.status,
+                      "metrics": result.metrics}))
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

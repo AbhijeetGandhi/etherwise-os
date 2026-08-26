@@ -1,0 +1,23 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~16:20 IST (Abhijeet's approval, Upwork chat: 'the three for transactions + connects'). Structure verbatim; ids and amounts real; a few rows dropped for size, none altered. Tool: list_accounts. Verbatim; org_uids real. The agency's role string is FL_AGENCY; there is also a CLIENT org (the hiring side).",
+ "accounts": [
+  {
+   "name": "Abhijeet Gandhi",
+   "org_uid": "1647672547786633217",
+   "role": "TALENT",
+   "role_label": "Freelancer"
+  },
+  {
+   "name": "Etherwise",
+   "org_uid": "1715797263477194752",
+   "role": "CLIENT",
+   "role_label": "Client"
+  },
+  {
+   "name": "Etherwise",
+   "org_uid": "1910033523997712724",
+   "role": "FL_AGENCY",
+   "role_label": "Agency"
+  }
+ ]
+}

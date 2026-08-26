@@ -1,0 +1,134 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~16:20 IST (Abhijeet's approval, Upwork chat: 'the three for transactions + connects'). Structure verbatim; ids and amounts real; a few rows dropped for size, none altered. Tool: get_freelancer_financials action=connects_balance org_uid=1647672547786633217 params={limit:10}. Verbatim. The usage rows carry NO label: transactionType DEBIT | REFUND_CREDIT, an instant (UTC), a jobPost {jobId '~02<id>', jobTitle} or null. Readings: DEBIT -1 with no job twice a day = the availability badge; two DEBITs on one job at one instant (-17 and -50) = the proposal and its boost; REFUND_CREDIT +100 on a job = a boost refund (outbid). Paged (hasNextPage/endCursor).",
+ "balance": {
+  "connectsBalance": 256,
+  "connectsBalanceFree": 0,
+  "connectsBalancePaid": 256,
+  "organizationId": "1647672547786633217",
+  "rolloverBalance": 0
+ },
+ "status": "ok",
+ "usage_history": {
+  "pageInfo": {
+   "endCursor": "MCw0NzMxNDk1Mjky",
+   "hasNextPage": true
+  },
+  "transactions": [
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-1",
+     "rawValue": "-1"
+    },
+    "createdDateTime": "2026-08-26T09:39:15Z",
+    "jobPost": null,
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-1",
+     "rawValue": "-1"
+    },
+    "createdDateTime": "2026-08-25T21:39:15Z",
+    "jobPost": null,
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-1",
+     "rawValue": "-1"
+    },
+    "createdDateTime": "2026-08-25T09:39:15Z",
+    "jobPost": null,
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-1",
+     "rawValue": "-1"
+    },
+    "createdDateTime": "2026-08-24T21:39:14Z",
+    "jobPost": null,
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "100",
+     "rawValue": "100"
+    },
+    "createdDateTime": "2026-08-24T20:18:06Z",
+    "jobPost": {
+     "jobId": "~022089446685358007253",
+     "jobTitle": "Airtable + Twilio Automation Expert Needed to Troubleshoot & Stabilize Existing SMS System"
+    },
+    "transactionType": "REFUND_CREDIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-50",
+     "rawValue": "-50"
+    },
+    "createdDateTime": "2026-08-24T13:54:11Z",
+    "jobPost": {
+     "jobId": "~022091881079178928768",
+     "jobTitle": "Expert Airtable Solution Architect"
+    },
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-17",
+     "rawValue": "-17"
+    },
+    "createdDateTime": "2026-08-24T13:54:11Z",
+    "jobPost": {
+     "jobId": "~022091881079178928768",
+     "jobTitle": "Expert Airtable Solution Architect"
+    },
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-1",
+     "rawValue": "-1"
+    },
+    "createdDateTime": "2026-08-24T09:39:14Z",
+    "jobPost": null,
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-18",
+     "rawValue": "-18"
+    },
+    "createdDateTime": "2026-08-23T23:25:24Z",
+    "jobPost": {
+     "jobId": "~022090865622486570617",
+     "jobTitle": "Airtable Expert Needed to Build Work Order & Tenant Move In Management System"
+    },
+    "transactionType": "DEBIT"
+   },
+   {
+    "amount": {
+     "currency": "USD",
+     "displayValue": "-103",
+     "rawValue": "-103"
+    },
+    "createdDateTime": "2026-08-23T23:22:25Z",
+    "jobPost": {
+     "jobId": "~022091139773174847123",
+     "jobTitle": "Senior AI Automation Specialist — LLMs + Make.com / n8n (Long-term, IC or PM Route)"
+    },
+    "transactionType": "DEBIT"
+   }
+  ]
+ }
+}

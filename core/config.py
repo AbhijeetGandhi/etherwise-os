@@ -864,6 +864,20 @@ SOURCES = (
      "degrade_kinds": (), "critical": True, "backs": "money",
      "launchd_label": "io.etherwise.v3.finance-upwork-weekly", "catch_up": True,
      "why": "the weekly Upwork earnings/fee pull behind the P&L"},
+    # ── the MCP ledger read (2026-08-26, use case A) ──────────────────────────
+    # Daily 06:05 IST: both orgs' transactions (personal + agency) into the
+    # ledger under the CSV's own canonical key, and the connects usage rows in
+    # shadow. Critical from day one: this is the rail the CSV import retires
+    # into, so its silence must turn the doctor amber before a week of money
+    # goes unread. degraded = a read that could not return every row.
+    {"key": "upwork_financials", "label": "Upwork ledger (MCP, daily)",
+     "task_name": "upwork_financials", "max_age_hours": 30,      # daily + grace
+     "degrade_kinds": ("financials_truncated", "financials_no_agency"),
+     "critical": True, "backs": "money",
+     "launchd_label": "io.etherwise.v3.upwork-financials", "catch_up": True,
+     "why": "reads both Upwork orgs' transactions every morning — the rail"
+            " that replaces the weekly CSV import; stale means new Upwork"
+            " earnings and fees are not reaching the P&L"},
     {"key": "finance_stripe", "label": "Stripe rail (daily)",
      "task_name": "finance_stripe", "max_age_hours": 26,      # daily at 06:20
      "degrade_kinds": ("finance_stripe_reconcile", "finance_stripe_doctor_red"),
@@ -1200,10 +1214,19 @@ MCP_RATE_LIMIT_WAIT_S = 6.0
 # stale backlog.
 MCP_CLAIM_SINCE = "2026-08-25T21:45:00+00:00"
 # Financials through the MCP (docs/upwork/MCP_USE_CASES.md, use cases A + B;
-# modules/upwork/feeds/mcp_financials.py). The look-back window of one
-# transactions read per org — the GraphQL sync's 14 days. NOT SCHEDULED until
-# the fixtures pin the row mapping (Abhijeet's OK per capture call).
+# modules/upwork/feeds/mcp_financials.py, task upwork_financials, daily 06:05
+# IST). The look-back window of one transactions read per org — the GraphQL
+# sync's 14 days; the MCP dates rows by INVOICE date and a week's hourly
+# invoices are paid ~10 days later, so 14 days keeps every row in view across
+# its payment. Scheduled 2026-08-26 evening on Abhijeet's "Finish use case A —
+# retire the CSV import"; the fixtures under tests/fixtures/mcp/ pin the shapes.
 MCP_FINANCIALS_LOOKBACK_DAYS = 14
+# The connects usage rows the same rail reads (use case B). None = SHADOW: the
+# rows are mapped and compared with the Chrome rail's (a twin = same UTC day,
+# delta, job) and never written. Set a 'YYYY-MM-DD' and rows from that day on
+# are written to connects_history — retire the Chrome rail (upwork_connects)
+# the SAME day, never both (law 2: no mixed provenance on one day).
+MCP_CONNECTS_SINCE = None
 
 # ── Upwork ───────────────────────────────────────────────────────────────────
 UPWORK_USER_ID = "1647672547786633216"

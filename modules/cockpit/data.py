@@ -3717,6 +3717,7 @@ _RUN_TASK_WORDS = {
     "upwork_scan": "Scanned for new jobs",
     "upwork_sync": "Synced proposals and rooms",
     "upwork_connects": "Updated the connects ledger",
+    "upwork_financials": "Read the Upwork ledger (both orgs, through the MCP)",
     "cos_sweep": "Swept the cards",
     "crm_mirror": "Mirrored the CRM to Airtable",
     "kb_daily": "Read the day's meetings and mail into the brain",

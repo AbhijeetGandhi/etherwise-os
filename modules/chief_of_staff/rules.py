@@ -308,15 +308,20 @@ def _upwork_promise_cards(conn, now=None) -> List[dict]:
         room_name = (room["room_name"] if room else None) or "the client"
         who = (to["sender_user_name"] if to else None) or room_name.split(",")[0].strip()
         client = r["client_id"] or (room["client_id"] if room else None) or room_name
+        # reply-type promises clear themselves on the next message in the
+        # room; a deliverable waits for Done or its date (his 26 Aug rule)
+        reply = _promises.is_reply_type(r["text"])
         out.append({
             "source": "commitment", "dept": "sales", "kind": "commitment_due",
             "title": f"You promised {who}: {r['text'][:80]}",
             "client": client,
-            "action": "Reply on Upwork — your next message in the room clears this by itself.",
+            "action": ("Reply on Upwork — your next message in the room clears this by itself."
+                       if reply else
+                       "Mark Done here when it is delivered — a reply alone does not clear it."),
             "due": due, "dedup_key": f"commitment:{r['id']}",
             "payload": {"cite": r["source_cite"], "room_id": room_id,
                         "room_name": room_name, "to": who, "promised_on": promised_on,
-                        "undated": r["due"] is None}})
+                        "undated": r["due"] is None, "auto_clears": reply}})
     return out
 
 

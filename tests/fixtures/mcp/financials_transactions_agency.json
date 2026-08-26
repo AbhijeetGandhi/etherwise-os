@@ -1,0 +1,134 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~16:20 IST (Abhijeet's approval, Upwork chat: 'the three for transactions + connects'). Structure verbatim; ids and amounts real; a few rows dropped for size, none altered. Tool: get_freelancer_financials action=transactions org_uid=1910033523997712724 (FL_AGENCY - the role string is FL_AGENCY, not AGENCY) params={from_date:2026-08-01,to_date:2026-08-26,limit:200}. total_count 27; 9 rows kept: the withdrawal pair (APPayment Withdrawal + APAdjustment Withdrawal Fee), TCC's week, Ioannis's week, the Agency Plus membership. The agency answers through the MCP where the GraphQL accounting entity refused every hour since June. NOTE rows dated 2026-07-26 came back inside a from_date=2026-08-01 window - the filter is loose; the upsert dedups.",
+ "data": {
+  "transactionHistory": {
+   "transactionDetail": {
+    "transactionHistoryRow": [
+     {
+      "accountingSubtype": "Withdrawal Fee",
+      "description": "Withdrawal Fee - Direct to Local Bank",
+      "recordId": "946740501",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "-0.99",
+       "rawValue": "-0.99"
+      },
+      "transactionCreationDate": "2026-08-26T00:00:00+0000",
+      "type": "APAdjustment"
+     },
+     {
+      "accountingSubtype": "Withdrawal",
+      "description": "Withdrawal - Direct to Local Bank Transfer: xxxx-0234",
+      "paymentStatus": "SUCCESS",
+      "recordId": "946740500",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "2335.14",
+       "rawValue": "2335.14"
+      },
+      "transactionCreationDate": "2026-08-26T00:00:00+0000",
+      "type": "APPayment"
+     },
+     {
+      "accountingSubtype": "Service Fee",
+      "assignmentCompanyName": "Brandi Jordan",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "Service Fee\nContract ID: 44099615\nContract title: AI Automation Specialist\nClient: Brandi Jordan\nAmount: \n$650.00 USD x 10% = $65.00 USD\nNotes: Invoice from Upwork for T944429627",
+      "recordId": "944429744",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "-65.00",
+       "rawValue": "-65.00"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APAdjustment"
+     },
+     {
+      "accountingSubtype": "WHT",
+      "assignmentCompanyName": "Brandi Jordan",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "Withholding Tax (IN) - Ref ID 944429716\nCountry: IN\nAmount: $650.00 USD x 0.1% = $0.65 USD",
+      "recordId": "944429726",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "-0.65",
+       "rawValue": "-0.65"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APAdjustment"
+     },
+     {
+      "accountingSubtype": "Hourly",
+      "assignmentCompanyName": "Brandi Jordan",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "(44099615) Brandi Jordan/Abhijeet Gandhi - 20:00 hrs @ $32.50/hr - 08/10/2026 - 08/16/2026",
+      "recordId": "944429716",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "650.00",
+       "rawValue": "650.00"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APInvoice"
+     },
+     {
+      "accountingSubtype": "Hourly",
+      "assignmentCompanyName": "Ioannis P",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "(43406906) Ioannis P/Abhijeet Gandhi - 5:20 hrs @ $35.00/hr - 08/10/2026 - 08/16/2026",
+      "recordId": "944250983",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "186.67",
+       "rawValue": "186.67"
+      },
+      "transactionCreationDate": "2026-08-16T00:00:00+0000",
+      "type": "APInvoice"
+     },
+     {
+      "accountingSubtype": "Membership Fee",
+      "description": "Fees for Agency Plus membership",
+      "recordId": "944838018",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "19.99",
+       "rawValue": "19.99"
+      },
+      "transactionCreationDate": "2026-08-18T00:00:00+0000",
+      "type": "ARInvoice"
+     },
+     {
+      "accountingSubtype": "Hourly",
+      "assignmentCompanyName": "Ioannis P",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "(43406906) Ioannis P/Abhijeet Gandhi - 16:20 hrs @ $35.00/hr - 08/03/2026 - 08/09/2026",
+      "recordId": "942480700",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "571.67",
+       "rawValue": "571.67"
+      },
+      "transactionCreationDate": "2026-08-09T00:00:00+0000",
+      "type": "APInvoice"
+     },
+     {
+      "accountingSubtype": "Hourly",
+      "assignmentCompanyName": "Brandi Jordan",
+      "assignmentDeveloperName": "Abhijeet Gandhi",
+      "description": "(44099615) Brandi Jordan/Abhijeet Gandhi - 2:10 hrs @ $32.50/hr - 07/20/2026 - 07/26/2026",
+      "recordId": "939077612",
+      "transactionAmount": {
+       "currency": "USD",
+       "displayValue": "70.42",
+       "rawValue": "70.42"
+      },
+      "transactionCreationDate": "2026-07-26T00:00:00+0000",
+      "type": "APInvoice"
+     }
+    ]
+   }
+  }
+ },
+ "status": "ok",
+ "total_count": 27
+}

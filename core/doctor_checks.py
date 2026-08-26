@@ -374,6 +374,118 @@ def check_source_freshness(db_path: Optional[Path] = None,
     return checks
 
 
+def check_upwork_mcp_twins(db_path: Optional[Path] = None, inbox: Optional[Path] = None,
+                           now=None) -> list:
+    """The CSV import's retirement criterion (Upwork chat 2026-08-26, use case
+    A of docs/upwork/MCP_USE_CASES.md): every Upwork row in the CSV exports on
+    disk that the MCP ledger rail could have seen has a twin in upwork_mcp_rows
+    (migration 030) carrying the same signed amount. "Could have seen" = record
+    id at or above the smallest id the rail read among rows invoiced on or
+    after its earliest window floor (sync_cursors upwork_financials_floor) —
+    ids grow with the invoice date, and the MCP's date filter is loose on the
+    old side, so the floor is drawn by date first, then by id (the first live
+    run flagged a 10 Aug connects purchase the 12 Aug window never held).
+    Reported for the last two COMPLETED weeks (Mon-Sun by the CSV's payment
+    date) plus the running one; 2/2 clean is the signal for the Money import
+    card to go audit-only. WARN, never FAIL: the rail is young and this is a
+    decision aid, not a ledger invariant (those are finance-doctor's)."""
+    import datetime as _dt
+    db_path = db_path or config.DB_PATH
+    if not Path(db_path).is_file():
+        return [Check("SKIP", "upwork mcp twins", "no database yet")]
+    try:
+        with db.connect(db_path) as conn:
+            have = conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
+                                " AND name='upwork_mcp_rows'").fetchone()
+            if not have:
+                return [Check("SKIP", "upwork mcp twins", "migration 030 not applied yet")]
+            seen = {r["record_id"]: dict(r) for r in conn.execute(
+                "SELECT record_id, amount_minor, outcome, invoice_dt, first_seen_at"
+                " FROM upwork_mcp_rows")}
+            floor_row = conn.execute("SELECT value FROM sync_cursors WHERE name="
+                                     "'upwork_financials_floor'").fetchone()
+            floor_day = floor_row["value"] if floor_row else None
+    except Exception as exc:  # noqa: BLE001 — a decision aid must never crash doctor
+        return [Check("WARN", "upwork mcp twins", f"check failed: {exc!r}")]
+    if not seen:
+        return [Check("SKIP", "upwork mcp twins", "the MCP ledger rail has not read a row yet")]
+    inbox = Path(inbox or (config.V3_ROOT / "finance-inbox" / "upwork"))
+    if not inbox.is_dir():
+        return [Check("SKIP", "upwork mcp twins", f"no CSV exports at {inbox}")]
+    try:
+        from modules.finance import ledger as _ledger
+        by_ref, _recon = _ledger.load_fullhistory(inbox)
+    except Exception as exc:  # noqa: BLE001
+        return [Check("WARN", "upwork mcp twins", f"could not read the CSV exports: {exc!r}")]
+    ids = [int(r) for r in seen if str(r).isdigit()]
+    if not ids:
+        return [Check("SKIP", "upwork mcp twins", "no numeric record ids read yet")]
+    if not floor_day:           # a rail from before the cursor: its first sight minus the window
+        first = min(r["first_seen_at"] for r in seen.values())[:10]
+        floor_day = (_dt.date.fromisoformat(first) - _dt.timedelta(days=14)).isoformat()
+    in_view = [int(r) for r, row in seen.items()
+               if str(r).isdigit() and (row.get("invoice_dt") or "")[:10] >= floor_day]
+    floor_id = min(in_view) if in_view else min(ids)
+    if isinstance(now, _dt.datetime):
+        today = now.date()
+    elif isinstance(now, _dt.date):
+        today = now
+    else:                       # the IST calendar day — the CSV's dates are his days
+        today = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=5, minutes=30))).date()
+    this_monday = today - _dt.timedelta(days=today.weekday())
+    weeks = [(this_monday - _dt.timedelta(days=14), this_monday - _dt.timedelta(days=8)),
+             (this_monday - _dt.timedelta(days=7), this_monday - _dt.timedelta(days=1)),
+             (this_monday, today)]
+    since = weeks[0][0].isoformat()
+    covered, older, missing, mismatch = 0, 0, [], []
+    week_bad = [False, False, False]
+    for ref, row in by_ref.items():
+        day = row.get("date") or ""
+        if not day or day < since or day > today.isoformat():
+            continue
+        if not str(ref).isdigit() or int(ref) < floor_id:
+            older += 1
+            continue
+        covered += 1
+        wk = next((i for i, (a, b) in enumerate(weeks) if a.isoformat() <= day <= b.isoformat()), 2)
+        twin = seen.get(str(ref))
+        if twin is None:
+            missing.append(ref)
+            week_bad[wk] = True
+        elif twin["amount_minor"] is not None and twin["amount_minor"] != row.get("amount_minor"):
+            mismatch.append(f"{ref} csv {row.get('amount_minor')} mcp {twin['amount_minor']}")
+            week_bad[wk] = True
+    clean = sum(1 for i in (0, 1) if not week_bad[i])
+    # a completed payment-week counts as IN VIEW only when every invoice it
+    # could hold was invoiced on or after the rail's floor (hourly pay lags
+    # the invoice by ~10 days; 14 is the margin) — otherwise a young rail
+    # would read 2/2 on its first morning
+    in_view_weeks = sum(1 for i in (0, 1)
+                        if (weeks[i][0] - _dt.timedelta(days=14)).isoformat() >= floor_day)
+    ready_on = (_dt.date.fromisoformat(floor_day) + _dt.timedelta(days=28))
+    ready_on = ready_on + _dt.timedelta(days=(7 - ready_on.weekday()) % 7)   # the Monday after
+    older_note = f"; {older} older CSV rows predate the rail" if older else ""
+    if missing or mismatch:
+        parts = []
+        if missing:
+            parts.append(f"{len(missing)} of {covered} CSV rows since {since} have no MCP twin"
+                         f" ({', '.join(missing[:6])}{'…' if len(missing) > 6 else ''})")
+        if mismatch:
+            parts.append(f"{len(mismatch)} amount mismatch(es): {'; '.join(mismatch[:4])}")
+        return [Check("WARN", "upwork mcp twins",
+                      "; ".join(parts) + f"; clean completed weeks {clean}/2{older_note}")]
+    if clean == 2 and in_view_weeks == 2:
+        verdict = "the CSV import can go audit-only"
+    elif in_view_weeks < 2:
+        verdict = (f"the rail has read invoices since {floor_day}, {in_view_weeks} of the two"
+                   f" completed weeks fully in view — keep the CSV import until {ready_on}")
+    else:
+        verdict = "keep the CSV import until two completed weeks are clean"
+    return [Check("PASS", "upwork mcp twins",
+                  f"{covered} CSV rows since {since} all have MCP twins with matching amounts;"
+                  f" clean completed weeks {clean}/2 — {verdict}{older_note}")]
+
+
 def check_cockpit() -> list:
     """Cockpit auth/bind hygiene (M2): token present, token file owner-only,
     server bound to loopback. No network."""
@@ -408,6 +520,7 @@ ALL_CHECKS = (
     ("hooks", check_hooks),
     ("calendar", check_calendar),
     ("source freshness", check_source_freshness),
+    ("upwork ledger", check_upwork_mcp_twins),
     ("models api", check_models_api),
     ("plists", check_plists),
     ("cockpit", check_cockpit),
