@@ -1053,7 +1053,28 @@ class TestOutcome(M1bCase):
         self.assertEqual(result.metrics["sent"], "sent")
         self.assertTrue(result.metrics["form_url_missing"])
         html = send.call_args[0][1]
-        self.assertIn("form_url is missing", html)
+        self.assertIn("the registry has no form_url", html)
+        self.assertNotIn("href", html)
+
+    def test_a_proposal_with_no_airtable_record_says_THAT_not_form_url(self):
+        """The rail's first real send (2026-08-27 01:11) named the wrong
+        repair: all four items blamed the registry's form_url, which was fine.
+        309 of his 382 closed proposals simply have no Airtable record — every
+        one imported through the MCP by use case C — and that is a different
+        fix entirely."""
+        self.seed_proposal("p1")
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE proposals SET airtable_record_id=NULL WHERE id='p1'")
+        send = mock.MagicMock()
+        with mock.patch.dict(config.SHADOW_MODE, {"upwork": False}), \
+             mock.patch.object(outcome_capture, "form_url",
+                               return_value="https://airtable.com/form"):
+            runner.run_task(outcome_capture.TASK_NAME,
+                            lambda ctx: outcome_capture.capture(ctx, _send=send),
+                            module="upwork", db_path=self.db_path)
+        html = send.call_args[0][1]
+        self.assertIn("not mirrored to Airtable yet", html)
+        self.assertNotIn("form_url", html)
         self.assertNotIn("href", html)
 
     def test_shadow_path_records_the_intent_and_sends_nothing(self):

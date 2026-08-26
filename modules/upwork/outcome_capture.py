@@ -77,10 +77,20 @@ def compose(candidates, base_url: str) -> dict:
     for p in candidates:
         link = (prefill_link(base_url, p["airtable_record_id"])
                 if base_url and p["airtable_record_id"] else None)
+        # WHY there is no link matters, and the two reasons are different
+        # repairs. Found on the rail's first real send (2026-08-27 01:11, the
+        # catch-up for week W34): all four items said "form_url is missing"
+        # when the registry's form_url was fine — it is the PROPOSAL that has
+        # no Airtable record. 309 of his 382 closed proposals are in that
+        # state, every one of them imported through the MCP by use case C.
         items.append({
             "proposal_id": p["id"],
             "title": p["job_title"], "client": p["client_company"],
             "status": p["status"], "form_link": link,
+            "no_link_because": None if link else
+                               ("the registry has no form_url"
+                                " (rails/REGISTRY.md)" if not base_url else
+                                "this proposal is not mirrored to Airtable yet"),
         })
     week = datetime.now(config.TZ).strftime("%Y-W%W")
     return {
@@ -103,7 +113,8 @@ def render_html(payload: dict) -> str:
                                                   it.get("status")) if v)
         link = (f'<a href="{esc(it["form_link"], quote=True)}">record the'
                 f' outcome</a>' if it.get("form_link")
-                else "<i>no form link — rails/REGISTRY.md form_url is missing</i>")
+                else f'<i>no form link — '
+                     f'{esc(str(it.get("no_link_because") or "reason unknown"))}</i>')
         items.append(f"<li><b>{esc(str(it.get('title') or it['proposal_id']))}"
                      f"</b>{' — ' + label if label else ''} · {link}</li>")
     return (f"<h2>Outcome capture — week {esc(payload['week'])}</h2>"
