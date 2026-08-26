@@ -73,6 +73,8 @@ RERUN_JOBS = {
     # the MCP ledger read (2026-08-26, use case A): read-only on Upwork, the
     # upsert dedups on the canonical key — safe to kick any time.
     "upwork_financials": "io.etherwise.v3.upwork-financials",
+    # the quarter-hour heartbeat (2026-08-26): one read, no writes outward.
+    "upwork_pulse": "io.etherwise.v3.upwork-pulse",
     # added 2026-08-13 with the SOURCES catch_up False->True flip. Safe to kick:
     # read-only IMAP, no sends, and upsert_provisional dedupes on canonical_key.
     "finance_payment_mail": "io.etherwise.v3.finance-payment-mail",

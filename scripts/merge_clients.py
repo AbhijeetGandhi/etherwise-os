@@ -110,6 +110,7 @@ _FOREIGN = {
     ("scored_jobs", "client_rating"): "not an id",
     ("scored_jobs", "client_payment_verified"): "not an id",
     ("messages", "sender_org_name"): "Upwork's label on the message",
+    ("upwork_invitations", "client_name"): "Upwork's label on the invitation",
     ("dossier_index", "client_name"): "display name, moved with the index row",
     ("sources", "client_name"): "display name, moved with the source row",
     ("audit_log", "entity"): "audit trail — never rewritten",

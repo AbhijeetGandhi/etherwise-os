@@ -874,9 +874,16 @@ SOURCES = (
     # shadow. Critical from day one: this is the rail the CSV import retires
     # into, so its silence must turn the doctor amber before a week of money
     # goes unread. degraded = a read that could not return every row.
+    {"key": "upwork_pulse", "label": "Upwork heartbeat (offers, invitations)",
+     "task_name": "upwork_pulse", "max_age_hours": 2,      # every 15 min + grace
+     "degrade_kinds": ("pulse_failed",), "critical": True, "backs": "pipeline",
+     "launchd_label": "io.etherwise.v3.upwork-pulse", "catch_up": True,
+     "why": "one read a quarter hour that says whether an offer or an invitation"
+            " is waiting — the only thing that sees either; stale means an offer"
+            " can sit unanswered for a day"},
     {"key": "upwork_financials", "label": "Upwork ledger (MCP, daily)",
      "task_name": "upwork_financials", "max_age_hours": 30,      # daily + grace
-     "degrade_kinds": ("financials_truncated", "financials_no_agency"),
+     "degrade_kinds": ("financials_truncated", "financials_no_agency", "inflight_failed"),
      "critical": True, "backs": "money",
      "launchd_label": "io.etherwise.v3.upwork-financials", "catch_up": True,
      "why": "reads both Upwork orgs' transactions every morning — the rail"
@@ -1276,6 +1283,22 @@ MCP_PROPOSAL_STATUS_MAP = {
 # Expired, or Lost when our row already says Interview (mcp_proposals turns
 # an Expired into Lost on interview evidence). The Declined list without the
 # status field saying so is still the client's decline -> Lost.
+# Money in flight and the heartbeat (Abhijeet, 26 Aug 22:30: "money in flight
+# + offers" and "the dashboard heartbeat"; modules/upwork/feeds/
+# mcp_inflight.py inside the daily upwork_financials rail, and
+# mcp_pulse.py every quarter hour).
+#   TIMESHEET_DAYS      how far back the hours read goes each day. Upwork
+#                       invoices a week on the Sunday it ends, so 14 keeps a
+#                       whole unbilled week plus the one settling behind it.
+#   MILESTONE_MAX_GETS  contract `get` reads per daily run (one read each):
+#                       34 active contracts refresh over ~5 days.
+#   CONTRACT_DETAIL_DAYS how stale a contract's milestones may get.
+#   OFFER_PENDING_STATES the freelancer-side state that means "waiting on you"
+#                       (the tool's client-side vocabulary differs).
+MCP_TIMESHEET_DAYS = 14
+MCP_MILESTONE_MAX_GETS = 8
+MCP_CONTRACT_DETAIL_DAYS = 5
+MCP_OFFER_PENDING_STATES = ("awaiting_your_acceptance",)
 # Contracts through the MCP (use case D, Phase 0.3; Abhijeet 26 Aug 19:18):
 # `list_contracts search` on the PERSONAL org lists every contract he holds,
 # the agency's included (the agency org refuses the search). Once a day

@@ -646,9 +646,48 @@ export async function render(root, ctx) {
         el("div", "muted small", `the ledger runs to ${st.ledger_newest || d.as_of || "?"}`
           + (st.email_newest ? ` and the newest payment email is dated ${st.email_newest}` : ""))]));
     }
-    list.appendChild(el("div", "pad", [el("b", null, "Hours worked this week, not yet invoiced"),
-      el("div", "muted small", "Upwork invoices hourly work on Monday · not tracked yet — it arrives with the Upwork financials sync (the next build step)")]));
+    list.append(...inFlightRows());
     return [heading("Money you are waiting on", null, "h3"), list];
+  }
+
+  /** hours logged and milestones agreed that no invoice covers yet (2026-08-26).
+   *  Never added to revenue: this is money coming, shown beside money that came. */
+  function inFlightRows() {
+    const f = d.in_flight || {};
+    if (!f.available) {
+      return [el("div", "pad", [el("b", null, "Hours worked this week, not yet invoiced"),
+        el("div", "muted small", "not readable yet — the Upwork hours rail has not run here")])];
+    }
+    const rows = [];
+    const h = f.hours || {};
+    const hoursSub = h.by_contract && h.by_contract.length
+      ? h.by_contract.map((c) => `${c.title || "a contract"} — ${c.hours} h, ${fmt.usd2(c.usd)}`)
+      : ["nothing logged since " + (h.since || "Monday")];
+    rows.push(el("div", "pad", [
+      el("b", null, Number(h.usd) > 0
+        ? `${fmt.usd2(h.usd)} of hours worked since ${fmt.dateShort(h.since)}, not invoiced yet`
+        : "No hours logged yet this week"),
+      el("div", "muted small", hoursSub.join(" · ")),
+      el("div", "muted small", "Upwork invoices the week on Sunday — these are your own entries, to the cent"),
+    ]));
+    const m = f.milestones || {};
+    if (m.stalled && m.stalled.length) {
+      rows.push(el("div", "pad", [
+        el("b", "neg", `${fmt.usd2(m.stalled_usd)} agreed and never funded`),
+        el("div", "muted small", m.stalled.map((x) =>
+          `${x.who} — ${fmt.usd2(x.usd)}, was due ${fmt.dateShort(x.due)}`).join(" · ")),
+        el("div", "muted small", "the client set the milestone and never put the money in escrow;"
+          + " you cannot submit work against it until they do"),
+      ]));
+    }
+    if (m.open && m.open.length) {
+      rows.push(el("div", "pad", [
+        el("b", null, `${fmt.usd2(m.open_usd)} in funded milestones still open`),
+        el("div", "muted small", m.open.map((x) =>
+          `${x.who} — ${fmt.usd2(x.usd)}${x.due ? ", due " + fmt.dateShort(x.due) : ""}`).join(" · ")),
+      ]));
+    }
+    return rows;
   }
 
   function cashStory() {

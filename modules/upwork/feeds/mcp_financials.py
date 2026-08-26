@@ -74,7 +74,7 @@ from core import config, db, runner
 from modules.finance import pnl
 from modules.finance.importers import upwork_csv
 from modules.upwork import sync_state
-from modules.upwork.feeds import mcp_search
+from modules.upwork.feeds import mcp_inflight, mcp_search
 
 TOOL = "get_freelancer_financials"
 SOURCE = "Upwork-MCP"
@@ -705,6 +705,16 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
             "all_new": bool(events) and (inserted if since else (would - twins)) == len(events)}
         ctx.log(f"connects: {len(events)} usage rows {kinds}, {metrics['connects']['mode']},"
                 f" twins {twins}/{would}, inserted {inserted}, balance {_balance_of(connects)}")
+    # money in flight: the hours and milestones no invoice covers yet (his
+    # 26 Aug 22:30 "money in flight"). Its own network reads, after the ledger
+    # write closed — never a call inside a transaction.
+    try:
+        metrics["in_flight"] = mcp_inflight.run(ctx, session, who["personal"], today=today)
+    except Exception as exc:                                     # noqa: BLE001
+        ctx.log(f"in-flight pass FAILED (non-fatal): {exc!r}")
+        ctx.anomaly("inflight_failed", "warn", {"error": repr(exc)[:200],
+                    "note": "hours and milestones were not refreshed this run"})
+        metrics["in_flight"] = {"status": "error", "error": repr(exc)[:200]}
     for profile, m in metrics["transactions"].items():
         ctx.log(f"{profile}: {m['fetched']} rows ({m['total']} exist) — inserted {m['inserted']},"
                 f" updated {m['updated']}, transfer legs {m['transfer_legs']},"

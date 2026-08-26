@@ -343,6 +343,82 @@ def _ist_day(ts: Optional[str]) -> str:
 
 # ── System ────────────────────────────────────────────────────────────────────
 
+def rule_upwork_waiting(db_path, now=None) -> List[dict]:
+    """An OFFER or an INVITATION is waiting on Upwork (the quarter-hour
+    heartbeat, modules/upwork/feeds/mcp_pulse.py — his 26 Aug 22:30 answer).
+    Both are money that arrived without him asking, and until tonight neither
+    had anywhere to appear: the offers table had not been written since 11
+    June and invitations had no table at all. Due TODAY — an unanswered offer
+    expires."""
+    out = []
+    today = _now(now).strftime("%Y-%m-%d")
+    with db.connect(db_path) as conn:
+        try:
+            offers = list(conn.execute(
+                "SELECT id, title, client_name, type FROM offers"
+                " WHERE state IN ('awaiting_your_acceptance', 'AWAITING_YOUR_ACCEPTANCE')"))
+        except Exception:                       # noqa: BLE001 — pre-migration DB
+            offers = []
+        for r in offers:
+            who = r["client_name"] or "a client"
+            out.append({
+                "source": "sales", "dept": "sales", "kind": "upwork_offer",
+                "title": f"Offer waiting: {(r['title'] or 'an Upwork offer')[:70]}",
+                "client": r["client_name"],
+                "action": "Open it on Upwork and accept or decline — an offer expires on its own.",
+                "due": today, "dedup_key": f"upwork_offer:{r['id']}",
+                "payload": {"offer_id": r["id"], "who": who, "type": r["type"],
+                            "url": "https://www.upwork.com/nx/offers/"}})
+        try:
+            invites = list(conn.execute(
+                "SELECT id, job_title, client_name, created_dt FROM upwork_invitations"
+                " WHERE seen_at IS NULL AND COALESCE(state,'pending') NOT IN"
+                " ('declined', 'expired', 'withdrawn')"))
+        except Exception:                       # noqa: BLE001 — pre-033 DB
+            invites = []
+        for r in invites:
+            out.append({
+                "source": "sales", "dept": "sales", "kind": "upwork_invitation",
+                "title": f"Invited to a job: {(r['job_title'] or 'an Upwork job')[:70]}",
+                "client": r["client_name"],
+                "action": "A client invited you — read it and answer; invitations expire quietly.",
+                "due": today, "dedup_key": f"upwork_invite:{r['id']}",
+                "payload": {"invitation_id": r["id"], "invited_on": r["created_dt"]}})
+    return out
+
+
+def rule_stalled_milestone(db_path, now=None) -> List[dict]:
+    """A fixed-price milestone the client never funded, past its due date —
+    money agreed and not moving (modules/upwork/feeds/mcp_inflight.py). Found
+    the day it was built: Mustafa's contract 43986743, $3,000 across two
+    milestones due 15 and 22 July, still Not funded on 26 August."""
+    from modules.finance import money as _money
+    out = []
+    try:
+        with db.connect(db_path) as conn:
+            from modules.upwork.feeds import mcp_inflight
+            rows = mcp_inflight.stalled(conn, _now(now).date())
+    except Exception:                           # noqa: BLE001 — pre-033 DB
+        return out
+    for r in rows:
+        amount = _money.from_minor(r["amount_minor"]) if r["amount_minor"] is not None else None
+        who = r["client_company"] or r["contract_title"] or r["contract_id"]
+        out.append({
+            "source": "sales", "dept": "sales", "kind": "stalled_milestone",
+            "title": (f"Unfunded milestone: ${amount} on {(r['contract_title'] or '')[:40]}"
+                      if amount is not None else
+                      f"Unfunded milestone on {(r['contract_title'] or '')[:40]}"),
+            "client": r["client_company"],
+            "action": "The client never funded this milestone and its date has passed —"
+                      " ask them to fund it, or agree to drop it.",
+            "due": (r["due_dt"] or "")[:10] or None,
+            "dedup_key": f"milestone:{r['id']}",
+            "payload": {"contract_id": r["contract_id"], "milestone_id": r["id"],
+                        "sequence": r["sequence_id"], "who": who,
+                        "amount_minor": r["amount_minor"], "due": r["due_dt"]}})
+    return out
+
+
 def rule_system(db_path, now=None) -> List[dict]:
     """Failed jobs (last N hours) + spend approaching the daily cap."""
     nowdt = _now(now)
@@ -385,7 +461,7 @@ def rule_system(db_path, now=None) -> List[dict]:
 
 ALL_RULES = (rule_owed_replies, rule_hotlead_no_loom, rule_won_no_outcome,
              rule_lost_pattern, rule_stale_dossier, rule_commitments_due,
-             rule_system)
+             rule_upwork_waiting, rule_stalled_milestone, rule_system)
 
 
 def gather(db_path, now=None) -> List[dict]:

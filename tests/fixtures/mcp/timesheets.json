@@ -1,0 +1,215 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~22:42 IST (his OK). Tool: get_freelancer_financials action=timesheets org_uid=1647672547786633217 params={from_date,to_date,limit:10}. Structure verbatim EXCEPT the contract node, which the wire returns with a dozen empty sub-objects (clientOrganization/clientTeam/freelancer/supervisor/vendorOrganization/vendorTeam, all ids blank) - only contract.id and contract.title carry anything, so the rest is dropped here. Envelope: data.contractTimeReport.edges[].node + pageInfo{endCursor,hasNextPage} + totalCount. Every hour is OFFLINE (manual entry): totalOnlineHoursWorked is 0 throughout. `memo` is his own daily work note. `termId` can differ from contract.id (44315695 logs against term 44336214). The week 24-26 Aug: 5 entries, 16.17 h, $565.83 - none of it invoiced yet.",
+ "week_2026_08_24": {
+  "data": {
+   "contractTimeReport": {
+    "edges": [
+     {
+      "cursor": "202608240332396437",
+      "node": {
+       "contract": {
+        "id": "43406906",
+        "title": "Ai Automations sales outbound & Inbound"
+       },
+       "dateWorkedOn": "2026-08-24",
+       "memo": "- call\n",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "43406906",
+       "totalCharges": 29.166667,
+       "totalHoursWorked": 0.8333333333333334,
+       "totalOfflineCharge": 29.166667,
+       "totalOfflineHoursWorked": 0.8333333333333334,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-24",
+       "yearWorkedOn": ""
+      }
+     },
+     {
+      "cursor": "202608240827780085",
+      "node": {
+       "contract": {
+        "id": "44315695",
+        "title": "Ai Automation Engineer"
+       },
+       "dateWorkedOn": "2026-08-24",
+       "memo": "- call\n- planning on the three automation with team\n",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "44336214",
+       "totalCharges": 105,
+       "totalHoursWorked": 3,
+       "totalOfflineCharge": 105,
+       "totalOfflineHoursWorked": 3,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-24",
+       "yearWorkedOn": ""
+      }
+     },
+     {
+      "cursor": "202608241180335769",
+      "node": {
+       "contract": {
+        "id": "43406906",
+        "title": "Ai Automations sales outbound & Inbound"
+       },
+       "dateWorkedOn": "2026-08-24",
+       "memo": "- fixing slack message for madita\n- updating the emails templates broken link\n",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "43406906",
+       "totalCharges": 11.666667,
+       "totalHoursWorked": 0.3333333333333333,
+       "totalOfflineCharge": 11.666667,
+       "totalOfflineHoursWorked": 0.3333333333333333,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-24",
+       "yearWorkedOn": ""
+      }
+     },
+     {
+      "cursor": "202608242099479592",
+      "node": {
+       "contract": {
+        "id": "44315695",
+        "title": "Ai Automation Engineer"
+       },
+       "dateWorkedOn": "2026-08-24",
+       "memo": "- implemented deposite refund form and loom\n- implemented meeting RSVP status\n- setup for sales dashboard",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "44336214",
+       "totalCharges": 192.5,
+       "totalHoursWorked": 5.5,
+       "totalOfflineCharge": 192.5,
+       "totalOfflineHoursWorked": 5.5,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-24",
+       "yearWorkedOn": ""
+      }
+     },
+     {
+      "cursor": "202608252099479592",
+      "node": {
+       "contract": {
+        "id": "44315695",
+        "title": "Ai Automation Engineer"
+       },
+       "dateWorkedOn": "2026-08-25",
+       "memo": "- implemented deposite refund form and loom\n- implemented meeting RSVP status\n- setup for sales dashboard",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "44336214",
+       "totalCharges": 227.5,
+       "totalHoursWorked": 6.5,
+       "totalOfflineCharge": 227.5,
+       "totalOfflineHoursWorked": 6.5,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-24",
+       "yearWorkedOn": ""
+      }
+     }
+    ],
+    "pageInfo": {
+     "endCursor": "202608252099479592",
+     "hasNextPage": false
+    },
+    "totalCount": 5
+   }
+  },
+  "status": "ok"
+ },
+ "week_2026_08_17_page1": {
+  "data": {
+   "contractTimeReport": {
+    "edges": [
+     {
+      "cursor": "202608170281000296",
+      "node": {
+       "contract": {
+        "id": "43406906",
+        "title": "Ai Automations sales outbound & Inbound"
+       },
+       "dateWorkedOn": "2026-08-17",
+       "memo": "- fixing empty addiiotnal services\n- fixing the issue with emails not getggin added in upsell",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "43406906",
+       "totalCharges": 35,
+       "totalHoursWorked": 1,
+       "totalOfflineCharge": 35,
+       "totalOfflineHoursWorked": 1,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-17",
+       "yearWorkedOn": ""
+      }
+     },
+     {
+      "cursor": "202608170387901945",
+      "node": {
+       "contract": {
+        "id": "43475182",
+        "title": "Airtable + Make Automation Specialist / Technical Coordinator (Ongoing Role)"
+       },
+       "dateWorkedOn": "2026-08-17",
+       "memo": "- fixing issues with duplicate invoices",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "43475182",
+       "totalCharges": 40,
+       "totalHoursWorked": 1.3333333333333333,
+       "totalOfflineCharge": 40,
+       "totalOfflineHoursWorked": 1.3333333333333333,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-17",
+       "yearWorkedOn": ""
+      }
+     },
+     {
+      "cursor": "202608170505303558",
+      "node": {
+       "contract": {
+        "id": "44099615",
+        "title": "AI Automation Specialist"
+       },
+       "dateWorkedOn": "2026-08-17",
+       "memo": "- indeed research and trying out various approaches",
+       "monthWorkedOn": "",
+       "task": "",
+       "taskDescription": "",
+       "termId": "44099615",
+       "totalCharges": 130,
+       "totalHoursWorked": 4,
+       "totalOfflineCharge": 130,
+       "totalOfflineHoursWorked": 4,
+       "totalOnlineCharge": 0,
+       "totalOnlineHoursWorked": 0,
+       "weekWorkedOn": "2026-08-17",
+       "yearWorkedOn": ""
+      }
+     }
+    ],
+    "pageInfo": {
+     "endCursor": "202608170505303558",
+     "hasNextPage": true
+    },
+    "totalCount": 17
+   }
+  },
+  "status": "ok"
+ }
+}

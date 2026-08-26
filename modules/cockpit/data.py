@@ -3730,6 +3730,7 @@ _RUN_TASK_WORDS = {
     "upwork_sync": "Synced proposals and rooms",
     "upwork_connects": "Updated the connects ledger",
     "upwork_financials": "Read the Upwork ledger (both orgs, through the MCP)",
+    "upwork_pulse": "Checked Upwork for offers and invitations",
     "cos_sweep": "Swept the cards",
     "crm_mirror": "Mirrored the CRM to Airtable",
     "kb_daily": "Read the day's meetings and mail into the brain",
@@ -3830,6 +3831,56 @@ def _upwork_attach_outcomes(conn, stage: str, rows: list) -> None:
                             "hourly_rate": r["hourly_rate"],
                             "contract_type": r["contract_type"],
                             "contract_title": r["title"]})
+
+
+def _money_in_flight(db_path: Optional[Path] = None) -> dict:
+    """Hours logged that Upwork has not invoiced yet, and fixed-price
+    milestones — the money that exists before a transaction row does
+    (modules/upwork/feeds/mcp_inflight.py; Abhijeet, 2026-08-26 22:30).
+
+    `hours_usd` is an estimate to the cent, `stalled` is not: a milestone the
+    client never funded whose date has passed is a fact, and the first read
+    found $3,000 of them six weeks overdue. Empty and unavailable are
+    different: a DB without migration 033 returns available False, never a
+    reassuring zero."""
+    from modules.finance import money as _m
+    from modules.upwork.feeds import mcp_inflight
+    try:
+        conn = _ro(db_path)
+        try:
+            un = mcp_inflight.unbilled(conn)
+            stalled = mcp_inflight.stalled(conn)
+            funded = [dict(r) for r in conn.execute(
+                "SELECT m.id, m.contract_id, m.amount_minor, m.due_dt, m.state,"
+                " c.title AS contract_title, c.client_company FROM upwork_milestones m"
+                " LEFT JOIN contracts c ON c.id = m.contract_id"
+                " WHERE m.state NOT IN ('Paid', 'NotFunded', 'Not funded')"
+                " ORDER BY m.due_dt")]
+        finally:
+            conn.close()
+    except Exception:                            # noqa: BLE001 — pre-033 DB
+        return {"available": False}
+
+    def usd(minor):
+        return str(_m.from_minor(minor or 0))
+    return {
+        "available": True,
+        "hours": {"hours": un["hours"], "usd": usd(un["charges_minor"]),
+                  "since": un["since"], "estimate": True,
+                  "by_contract": [{"title": c["title"], "hours": c["hours"],
+                                   "usd": usd(c["charges_minor"]),
+                                   "from": c["from"], "to": c["to"]}
+                                  for c in un["by_contract"]]},
+        "milestones": {
+            "stalled_usd": usd(sum(r["amount_minor"] or 0 for r in stalled)),
+            "stalled": [{"who": r["client_company"] or r["contract_title"],
+                         "contract_id": r["contract_id"], "usd": usd(r["amount_minor"]),
+                         "due": (r["due_dt"] or "")[:10]} for r in stalled],
+            "open_usd": usd(sum(r["amount_minor"] or 0 for r in funded)),
+            "open": [{"who": r["client_company"] or r["contract_title"],
+                      "contract_id": r["contract_id"], "usd": usd(r["amount_minor"]),
+                      "due": (r["due_dt"] or "")[:10], "state": r["state"]} for r in funded]},
+    }
 
 
 def _money_source_health(db_path: Optional[Path]) -> Optional[dict]:
@@ -3998,6 +4049,10 @@ def money(db_path: Optional[Path] = None,
                  "note": "savings + fixed deposits + Wise, base-USD"},
         "connects": {"this_month_usd": usd(connects_month),
                      "lifetime_usd": usd(connects_life)},
+        # money that EXISTS but has no invoice yet (2026-08-26): hours logged
+        # this week and fixed-price milestones. Never summed into revenue or
+        # the P&L — it is what is coming, kept beside what came.
+        "in_flight": _money_in_flight(db_path),
         # Money is fed by several sources (the Upwork sync, the weekly finance
         # pull, the manual statement imports) and is only as trustworthy as its
         # sickest input — so this is the WORST of them, not the first. A GREEN

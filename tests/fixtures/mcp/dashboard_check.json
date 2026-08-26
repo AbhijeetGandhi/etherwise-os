@@ -1,0 +1,139 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~22:45 IST (his OK: 'Yes, all four'). Tool: get_freelancer_dashboard action=check org_uid=1647672547786633217, no params. ONE call returns six blocks. Structure verbatim; the long job snippets and message bodies are truncated and the contract/job lists cut to two entries each (the wire returns 5 of each, every block marked truncated:true with a note naming the tool for the full list). What each block is worth: offers.count and invitations.count are the ALERT (0 and 0 right now) - this is the cheapest way to learn an offer arrived; messages.rooms carries last_message + topic + unread_in_preview; matching_jobs carries proposal_count (the competition), which the scan's find_jobs rows do not; connects is the same balance + usage_history the connects_balance action returns, for free.",
+ "check": {
+  "data": {
+   "offers": {
+    "count": 0,
+    "items": []
+   },
+   "invitations": {
+    "count": 0,
+    "items": []
+   },
+   "messages": {
+    "count": 5,
+    "preview_limit": 5,
+    "truncated": true,
+    "unread_in_preview": 0,
+    "note": "Preview only - the newest rooms, not the whole inbox [...] Use get_messages action=list_rooms for the full list.",
+    "rooms": [
+     {
+      "id": "room_8987ec8ac9beae4d85d0e7653911dd61",
+      "room_name": "Dhanya Sangolli, Dhanya S",
+      "topic": "Automated Zap - Weekly report",
+      "last_message": "we will get started on the zap and try to wrap up as quick as we can. [...]",
+      "last_message_at": "2026-08-26T17:07:03.347Z"
+     },
+     {
+      "id": "room_4a52eb3c795fc42061df689b5e363c47",
+      "room_name": "Jarrod Roback",
+      "topic": "Twilio + Make.com + Workiz (CRM) Automation Developer",
+      "last_message": "Thank you, Jarrod. I will send you the proposal within the next few hours. [...]",
+      "last_message_at": "2026-08-26T08:18:52.843Z"
+     }
+    ]
+   },
+   "active_contracts": {
+    "preview_count": 5,
+    "preview_limit": 5,
+    "truncated": true,
+    "note": "Preview only. Use list_contracts action=search with contract_statuses=[ACTIVE] for the full active-contract list.",
+    "contracts": [
+     {
+      "id": "35435297",
+      "title": "Tkinter GUI",
+      "client": "Orama Solutions LLP",
+      "freelancer": "Abhijeet G.",
+      "start_date": "2023-11-13T14:15:25.000Z",
+      "status": "ACTIVE"
+     },
+     {
+      "id": "38819558",
+      "title": "Make.com Workflow Specialist Needed for Training Creation",
+      "client": "Ippon  Technology",
+      "freelancer": "Abhijeet G.",
+      "start_date": "2024-10-28T08:16:04.613Z",
+      "status": "ACTIVE"
+     }
+    ]
+   },
+   "matching_jobs": {
+    "preview_count": 5,
+    "preview_limit": 5,
+    "truncated": true,
+    "note": "Preview only. Use find_jobs action=search to browse matching jobs.",
+    "jobs": [
+     {
+      "id": "2092659464075564443",
+      "title": "AI Automation and Web Development Partner",
+      "job_type": "hourly",
+      "budget": "0.0",
+      "hourly_budget_type": "client-specified range",
+      "duration": "More than 6 months",
+      "engagement": "30+ hrs/week",
+      "experience_level": "INTERMEDIATE",
+      "freelancers_to_hire": 1,
+      "proposal_count": 27,
+      "created_date": "2026-08-26T17:04:31+0000",
+      "published_date": "2026-08-26T17:06:08+0000",
+      "description_snippet": "I'm looking for a long-term partner to work side by side with me as my right-hand person [...]"
+     },
+     {
+      "id": "2092647710310089855",
+      "title": "Build a reorder-prediction automation for a B2B distributor client (n8n/Python, ERP data)",
+      "job_type": "fixed",
+      "budget": "500.0",
+      "duration": "1 to 3 months",
+      "experience_level": "INTERMEDIATE",
+      "freelancers_to_hire": 1,
+      "proposal_count": 51,
+      "created_date": "2026-08-26T16:17:48+0000",
+      "published_date": "2026-08-26T16:22:53+0000",
+      "description_snippet": "I run a small AI-automation agency serving industrial distributors [...]"
+     }
+    ]
+   },
+   "connects": {
+    "balance": {
+     "connectsBalance": 256,
+     "connectsBalanceFree": 0,
+     "connectsBalancePaid": 256,
+     "organizationId": "1647672547786633217",
+     "rolloverBalance": 0
+    },
+    "recent_usage": {
+     "pageInfo": {
+      "endCursor": "MCw0NzMyMjAzNTA3",
+      "hasNextPage": true
+     },
+     "transactions": [
+      {
+       "amount": {
+        "currency": "USD",
+        "displayValue": "-1",
+        "rawValue": "-1"
+       },
+       "createdDateTime": "2026-08-26T09:39:15Z",
+       "jobPost": null,
+       "transactionType": "DEBIT"
+      },
+      {
+       "amount": {
+        "currency": "USD",
+        "displayValue": "100",
+        "rawValue": "100"
+       },
+       "createdDateTime": "2026-08-24T20:18:06Z",
+       "jobPost": {
+        "jobId": "~022089446685358007253",
+        "jobTitle": "Airtable + Twilio Automation Expert Needed to Troubleshoot & Stabilize Existing SMS System"
+       },
+       "transactionType": "REFUND_CREDIT"
+      }
+     ]
+    }
+   }
+  },
+  "status": "ok"
+ }
+}

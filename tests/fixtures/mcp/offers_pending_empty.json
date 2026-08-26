@@ -1,0 +1,11 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~22:40 IST (Abhijeet's approval: 'Yes, all four'), personal org 1647672547786633217. Tool: list_offers action=list params={limit:10, states:[awaiting_your_acceptance]}. THE POINT IS THE ENVELOPE: the page is empty and hasMore is still TRUE with a next_offset — so a pager that loops on hasMore alone never terminates. mcp_pulse.fetch_offers reads one page and stops. Live reading: no offers were waiting on him at capture time.",
+ "data": {
+  "offersByAttribute": {
+   "offers": []
+  }
+ },
+ "hasMore": true,
+ "next_offset": 10,
+ "status": "ok"
+}

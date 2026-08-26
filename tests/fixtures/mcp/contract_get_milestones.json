@@ -1,0 +1,134 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~22:44 IST (his OK). Tool: list_contracts action=get org_uid=1647672547786633217 params={contract_id:43986743} - Mustafa A, the fixed-price contract from the offers list. Structure verbatim except: the empty client/vendor/freelancer sub-objects the wire pads the payload with, and offer.description (thousands of characters, truncated). THE MILESTONE SHAPE is the point: offer.milestones[] with id, sequenceId, depositAmount, fundedAmount, paid, state (+state_label), dueDateTime, description. NOTE fundedAmount equals the milestone amount even on a NOT-FUNDED milestone - `state` is the authority, not fundedAmount. terms.fixedPriceTerms[].fixedAmount is the whole contract. Live reading: $4,500 contract, milestone 1 Paid, milestones 2 and 3 ($1,500 each) NotFunded and past due since 15 and 22 July.",
+ "get": {
+  "data": {
+   "contractDetails": {
+    "id": "43986743",
+    "title": "AI automation architect(Airtable + make.com + Gohigh level + Evoto",
+    "status": "ACTIVE",
+    "startDate": "2026-06-29T19:40:12.483Z",
+    "createDate": "2026-06-29T19:40:12.483Z",
+    "modifyDate": "2026-06-29T19:40:12.483Z",
+    "deliveryModel": "TALENT_MARKETPLACE",
+    "offerId": "111865772",
+    "job": {
+     "id": "2058937200704482542"
+    },
+    "metadata": {
+     "agencyContract": false
+    },
+    "clientOrganization": {
+     "id": "2053659309980669337",
+     "name": "Mustafa A"
+    },
+    "hiringManager": {
+     "id": "2053659309980669336",
+     "name": "Mustafa A."
+    },
+    "freelancer": {
+     "id": "1647672547786633216",
+     "name": "Abhijeet G."
+    },
+    "terms": {
+     "fixedPriceTerms": [
+      {
+       "id": "43986743",
+       "jobType": "FIXED",
+       "fixedAmount": {
+        "currency": "USD",
+        "displayValue": "4500",
+        "rawValue": "4500"
+       },
+       "startDate": "2026-06-29T19:40:12.483Z"
+      }
+     ]
+    },
+    "offer": {
+     "id": "111865772",
+     "title": "AI automation architect(Airtable + make.com + Gohigh level + Evoto",
+     "type": "MARKET_PLACE_FIXED_PRICE",
+     "closeJobPostingOnAccept": false,
+     "description": "We are a growing cosmetic surgery and aesthetics practice [...]",
+     "offerTerms": {
+      "expectedStartDate": "2026-06-29T00:00:00+0000"
+     },
+     "milestones": [
+      {
+       "id": "50906322",
+       "sequenceId": 1,
+       "depositAmount": {
+        "currency": "USD",
+        "displayValue": "1500.00",
+        "rawValue": "1500.00"
+       },
+       "fundedAmount": {
+        "currency": "USD",
+        "displayValue": "1500.00",
+        "rawValue": "1500.00"
+       },
+       "paid": {
+        "currency": "USD",
+        "displayValue": "1500.00",
+        "rawValue": "1500.00"
+       },
+       "state": "Paid",
+       "state_label": "Paid",
+       "dueDateTime": "2026-07-08T00:00:00.000Z",
+       "description": "Fully integrated lead tracking system * Marketing attribution dashboard [...]",
+       "submissionEvents": null
+      },
+      {
+       "id": "50906323",
+       "sequenceId": 2,
+       "depositAmount": {
+        "currency": "USD",
+        "displayValue": "1500.00",
+        "rawValue": "1500.00"
+       },
+       "fundedAmount": {
+        "currency": "USD",
+        "displayValue": "1500.00",
+        "rawValue": "1500.00"
+       },
+       "paid": {
+        "currency": "USD",
+        "displayValue": "0.00",
+        "rawValue": "0.00"
+       },
+       "state": "NotFunded",
+       "state_label": "Not funded",
+       "dueDateTime": "2026-07-15T00:00:00.000Z",
+       "description": "Updated KPI dashboards * Optimized CRM workflows [...]",
+       "submissionEvents": null
+      },
+      {
+       "id": "50906324",
+       "sequenceId": 3,
+       "depositAmount": {
+        "currency": "USD",
+        "displayValue": "1500.00",
+        "rawValue": "1500.00"
+       },
+       "fundedAmount": {
+        "currency": "USD",
+        "displayValue": "1500.00",
+        "rawValue": "1500.00"
+       },
+       "paid": {
+        "currency": "USD",
+        "displayValue": "0.00",
+        "rawValue": "0.00"
+       },
+       "state": "NotFunded",
+       "state_label": "Not funded",
+       "dueDateTime": "2026-07-22T00:00:00.000Z",
+       "description": "Strategic business growth plan * Profitability and financial analysis [...]",
+       "submissionEvents": null
+      }
+     ]
+    }
+   }
+  },
+  "status": "ok"
+ }
+}

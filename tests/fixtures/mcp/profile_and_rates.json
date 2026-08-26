@@ -1,0 +1,112 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~22:33 IST (Abhijeet's approval: 'Yes, run both'). Tool: get_profile action=get org_uid=1647672547786633217 (own profile) + action=list_highlights, and get_rate_insights action=get on the CLIENT org 1715797263477194752 (the tool REFUSES a freelancer org: 'requires a Client account'). Verbatim except the long description text, kept in full because it is his own copy. Findings: profile chargeRate 51.5 (config PROFILE_RATE_USD says 32.50); Top Rated Plus; 124 jobs / $127,017.71 earned / 44 feedbacks - the description still says '69 contracts, $100K+'; availability says 22 active hourly contracts committing 537 hours a week; the only portfolio project is a college RC car and the only certificate is Microsoft Certified Professional.",
+ "profile": {
+  "availability": {
+   "active_hourly_contracts": 22,
+   "committed_hours_per_week": 537,
+   "hours_per_week": "More than 30 hrs/week"
+  },
+  "identity": {
+   "ciphertext": "~01d7dccac9aa1fde08",
+   "id": "1647672547786633216"
+  },
+  "personId": "1647672547786633216",
+  "personAvailability": {
+   "availableDays": null,
+   "capacity": "fullTime"
+  },
+  "personalData": {
+   "chargeRate": {
+    "currency": "USD",
+    "displayValue": "$51.5",
+    "rawValue": "51.5"
+   },
+   "firstName": "Abhijeet",
+   "lastName": "G.",
+   "location": {
+    "city": "Pune",
+    "country": "India",
+    "state": "MH",
+    "timezone": "UTC+05:30 Mumbai, Kolkata, Chennai, New Delhi"
+   },
+   "profileState": "AUTO_ACCEPTED",
+   "profileUrl": "https://upwork.com/freelancers/abhijeetgandhi",
+   "title": "AI Automation Expert | Make.coml | Airtable | GoHighLevel | Vapi | n8n",
+   "description": "[...] 69 contracts completed, 100% Job Success, $100K+ earned on Upwork [...]"
+  },
+  "profileAggregates": {
+   "top_rated": "Top Rated Plus",
+   "totalEarnings": 127017.71,
+   "totalFeedback": 44,
+   "totalFixedJobs": 47,
+   "totalHourlyJobs": 77,
+   "totalJobs": 124,
+   "totalJobsReconciled": true
+  },
+  "skills": [
+   "Python",
+   "AI Agent Development",
+   "Make.com",
+   "n8n",
+   "Airtable",
+   "Artificial Intelligence",
+   "API Integration",
+   "Zapier",
+   "Web Scraping",
+   "Automation",
+   "ChatGPT",
+   "CRM Automation",
+   "OpenAI API",
+   "AI Chatbot",
+   "Data Processing",
+   "Prompt Engineering",
+   "Business Process Automation",
+   "LLM Prompt",
+   "Generative AI"
+  ],
+  "languages": [
+   {
+    "language_code": "en",
+    "proficiency": "NATIVE_OR_BILINGUAL"
+   },
+   {
+    "language_code": "hi",
+    "proficiency": "NATIVE_OR_BILINGUAL"
+   },
+   {
+    "language_code": "mr",
+    "proficiency": "NATIVE_OR_BILINGUAL"
+   }
+  ],
+  "status": "ok"
+ },
+ "highlights": {
+  "certificates": [
+   {
+    "id": "522296425745498112",
+    "name": "Microsoft Certified Professional"
+   }
+  ],
+  "portfolio_projects": [
+   {
+    "id": "1647679831652884480",
+    "title": "Autonomus-Rc car"
+   }
+  ],
+  "status": "ok"
+ },
+ "rate_insights": {
+  "_request": {
+   "org_uid": "1715797263477194752 (CLIENT)",
+   "experience_level": "expert",
+   "project_text": "AI automation expert: Make.com, Airtable, GoHighLevel, n8n, API integrations, CRM automation, Vapi voice agents"
+  },
+  "based_on_jobs": 208,
+  "experience_level": "expert",
+  "occupation": "AI Integration",
+  "rate_high": 50,
+  "rate_low": 25,
+  "scope": "global",
+  "status": "ok"
+ }
+}
