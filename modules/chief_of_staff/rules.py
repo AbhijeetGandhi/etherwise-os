@@ -247,6 +247,7 @@ def rule_commitments_due(db_path, now=None) -> List[dict]:
             "SELECT id, text, due, source_cite, client_id FROM commitments"
             " WHERE state='open' AND who='us' AND due IS NOT NULL"
             " AND COALESCE(review_state,'') != 'stale'"     # stale -> not a card
+            " AND source_cite NOT LIKE 'upwork/%'"           # Upwork promises: the branch below
             " AND substr(due,1,10) <= ? AND substr(due,1,10) >= ?",
             (horizon.strftime("%Y-%m-%d"), stale_floor.strftime("%Y-%m-%d"))):
             out.append({
@@ -259,9 +260,9 @@ def rule_commitments_due(db_path, now=None) -> List[dict]:
                 "action": "Deliver or update the client.",
                 "due": r["due"], "dedup_key": f"commitment:{r['id']}",
                 "payload": {"cite": r["source_cite"]}})
-        # a promise typed on Upwork with NO date ("I'll take a look and let you
-        # know") is a task the moment it is made (Abhijeet, 2026-08-26): due
-        # UPWORK_PROMISE_DAYS after the promise, the card says whom and where
+        # a promise typed on Upwork is a task the moment it is made (Abhijeet,
+        # 2026-08-26): dated or not (undated = due UPWORK_PROMISE_DAYS after
+        # the promise), the card says whom and where, and opens the room
         carded = {c["dedup_key"] for c in out}
         out.extend(c for c in _upwork_promise_cards(conn, now)
                    if c["dedup_key"] not in carded)

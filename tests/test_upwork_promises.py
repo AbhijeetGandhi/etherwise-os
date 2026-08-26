@@ -253,10 +253,12 @@ class TestTodayCard(PromiseCase):
                             {"text": "Send the register", "due": "2026-08-27"})
         cards = rules.rule_commitments_due(self.db_path, now=self.now.astimezone(config.TZ))
         self.assertEqual(len(cards), 1)
-        self.assertEqual(cards[0]["due"], "2026-08-27")
+        self.assertEqual(cards[0]["due"], "2026-08-27")                 # its own date, kept
         self.assertEqual(cards[0]["client"], "the-cradle-company")
-        # the dated branch carded it; the Upwork branch did not duplicate it
-        self.assertEqual(cards[0]["title"], "Commitment due: Send the register")
+        # one card, from the Upwork branch: named, with the room to open
+        self.assertEqual(cards[0]["title"], "You promised Brandi Jordan: Send the register")
+        self.assertEqual(cards[0]["payload"]["room_id"], "room_tcc")
+        self.assertFalse(cards[0]["payload"]["undated"])
 
     def test_today_hands_the_room_to_the_card(self):
         from modules.cockpit import data as cdata
