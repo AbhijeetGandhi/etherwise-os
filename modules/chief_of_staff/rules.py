@@ -259,7 +259,80 @@ def rule_commitments_due(db_path, now=None) -> List[dict]:
                 "action": "Deliver or update the client.",
                 "due": r["due"], "dedup_key": f"commitment:{r['id']}",
                 "payload": {"cite": r["source_cite"]}})
+        # a promise typed on Upwork with NO date ("I'll take a look and let you
+        # know") is a task the moment it is made (Abhijeet, 2026-08-26): due
+        # UPWORK_PROMISE_DAYS after the promise, the card says whom and where
+        carded = {c["dedup_key"] for c in out}
+        out.extend(c for c in _upwork_promise_cards(conn, now)
+                   if c["dedup_key"] not in carded)
     return out
+
+
+def _upwork_promise_cards(conn, now=None) -> List[dict]:
+    """Cards for open promises made on Upwork (modules/upwork/promises.py):
+    "You promised <room>: <text>", due as stated or UPWORK_PROMISE_DAYS after
+    the message; the room and the message id ride in the payload so Today can
+    open the thread. Bounded like the dated rule (nothing older than
+    COS_COMMITMENT_STALE_DAYS)."""
+    from modules.upwork import promises as _promises
+    nowdt = _now(now)
+    stale_floor = (nowdt - timedelta(days=config.COS_COMMITMENT_STALE_DAYS)).strftime("%Y-%m-%d")
+    out = []
+    for r in conn.execute(
+            "SELECT c.id, c.text, c.due, c.source_cite, c.client_id, c.created_at"
+            " FROM commitments c WHERE c.state='open' AND c.who='us'"
+            " AND COALESCE(c.review_state,'') != 'stale' AND c.source_cite LIKE ?"
+            " AND substr(c.created_at,1,10) >= ?",
+            (_promises.SOURCE_PREFIX + "%", stale_floor)):
+        parsed = _promises.parse_cite(r["source_cite"])
+        room_id, message_id = parsed if parsed else (None, None)
+        room = conn.execute("SELECT room_name, client_id FROM threads WHERE id=?",
+                            (room_id,)).fetchone() if room_id else None
+        promised = conn.execute("SELECT created_dt FROM messages WHERE id=?",
+                                (message_id,)).fetchone() if message_id else None
+        promised_on = _ist_day((promised["created_dt"] if promised else None) or r["created_at"])
+        # the person we answered: whoever wrote to us last before the promise
+        to = conn.execute(
+            "SELECT sender_user_name FROM messages WHERE thread_id=? AND created_dt < ?"
+            " AND lower(direction)='inbound' AND sender_user_name IS NOT NULL"
+            " ORDER BY created_dt DESC LIMIT 1",
+            (room_id, promised["created_dt"] if promised else "")).fetchone() if promised else None
+        due = r["due"]
+        if not due:
+            try:
+                due = (datetime.strptime(promised_on, "%Y-%m-%d")
+                       + timedelta(days=config.UPWORK_PROMISE_DAYS)).strftime("%Y-%m-%d")
+            except ValueError:
+                due = (nowdt + timedelta(days=config.UPWORK_PROMISE_DAYS)).strftime("%Y-%m-%d")
+        room_name = (room["room_name"] if room else None) or "the client"
+        who = (to["sender_user_name"] if to else None) or room_name.split(",")[0].strip()
+        client = r["client_id"] or (room["client_id"] if room else None) or room_name
+        out.append({
+            "source": "commitment", "dept": "sales", "kind": "commitment_due",
+            "title": f"You promised {who}: {r['text'][:80]}",
+            "client": client,
+            "action": "Reply on Upwork — your next message in the room clears this by itself.",
+            "due": due, "dedup_key": f"commitment:{r['id']}",
+            "payload": {"cite": r["source_cite"], "room_id": room_id,
+                        "room_name": room_name, "to": who, "promised_on": promised_on,
+                        "undated": r["due"] is None}})
+    return out
+
+
+def _ist_day(ts: Optional[str]) -> str:
+    """An Upwork ISO instant (UTC) or a SQLite 'now' → the IST calendar day;
+    a promise typed at 05:07 IST is a 26 Aug promise, not a 25 Aug one."""
+    if not ts:
+        return ""
+    import re as _re
+    t = _re.sub(r"\.\d+", "", str(ts).strip()).replace("Z", "+00:00").replace(" ", "T", 1)
+    if not _re.search(r"[+-]\d\d:\d\d$", t):
+        t += "+00:00"
+    try:
+        dt = datetime.fromisoformat(t)
+    except ValueError:
+        return str(ts)[:10]
+    return dt.astimezone(config.TZ).strftime("%Y-%m-%d")
 
 
 # ── System ────────────────────────────────────────────────────────────────────

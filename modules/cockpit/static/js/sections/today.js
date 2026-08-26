@@ -387,6 +387,10 @@ export function queueCard(it, ctx, opts = {}) {
     actions.append(copy,
       btn("Open thread", () => window.open(it.thread_url, "_blank", "noopener"),
         { sm: true, icon: "arrow-up-right" }));
+  } else if ((it.detail || {}).thread_url) {
+    // a promise typed on Upwork: the room it was made in is one click away
+    actions.append(btn("Open on Upwork", () => window.open(it.detail.thread_url, "_blank", "noopener"),
+      { sm: true, icon: "arrow-up-right" }));
   }
   actions.append(
     btn("Done", () => act(it, "done", null, ctx), { sm: true, icon: "check" }),
@@ -535,6 +539,7 @@ function queueDetail(it) {
   kv("Client", dt.client || el("span", "muted", "not linked to a client"));
   kv("Type", dt.kind);
   if (dt.full_text) kv("Detail", dt.full_text);
+  if (dt.promised_on) kv("Promised", `${fmt.dateShort(dt.promised_on)} on Upwork, to ${dt.to || dt.room_name || "the client"}${dt.room_name && dt.to && dt.room_name !== dt.to ? ` (${dt.room_name})` : ""}${dt.undated ? " — no date given, so it is due in a couple of days" : ""}`);
   if (dt.due) kv("Due", String(dt.due).slice(0, 10));
   // "idle" is now the CROSS-CHANNEL age (evidence.waiting_since), not the age
   // of the newest Upwork row — the label has to say which, or it re-opens the

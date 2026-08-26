@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core import config, db, runner
-from modules.upwork import queries, room_link
+from modules.upwork import promises, queries, room_link
 from modules.upwork.upwork_client import UpworkClient
 
 TASK_NAME = "upwork_inbox"
@@ -330,6 +330,11 @@ def poll(ctx, client_factory=UpworkClient) -> dict:
             for s in stories:
                 if s.get("id") and upsert_message(conn, room["id"], s):
                     metrics["new_messages"] += 1
+
+    # promises we typed on Upwork -> tasks on Today (modules/upwork/promises;
+    # Abhijeet 2026-08-26). Reads only the NEW outbound messages; never fails
+    # the poll - its metrics ride on this run.
+    metrics.update(promises.run(ctx, dbp))
 
     # classify (verbatim) + judgment
     digest_items = []

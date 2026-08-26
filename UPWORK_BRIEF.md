@@ -477,6 +477,33 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    second TCC contract exists, the hourly ROOM_LIST sync cannot see it: `list_contracts`
    (MCP plan, next actions 5) is the fix. Spec addendum written. 56 tests in
    test_upwork_tab (+3: the rooms rule, the new-posting hire, the repeat client).
+0p. DONE 2026-08-26 07:00 (overnight item a, his 05:20: "we told David that we will let him
+   know immediately — that should become part of the Today tab because it's a task"; he
+   believed it existed) — **promises typed on Upwork become tasks on Today.** Found: 660
+   commitments in the table, every one from a Fathom call; the Upwork path (a `sources` row
+   of type 'upwork' fed to the extractor) was never scheduled — 2 such rows, both from
+   June. Built `modules/upwork/promises.py`, run by the inbox poll (10:15 / 19:15 / "Check
+   Upwork now") after ingesting: every NEW outbound message since a cursor that passes a
+   phrase gate ("I'll", "will send", "let you know", "get back to you", "by Friday" …;
+   `config.UPWORK_PROMISE_PHRASES`, no model call for "thanks!") goes one at a time, with
+   the two messages before it, to the SAME Sonnet extractor the Fathom path uses
+   (`chief_of_staff.commitments` SYSTEM + SCHEMA); who='us' rows land in `commitments`
+   with cite `upwork/<room> @ <message id>`, dedup on (room, message, text). A promise
+   with no date is due `UPWORK_PROMISE_DAYS` (2) after it was made — the card says so.
+   The card (`rules.rule_commitments_due`, new branch): "You promised David S.: read the
+   brief and let him know" · due tomorrow · "Reply on Upwork — your next message in the
+   room clears this by itself" · Open on Upwork · Done / Snooze; the detail names the
+   room, the IST day, the cite. AUTO-CLEAR (law 5): a later outbound message in the same
+   room marks the promise done at the next poll and the sweep clears the card. Bounds: a
+   week's look-back on the first run, `UPWORK_PROMISE_MAX_PER_RUN` (12) extractor calls
+   per poll, a failed extraction is retried next poll (the cursor stops before it), a
+   failure is a metric on the poll (`promise_errors`), never a failed run. Config diff
+   applied under his standing approval (three UPWORK_PROMISE_* lines). 12 tests
+   (`tests/test_upwork_promises.py`). ◆ For him: the extractor is the design's Sonnet call
+   (~$0.01 per promise-shaped message, ~3/day); a deterministic-only version would be
+   free but blunter — say if the spend matters. ◆ The first poll after deploy reads the
+   last 7 days of his outbound mail (64 messages) → up to 12 extractor calls, the rest at
+   the next poll.
 0k. DONE 2026-08-26 00:40 `a10b421` — **the tab REDESIGNED on his verdict** (23:50: "I don't
    like the UI at all … too complicated for me to understand anything … the part that I
    hate most is the client comms and how you represent it — it all should be intuitive").

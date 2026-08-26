@@ -2045,6 +2045,11 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
             client = pl.get("client")
             detail.update({"full_text": ci.get("text"), "due": ci.get("due"),
                            "source": ci.get("source_cite"), "client": client})
+            if pl.get("room_id"):           # a promise typed on Upwork: open the room
+                detail.update({"thread_url": ROOM_URL.format(tid=pl["room_id"]),
+                               "room_name": pl.get("room_name"), "to": pl.get("to"),
+                               "promised_on": pl.get("promised_on"),
+                               "undated": pl.get("undated")})
         else:
             detail.update({"job_url": pl.get("job_url"), "cite": pl.get("cite")})
         entry = {

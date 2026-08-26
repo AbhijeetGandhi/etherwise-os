@@ -1242,6 +1242,23 @@ UPWORK_SIGNAL_MIN_N = 30
 # name; an ambiguous match (two rooms, two people) links nothing.
 UPWORK_ROOM_LINK_DAYS = 30
 UPWORK_ROOM_LINK_MAIL_CHARS = 1500   # of a linked email's body the draft-writer sees
+# Promises typed on Upwork become tasks on Today (modules/upwork/promises.py,
+# Abhijeet 2026-08-26 05:20: "we told David we will let him know — that should
+# be on Today because it's a task"). The phrase gate decides which outbound
+# messages the extractor reads at all; an undated promise is due
+# UPWORK_PROMISE_DAYS after it was made; the first run looks back
+# UPWORK_PROMISE_LOOKBACK_DAYS, never the whole history.
+UPWORK_PROMISE_PHRASES = (
+    r"\b(?:i|we)\s*(?:'ll|will|shall|can|am going to|are going to)\b",
+    r"\blet (?:you|him|her|them) know\b", r"\bget back to you\b",
+    r"\bsend (?:you|it|them|over|across|the|a|an)\b", r"\bshare (?:it|the|a|an|with)\b",
+    r"\b(?:by|before|within) (?:tomorrow|tonight|today|monday|tuesday|wednesday|thursday"
+    r"|friday|saturday|sunday|eod|eow|end of|the end of|next|this|an? |\d)",
+    r"\bkeep you (?:posted|updated)\b", r"\bfollow up\b", r"\bcircle back\b",
+)
+UPWORK_PROMISE_DAYS = 2              # an undated promise is due this many days later
+UPWORK_PROMISE_LOOKBACK_DAYS = 7     # first run: only promises this recent
+UPWORK_PROMISE_MAX_PER_RUN = 12      # extractor calls per poll; the rest wait for the next
 COCKPIT_PORT = 5051            # v2 dashboard holds :5050 (live)
 COCKPIT_TOKEN_FILE = CREDENTIALS_DIR / "cockpit-token.txt"
 
