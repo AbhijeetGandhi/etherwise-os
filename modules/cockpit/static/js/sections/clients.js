@@ -39,6 +39,8 @@ import {
   emptyState, notice, toast,
 } from "../ui.js";
 import { openDrill, cols } from "../drill.js";
+import { subtabs } from "../subtabs.js";
+import { openDossier } from "./knowledge.js";
 
 export const meta = { title: "Clients", hint: "revenue economics from the ledger" };
 
@@ -109,12 +111,93 @@ export async function render(root, ctx) {
     if (!rosterIndex.has(normName(x.name))) rosterIndex.set(normName(x.name), x);
   });
 
-  root.appendChild(heading("Clients",
-    `— revenue economics from the ledger; every figure drills to its`
-    + ` transactions · as of ${d.as_of || "?"}`));
+  // REDESIGNED 2026-08-26 in the Upwork tab's style (Abhijeet, 05:20): one
+  // row per client in words — what they pay, how you talk, whether anything
+  // is owed, what the brain knows — under three views: Working with now,
+  // Everyone (the audited table, the tiles and the roster reconciliation,
+  // unchanged), Needs a look. The dossier opens under the row.
+  const dossierIndex = new Map();
+  try {
+    const k = await ctx.api("/api/knowledge");
+    (k.dossiers || []).forEach((x) => dossierIndex.set(normName(x.client_name || x.client_id), x));
+  } catch (e) { /* the brain is optional here */ }
+
+  const allClients = d.clients || [];
+  const cutoff90 = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  const working = allClients.filter((c) => (c.active_contracts || 0) > 0 || (c.last && c.last >= cutoff90));
+  const cutoff120 = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
+  const needsLook = allClients.filter((c) => (c.owed_replies || 0) > 0 || c.passthrough
+    || ((c.active_contracts || 0) > 0 && c.last && c.last < cutoff120));
+
+  root.append(el("div", "up-head", [
+    el("div", "hstack", [el("h2", "up-title", "Clients"), el("span", "muted small", `as of ${d.as_of ? fmt.dateShort(d.as_of) : "?"}`)]),
+    el("p", "up-lede", [
+      el("b", null, `${fmt.num(working.length)} client${working.length === 1 ? "" : "s"}`), " working with you now · ",
+      el("b", null, dash(d.revenue_total_usd, fmt.usd)), ` paid to date by ${fmt.num(allClients.length)}`,
+      needsLook.length ? [" · ", el("b", "neg", `${needsLook.length}`), ` need${needsLook.length === 1 ? "s" : ""} a look`] : "",
+    ]),
+  ]));
 
   const body = el("div", { class: "stack", style: { gap: "24px" } });
-  root.appendChild(body);
+
+  await subtabs(root, {
+    section: "clients", ctx,
+    tabs: [{ id: "now", label: "Working with now" }, { id: "all", label: "Everyone" }, { id: "look", label: "Needs a look" }],
+    badge: (id) => (id === "now" ? el("span", "n", String(working.length))
+      : id === "all" ? el("span", "n", String(allClients.length))
+        : needsLook.length ? el("span", "n warn", String(needsLook.length)) : null),
+    views: {
+      now: () => clientRows(working, "A client is here while a contract is live or money arrived in the last 90 days. Most recent first."),
+      all: () => { paint(); return body; },
+      look: () => clientRows(needsLook, "Owed a reply, a payment the parser could not attribute, or a contract Upwork still calls live with no payment for four months (probably finished — worth closing).", true),
+    },
+  });
+
+  /* ── the rows in words ──────────────────────────────────────────────────── */
+  function clientRows(list, footnote, why = false) {
+    const out = el("div", "stack");
+    if (!list.length) {
+      out.appendChild(el("div", "card flush", emptyState("Nobody here right now.", { icon: "circle-check" })));
+      return out;
+    }
+    const sorted = list.slice().sort((a, b) => String(b.last || "").localeCompare(String(a.last || "")));
+    sorted.forEach((c) => out.appendChild(clientRow(c, why)));
+    out.appendChild(el("p", "muted small foot", footnote));
+    return out;
+  }
+
+  function clientRow(c, why) {
+    const initials = String(c.name || "?").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase();
+    const dz = dossierIndex.get(normName(c.name));
+    const m = matchRoster(c.name, rosterIndex);
+    const bits = [];
+    if ((c.active_contracts || 0) > 0) bits.push(el("span", "pos", `${c.active_contracts === 1 ? "a live contract" : c.active_contracts + " live contracts"}`));
+    bits.push(el("span", null, ["paid us ", el("b", null, fmt.usd(c.revenue_usd)), " to date",
+      c.last ? [", last ", el("b", null, fmt.dateShort(c.last))] : ""]));
+    if ((c.channels || []).length) bits.push(`talks on ${c.channels.join(", ")}`);
+    if ((c.owed_replies || 0) > 0) bits.push(el("span", "neg", `owed a reply${c.owed_replies > 1 ? ` on ${c.owed_replies} threads` : ""}`));
+    if (c.passthrough) bits.push(el("span", "warn", "a payment still to be attributed"));
+    if (dz) bits.push(el("span", null, ["knows ", el("b", null, fmt.num(dz.fact_count)), ` facts, compiled ${dz.last_compiled_at ? fmt.dateShort(dz.last_compiled_at) : "never"}`]));
+    else bits.push(el("span", "muted", "no dossier yet"));
+    if (m && m.status) bits.push(el("span", "muted", `Airtable: ${m.status}`));
+    const desc = el("div", "d");
+    bits.forEach((b, i) => { if (i) desc.append(" · "); desc.append(b); });
+    if (why && (c.active_contracts || 0) > 0 && c.last && c.last < cutoff120) {
+      desc.append(el("div", "warn", `A live contract but nothing paid since ${fmt.dateShort(c.last)}.`));
+    }
+    const host = el("div", { class: "dossier-host", style: { display: "none" } });
+    const actions = el("div", "btns", [
+      btn("Payments", () => openClient(c.name, c.name, rosterNote(c)), { sm: true, icon: "wallet" }),
+      dz ? btn("Open dossier", async () => {
+        if (host.style.display === "none") { host.style.display = "block"; await openDossier(dz, ctx, host); }
+        else { host.style.display = "none"; clear(host); }
+      }, { sm: true, variant: "primary", icon: "book-open" }) : null,
+    ]);
+    return el("div", "row client-row", [
+      el("div", "in", [el("div", "avatar", initials), el("div", null, [el("div", "t", c.name), desc]), actions]),
+      host,
+    ]);
+  }
 
   /* ── the per-client drill ─────────────────────────────────────────────── */
   async function openClient(name, label, extra) {

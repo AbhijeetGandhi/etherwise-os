@@ -82,19 +82,112 @@ export async function render(root, ctx) {
   const d = await ctx.api("/api/today");
   const m = d.metrics || {};
 
+  // REGROUPED 2026-08-26 (Abhijeet, 05:20: "I want the UI of all the tabs
+  // improved in the same way" as the Upwork tab): one list ranked by an
+  // urgency number read as "a lot of data laid out without structure". The
+  // cards are now grouped by WHAT THEY ASK OF HIM — people waiting on a reply,
+  // things he promised, decisions, housekeeping — each group longest-wait
+  // first with a fold; the health line is one sentence; the hot-lead backlog,
+  // the four figures and the latest brief sit under "More".
   root.append(
     heading("Today", "— what to act on right now"),
-    sourceHealth(d.sources || {}),
+    healthLine(d.sources || {}),
     quickCapture(ctx),
     ...captured(d, ctx),
-    ...actNow(d, ctx),
-    ...backlog(d, ctx),
-    heading("At a glance", null, "h3"),
-    atAGlance(d, m),
+    ...groups(d, ctx),
+    expander("More — hot leads waiting, the numbers at a glance, the latest brief", (body) => {
+      body.append(...backlog(d, ctx), heading("At a glance", null, "h3"), atAGlance(d, m),
+        expander("Latest brief (draft)", (b2) => renderBrief(b2, ctx)));
+    }),
   );
 }
 
-/* ── source health ────────────────────────────────────────────────────────── */
+/* ── the health line: one sentence, the names, a link ────────────────────── */
+
+function healthLine(s) {
+  const lines = s.lines || [];
+  if (s.ok) {
+    return el("div", "srcline ok", [icon("circle-check", { size: 15 }),
+      el("div", "grow", s.headline || "Every system ran on time.")]);
+  }
+  // "STALE: Upwork sync last produced 10h ago (expected every 3h)." -> "Upwork sync"
+  // "STILL STALE (1d overdue): Sunday outcome email last produced …" -> "Sunday outcome email"
+  const names = lines.map((x) => String(x).replace(/^[A-Z][A-Z ]*(?:\([^)]*\))?:\s*/, "")
+    .replace(/\s+(?:last produced|has not|never|is|—).*$/i, "").trim()).filter(Boolean);
+  const n = lines.length || names.length;
+  const go = () => { location.hash = "#/activity?view=health"; };
+  return el("div", "srcline bad", [icon("alert-triangle", { size: 15 }),
+    el("div", "grow", [
+      el("button", { class: "linktext strong", type: "button", on: { click: go } },
+        `${n} system${n === 1 ? " is" : "s are"} late`),
+      names.length ? el("span", "muted", ` — ${names.join(", ")}. `) : el("span", "muted", ". "),
+      el("span", "muted", "Their numbers on this page may be behind."),
+    ])]);
+}
+
+/* ── the groups: what each card asks of him ──────────────────────────────── */
+
+const GROUPS = [
+  { key: "people", title: "People waiting on you", hint: "longest wait first" },
+  { key: "promised", title: "Things you promised", hint: "the system clears one the moment you deliver it" },
+  { key: "decide", title: "Needs a decision", hint: "" },
+  { key: "house", title: "Housekeeping", hint: "nothing a client can see" },
+];
+const DECIDE_KINDS = new Set(["escalate_client", "escalate_commitment", "won_no_outcome",
+  "deadline", "lost_pattern", "capture", "owed_reply"]);
+const GROUP_FOLD = 5;
+
+function groupOf(it) {
+  if (it.conversation) return "people";
+  const k = it.nudge_kind || "";
+  if (k === "commitment_due") return "promised";
+  if (it.kind === "followup") return "people";
+  if (DECIDE_KINDS.has(k)) return "decide";
+  return "house";
+}
+
+function groups(d, ctx) {
+  const all = d.queue_all || d.queue || [];
+  const out = [];
+
+  if (d.queue_hidden_no_provenance) {
+    const n = d.queue_hidden_no_provenance;
+    out.push(notice("warn",
+      `${n} card${n === 1 ? " is" : "s are"} hidden — client-facing but without an evidence`
+      + ` link, and an unsourced claim about a client is never shown. Listed under Activity.`));
+  }
+
+  if (!all.length) {
+    const ok = (d.sources || {}).ok;
+    out.push(el("div", "card flush", emptyState(
+      ok ? "Nothing needs you right now — and every system is fresh, so that is a real quiet."
+         : "Nothing is listed — but a system is late (see the line above), so this may be a gap, not a clear desk.",
+      { icon: ok ? "circle-check" : "alert-triangle" })));
+    return out;
+  }
+
+  const by = {};
+  all.forEach((it) => { (by[groupOf(it)] = by[groupOf(it)] || []).push(it); });
+  GROUPS.forEach((g) => {
+    const items = by[g.key] || [];
+    if (!items.length) return;
+    out.push(heading(g.title, `— ${items.length}${g.hint ? " · " + g.hint : ""}`, "h3"));
+    const list = el("div", "card flush");
+    items.slice(0, GROUP_FOLD).forEach((it) => list.appendChild(queueCard(it, ctx)));
+    if (items.length > GROUP_FOLD) {
+      list.appendChild(expander(`+${items.length - GROUP_FOLD} more`, (body) => {
+        items.slice(GROUP_FOLD).forEach((it) => body.appendChild(queueCard(it, ctx)));
+      }));
+    }
+    out.push(list);
+  });
+  if (d.queue_auto_closed) {
+    out.push(el("p", "muted small", `${d.queue_auto_closed} card${d.queue_auto_closed === 1 ? "" : "s"} closed by themselves — a call or a reply settled them.`));
+  }
+  return out;
+}
+
+/* ── source health (the older box; kept for the Upwork tab's readers) ────── */
 
 function sourceHealth(s) {
   const box = el("div", "srcline " + (s.ok ? "ok" : "bad"), [
@@ -345,7 +438,7 @@ export function queueCard(it, ctx, opts = {}) {
     class: "q-title", type: "button", attrs: { "aria-expanded": "false" },
   }, [
     icon("chevron-right", { size: 14, class: "q-expand" }),
-    el("span", "txt", it.title || "(untitled)"),
+    el("span", "txt", String(it.title || "(untitled)").replace(/^Commitment due:\s*/, "")),
   ]);
   title.addEventListener("click", () => {
     const open = detail.style.display === "none";
@@ -360,10 +453,25 @@ export function queueCard(it, ctx, opts = {}) {
   if (it.kind === "followup") {
     followupMeta(it, metaRow);
   } else {
-    metaRow.append(pill(String(it.nudge_kind || "").replace(/_/g, " "), "outline"),
-      el("span", null, it.dept || ""));
-    if (it.due) metaRow.append(el("span", null, " · " + fmt.due(it.due)));
-    if (it.action) metaRow.appendChild(el("div", "q-actionnote", it.action));
+    // in words, never a kind pill: where the promise came from and when it is
+    // due, or the action the escalation asks for
+    const dt = it.detail || {};
+    if (it.nudge_kind === "commitment_due") {
+      const where = dt.source_kind === "upwork" ? "on Upwork"
+        : dt.source_kind === "fathom" ? `on the call${dt.source_title ? ` “${dt.source_title}”` : ""}`
+          : dt.source_kind ? `from ${dt.source_kind}` : "";
+      const bits = [];
+      if (dt.promised_on) bits.push(`promised ${fmt.dateShort(dt.promised_on)}${where ? " " + where : ""}${dt.to ? ", to " + dt.to : ""}`);
+      else if (where) bits.push(`promised ${where}`);
+      if (it.due) bits.push(fmt.due(it.due));
+      if (bits.length) metaRow.appendChild(el("span", null, bits.join(" · ")));
+      if (it.action && !/^Deliver or update the client\.?$/.test(it.action)) {
+        metaRow.appendChild(el("div", "q-actionnote", it.action));
+      }
+    } else {
+      if (it.due) metaRow.append(el("span", null, fmt.due(it.due)));
+      if (it.action) metaRow.appendChild(el("div", "q-actionnote", it.action));
+    }
   }
 
   const left = el("div", "q-left", [title, metaRow]);

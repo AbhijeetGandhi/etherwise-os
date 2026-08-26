@@ -361,7 +361,20 @@ def system(db_path: Optional[Path] = None) -> dict:
                        "window_days": 30},
         "sources": sources,
         "doctor": _doctor_light(),
+        # which tasks the cockpit may kick (actions.RERUN_JOBS) and their words,
+        # so the Health view can put a Run-now button on every system it lists
+        # (2026-08-26, the Activity tab in the Upwork tab's style)
+        "rerun_jobs": _rerun_jobs(),
+        "task_words": dict(_RUN_TASK_WORDS),
     }
+
+
+def _rerun_jobs() -> list:
+    try:
+        from modules.cockpit import actions as _actions
+        return sorted(_actions.RERUN_JOBS)
+    except Exception:  # noqa: BLE001 — the panel must render without it
+        return []
 
 
 ROOM_URL = "https://www.upwork.com/messages/rooms/{tid}/"
@@ -1902,7 +1915,16 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
         room_client = {r["id"]: r["room_name"] for r in tconn.execute(
             "SELECT id, room_name FROM threads WHERE room_name IS NOT NULL")}
         commit_info = {str(r["id"]): dict(r) for r in tconn.execute(
-            "SELECT id, text, due, source_cite, state FROM commitments")}
+            "SELECT c.id, c.text, c.due, c.source_cite, c.state, c.created_at,"
+            # the day the promise was made: the call's day for a Fathom cite
+            # (sources.source_ref = the cite before ' @ '), else when it was filed
+            " (SELECT substr(s.occurred_dt,1,10) FROM sources s WHERE s.source_ref ="
+            "  substr(c.source_cite, 1, instr(c.source_cite, ' @ ') - 1)"
+            "  AND instr(c.source_cite, ' @ ') > 0 LIMIT 1) AS promised_on,"
+            " (SELECT s.title FROM sources s WHERE s.source_ref ="
+            "  substr(c.source_cite, 1, instr(c.source_cite, ' @ ') - 1)"
+            "  AND instr(c.source_cite, ' @ ') > 0 LIMIT 1) AS source_title"
+            " FROM commitments c")}
     finally:
         tconn.close()
 
@@ -2044,7 +2066,11 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
             ci = commit_info.get(dk.split(":", 1)[1]) or {}
             client = pl.get("client")
             detail.update({"full_text": ci.get("text"), "due": ci.get("due"),
-                           "source": ci.get("source_cite"), "client": client})
+                           "source": ci.get("source_cite"), "client": client,
+                           "source_kind": ((ci.get("source_cite") or "").split("/")[0] or None),
+                           "source_title": ci.get("source_title"),
+                           "promised_on": (pl.get("promised_on") or ci.get("promised_on")
+                                           or (ci.get("created_at") or "")[:10] or None)})
             if pl.get("room_id"):           # a promise typed on Upwork: open the room
                 detail.update({"thread_url": ROOM_URL.format(tid=pl["room_id"]),
                                "room_name": pl.get("room_name"), "to": pl.get("to"),
@@ -2575,6 +2601,12 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     # Nudges tab. Overflow is stated, never silently dropped.
     queue_total = len(queue)
     queue_more = max(0, queue_total - config.TODAY_QUEUE_TOPN)
+    # the grouped Today (2026-08-26, his "all the tabs in the Upwork tab's
+    # style") reads the WHOLE ranked list and groups it by what kind of act
+    # it asks for — people waiting, things promised, decisions, housekeeping
+    # — with a per-group fold; `queue` stays the ruthless top-N for the older
+    # readers and the tests that pin it
+    queue_all = list(queue)
     queue = queue[:config.TODAY_QUEUE_TOPN]
 
     # source health: a quiet queue must be provably quiet, not a dead feed
@@ -2650,6 +2682,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         "sources": sources,
         "captures": captures,
         "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
+        "queue_all": queue_all,
         "queue_hidden_no_provenance": _hidden_keys_n,
         "queue_auto_closed": _auto_closed, "clusters": clusters,
         "follow_ups": follow_ups,           # kept for back-compat / counts
@@ -3685,6 +3718,15 @@ _RUN_TASK_WORDS = {
     "upwork_sync": "Synced proposals and rooms",
     "upwork_connects": "Updated the connects ledger",
     "cos_sweep": "Swept the cards",
+    "crm_mirror": "Mirrored the CRM to Airtable",
+    "kb_daily": "Read the day's meetings and mail into the brain",
+    "loom_fetch": "Fetched new Looms",
+    "jarvis_sweep": "Sorted the mail and Slack into the review queue",
+    "jarvis_slack": "Read Slack",
+    "finance_stripe": "Read Stripe",
+    "finance_wise_mail": "Read the Wise mails",
+    "finance_upwork_weekly": "Read the week's Upwork finances",
+    "finance_payment_mail": "Looked for payments in email",
 }
 
 

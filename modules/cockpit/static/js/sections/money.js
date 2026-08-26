@@ -55,9 +55,10 @@
 
 import {
   el, append, clear, fmt, dash, isUnmeasured, heading, card, kpi, pill, chip, btn,
-  emptyState, notice, expander, toast, qstr,
+  emptyState, notice, expander, toast, qstr, icon,
 } from "../ui.js";
 import { openDrill, cols } from "../drill.js";
+import { subtabs } from "../subtabs.js";
 import { chart, axes } from "../charts.js";
 import { bootToken } from "../app.js";           // raw-body upload needs the token
 
@@ -113,6 +114,45 @@ const kv = (v, formatter) => ({
  * 'Wise-mail · revenue' in the same strip (2026-08-25). They remain only for
  * spends (vendors) and rows the server could not attribute.
  */
+/** "2026-08" -> "August 2026"; anything else passes through */
+function monthWords(ym) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ""));
+  if (!m) return String(ym || "");
+  const names = ["January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December"];
+  return `${names[Number(m[2]) - 1] || m[2]} ${m[1]}`;
+}
+
+/** the account keys in words */
+function accountWords(a) {
+  const m = { "idfc-fd": "IDFC fixed deposit", idfc: "IDFC savings", wise: "Wise" };
+  return m[String(a || "").toLowerCase()] || a;
+}
+
+/** the ledger's source tags in words */
+function srcWords(s) {
+  const m = { "Upwork-CSV": "Upwork", "Upwork": "Upwork", "Wise-mail": "Wise", "Wise": "Wise",
+    "IDFC": "bank", "Bank": "bank", "Card": "card", "Stripe": "Stripe", "Direct": "direct" };
+  return m[s] || s || "";
+}
+
+/** one sentence: how fresh the money sources are, with the health page a click away */
+function freshnessLine(mh, ctx) {
+  if (!mh) return el("div", "srcline bad", [icon("alert-triangle", { size: 15 }),
+    el("div", "grow", "How fresh these numbers are could not be read — treat their age as unknown.")]);
+  const age = mh.age_hours == null ? "never"
+    : mh.age_hours < 48 ? `${Math.round(mh.age_hours)} hours ago` : `${Math.round(mh.age_hours / 24)} days ago`;
+  if (mh.ok) {
+    return el("div", "srcline ok", [icon("circle-check", { size: 15 }),
+      el("div", "grow", `${mh.label || "The money sources"} last read ${age} — these numbers are current.`)]);
+  }
+  const go = () => { location.hash = "#/activity?view=health"; };
+  return el("div", "srcline bad", [icon("alert-triangle", { size: 15 }),
+    el("div", "grow", [el("b", null, `${mh.label || "A money source"} last read ${age}`),
+      ` — this month may be missing the newest rows. `,
+      el("button", { class: "linktext", type: "button", on: { click: go } }, "See which systems are late")])]);
+}
+
 export function whoOf(x) {
   if (x.w) return x.w;
   const d = (x.d || "").toUpperCase();
@@ -190,9 +230,9 @@ export async function render(root, ctx) {
     ["all", "All time", () => [null, null]],
     ["this", "This month", () => [thisM, thisM]],
     ["last", "Last month", () => [lastM, lastM]],
-    ["l3", "Last 3 mo", () => [mAdd(thisM, -2), thisM]],
-    ["t12", "Trailing 12", () => [mAdd(thisM, -11), thisM]],
-    ["ytd", "YTD", () => [String(thisM || "").slice(0, 4) + "-01", thisM]],
+    ["l3", "Last 3 months", () => [mAdd(thisM, -2), thisM]],
+    ["t12", "Last 12 months", () => [mAdd(thisM, -11), thisM]],
+    ["ytd", "This year", () => [String(thisM || "").slice(0, 4) + "-01", thisM]],
     ["custom", "Custom", null],
   ];
   // READ IT EVERY TIME, never once. `explorer()` is rebuilt on every range
@@ -346,8 +386,18 @@ export async function render(root, ctx) {
   let segHost, fromIn, toIn, customWrap;
   let revChart = null;
 
-  const head = heading("Money",
-    `— every figure is clickable and matches bin/finance-pnl · ledger through ${d.as_of || "?"}`);
+  // REDESIGNED 2026-08-26 in the Upwork tab's style (Abhijeet, 05:20: "I want
+  // the UI of all the tabs improved in the same way"): one long page of tiles
+  // became five views — This month (the story in plain words: came in, went
+  // out, left, where from, what it cost), Cash, History (the month table, the
+  // chart, the whole picture), Ledger (the explorer), Statements (the
+  // imports). Every figure still drills to its rows and the parity check
+  // still runs; only the arrangement and the words changed.
+  const head = el("div", "up-head", [
+    el("div", "hstack", [el("h2", "up-title", "Money"),
+      el("span", "muted small", `ledger through ${d.as_of ? fmt.dateShort(d.as_of) : "?"}`)]),
+    moneyLede(),
+  ]);
   if (!parityOk) head.appendChild(pill("parity mismatch", "fail"));
   root.appendChild(head);
 
@@ -360,15 +410,53 @@ export async function render(root, ctx) {
       + ` everything below as unverified until they agree.`));
   }
 
-  root.appendChild(sourceFreshness(d.source_health));
-  root.appendChild(provisionalPanel(d.provisional));
-  root.appendChild(rangeBar());
-  root.appendChild(importCard(ctx));
-
   const body = el("div", { class: "stack", style: { gap: "24px" } });
-  root.appendChild(body);
+  const rangeUI = rangeBar();
 
-  /* ── the range bar ──────────────────────────────────────────────────────── */
+  await subtabs(root, {
+    section: "money", ctx,
+    tabs: [{ id: "month", label: "This month" }, { id: "cash", label: "Cash" },
+      { id: "history", label: "History" }, { id: "ledger", label: "Ledger" },
+      { id: "statements", label: "Statements" }],
+    badge: (id) => {
+      const st = (d.provisional || {}).staleness || {};
+      if (id === "statements" && st.stale && st.count) return el("span", "n warn", String(st.count));
+      return null;
+    },
+    views: {
+      month: () => {
+        if (isAll()) range.preset = "this";
+        rerender();
+        return el("div", "stack", [freshnessLine(d.source_health, ctx), rangeUI, body]);
+      },
+      cash: () => el("div", "stack", [
+        heading("In the bank", "— point-in-time balances; the range never touches them", "h3"),
+        cashStory(), cashCard()]),
+      history: () => historyView(),
+      ledger: () => el("div", "stack", [
+        heading("Every transaction", "— reconciled, filtered on the server", "h3"),
+        explorer(), provenanceFooter(rows)]),
+      statements: () => el("div", "stack", [provisionalPanel(d.provisional), importCard(ctx)]),
+    },
+  });
+
+  /* ── the sentence under the heading ─────────────────────────────────────── */
+  function moneyLede() {
+    const mtd = r.month_usd;
+    const monthRows = rows.filter((x) => x.m === thisM);
+    const left = sumB(OPERATING_ALL, monthRows);
+    const parts = [el("b", null, dash(mtd, fmt.usd)), " came in this month"];
+    if (mtd != null) parts.push(", ", el("b", null, fmt.usd(left)), " left after costs");
+    parts.push(" · ", el("b", null, dash(cash.value_usd, fmt.usd)), " in the bank");
+    const st = (d.provisional || {}).staleness || {};
+    if (st.stale && st.count) {
+      parts.push(" · ", el("b", "neg", `${st.count} payment${st.count === 1 ? "" : "s"}`),
+        " seen in email, not on the ledger yet");
+    }
+    return el("p", "up-lede", parts);
+  }
+
+  /* ── the range bar (This month view) ────────────────────────────────────── */
   function rangeBar() {
     segHost = el("div", "segmented");
     fromIn = el("input", { type: "month", attrs: { "aria-label": "range from month" } });
@@ -381,15 +469,12 @@ export async function render(root, ctx) {
     toIn.addEventListener("change", () => {
       range.preset = "custom"; range.to = toIn.value || null; rerender();
     });
-    return el("div", "hstack", [
-      segHost, customWrap,
-      el("span", "muted small", "flows are scoped to this range; cash is not"),
-    ]);
+    return el("div", "hstack", [segHost, customWrap]);
   }
 
   function drawSeg() {
     clear(segHost);
-    PRESETS.forEach(([key, label]) => {
+    PRESETS.filter(([key]) => key !== "all").forEach(([key, label]) => {
       const b = el("button", {
         class: "segbtn" + (range.preset === key ? " on" : ""), type: "button",
         attrs: { "aria-pressed": String(range.preset === key) },
@@ -409,59 +494,186 @@ export async function render(root, ctx) {
     toIn.value = range.to || "";
   }
 
-  /* ── the body, rebuilt whenever the range changes ───────────────────────── */
+  /* ── This month: the story, rebuilt whenever the range changes ──────────── */
 
   function rerender() {
-    // MATERIALISE the preset's window back into `range` before anything reads
-    // it. bounds() was the only place that knew what "Last month" meant; the
-    // month pickers read range.from/range.to directly, so after clicking "Last
-    // month" the KPIs measured 2026-07 while both pickers still showed 2026-06
-    // — and switching to Custom then adopted the pickers' stale window and
-    // quietly applied the wrong one. For "custom" this is a no-op (bounds()
-    // returns range.from/range.to unchanged), so it cannot fight the user.
     const [bf, bt] = bounds();
     range.from = bf || null;
     range.to = bt || null;
     persist();
     drawSeg();
-    // destroy() cancels a build that has not happened yet as well as one that
-    // has: charts.js keeps every live handle for the theme flip, and an orphan
-    // whose canvas has been cleared out of the DOM would refresh forever.
     if (revChart) { try { revChart.destroy(); } catch (e) { /* already gone */ } }
     revChart = null;
     clear(body);
+    body.append(...storyView(scopedRows(), rangeLabel()));
+  }
 
-    const scoped = scopedRows();
-    const rl = rangeLabel();
-    // All-time anchors on the SERVER's audited figure; any narrower range is a
-    // row sum. A bucket the server omits has no rows, which is a true zero — but
-    // a headline the server did not compute stays null, so it renders "—".
-    const bucketSum = (b) => (isAll() ? round2(srvBuckets[b] || 0) : sumB([b], scoped));
-    const anchor = (v, rangeFn) => (isAll()
-      ? (v == null ? null : round2(v))
-      : rangeFn());
-    const netRev = anchor(p.net_revenue_usd, () => sumB(["revenue", "refund"], scoped));
-    const opProfit = anchor(p.operating_profit_usd, () => sumB(OPERATING_ALL, scoped));
+  /** the "usual" month: the average of the completed months before this one (up to 12) */
+  function usualMonthUsd() {
+    const done = byMonth.filter((x) => x.month < thisM).slice(-12);
+    if (!done.length) return null;
+    return round2(done.reduce((a, x) => a + (Number(x.usd) || 0), 0) / done.length);
+  }
 
-    body.append(
-      kpiRowA(netRev, opProfit, rl),
-      heading("Runway and cost base",
-        "— the trailing-12 rate: what comes in, what running the business costs,"
-        + " and what you take out", "h3"),
+  function storyView(scoped, rl) {
+    const isThis = range.preset === "this";
+    const period = isThis ? `${monthWords(thisM)} so far` : monthWords(rl);
+    const cameIn = sumB(["revenue", "refund"], scoped);
+    const costs = sumB(OPERATING_COSTS, scoped);        // negative
+    const left = round2(cameIn + costs);
+    const draws = sumB(["owner_draw"], scoped);           // negative
+    const usual = usualMonthUsd();
+    const byB = (b) => sumB([b], scoped);
+
+    // came in — against the same day last month when the range is this month
+    const cameSub = [];
+    if (isThis && r.last_month_mtd_usd != null) {
+      const cmp = round2((r.month_usd || 0) - r.last_month_mtd_usd);
+      cameSub.push("by this day last month ", el("b", null, fmt.usd(r.last_month_mtd_usd)), " ",
+        el("span", cmp >= 0 ? "pos" : "neg", `${cmp >= 0 ? "▲" : "▼"} ${fmt.usd(Math.abs(cmp))}`));
+      if (usual != null) cameSub.push(" · a usual month ends at ", el("b", null, fmt.usd(usual)));
+    } else if (usual != null && oneMonth()) {
+      const cmp = round2(cameIn - usual);
+      cameSub.push("a usual month is ", el("b", null, fmt.usd(usual)), " ",
+        el("span", cmp >= 0 ? "pos" : "neg", `${cmp >= 0 ? "▲" : "▼"} ${fmt.usd(Math.abs(cmp))}`));
+    } else {
+      cameSub.push("revenue less refunds");
+    }
+    const fee = byB("platform_fee"), tax = byB("tax"), pay = byB("payroll"), opx = byB("opex");
+    const costBits = [];
+    if (fee) costBits.push(`fees ${fmt.usd(Math.abs(fee))}`);
+    if (tax) costBits.push(`taxes ${fmt.usd(Math.abs(tax))}`);
+    if (opx) costBits.push(`tools ${fmt.usd(Math.abs(opx))}`);
+    costBits.push(pay ? `payroll ${fmt.usd(Math.abs(pay))}`
+      : (isThis ? "payroll not yet (the last working day)" : "no payroll"));
+    const leftSub = [];
+    if (isThis) {
+      const lastLeft = sumB(OPERATING_ALL, rows.filter((x) => x.m === lastM));
+      leftSub.push("last month ended at ", el("b", null, fmt.usd(lastLeft)), " · ");
+    }
+    leftSub.push("you took out ", el("b", null, fmt.usd(Math.abs(draws))), isThis ? " so far" : "");
+
+    const flow = el("div", { class: "flow", style: { gridTemplateColumns: "repeat(3, 1fr)" } }, [
+      storyCell("Came in", cameIn, cameSub, () => drillTx({
+        title: `Came in — ${rl}`, buckets: ["revenue", "refund"], ranged: true,
+        subtitle: "revenue less refunds; the top line" })),
+      storyCell("Went out", costs, [costBits.join(" · ")], () => drillTx({
+        title: `Went out — ${rl}`, buckets: OPERATING_COSTS, ranged: true, sortAmount: true,
+        subtitle: "fees, taxes, payroll and tools; biggest first" }), costs < 0 ? "neg" : ""),
+      storyCell("Left", left, leftSub, () => drillTx({
+        title: `Left — ${rl}`, buckets: OPERATING_ALL, ranged: true,
+        subtitle: "every operating row; what you take out sits below this line" }),
+      left >= 0 ? "pos" : "neg"),
+    ]);
+
+    // where it came from — one line per payer, biggest first
+    const byWho = new Map();
+    scoped.filter((x) => x.b === "revenue" || x.b === "refund").forEach((x) => {
+      const w = whoOf(x) || "unknown";
+      const g = byWho.get(w) || { who: w, usd: 0, n: 0, last: null, src: new Set() };
+      g.usd = round2(g.usd + (Number(x.u) || 0));
+      g.n += 1;
+      if (!g.last || (x.dt || "") > g.last) g.last = x.dt;
+      if (x.s) g.src.add(x.s);
+      byWho.set(w, g);
+    });
+    const whoRows = [...byWho.values()].sort((a, b2) => b2.usd - a.usd);
+    const fromList = el("div", "list");
+    whoRows.slice(0, 8).forEach((g) => fromList.appendChild(el("button", {
+      class: "li", type: "button",
+      on: { click: () => drillTx({ title: `${g.who} — ${rl}`, buckets: ["revenue", "refund"],
+        ranged: true, q: g.who, subtitle: "matched on the description" }) },
+    }, [el("div", null, [g.who, el("span", "sub",
+      `${[...g.src].map(srcWords).join(", ")} · ${g.n === 1 ? "1 payment" : g.n + " payments"}`
+      + ` · last ${fmt.dateShort(g.last)}`)]),
+    el("span", "amt", fmt.usd(g.usd))])));
+    if (whoRows.length > 8) fromList.appendChild(el("div", "li muted", `…and ${whoRows.length - 8} more`));
+    if (!whoRows.length) fromList.appendChild(el("div", "li muted", "nothing came in"));
+    fromList.appendChild(el("div", "li total", [el("span", null, "Came in"), el("span", "amt", fmt.usd(cameIn))]));
+
+    const costList = el("div", "list");
+    [["platform_fee", "Upwork and Wise fees", "the platforms' cut of what came in"],
+      ["tax", "Taxes withheld", "WHT and GST taken at source"],
+      ["payroll", "Payroll", isThis && !pay ? "not yet — the last working day of the month" : "the team"],
+      ["opex", "Tools and subscriptions", "software, card charges"]].forEach(([b, label, sub]) => {
+      const v = byB(b);
+      costList.appendChild(el("button", { class: "li", type: "button",
+        on: { click: () => drillTx({ title: `${label} — ${rl}`, buckets: [b], ranged: true, sortAmount: true }) } },
+      [el("div", null, [label, el("span", "sub", sub)]), el("span", "amt" + (v ? " neg" : ""), v ? fmt.usd(v) : "—")]));
+    });
+    if (draws) {
+      costList.appendChild(el("button", { class: "li", type: "button",
+        on: { click: () => drillTx({ title: `You took out — ${rl}`, buckets: ["owner_draw"], ranged: true,
+          sortAmount: true, subtitle: "equity, not a cost — below the line" }) } },
+      [el("div", null, ["You took out", el("span", "sub", "not a cost — below the line")]),
+        el("span", "amt", fmt.usd(Math.abs(draws)))]));
+    }
+    costList.appendChild(el("div", "li total", [el("span", null, "Went out"), el("span", "amt neg", fmt.usd(costs))]));
+
+    const two = el("div", "grid-2", [
+      el("div", "stack", [heading("Where it came from", `— ${whoRows.length} ${whoRows.length === 1 ? "payer" : "payers"}`, "h3"), fromList]),
+      el("div", "stack", [heading("What it cost", `— ${period}`, "h3"), costList]),
+    ]);
+
+    return [
+      el("div", "secrow", [el("h3", "sec-title", period),
+        el("span", "muted small", isThis && d.as_of ? `through ${fmt.dateShort(d.as_of)}` : "")]),
+      flow, two, ...waitingBlock(),
+      el("p", "muted small foot", "Every number is a button — click it for the transactions behind it. Money moving between your own accounts is never counted."),
+    ];
+  }
+
+  function storyCell(label, value, sub, onClick, tone = "") {
+    return el("button", { class: "stage", type: "button", on: { click: onClick } }, [
+      el("div", "l", label),
+      el("div", "v" + (tone ? " " + tone : ""), value == null ? "—" : fmt.usd(value)),
+      el("div", "s", sub),
+    ]);
+  }
+
+  function waitingBlock() {
+    const st = (d.provisional || {}).staleness || {};
+    const list = el("div", "card flush");
+    if (st.stale && st.count) {
+      list.appendChild(el("div", "pad", [
+        el("b", null, `${st.count} payment${st.count === 1 ? "" : "s"} seen in email but not on the ledger`),
+        el("div", "muted small", `at least ${fmt.usd2(st.floor_usd)} has arrived that these numbers do not`
+          + ` contain — the newest email is dated ${st.email_newest || "?"}, the ledger ends`
+          + ` ${st.ledger_newest || "?"}. Statements has the list.`),
+      ]));
+    } else {
+      list.appendChild(el("div", "pad", [el("b", null, "Nothing seen in email that is missing here"),
+        el("div", "muted small", `the ledger runs to ${st.ledger_newest || d.as_of || "?"}`
+          + (st.email_newest ? ` and the newest payment email is dated ${st.email_newest}` : ""))]));
+    }
+    list.appendChild(el("div", "pad", [el("b", null, "Hours worked this week, not yet invoiced"),
+      el("div", "muted small", "Upwork invoices hourly work on Monday · not tracked yet — it arrives with the Upwork financials sync (the next build step)")]));
+    return [heading("Money you are waiting on", null, "h3"), list];
+  }
+
+  function cashStory() {
+    const lines = cash.by_account || [];
+    return el("div", { class: "flow", style: { gridTemplateColumns: `repeat(${Math.min(4, lines.length + 1)}, 1fr)` } }, [
+      storyCell("In the bank", cash.value_usd,
+        [`${lines.length} account${lines.length === 1 ? "" : "s"} · as of ${cash.as_of ? fmt.dateShort(cash.as_of) : "?"}`], drillCash),
+      ...lines.slice(0, 3).map((x) => storyCell(accountWords(x.account), x.usd, [`${x.currency} ${x.closing}`], drillCash)),
+    ]);
+  }
+
+  function historyView() {
+    const bucketSum = (b) => round2(srvBuckets[b] || 0);
+    const rl = "all time";
+    return el("div", "stack", [
+      heading("Month by month", "— click a month for its transactions", "h3"),
+      pnlByMonth(rows, rl),
+      heading("Came in, month by month", "— the last 13 months", "h3"),
+      revenueChart(),
+      heading("The whole picture", "— all time", "h3"),
+      waterfall(bucketSum, p.operating_profit_usd, rl),
+      heading("The running rate", "— the last twelve months", "h3"),
       kpiRowB(bucketSum, rl),
       kpiRowC(),
-      heading("Revenue by month", "— 13 months · click a bar for its transactions", "h3"),
-      revenueChart(),
-      heading("P&L by month", `— ${rl} · click any cell for its transactions`, "h3"),
-      pnlByMonth(scoped, rl),
-      heading("Profit & loss", `— ${rl} · click any line for its transactions`, "h3"),
-      waterfall(bucketSum, opProfit, rl),
-      heading("Cash position", "— point-in-time balances, never scoped by the range", "h3"),
-      cashCard(),
-      heading("Transaction explorer", "— every reconciled transaction, filtered on the server", "h3"),
-      explorer(),
-      provenanceFooter(scoped),
-    );
+    ]);
   }
 
   /* ── KPI row A: the four from v1 ────────────────────────────────────────── */

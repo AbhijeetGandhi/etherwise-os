@@ -35,6 +35,7 @@ import {
   extLink, emptyState, notice, expander, skeleton, toast,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
+import { subtabs } from "../subtabs.js";
 
 export const meta = { title: "Knowledge", hint: "the cited client memory" };
 
@@ -145,16 +146,47 @@ export async function render(root, ctx) {
   const totals = d.totals || {};
   const fr = d.freshness || {};
 
-  root.append(
-    heading("Knowledge",
-      "— the cited client memory · every dossier carries what the client is"
-      + " worth, and every answer carries its citations"),
-    freshnessLine(fr, dossiers),
-    askCard(d, ctx),
-    statCards(d, dossiers, totals, ctx),
-    searchCard(ctx),
-    ...dossierRegion(dossiers, fr, ctx),
-  );
+  // REDESIGNED 2026-08-26 in the Upwork tab's style (Abhijeet, 05:20): Ask
+  // first (the thing he actually uses), then the dossiers, what came in, and
+  // the fact search — four views instead of one page of tiles. Every builder
+  // below is unchanged; only where it sits and the sentence on top are new.
+  const stale = dossiers.filter((x) => x.stale).length;
+  const empty = dossiers.filter((x) => x.empty_reason).length;
+  const brainWords = brainSentence(totals, dossiers, fr);
+  root.append(el("div", "up-head", [
+    el("div", "hstack", [el("h2", "up-title", "Knowledge"),
+      el("span", "muted small", fr.last_compiled_at ? `compiled ${fmt.dateTime(fr.last_compiled_at)}` : "")]),
+    el("p", "up-lede", brainWords),
+  ]));
+  await subtabs(root, {
+    section: "knowledge", ctx,
+    tabs: [{ id: "ask", label: "Ask" }, { id: "dossiers", label: "Dossiers" },
+      { id: "camein", label: "What came in" }, { id: "search", label: "Search facts" }],
+    badge: (id) => {
+      if (id === "dossiers") return el("span", "n" + (stale ? " warn" : ""), stale ? `${stale} stale` : String(dossiers.length));
+      return null;
+    },
+    views: {
+      ask: () => el("div", "stack", [askCard(d, ctx), freshnessLine(fr, dossiers)]),
+      dossiers: () => el("div", "stack", dossierRegion(dossiers, fr, ctx)),
+      camein: () => el("div", "stack", [statCards(d, dossiers, totals, ctx)]),
+      search: () => el("div", "stack", [searchCard(ctx)]),
+    },
+  });
+}
+
+/** "18,707 facts about 77 clients · every dossier compiled yesterday · 2 have no facts yet" */
+function brainSentence(t, dossiers, fr) {
+  const parts = [];
+  const facts = t.facts != null ? t.facts : t.fact_count;
+  if (facts != null) parts.push(el("b", null, `${fmt.num(facts)} facts`), ` about ${fmt.num(dossiers.length)} clients`);
+  else parts.push(el("b", null, `${fmt.num(dossiers.length)} dossiers`));
+  const stale = dossiers.filter((x) => x.stale);
+  if (stale.length) parts.push(" · ", el("b", "neg", `${stale.length} stale`), ` (oldest ${Math.max(...stale.map((x) => x.stale_days || 0))} days)`);
+  else if (dossiers.length) parts.push(" · every dossier is current");
+  const empty = dossiers.filter((x) => x.empty_reason);
+  if (empty.length) parts.push(" · ", el("b", null, `${empty.length}`), ` ha${empty.length === 1 ? "s" : "ve"} no facts yet: ${empty.slice(0, 3).map((x) => x.client_name).join(", ")}${empty.length > 3 ? "…" : ""}`);
+  return parts;
 }
 
 /* ── 1. freshness ─────────────────────────────────────────────────────────── */
@@ -796,7 +828,7 @@ function dossierCard(x, fr, ctx, detail) {
 
 /* ── the dossier itself ───────────────────────────────────────────────────── */
 
-async function openDossier(entry, ctx, host) {
+export async function openDossier(entry, ctx, host) {
   clear(host).appendChild(el("div", "card", skeleton({ lines: 4 })));
   host.scrollIntoView({ behavior: "smooth", block: "nearest" });
 

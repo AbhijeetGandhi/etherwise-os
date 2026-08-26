@@ -302,7 +302,7 @@ function clock(iso) {
  * If the task is already running (a scheduled run), it does not kick — a
  * kickstart would kill that run — it just waits for it.
  */
-function runButton(ctx, d, task, label, opts = {}) {
+export function runButton(ctx, d, task, label, opts = {}) {
   const rail = ((d.rails || {}).items || []).find((r) => r.task_name === task);
   const allowed = !rail || rail.rerun !== false;
   const wrap = el("span", "runbtn");

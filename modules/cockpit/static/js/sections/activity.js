@@ -48,6 +48,8 @@ import {
 } from "../ui.js";
 import { openDrill } from "../drill.js";
 import { chart, axes } from "../charts.js";
+import { subtabs } from "../subtabs.js";
+import { runButton } from "./upwork.js";
 
 export const meta = { title: "Activity", hint: "everything the system did, run by run" };
 
@@ -151,13 +153,190 @@ export async function render(root, ctx) {
     return { __error: String((e && e.message) || e) };
   });
 
-  root.append(
-    heading("Activity", "— everything the system did, run by run"),
-    dayBar(day, ctx),
-    ...digestRegion(act, ctx, day),
-    ...runLogRegion(act, ctx, focusRun),
-    ...systemRegion(sys, ctx),
-  );
+  // REDESIGNED 2026-08-26 in the Upwork tab's style (Abhijeet, 05:20): one
+  // 7,700-pixel page became four views — Today (the day in words, run by
+  // run), Health (every system in words with Run now, the Upwork Health
+  // table for the whole machine), Every system (the latest run of each
+  // task), Spend (the model bill). Nothing that was on the page is gone.
+  const srcs = ((sys.sources || {}).sources) || [];
+  const attention = srcs.filter((x) => x.status && x.status !== "ok");
+  const r = act.runs || {}, sp = act.spend || {};
+  root.append(el("div", "up-head", [
+    el("div", "hstack", [el("h2", "up-title", "Activity"), el("span", "muted small", fmt.date(day))]),
+    el("p", "up-lede", [
+      el("b", null, `${fmt.num(r.started || 0)} run${(r.started || 0) === 1 ? "" : "s"}`),
+      ` ${day === istToday() ? "today" : "that day"}`,
+      r.failed ? [", ", el("b", "neg", `${r.failed} failed`)] : (r.started ? ", all fine" : ""),
+      " · ", el("b", null, fmt.usd2(sp.usd || 0)), " spent on the model",
+      " · ", attention.length
+        ? el("b", "neg", `${attention.length} system${attention.length === 1 ? "" : "s"} need${attention.length === 1 ? "s" : ""} a look`)
+        : el("b", "pos", "every system is fine"),
+    ]),
+  ]));
+
+  await subtabs(root, {
+    section: "activity", ctx,
+    tabs: [{ id: "today", label: day === istToday() ? "Today" : "The day" }, { id: "health", label: "Health" },
+      { id: "systems", label: "Every system" }, { id: "spend", label: "Spend" }],
+    badge: (id) => {
+      if (id === "health" && attention.length) return el("span", "n warn", String(attention.length));
+      if (id === "systems") return el("span", "n", String((sys.jobs || []).length));
+      return null;
+    },
+    views: {
+      today: () => el("div", "stack", [dayBar(day, ctx), ...digestRegion(act, ctx, day), ...runLogRegion(act, ctx, focusRun)]),
+      health: () => el("div", "stack", healthView(sys, ctx, attention)),
+      systems: () => el("div", "stack", systemsView(sys, ctx)),
+      spend: () => el("div", "stack", spendView(sys, act, ctx, day)),
+    },
+  });
+}
+
+/* ══ HEALTH — every system in words, with Run now ═════════════════════════ */
+
+const AGO = (h) => {
+  if (h == null) return "never";
+  if (h < 1) return `${Math.round(h * 60)} min ago`;
+  if (h < 48) return `${Math.round(h)} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+};
+
+function statusWords(s) {
+  if (s.status === "ok") return ["OK", "ok", ""];
+  if (s.status === "down") return ["Not running", "bad", "has never produced a run"];
+  if (s.status === "degraded") return ["Needs a look", "warn", "ran, but its output was thin"];
+  const late = s.hours_overdue || 0;
+  const by = late >= 48 ? `${Math.round(late / 24)} days` : `${Math.round(late)} h`;
+  const every = s.max_age_hours >= 48 ? `${Math.round(s.max_age_hours / 24)} days` : `${s.max_age_hours} h`;
+  return ["Late", "warn", `expected every ${every} — ${by} overdue`];
+}
+
+function healthView(sys, ctx, attention) {
+  const out = [];
+  if (sys.__error) {
+    out.push(el("div", "errstate", "System health could not be read: " + sys.__error));
+    return out;
+  }
+  const srcs = ((sys.sources || {}).sources) || [];
+  const rerun = new Set(sys.rerun_jobs || []);
+  if (attention.length) {
+    out.push(el("div", "srcline bad", [icon("alert-triangle", { size: 15 }),
+      el("div", "grow", [el("b", null, `${attention.length} system${attention.length === 1 ? "" : "s"} need${attention.length === 1 ? "s" : ""} a look`),
+        ` — ${attention.map((x) => x.label).join(", ")}.`])]));
+  } else {
+    out.push(el("div", "srcline ok", [icon("circle-check", { size: 15 }), el("div", "grow", "Every system has run on time.")]));
+  }
+  const rows = srcs.slice().sort((a, b) => (a.status === "ok") - (b.status === "ok"));
+  const tbl = el("table", "rails-table");
+  tbl.appendChild(el("thead", null, el("tr", null, ["System", "What it does", "Last ran", "Status", ""].map((h) => el("th", null, h)))));
+  const tb = el("tbody");
+  rows.forEach((s) => {
+    const [word, tone, why] = statusWords(s);
+    const canRun = s.task_name && rerun.has(s.task_name);
+    tb.appendChild(el("tr", tone === "ok" ? "" : "attn", [
+      el("td", null, [el("i", "dot " + tone), el("b", null, s.label)]),
+      el("td", "muted small", s.why || ""),
+      el("td", null, s.last_success ? [fmt.dateTime(s.last_success), el("span", "muted small", ` · ${AGO(s.age_hours)}`)] : el("span", "muted", "never")),
+      el("td", null, [el("span", "st " + tone, word), why ? el("span", "muted small", ` ${why}`) : null]),
+      el("td", "right", canRun ? runButton(ctx, {}, s.task_name, "Run now", { quiet: true, variant: "ghost" }) : el("span", "muted small", s.manual ? "fed by hand" : "")),
+    ]));
+  });
+  tbl.appendChild(tb);
+  out.push(el("div", "card flush up-table", tbl));
+  out.push(el("p", "muted small foot", "Run now starts the system and waits for it to finish, then says what happened. Nothing on this page sends anything to a client."));
+  out.push(heading("The machine itself", null, "h3"));
+  out.push(healthCards(sys));
+  const an = sys.anomalies || {};
+  const anoms = (an.recent || []).filter((a) => !a.recovered);
+  if (anoms.length) {
+    out.push(heading("Open problems", `— ${anoms.length} · newest first`, "h3"));
+    out.push(table({
+      columns: [
+        { key: "last", label: "When", render: (a) => el("span", "muted", fmt.dateTime(a.last)) },
+        { key: "task_name", label: "System", render: (a) => (sys.task_words || {})[a.task_name] || a.task_name },
+        { key: "kind", label: "What", render: (a) => String(a.kind || "").replace(/_/g, " ") },
+        { key: "n", label: "Times", num: true, render: (a) => fmt.num(a.n) },
+        { key: "severity", label: "How bad", render: (a) => pill(a.severity === "critical" ? "serious" : "a warning", a.severity === "critical" ? "red" : "amber") },
+      ],
+      rows: anoms,
+      empty: "None.",
+    }));
+  }
+  out.push(expander("Every self-check (the doctor)", (body) => {
+    body.appendChild(table({
+      columns: [
+        { key: "name", label: "Check" },
+        { key: "status", label: "Status", render: (c) => pill(c.status, String(c.status || "").toLowerCase()) },
+        { key: "detail", label: "Detail", cls: "muted" },
+      ],
+      rows: (sys.doctor || {}).checks || [],
+      empty: "The doctor reported no checks.",
+    }));
+  }));
+  return out;
+}
+
+/* ══ EVERY SYSTEM — the latest run of each task, in words ═════════════════ */
+
+function systemsView(sys, ctx) {
+  if (sys.__error) return [el("div", "errstate", "Could not be read: " + sys.__error)];
+  const words = sys.task_words || {};
+  const rerun = new Set(sys.rerun_jobs || []);
+  return [
+    heading("Every system", "— the latest run of each, newest first", "h3"),
+    table({
+      columns: [
+        { key: "task_name", label: "System", render: (j) => el("span", null, [el("b", null, words[j.task_name] || j.task_name.replace(/_/g, " ")), el("span", "muted small mono", ` ${j.task_name}`)]) },
+        { key: "status", label: "Last run", render: (j) => (j.status === "completed" ? el("span", "pos", "finished") : j.status === "skipped_empty" ? el("span", "muted", "nothing to do") : j.status === "running" ? el("span", null, "running now") : el("span", "neg", j.status)) },
+        { key: "started_at", label: "When", render: (j) => el("span", "muted", fmt.dateTime(j.started_at)) },
+        { key: "duration_ms", label: "Took", num: true, render: (j) => dash(j.duration_ms == null ? null : j.duration_ms / 1000, fmt.duration) },
+        { key: "run", label: "", render: (j) => (rerun.has(j.task_name) ? runButton(ctx, {}, j.task_name, "Run now", { quiet: true, variant: "ghost" }) : null) },
+      ],
+      rows: sys.jobs || [],
+      empty: "No system has ever run.",
+    }),
+    expander("Writes held while shadowed", (body) => {
+      const byTask = (sys.shadow || {}).by_task || {};
+      const shRows = Object.entries(byTask).map(([task, n]) => ({ task, n }));
+      body.appendChild(table({
+        columns: [
+          { key: "task", label: "System", render: (x) => words[x.task] || x.task },
+          { key: "n", label: "Held writes", num: true, render: (x) => fmt.num(x.n) },
+        ],
+        rows: shRows.sort((a, b) => b.n - a.n), empty: "None.",
+      }));
+    }),
+  ];
+}
+
+/* ══ SPEND — the model bill ═══════════════════════════════════════════════ */
+
+function spendView(sys, act, ctx, day) {
+  const sp = sys.spend || {};
+  const words = sys.task_words || {};
+  const over = sp.today_usd != null && sp.soft_limit_usd != null && sp.today_usd > sp.soft_limit_usd;
+  const flow = el("div", { class: "flow", style: { gridTemplateColumns: "repeat(3, 1fr)" } }, [
+    el("div", "stage", [el("div", "l", "Today"), el("div", "v" + (over ? " neg" : ""), fmt.usd2(sp.today_usd || 0)),
+      el("div", "s", `of ${fmt.usd2(sp.soft_limit_usd)} a day${over ? " — over the line" : ""} · hard stop ${fmt.usd2(sp.hard_limit_usd)}`)]),
+    el("div", "stage", [el("div", "l", "This month"), el("div", "v", fmt.usd2(sp.mtd_usd || 0)),
+      el("div", "s", "every model call, exact")]),
+    el("div", "stage", [el("div", "l", "Held writes"), el("div", "v", fmt.num((sys.shadow || {}).pending || 0)),
+      el("div", "s", "things the system would have written to Airtable, ClickUp or email while shadowed")]),
+  ]);
+  const byTask = (sp.by_task || []).slice().sort((a, b) => (b.usd || 0) - (a.usd || 0));
+  return [
+    flow,
+    heading("Today, by system", byTask.length ? `— ${byTask.length}` : "— nothing spent today", "h3"),
+    table({
+      columns: [
+        { key: "task", label: "System", render: (x) => words[x.task || x.task_name] || x.task || x.task_name },
+        { key: "calls", label: "Calls", num: true, render: (x) => fmt.num(x.calls || x.n || 0) },
+        { key: "usd", label: "Cost", num: true, render: (x) => fmt.usd2(x.usd || 0) },
+      ],
+      rows: byTask, empty: "No model call was billed today.",
+    }),
+    trendCard(ctx, day),
+  ];
 }
 
 /* ── the date bar ─────────────────────────────────────────────────────────── */

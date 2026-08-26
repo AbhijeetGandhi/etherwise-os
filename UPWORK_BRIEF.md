@@ -504,6 +504,42 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    free but blunter — say if the spend matters. ◆ The first poll after deploy reads the
    last 7 days of his outbound mail (64 messages) → up to 12 extractor calls, the rest at
    the next poll.
+0r. DONE 2026-08-26 09:20 (overnight item 1, his 05:20: "I like the way you built UI for the
+   upwork tab or at least the direction you headed. I want UI of all the tabs improved now in
+   the same way") — **the other six tabs, in the Upwork tab's style.** Mockups first
+   (`var/patches/2026-08-26_mockups/` — eight pictures, his morning review), then built:
+   **Today** — the one ranked list ("a lot of data laid out without structure") is now
+   grouped by what each card asks of him: *People waiting on you* (the conversation rows),
+   *Things you promised* (commitments in words — "promised 20 Aug on the call 'Impromptu
+   Google Meet'", "promised 26 Aug on Upwork, to David S. · due tomorrow"), *Needs a
+   decision*, *Housekeeping*; each group longest-wait first with a fold at five; the
+   health box is one sentence ("5 systems are late — the names. Their numbers on this
+   page may be behind." → Activity › Health); hot leads, the four figures and the brief
+   sit under "More". **Money** — five views: *This month* (came in / went out / left in
+   plain numbers with "by this day last month" and "a usual month ends at"; where it came
+   from, payer by payer; what it cost; money you are waiting on), *Cash*, *History* (the
+   month table, the chart, the whole picture, the running rate), *Ledger*, *Statements*;
+   every figure still drills, the parity check still runs. **Activity** — *Today* (the
+   day in words, run by run), *Health* (EVERY system in words with Run now — the Upwork
+   Health table for the whole machine; `/api/system` now carries `rerun_jobs` and
+   `task_words`), *Every system*, *Spend*. **Clients** — one row per client in words (what
+   they pay, how you talk, what is owed, what the brain knows; the dossier opens under
+   the row) under *Working with now* / *Everyone* (the audited table, unchanged) / *Needs
+   a look*. **Knowledge** — *Ask* first, then *Dossiers*, *What came in*, *Search facts*.
+   **Review** — a sentence on top (how many need a name, how old the oldest), *To decide* /
+   *Decided* / *Dismissed*, and each item says "the system thinks: Hipp Health (9 in 10
+   sure)" instead of a row of pills; the decisions themselves are untouched. One helper
+   (`static/js/subtabs.js`) gives every section the same bar (remembered view, the hash
+   kept honest). Tests: `tests/test_tabs_redesign.py` (8). Nothing that was on any page
+   is gone — it moved under a view or a fold.
+   ◆ FOR HIM (the choices made while he slept, each easy to flip): (1) Today's groups and
+   their order — people, promises, decisions, housekeeping; (2) Money opens on *This month*
+   with the range bar inside it; "All time" lives on *History*; (3) Clients' "working with
+   now" = a live contract or money in 90 days, "needs a look" = owed / unattributed / a
+   contract Upwork still calls live with no payment for four months; (4) the Review
+   wording ("9 in 10 sure"); (5) Brandi Jordan shows "no dossier yet" on Clients because
+   the ledger's payer name and the registry's "The Cradle Company" differ — the same
+   linkage gap the roster panel already lists.
 0k. DONE 2026-08-26 00:40 `a10b421` — **the tab REDESIGNED on his verdict** (23:50: "I don't
    like the UI at all … too complicated for me to understand anything … the part that I
    hate most is the client comms and how you represent it — it all should be intuitive").

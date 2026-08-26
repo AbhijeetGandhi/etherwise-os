@@ -46,6 +46,7 @@ import {
   table, emptyState, notice, expander, toast, copyText, iconBtn,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
+import { subtabs } from "../subtabs.js";
 
 export const meta = { title: "Review", hint: "the things waiting on you" };
 
@@ -114,11 +115,24 @@ export async function render(root, ctx) {
     ctx.api("/api/review/counts"),
   ]);
 
-  root.append(
-    heading("Review", "— every decision the system refuses to make on your behalf"),
-    statsCard(q, th, counts, ctx),
-  );
-  append(root, receiptsCard(ctx));
+  // REDESIGNED 2026-08-26 in the Upwork tab's style (Abhijeet, 05:20): a
+  // sentence on top that says how many things need a name and how old the
+  // oldest is; To decide / Decided / Dismissed as views; the per-item line
+  // in words ("the system thinks: Hipp Health — 9 in 10 sure") instead of a
+  // row of pills. The decisions themselves — assign, internal, ignore, the
+  // batch bars, the armed confirm, the receipts — are exactly as they were.
+  const total = counts.total || 0;
+  const oldest = oldestDays(q);
+  root.append(el("div", "up-head", [
+    el("div", "hstack", [el("h2", "up-title", "Review"),
+      el("span", "muted small", total ? `${fmt.num(total)} waiting` : "nothing waiting")]),
+    el("p", "up-lede", [
+      total ? [el("b", null, `${fmt.num(total)} thing${total === 1 ? "" : "s"}`), " need a name"]
+        : [el("b", null, "Nothing needs your input"), " — every recording, mail and thread is placed"],
+      q.queued_total ? [" · ", el("b", null, fmt.num(q.queued_total)), " already come with the system's best guess"] : "",
+      oldest != null ? [" · the oldest has waited ", el("b", oldest >= 7 ? "neg" : null, `${oldest} day${oldest === 1 ? "" : "s"}`)] : "",
+    ]),
+  ]));
 
   if (th.error) {
     root.appendChild(notice("bad", "Thread queue: " + th.error, {
@@ -128,27 +142,53 @@ export async function render(root, ctx) {
     }));
   }
 
-  const nothing = !counts.total && !th.dismissed_total;
-  if (nothing) {
-    root.appendChild(el("div", "card", emptyState(
-      "Queue clear — every event is mapped or excluded, and every Upwork thread"
-      + " is attributed or dismissed.",
-      {
-        icon: "circle-check",
-        title: "Nothing needs your input",
-        detail: `${fmt.num((q.counts || {}).mapped)} events are mapped to a`
-          + ` client and ${fmt.num((q.counts || {}).excluded)} are excluded;`
-          + ` ${fmt.num(th.attributed_total)} Upwork threads carry a client.`
-          + " The next sweep will queue anything it cannot place on its own.",
-      })));
-    return;
-  }
+  await subtabs(root, {
+    section: "review", ctx,
+    tabs: [{ id: "decide", label: "To decide" }, { id: "decided", label: "Decided" }, { id: "dismissed", label: "Dismissed" }],
+    badge: (id) => (id === "decide" && total ? el("span", "n hot", String(total))
+      : id === "dismissed" && th.dismissed_total ? el("span", "n", String(th.dismissed_total)) : null),
+    views: {
+      decide: () => {
+        const out = el("div", "stack");
+        if (!total) {
+          out.appendChild(el("div", "card", emptyState(
+            "Queue clear — every event is mapped or excluded, and every Upwork thread is attributed or dismissed.",
+            { icon: "circle-check", title: "Nothing needs your input",
+              detail: `${fmt.num((q.counts || {}).mapped)} events are mapped to a client and`
+                + ` ${fmt.num((q.counts || {}).excluded)} are excluded; ${fmt.num(th.attributed_total)}`
+                + " Upwork threads carry a client. The next sweep will queue anything it cannot place on its own." })));
+          return out;
+        }
+        out.append(writeWarning(), regionBar(region, q, th, counts, ctx));
+        if (region !== "threads") out.appendChild(eventsRegion(q, ctx));
+        if (region !== "events") out.appendChild(threadsRegion(th, "open", ctx));
+        return out;
+      },
+      decided: () => el("div", "stack", [statsCard(q, th, counts, ctx), receiptsCard(ctx)]),
+      dismissed: async () => {
+        const dth = await ctx.api("/api/review/threads?show=dismissed");
+        return el("div", "stack", [threadsRegion(dth, "dismissed", ctx)]);
+      },
+    },
+  });
+}
 
-  root.appendChild(writeWarning());
-  root.appendChild(regionBar(region, q, th, counts, ctx));
+/** days since the oldest queued item, from the groups' timestamps (null when unknown) */
+function oldestDays(q) {
+  let oldest = null;
+  (q.groups || []).forEach((g) => (g.items || []).forEach((it) => {
+    const t = Date.parse(it.ts || "");
+    if (!Number.isNaN(t) && (oldest == null || t < oldest)) oldest = t;
+  }));
+  if (oldest == null) return null;
+  return Math.max(0, Math.floor((Date.now() - oldest) / 864e5));
+}
 
-  if (region !== "threads") root.appendChild(eventsRegion(q, ctx));
-  if (region !== "events") root.appendChild(threadsRegion(th, show, ctx));
+/** "9 in 10 sure" — a confidence in words, never a percentage pill */
+function sureWords(c) {
+  if (c == null) return "no guess";
+  const n = Math.round(Number(c) * 10);
+  return n >= 10 ? "as sure as it gets" : `${n} in 10 sure`;
 }
 
 /* ── the header: three backlogs, one line each, every figure drilling ─────── */
@@ -695,19 +735,15 @@ function selectedName(select) {
 function eventRow(it, defaultClient, d, ctx, sel) {
   const wrap = el("div", "qitem");
 
+  const what = it.kind === "recording" ? "a recording" : (it.source === "email" ? "an email" : it.source === "slack" ? "a Slack thread" : it.source === "loom" ? "a Loom" : it.source || "an item");
+  const guessName = d.clients && defaultClient ? ((d.clients.find((c) => c.client_id === defaultClient) || {}).name || defaultClient) : null;
   const meta = el("div", "q-meta", [
-    pill(it.source || "?", "outline"),
-    it.kind === "recording" ? pill("recording", "info") : null,
-    it.ts ? el("span", null, fmt.dateTime(it.ts)) : null,
-    it.confidence != null
-      ? pill(`proposal ${(Number(it.confidence) * 100).toFixed(0)}%`,
-        Number(it.confidence) >= 0.8 ? "ok" : "warn")
-      : el("span", "muted", "no confidence score"),
+    el("span", null, `${what}${it.ts ? ` · ${fmt.dateTime(it.ts)}` : ""}`),
+    el("span", null, [" · the system thinks: ", guessName
+      ? [el("b", null, guessName), ` (${sureWords(it.confidence)})`]
+      : el("span", "muted", "nobody in particular — pick the client yourself, or say it is not a client")]),
     it.recording && it.recording.facts != null
-      ? el("span", null, `· ${fmt.num(it.recording.facts)} facts ride on it`)
-      : null,
-    it.recording && it.recording.density != null
-      ? el("span", "muted", `· density ${Number(it.recording.density).toFixed(2)}`)
+      ? el("span", "muted", ` · ${fmt.num(it.recording.facts)} facts would go to that dossier`)
       : null,
   ]);
 
