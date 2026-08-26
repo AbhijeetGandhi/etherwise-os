@@ -171,6 +171,16 @@ There is no per-proposal *viewed* flag (checked on 25 Aug) — the Viewed stage 
 
 ## 6. Use case D — contracts, milestones, end reasons (Phase 0.3, and the TCC question)
 
+> **STATUS 2026-08-26 19:28 — contracts BUILT** (`modules/upwork/feeds/mcp_contracts.py`, once
+> per IST day inside the hourly `upwork_sync`; his 19:18 "0.3 — contracts through the MCP").
+> The agency org REFUSES `list_contracts search` ("you don't have access to this data"); the
+> personal org lists every contract he holds, the agency's included — four pages, 34 active
+> (fixture `contracts_search_active.json`). **The TCC question: ONE contract, 44099615, 15 Jul
+> 2026.** ACTIVE + PAUSED in full, CLOSED narrowed to the last 45 days; new contracts inserted
+> with what the search carries, existing ones keep the room pass's type / rate / job and gain
+> the status; the agency's contracts are marked from the ledger's own evidence. Milestones and
+> end reasons (`get`, one read per contract) are not read yet — ◆.
+
 **Tools:** `list_contracts` — `search` (statuses ACTIVE / CLOSED / PAUSED, date filters, limit
 10 + offset), `list` (by ids), `get` (full contract: `offer.milestones` with dueDateTime,
 state, depositAmount, fundedAmount, paid, submissionCount), `get_original_proposal`,
@@ -276,8 +286,9 @@ concern, and every call is one `runs` row with a health line.
    date).
 5. ~~`get_freelancer_financials connects_balance`, `limit 10`~~ — **DONE** →
    `connects_balance.json` (verbatim; no labels, see §4).
-6. `list_contracts search`, agency org, `contract_statuses ["ACTIVE"]`, `limit 10` — the TCC
-   answer and the contract shape.
+6. ~~`list_contracts search`, agency org~~ — **REFUSED by the agency org 26 Aug 19:20**
+   ("you don't have access to this data"); the PERSONAL org paged instead on his OK (4 reads,
+   34 active) → `contracts_search_active.json`. The TCC answer: one contract.
 7. `get_freelancer_dashboard check` — the heartbeat's shape.
 8. `get_messages list_rooms`, `unread_only true`, `limit 10` — for 0.4, later.
 

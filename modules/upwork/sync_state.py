@@ -164,12 +164,16 @@ def upsert_contract(conn, c: dict, thread_id: Optional[str],
         # hourly_rate/job_title are fill-or-keep: ROOM_LIST selects no
         # hourlyChargeRate, so a NULL from the payload must not erase a value
         # a richer source has stored.
+        # profile is fill-or-keep since 2026-08-26: the room pass says
+        # 'personal' for every contract, the MCP contracts pass marks the
+        # agency's from the ledger (mcp_contracts.profile_for) and that mark
+        # must survive the next hour
         conn.execute(
             """UPDATE contracts SET title=?, upwork_status=?,
                contract_type=?, start_dt=?, end_dt=?,
                hourly_rate=COALESCE(?, hourly_rate),
                job_id=?, job_title=COALESCE(?, job_title), client_company=?,
-               profile=?, thread_id=COALESCE(?, thread_id),
+               profile=COALESCE(profile, ?), thread_id=COALESCE(?, thread_id),
                updated_at=datetime('now')
                WHERE id=?""", (*fields, cid))
         return "updated"
@@ -455,6 +459,26 @@ def sync_submitted_proposals(ctx, client, page_size: int = 100,
 _MCP_DEFAULT = object()
 
 
+def mcp_contracts_pass(ctx, session, now=None) -> dict:
+    """Use case D (2026-08-26): every contract through the MCP once per IST
+    day (mcp_contracts.run); non-fatal like the proposals pass."""
+    from modules.upwork.feeds import mcp_client, mcp_contracts
+    dbp = ctx.db_path or config.DB_PATH
+    try:
+        with db.connect(dbp) as conn:
+            if not mcp_contracts.due_today(conn, now):
+                return {"status": "not due"}
+        return mcp_contracts.run(ctx, session, config.UPWORK_ORGS["personal"], now=now)
+    except Exception as exc:                                     # noqa: BLE001
+        kind = mcp_client.start_failure_kind(exc)
+        ctx.log(f"contracts pass FAILED ({kind}): {exc!r} — {mcp_client.START_FAILURE_ADVICE[kind]}")
+        if hasattr(ctx, "anomaly"):
+            ctx.anomaly("contracts_pass_failed", "warn",
+                        {"kind": kind, "error": repr(exc)[:200],
+                         "note": mcp_client.START_FAILURE_ADVICE[kind]})
+        return {"status": "error", "kind": kind, "error": repr(exc)[:200]}
+
+
 def mcp_proposals_pass(ctx, session_factory=None) -> dict:
     """Use case C (2026-08-26): every proposal by status through the MCP —
     modules/upwork/feeds/mcp_proposals.run. Non-fatal for the sync: a failure
@@ -465,7 +489,10 @@ def mcp_proposals_pass(ctx, session_factory=None) -> dict:
         session = (session_factory or mcp_client.MCPSession)()
         if hasattr(session, "initialize"):
             session.initialize()
-        return mcp_proposals.run(ctx, session, config.UPWORK_ORGS["personal"])
+        out = mcp_proposals.run(ctx, session, config.UPWORK_ORGS["personal"])
+        # the contracts pass rides the same session, once a day (use case D)
+        out["contracts"] = mcp_contracts_pass(ctx, session)
+        return out
     except Exception as exc:                                     # noqa: BLE001
         kind = mcp_client.start_failure_kind(exc)
         ctx.log(f"proposals pass FAILED ({kind}): {exc!r} —"

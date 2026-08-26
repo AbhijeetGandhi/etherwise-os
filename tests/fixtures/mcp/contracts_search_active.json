@@ -1,0 +1,778 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~19:22 IST (Abhijeet's approval, Upwork chat: 'Yes, page the personal org'), personal org 1647672547786633217. Tool: list_contracts action=search params={contract_statuses:[ACTIVE], limit:10, offset:0/10/20/30}. Four pages, 34 contracts, structure verbatim, ids real; trace_ids dropped. The AGENCY org refuses the same search ('you don't have access to this data') but its contracts (Ioannis P 43406906, Brandi Jordan 44099615) are in the personal search - the freelancer is the same person. Order: ascending by createDate across pages, descending within a page. No contract type, rate, end date or job id on this shape (get carries them; offerId links to list_offers). Only ONE Brandi Jordan / TCC contract exists (44099615, 15 Jul 2026).",
+ "pages": [
+  {
+   "data": {
+    "vendorContracts": {
+     "contracts": [
+      {
+       "clientOrganization": {
+        "id": "662317210505543680",
+        "name": "Renutech Ltd"
+       },
+       "clientTeam": {
+        "id": "662317210505543680",
+        "name": "Renutech Ltd"
+       },
+       "createDate": "2025-03-21T14:31:47.684Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40100550",
+       "offerId": "106615853",
+       "startDate": "2025-03-22T00:00:00.000Z",
+       "status": "ACTIVE",
+       "title": "Fixing / Developing Jupyter Notebook Scaper Application"
+      },
+      {
+       "clientOrganization": {
+        "id": "1755113507494535169",
+        "name": "Bailey Reid"
+       },
+       "clientTeam": {
+        "id": "1755113507494535169",
+        "name": "Bailey Reid"
+       },
+       "createDate": "2025-03-06T12:29:31.924Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "39956588",
+       "offerId": "106405234",
+       "startDate": "2025-03-06T12:29:31.924Z",
+       "status": "ACTIVE",
+       "title": "Automation Specialist Needed for email automation"
+      },
+      {
+       "clientOrganization": {
+        "id": "732886823125512192",
+        "name": "College Life"
+       },
+       "clientTeam": {
+        "id": "732886823125512192",
+        "name": "College Life"
+       },
+       "createDate": "2025-01-28T12:21:07.821Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "39606005",
+       "offerId": "105887730",
+       "startDate": "2025-01-28T12:21:07.821Z",
+       "status": "ACTIVE",
+       "title": "Automate Proposal Creation in Canva using Make.com"
+      },
+      {
+       "clientOrganization": {
+        "id": "1657485820259651585",
+        "name": "Tanushant  Sharma"
+       },
+       "clientTeam": {
+        "id": "1657485820259651585",
+        "name": "Tanushant  Sharma"
+       },
+       "createDate": "2025-01-19T06:41:21.456Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "39523142",
+       "offerId": "105759702",
+       "startDate": "2025-01-19T06:41:21.456Z",
+       "status": "ACTIVE",
+       "title": "AI and Automation using make.com"
+      },
+      {
+       "clientOrganization": {
+        "id": "1657485820259651585",
+        "name": "Tanushant  Sharma"
+       },
+       "clientTeam": {
+        "id": "1657485820259651585",
+        "name": "Tanushant  Sharma"
+       },
+       "createDate": "2025-01-17T06:56:47.928Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "39507591",
+       "offerId": "105736197",
+       "startDate": "2025-01-17T06:56:47.928Z",
+       "status": "ACTIVE",
+       "title": "Ai automation"
+      },
+      {
+       "clientOrganization": {
+        "id": "629189818065244160",
+        "name": "Morten Kremmer"
+       },
+       "clientTeam": {
+        "id": "629189818065244160",
+        "name": "Morten Kremmer"
+       },
+       "createDate": "2025-01-06T13:36:55.995Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "39404087",
+       "offerId": "105578959",
+       "startDate": "2025-01-06T13:36:55.995Z",
+       "status": "ACTIVE",
+       "title": "Integration to VAPI"
+      },
+      {
+       "clientOrganization": {
+        "id": "1755113507494535169",
+        "name": "Bailey Reid"
+       },
+       "clientTeam": {
+        "id": "1755113507494535169",
+        "name": "Bailey Reid"
+       },
+       "createDate": "2024-12-18T09:48:37.136Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "39275236",
+       "offerId": "105382640",
+       "startDate": "2024-12-18T09:48:37.136Z",
+       "status": "ACTIVE",
+       "title": "AI Caller Setup with VAPI and Twilio"
+      },
+      {
+       "clientOrganization": {
+        "id": "1429221746529624065",
+        "name": "Dr Rajiv Siotia"
+       },
+       "clientTeam": {
+        "id": "1429221746529624065",
+        "name": "Dr Rajiv Siotia"
+       },
+       "createDate": "2024-12-09T05:13:48.102Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "39193235",
+       "offerId": "105250094",
+       "startDate": "2024-12-09T05:13:48.102Z",
+       "status": "ACTIVE",
+       "title": "Email Automation Using Make.com And Airtable"
+      },
+      {
+       "clientOrganization": {
+        "id": "425316083411611648",
+        "name": "Ippon  Technology"
+       },
+       "clientTeam": {
+        "id": "425316083411611648",
+        "name": "Ippon  Technology"
+       },
+       "createDate": "2024-10-28T08:16:04.613Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "38819558",
+       "offerId": "104623219",
+       "startDate": "2024-10-28T08:16:04.613Z",
+       "status": "ACTIVE",
+       "title": "Make.com Workflow Specialist Needed for Training Creation"
+      },
+      {
+       "clientOrganization": {
+        "id": "1128285186968596480",
+        "name": "Orama Solutions LLP"
+       },
+       "clientTeam": {
+        "id": "1128285186968596480",
+        "name": "Orama Solutions LLP"
+       },
+       "createDate": "2023-11-13T14:15:25.000Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "35435297",
+       "offerId": "27645750",
+       "startDate": "2023-11-13T14:15:25.000Z",
+       "status": "ACTIVE",
+       "title": "Tkinter GUI"
+      }
+     ],
+     "paging": {
+      "limit": 10,
+      "offset": 0
+     }
+    }
+   },
+   "hasMore": true,
+   "next_offset": 10,
+   "status": "ok"
+  },
+  {
+   "data": {
+    "vendorContracts": {
+     "contracts": [
+      {
+       "clientOrganization": {
+        "id": "627161573700108288",
+        "name": "Sale Pros Corp"
+       },
+       "clientTeam": {
+        "id": "627161573700108288",
+        "name": "Sale Pros Corp"
+       },
+       "createDate": "2025-09-07T21:20:53.886Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "41584201",
+       "offerId": "108693714",
+       "startDate": "2025-09-07T21:20:53.886Z",
+       "status": "ACTIVE",
+       "title": "AI Voice - Inbound Expert Needed - Vapi, HighLevel, Make"
+      },
+      {
+       "clientOrganization": {
+        "id": "438671571762659328",
+        "name": "Christoph Weingärtner Unternehmensberatung"
+       },
+       "clientTeam": {
+        "id": "438671571762659328",
+        "name": "Christoph Weingärtner Unternehmensberatung"
+       },
+       "createDate": "2025-07-11T22:32:48.632Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "41085530",
+       "offerId": "107991753",
+       "startDate": "2025-07-11T22:32:48.632Z",
+       "status": "ACTIVE",
+       "title": "Setup n8n Workflows with Documentation"
+      },
+      {
+       "clientOrganization": {
+        "id": "668924067839967232",
+        "name": "Desh Weragoda"
+       },
+       "clientTeam": {
+        "id": "668924067839967232",
+        "name": "Desh Weragoda"
+       },
+       "createDate": "2025-06-12T21:13:32.602Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40836838",
+       "offerId": "107656420",
+       "startDate": "2025-06-12T21:13:32.602Z",
+       "status": "ACTIVE",
+       "title": "AI Agents"
+      },
+      {
+       "clientOrganization": {
+        "id": "1823370924430893057",
+        "name": "VANTAGE"
+       },
+       "clientTeam": {
+        "id": "1823370924430893057",
+        "name": "VANTAGE"
+       },
+       "createDate": "2025-06-09T07:51:23.645Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40800346",
+       "offerId": "107608339",
+       "startDate": "2025-06-09T07:51:23.645Z",
+       "status": "ACTIVE",
+       "title": "Automations & Systems | N8N, Make.com, GHL"
+      },
+      {
+       "clientOrganization": {
+        "id": "1526225991521525761",
+        "name": "Alfredo Elias"
+       },
+       "clientTeam": {
+        "id": "1526225991521525761",
+        "name": "Alfredo Elias"
+       },
+       "createDate": "2025-06-02T18:31:12.667Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40747534",
+       "offerId": "107534848",
+       "startDate": "2025-06-02T18:31:12.667Z",
+       "status": "ACTIVE",
+       "title": "GHL Workflow + KPI Automation"
+      },
+      {
+       "clientOrganization": {
+        "id": "1635344921904988161",
+        "name": "Dane Worthington"
+       },
+       "clientTeam": {
+        "id": "1635344921904988161",
+        "name": "Dane Worthington"
+       },
+       "createDate": "2025-05-31T13:47:20.990Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40732694",
+       "offerId": "107513813",
+       "startDate": "2025-05-31T13:47:20.990Z",
+       "status": "ACTIVE",
+       "title": "zapier consultation for vapi integration"
+      },
+      {
+       "clientOrganization": {
+        "id": "1635344921904988161",
+        "name": "Dane Worthington"
+       },
+       "clientTeam": {
+        "id": "1635344921904988161",
+        "name": "Dane Worthington"
+       },
+       "createDate": "2025-05-08T22:32:41.014Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40535816",
+       "offerId": "107232381",
+       "startDate": "2025-05-08T22:32:41.014Z",
+       "status": "ACTIVE",
+       "title": "AI Voice Enablement Training Program Development"
+      },
+      {
+       "clientOrganization": {
+        "id": "1818651557828890625",
+        "name": "Andrew Wang"
+       },
+       "clientTeam": {
+        "id": "1818651557828890625",
+        "name": "Andrew Wang"
+       },
+       "createDate": "2025-05-05T09:19:32.088Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40496773",
+       "offerId": "107178321",
+       "startDate": "2025-05-05T09:19:32.088Z",
+       "status": "ACTIVE",
+       "title": "Pipedrive backend work"
+      },
+      {
+       "clientOrganization": {
+        "id": "807751785439035392",
+        "name": "Sunil Paul"
+       },
+       "clientTeam": {
+        "id": "807751785439035392",
+        "name": "Sunil Paul"
+       },
+       "createDate": "2025-05-04T17:07:39.180Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40492460",
+       "offerId": "107172482",
+       "startDate": "2025-05-07T00:00:00.000Z",
+       "status": "ACTIVE",
+       "title": "Voice Platform Automation – No-Code / Low-Code Contractor"
+      },
+      {
+       "clientOrganization": {
+        "id": "971899763416481792",
+        "name": "Nalu Group"
+       },
+       "clientTeam": {
+        "id": "971899763416481792",
+        "name": "Nalu Group"
+       },
+       "createDate": "2025-03-26T07:34:20.356Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "40140399",
+       "offerId": "106672446",
+       "startDate": "2025-03-26T07:34:20.356Z",
+       "status": "ACTIVE",
+       "title": "Ai Voice expert"
+      }
+     ],
+     "paging": {
+      "limit": 10,
+      "offset": 10
+     }
+    }
+   },
+   "hasMore": true,
+   "next_offset": 20,
+   "status": "ok"
+  },
+  {
+   "data": {
+    "vendorContracts": {
+     "contracts": [
+      {
+       "clientOrganization": {
+        "id": "2070227421600700190",
+        "name": "Dhanya S"
+       },
+       "clientTeam": {
+        "id": "2070227421600700190",
+        "name": "Dhanya S"
+       },
+       "createDate": "2026-07-08T20:32:44.810Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "44052042",
+       "offerId": "111950137",
+       "startDate": "2026-07-08T20:32:44.810Z",
+       "status": "ACTIVE",
+       "title": "AI Voice Coach - Vapi, Sheets, Twilio, Zapier"
+      },
+      {
+       "clientOrganization": {
+        "id": "2053659309980669337",
+        "name": "Mustafa A"
+       },
+       "clientTeam": {
+        "id": "2053659309980669337",
+        "name": "Mustafa A"
+       },
+       "createDate": "2026-06-29T19:40:12.483Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43986743",
+       "offerId": "111865772",
+       "startDate": "2026-06-29T19:40:12.483Z",
+       "status": "ACTIVE",
+       "title": "AI automation architect(Airtable + make.com + Gohigh level + Evoto"
+      },
+      {
+       "clientOrganization": {
+        "id": "1382027741478662145",
+        "name": "Josh Vann"
+       },
+       "clientTeam": {
+        "id": "1382027741478662145",
+        "name": "Josh Vann"
+       },
+       "createDate": "2026-05-18T12:33:05.162Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43681034",
+       "offerId": "111460287",
+       "startDate": "2026-05-18T12:33:05.162Z",
+       "status": "ACTIVE",
+       "title": "Make.com Expert Needed — AI-Powered Inbox Triage & Project Logging System"
+      },
+      {
+       "clientOrganization": {
+        "id": "676962885454594048",
+        "name": "Daniel Realty & Investments"
+       },
+       "clientTeam": {
+        "id": "676962885454594048",
+        "name": "Daniel Realty & Investments"
+       },
+       "createDate": "2026-05-07T18:00:49.859Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43601563",
+       "offerId": "111356031",
+       "startDate": "2026-05-07T18:00:49.859Z",
+       "status": "ACTIVE",
+       "title": "Automation and scripting for Make, Airtable and third party  clicksend connection"
+      },
+      {
+       "clientOrganization": {
+        "id": "1263136732337213440",
+        "name": "Rick K"
+       },
+       "clientTeam": {
+        "id": "1263136732337213440",
+        "name": "Rick K"
+       },
+       "createDate": "2026-05-02T19:54:34.876Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43562664",
+       "offerId": "111304702",
+       "startDate": "2026-05-03T00:00:00.000Z",
+       "status": "ACTIVE",
+       "title": "Design code for website front end"
+      },
+      {
+       "clientOrganization": {
+        "id": "425251626970935296",
+        "name": "NETFLY"
+       },
+       "clientTeam": {
+        "id": "425251626970935296",
+        "name": "NETFLY"
+       },
+       "createDate": "2026-04-23T23:17:41.604Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43495766",
+       "offerId": "111216345",
+       "startDate": "2026-04-23T23:17:41.604Z",
+       "status": "ACTIVE",
+       "title": "GoHighLevel (GHL) + Zapier/Webhooks Expert (Kixie Integration, Real-Time Data, Call Transcriptions)"
+      },
+      {
+       "clientOrganization": {
+        "id": "1435166415036960768",
+        "name": "Tomas Eklund"
+       },
+       "clientTeam": {
+        "id": "1435166415036960768",
+        "name": "Tomas Eklund"
+       },
+       "createDate": "2026-04-21T18:30:04.276Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43475182",
+       "offerId": "111188586",
+       "startDate": "2026-04-21T18:30:04.276Z",
+       "status": "ACTIVE",
+       "title": "Airtable + Make Automation Specialist / Technical Coordinator (Ongoing Role)"
+      },
+      {
+       "clientOrganization": {
+        "id": "2029173673230737892",
+        "name": "Ioannis P"
+       },
+       "clientTeam": {
+        "id": "2029173673230737892",
+        "name": "Ioannis P"
+       },
+       "createDate": "2026-04-13T22:13:55.350Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43406906",
+       "offerId": "111098627",
+       "startDate": "2026-04-14T00:00:00.000Z",
+       "status": "ACTIVE",
+       "title": "Ai Automations sales outbound & Inbound"
+      },
+      {
+       "clientOrganization": {
+        "id": "1838211072068125742",
+        "name": "Hero Marketing Agency"
+       },
+       "clientTeam": {
+        "id": "1838211072068125742",
+        "name": "Hero Marketing Agency"
+       },
+       "createDate": "2026-03-17T14:00:07.645Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "43184286",
+       "offerId": "110800879",
+       "startDate": "2026-03-17T14:00:07.645Z",
+       "status": "ACTIVE",
+       "title": "Hero GHL landing pages"
+      },
+      {
+       "clientOrganization": {
+        "id": "1279049301485969408",
+        "name": "Vitaliy Kahanets"
+       },
+       "clientTeam": {
+        "id": "1279049301485969408",
+        "name": "Vitaliy Kahanets"
+       },
+       "createDate": "2026-01-29T13:23:53.648Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "42784694",
+       "offerId": "110272218",
+       "startDate": "2026-01-29T13:23:53.648Z",
+       "status": "ACTIVE",
+       "title": "AI Automations"
+      }
+     ],
+     "paging": {
+      "limit": 10,
+      "offset": 20
+     }
+    }
+   },
+   "hasMore": true,
+   "next_offset": 30,
+   "status": "ok"
+  },
+  {
+   "data": {
+    "vendorContracts": {
+     "contracts": [
+      {
+       "clientOrganization": {
+        "id": "1771171467874963457",
+        "name": "Rocky Choy"
+       },
+       "clientTeam": {
+        "id": "1771171467874963457",
+        "name": "Rocky Choy"
+       },
+       "createDate": "2026-08-24T12:09:04.529Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "44362102",
+       "offerId": "112351232",
+       "startDate": "2026-08-24T12:09:04.529Z",
+       "status": "ACTIVE",
+       "title": "Simplebookme connection with make - like Calendly"
+      },
+      {
+       "clientOrganization": {
+        "id": "1573179204113887233",
+        "name": "Ryan Stomberg"
+       },
+       "clientTeam": {
+        "id": "1573179204113887233",
+        "name": "Ryan Stomberg"
+       },
+       "createDate": "2026-08-17T09:21:13.310Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "44315695",
+       "offerId": "112287636",
+       "startDate": "2026-08-17T09:21:13.310Z",
+       "status": "ACTIVE",
+       "title": "Ai Automation Engineer"
+      },
+      {
+       "clientOrganization": {
+        "id": "2055314779725489408",
+        "name": "Amanda T"
+       },
+       "clientTeam": {
+        "id": "2055314779725489408",
+        "name": "Amanda T"
+       },
+       "createDate": "2026-07-22T15:59:00.860Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "44145310",
+       "offerId": "112071334",
+       "startDate": "2026-07-23T00:00:00.000Z",
+       "status": "ACTIVE",
+       "title": "Airtable Configuration and Automation"
+      },
+      {
+       "clientOrganization": {
+        "id": "879612244420243456",
+        "name": "Brandi Jordan"
+       },
+       "clientTeam": {
+        "id": "879612244420243456",
+        "name": "Brandi Jordan"
+       },
+       "createDate": "2026-07-15T20:21:42.093Z",
+       "deliveryModel": "TALENT_MARKETPLACE",
+       "freelancer": {
+        "id": "1647672547786633216",
+        "name": "Abhijeet G."
+       },
+       "id": "44099615",
+       "offerId": "112011283",
+       "startDate": "2026-07-15T20:21:42.093Z",
+       "status": "ACTIVE",
+       "title": "AI Automation Specialist"
+      }
+     ],
+     "paging": {
+      "limit": 10,
+      "offset": 30
+     }
+    }
+   },
+   "hasMore": false,
+   "status": "ok"
+  }
+ ]
+}

@@ -842,6 +842,31 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    reaches the Sunday email (its 7-day window on `modified_dt`).
    ◆ 0.5 substrate: `Offered` proposals now land hourly with `upwork_status='Offered'` — an
    offer card is one rule away.
+7. **Use case D — contracts through the MCP (Phase 0.3) — BUILT 2026-08-26 19:28 (`<p35>`),
+   his 19:18 "0.3 — contracts".** The agency org REFUSES `list_contracts search` ("you don't
+   have access to this data" — the GraphQL's wall, one tool over); the personal org lists
+   every contract he holds, the agency's included (Ioannis P 43406906, Brandi Jordan 44099615
+   are agency-invoiced in the ledger): 4 reads, **34 active contracts**, fixture
+   `contracts_search_active.json`. **The TCC question is answered: ONE contract, 44099615,
+   started 15 Jul 2026 — "TCC won this month" was July's hire, not a second contract.**
+   `modules/upwork/feeds/mcp_contracts.py`, once per IST day inside the hourly sync
+   (`sync_cursors upwork_contracts_day`, on the proposals pass's session): ACTIVE + PAUSED in
+   full, CLOSED narrowed to the last `MCP_CONTRACTS_CLOSED_DAYS` (45) — ~6 reads a day. A NEW
+   contract is inserted with what the search carries (id, title, status, start, client name);
+   an EXISTING one gains its status and an end date, and keeps the room pass's title / type /
+   rate / job / thread (fill-or-keep). `contracts.profile` is read from the ledger: a client
+   the agency invoices (`upwork_mcp_rows.profile='Agency'`) → 'agency' — the room pass wrote
+   'personal' for all 59 and its update is fill-or-keep since tonight. ACTIVE → CLOSED /
+   PAUSED are counted (`ended`, `paused`) — the 0.3 status signal. A failure is a
+   `contracts_pass_failed` warn anomaly (degraded sync). 7 tests
+   (`tests/test_mcp_contracts.py`). The table goes 59 → ~64 on the first daily round (the
+   19:45 sync): the search has no contract type, rate, job id or end date — `get` carries
+   them (and the milestones), one read per contract.
+   ◆ For him: read `get` for every active contract once (34 reads) and for each new one after
+   — type, rate, job id, milestones (Money's "hours worked, not yet invoiced" is `timesheets`,
+   use case H). ◆ The 30 personal "ACTIVE" contracts include 2023–2025 ones nobody works on
+   (Orama, Ippon, Dr Rajiv…) — Upwork never closed them; a "quiet for 90 days" card could ask
+   whether to end them (idle contracts weigh on the JSS).
    **16:50 his three answers: run it now once · invoice date, as built · insert the
    withdrawals as transfers** → the hold removed before the first run (a Withdrawal is a
    `Withdrawal`/`transfer` row signed negative like the 65 older ones, its fee `Other`/
@@ -942,3 +967,8 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 - 2026-08-26 19:05 · The cross-tab of the two rounds → "Expired / Lost as proposed" (the
   second half of decision 4's map, `MCP_PROPOSAL_LIST_MAP`) and "hourly is fine" (the
   proposals pass stays at :45). `0569cb1`.
+- 2026-08-26 19:18 · "what do you need from me?" → "0.3 — contracts through the MCP" and
+  "flip the April row to Won" (done by hand with an audit row: Brandi Jordan / AI Automation
+  Specialist, hired 15 Jul; Won is now 43). The agency org refused the contracts search; his
+  "yes, page the personal org" → 4 reads, 34 active contracts, ONE TCC contract. Use case D
+  built (`<p35>`, Next actions 7).

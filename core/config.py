@@ -851,7 +851,8 @@ SOURCES = (
      "task_name": "upwork_sync", "max_age_hours": 3,     # hourly at :45
      # the MCP proposals pass inside the sync failing is a degraded sync, not
      # a failed one: rooms and contracts still landed (2026-08-26)
-     "degrade_kinds": ("proposals_pass_failed",), "critical": True, "backs": "pipeline",
+     "degrade_kinds": ("proposals_pass_failed", "contracts_pass_failed"),
+     "critical": True, "backs": "pipeline",
      "launchd_label": "io.etherwise.v3.upwork-sync", "catch_up": True,
      "why": "feeds rooms, contracts and — through the MCP since 26 Aug — every"
             " proposal's status: the pipeline's thread state, the win rate and"
@@ -1275,6 +1276,15 @@ MCP_PROPOSAL_STATUS_MAP = {
 # Expired, or Lost when our row already says Interview (mcp_proposals turns
 # an Expired into Lost on interview evidence). The Declined list without the
 # status field saying so is still the client's decline -> Lost.
+# Contracts through the MCP (use case D, Phase 0.3; Abhijeet 26 Aug 19:18):
+# `list_contracts search` on the PERSONAL org lists every contract he holds,
+# the agency's included (the agency org refuses the search). Once a day
+# inside the hourly sync (sync_cursors upwork_contracts_day): ACTIVE and
+# PAUSED in full, CLOSED narrowed to contracts ended in the last
+# MCP_CONTRACTS_CLOSED_DAYS. 34 active contracts = 4 pages of 10.
+MCP_CONTRACT_STATUSES = ("ACTIVE", "PAUSED", "CLOSED")
+MCP_CONTRACTS_CLOSED_DAYS = 45
+MCP_CONTRACTS_MAX_PAGES = 20
 MCP_PROPOSAL_LIST_MAP = {
     ("Archived", "Accepted"): "Expired", ("Withdrawn", "Accepted"): "Expired",
     ("Hired", "Accepted"): "Expired", ("Declined", "Accepted"): "Lost",
