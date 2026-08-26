@@ -1340,7 +1340,7 @@ class TestPipelineReader(unittest.TestCase):
         self.assertEqual(wr["won"], 3)
         self.assertEqual(wr["decided"], 5)
         self.assertEqual(wr["pct"], 60.0)
-        self.assertIn("threads-only", wr["caveat"])  # honest skew note
+        self.assertIn("every decided proposal", wr["caveat"])   # since use case C (26 Aug)
 
     def test_proposals_by_status_with_upwork_fallback(self):
         with db.connect(self.db_path) as conn:      # blank status, raw upwork one

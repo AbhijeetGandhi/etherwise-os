@@ -757,7 +757,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    ◆ **For him — the Chrome connects rail.** After a few mornings of `connects.twins ==
    shadow_rows` in the run metrics, set `MCP_CONNECTS_SINCE` to a day and retire
    `io.etherwise.v3.upwork-connects` the same day — the last Chrome rail.
-6. **Use case C — proposals through the MCP (Phase 0.2) — BUILT 2026-08-26 18:25 (`<p33>`),
+6. **Use case C — proposals through the MCP (Phase 0.2) — BUILT 2026-08-26 18:25 (`f231295`),
    his 17:55 "use case C next".** `modules/upwork/feeds/mcp_proposals.py`, run by the hourly
    `upwork_sync` at :45 in place of the scope-blocked GraphQL vendorProposals pass (that
    function stays as code, never activated). `list_freelancer_proposals list` filters ONE
@@ -807,9 +807,36 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    proposal the client declined; in the Withdrawn list one we withdrew; in the Archived list
    one that expired — is his to decide with both dimensions in front of him: migration 032
    (`proposals.mcp_list_status`, `upwork_status_label`, `mcp_listed_at`), the cursors reset
-   once so the 18:45 round re-reads everything and fills them (`<p33c>`). The cross-tab and
-   the question are below, after that round. Volume: the backfill was ~100 reads twice;
-   a quiet hour is 7.
+   once so the 18:45 round re-reads everything and fills them (`f231295`). Volume: the
+   backfill was ~100 reads twice; a quiet hour is 7.
+   **The cross-tab after the 18:45 round (run 7243), list × Upwork's own status/label × our
+   verdict — the whole table, 414 rows:**
+   · Accepted list · Submitted · no verdict · **29** (Jun–Aug 2026) — the open ones
+   · Activated list · Invitation accepted · Interview · 3
+   · Hired list · Hired · Won · **42** (+1 Expired: the April disagreement, kept)
+   · Declined list · Declined by client · Lost · 6
+   · Withdrawn list · Withdrawn by freelancer · Withdrawn · 20 (all 2023)
+   · Archived list · Archived (job closed) · no verdict · **105** · Expired 17 · Interview 4
+   · Archived list · Submitted (never answered, job closed) · no verdict · **55** (Nov 25–Aug 26)
+   · Archived list · Invitation accepted (interviewed, job closed) · Interview · **19**
+   · Withdrawn list · Submitted (never answered, job gone) · no verdict · **70** (2023–2025)
+   · Withdrawn list · Invitation accepted (interviewed, job gone) · Interview · **36**
+   · no list (beyond the Archived page cap) · Archived · Expired · 7
+   Reading: the lists overlap — a job someone else won is in the Hired list AND in the
+   Archived/Withdrawn list, and the last list read wins on the row; the "Withdrawn" list
+   holds the pre-Nov-2025 closed jobs, "Archived" the ones since. Every verdict written so
+   far is one Upwork's own status field states. **The 285 rows with no verdict or a stale
+   Interview are his to map** (◆ below): the honest all-time win rate becomes ~42 of ~400
+   (~11 %) instead of the May snapshot's 46 % of the rows that had rooms.
+   **19:05 his answers: "Expired / Lost as proposed" · "hourly is fine"** (`<p34>`):
+   `config.MCP_PROPOSAL_LIST_MAP` — (list, own status) → verdict when Upwork's own status
+   field writes none, and a closed job's list ends a live Interview: Submitted + job
+   closed/gone/won by someone else → **Expired**; Invitation accepted + the same → **Lost**;
+   "Archived (job closed)" → **Expired**, or **Lost** when our row already held an
+   Interview; the Declined list → Lost. Upwork's own terminal status always wins.
+   `mcp_proposals.backfill_verdicts()` applied it once to the rows already listed (numbers
+   below); the hourly pass applies it from here on. Nothing older than a week reaches the
+   Sunday email (its 7-day window on `modified_dt`).
    ◆ 0.5 substrate: `Offered` proposals now land hourly with `upwork_status='Offered'` — an
    offer card is one rule away.
    **16:50 his three answers: run it now once · invoice date, as built · insert the
@@ -905,7 +932,10 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   answers: **use case C (proposals, 0.2) next**; the `summary` capture (run 17:57); both
   ledger bucket fixes; the GraphQL transactions pass retired. Built as `1ed25ea` (summary
   tie-out, migration 031; pnl rules; the importer's withdrawal hold lifted) before starting C.
-- 2026-08-26 18:25 · Use case C built (`<p33>`, Next actions 6): the hourly sync lists every
+- 2026-08-26 18:25 · Use case C built (`f231295`, Next actions 6): the hourly sync lists every
   proposal by status through the MCP; decision 4's map writes Won / Lost / Withdrawn /
   Interview, never flips a terminal verdict; a proposal row counts as applied on the Jobs flow.
   First live round on his word.
+- 2026-08-26 19:05 · The cross-tab of the two rounds → "Expired / Lost as proposed" (the
+  second half of decision 4's map, `MCP_PROPOSAL_LIST_MAP`) and "hourly is fine" (the
+  proposals pass stays at :45). `<p34>`.

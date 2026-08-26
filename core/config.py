@@ -1264,6 +1264,24 @@ MCP_PROPOSAL_STATUS_MAP = {
     "Activated": "Interview",
     "Accepted": None, "Offered": None, "Archived": None, "Pending": None,
 }
+# The second half of the map (Abhijeet, 26 Aug 19:05: "Expired / Lost as
+# proposed"), read when the proposal's own status writes nothing: the LIST a
+# proposal sits in is the job-level bucket (the first live round showed the
+# Hired list holding jobs someone else won, the Archived/Withdrawn lists the
+# closed and gone jobs), so (list, own status) says what became of it:
+# submitted and the job closed or went to someone else -> Expired (never a
+# decision on us); an invitation accepted and the job closed or went to
+# someone else -> Lost (we were in the room); "Archived (job closed)" ->
+# Expired, or Lost when our row already says Interview (mcp_proposals turns
+# an Expired into Lost on interview evidence). The Declined list without the
+# status field saying so is still the client's decline -> Lost.
+MCP_PROPOSAL_LIST_MAP = {
+    ("Archived", "Accepted"): "Expired", ("Withdrawn", "Accepted"): "Expired",
+    ("Hired", "Accepted"): "Expired", ("Declined", "Accepted"): "Lost",
+    ("Archived", "Activated"): "Lost", ("Withdrawn", "Activated"): "Lost",
+    ("Hired", "Activated"): "Lost", ("Declined", "Activated"): "Lost",
+    ("Archived", "Archived"): "Expired", ("Withdrawn", "Archived"): "Expired",
+}
 
 # ── Upwork ───────────────────────────────────────────────────────────────────
 UPWORK_USER_ID = "1647672547786633216"

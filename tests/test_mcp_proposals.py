@@ -204,21 +204,47 @@ class TestOutcomes(Case):
         })
         ctx = _Ctx(self.db_path)
         m = mp.run(ctx, s, ORG)
-        self.assertEqual(m["outcomes"], {"won": 1, "lost": 1, "withdrawn": 1, "interview": 1})
+        self.assertEqual(m["outcomes"], {"won": 1, "lost": 1, "withdrawn": 1, "interview": 1, "expired": 1})
         got = {r["id"]: (r["status"], r["upwork_status"]) for r in self.rows("SELECT id, status, upwork_status FROM proposals")}
         self.assertEqual(got, {"h1": ("Won", "Hired"), "d1": ("Lost", "Declined"), "w1": ("Withdrawn", "Withdrawn"),
-                               "a1": ("Interview", "Activated"), "o1": (None, "Offered"), "x1": (None, "Archived")})
-        # a node in the Hired list whose OWN status says Accepted (the job went to
-        # someone else) gets no verdict — the list is recorded, the map reads the node
-        s2 = _Session({"Hired": [envelope([node("h2", "Accepted", "2026-08-21T10:00:00.000Z")])]})
-        m2 = mp.run(ctx, s2, ORG)
-        self.assertEqual(m2["statuses"]["Hired"]["node_statuses"], {"Accepted": 1})
-        r = self.rows("SELECT status, upwork_status, mcp_list_status FROM proposals WHERE id='h2'")[0]
-        self.assertEqual((r["status"], r["upwork_status"], r["mcp_list_status"]), (None, "Accepted", "Hired"))
+                               "a1": ("Interview", "Activated"), "o1": (None, "Offered"),
+                               "x1": ("Expired", "Archived")})            # "Archived (job closed)" → Expired
         self.assertEqual(ctx.anomalies, [])
         # modified_dt carries Upwork's instant, so the Sunday email's window sees the closure
         self.assertEqual(self.rows("SELECT modified_dt FROM proposals WHERE id='h1'")[0]["modified_dt"],
                          "2026-08-20T10:00:00+00:00")                  # epoch-ms rawValue → ISO
+
+    def test_the_second_half_reads_the_list_the_proposal_sits_in(self):
+        """His 26 Aug 19:05 answer: submitted + the job closed or went to someone
+        else → Expired; an invitation accepted + the same → Lost; a stale
+        Interview on a closed job → Lost. The proposal's own status still wins."""
+        with db.connect(self.db_path) as conn:                      # the room pass left an Interview on i1
+            sync_state.upsert_proposal(conn, sync_state._vp_node_to_proposal(
+                node("i1", "Archived", "2026-06-01T00:00:00.000Z")), "room-9")
+            conn.execute("UPDATE proposals SET status='Interview' WHERE id='i1'")
+        s = _Session({
+            "Hired": [envelope([node("s1", "Accepted", "2026-08-21T10:00:00.000Z"),      # someone else won
+                                node("s2", "Activated", "2026-08-21T11:00:00.000Z")])],  # we interviewed, someone else won
+            "Withdrawn": [envelope([node("s3", "Accepted", "2025-03-01T10:00:00.000Z")])],   # job gone
+            "Archived": [envelope([node("s4", "Activated", "2026-05-01T10:00:00.000Z"),
+                                   node("i1", "Archived", "2026-06-01T00:00:00.000Z")])],
+            "Accepted": [envelope([node("open1", "Accepted", "2026-08-24T10:00:00.000Z")])],   # still open
+        })
+        ctx = _Ctx(self.db_path)
+        m = mp.run(ctx, s, ORG)
+        got = {r["id"]: (r["status"], r["mcp_list_status"]) for r in self.rows("SELECT id, status, mcp_list_status FROM proposals")}
+        self.assertEqual(got, {"s1": ("Expired", "Hired"), "s2": ("Lost", "Hired"), "s3": ("Expired", "Withdrawn"),
+                               "s4": ("Lost", "Archived"), "i1": ("Lost", "Archived"), "open1": (None, "Accepted")})
+        self.assertEqual(m["outcomes"], {"expired": 2, "lost": 3})
+        self.assertEqual(m["statuses"]["Hired"]["node_statuses"], {"Accepted": 1, "Activated": 1})
+        self.assertEqual(mp.verdict_for("Hired", "Archived", None), "Won")          # own status first
+        self.assertIsNone(mp.verdict_for("Accepted", "Accepted", None))               # open stays open
+        self.assertIsNone(mp.verdict_for("Offered", "Hired", None))                   # an offer is not a verdict
+        # the one-off backfill over rows already listed writes the same and is idempotent
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE proposals SET status=NULL WHERE id IN ('s1','s3')")
+            self.assertEqual(mp.backfill_verdicts(conn), {"expired": 2, "none": 1})
+            self.assertEqual(mp.backfill_verdicts(conn), {"none": 1})
 
     def test_a_terminal_verdict_is_never_flipped_and_a_disagreement_is_counted(self):
         with db.connect(self.db_path) as conn:

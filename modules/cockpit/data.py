@@ -1149,7 +1149,7 @@ def pipeline(db_path: Optional[Path] = None,
       the connects-history CSV rail is the planned source of applied-truth.
     - board is WINDOWED to actionable recency (BOARD_WINDOW_DAYS); the uncarded
       shadow-era backlog is counted separately, never mixed into 'to triage'.
-    - win rate keeps its threads-only upper-bound caveat.
+    - win rate = won over every decided proposal (use case C, 26 Aug).
     """
     from collections import Counter
     day = today or _ist_today()
@@ -1286,12 +1286,17 @@ def pipeline(db_path: Optional[Path] = None,
         decided = conn.execute(
             f"SELECT COUNT(*) FROM proposals WHERE status IN ({dmarks})",
             _DECIDED_PROP).fetchone()[0]
+        # since 26 Aug (use case C) every proposal Upwork holds is in the table
+        # with a verdict from Upwork's own status and the list it sits in, so
+        # the rate is won over every decided proposal — no longer a threads-only
+        # upper bound (42 of 382 = 11 % on the day the map landed, against the
+        # May snapshot's 46 % of the rows that had rooms)
         win_rate = {
             "won": won, "decided": decided,
             "pct": round(100 * won / decided, 1) if decided else None,
-            "caveat": "threads-only — submitted-no-reply losses are invisible"
-                      " (no Lost rows exist), so this is a steep upper bound;"
-                      " true rate needs the connects-history applied count"}
+            "caveat": "won over every decided proposal Upwork holds (Won + Lost +"
+                      " Expired + Withdrawn); open and interviewing proposals are"
+                      " not in the denominator"}
 
         # the OPEN board, windowed to actionable freshness; the uncarded
         # shadow-era backlog (never pushed while ClickUp was shadowed) is

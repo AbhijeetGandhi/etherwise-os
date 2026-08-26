@@ -8,7 +8,7 @@
 //                      verdict of the SOURCE behind it: a stale connects rail
 //                      may not render a live-looking count, because a stale
 //                      rail's 0 is indistinguishable from a real 0 (2026-07-14).
-//   · win-rate line    threads-only, so it is an upper bound and says so.
+//   · win-rate line    won over every decided proposal (use case C, 26 Aug).
 //   · range bar        ONE scope state (localStorage.ew_cockpit_pipeline_filters).
 //                      Everything below re-scopes off it, and every chart
 //                      aggregates the SAME fact rows the drills query — so a
@@ -1291,8 +1291,8 @@ function kpiStrip(d, openRows, when) {
 function winRateLine(d) {
   const wr = d.win_rate || {};
   return notice("info", [
-    el("b", null, `Win rate ≤${wr.pct != null ? wr.pct : "—"}%`),
-    ` (${fmt.num(wr.won)} won of ${fmt.num(wr.decided)} decided threads)`
+    el("b", null, `Win rate ${wr.pct != null ? wr.pct : "—"}%`),
+    ` (${fmt.num(wr.won)} won of ${fmt.num(wr.decided)} decided proposals)`
     + (wr.caveat ? " — " + wr.caveat : ""),
   ]);
 }
@@ -1393,8 +1393,8 @@ function threadsByStatus(d, openRows) {
     empty: "No proposal thread has been recorded.",
   }));
   append(c, el("div", "card-foot", "Status falls back to the raw Upwork status when ours is blank, so nothing"
-    + " reads as “Unknown” when the API gave a real state. These are rooms the"
-    + " client opened — a submission that never got a reply has no row here at"
-    + " all, which is why the win rate above is an upper bound."));
+    + " reads as “Unknown” when the API gave a real state. Since 26 Aug every"
+    + " proposal Upwork holds is here with its verdict (the hourly sync reads"
+    + " them through the MCP), submitted-and-never-answered ones included."));
   return c;
 }

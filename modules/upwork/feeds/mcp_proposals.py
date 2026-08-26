@@ -24,11 +24,14 @@ GraphQL pass; one MCPSession per sync):
     to MCP_PROPOSALS_MAX_PAGES per status — the backlog since the freeze.
   * every node goes through sync_state.upsert_proposal (the flat shape via
     _vp_node_to_proposal): telemetry fill-or-keep, thread_id preserved, the
-    Upwork status recorded in `upwork_status`. Then the 0.3 map
-    (config.MCP_PROPOSAL_STATUS_MAP, decision 4): Hired → Won, Declined →
-    Lost, Withdrawn → Withdrawn, Activated → Interview; Accepted / Offered /
-    Archived write NO status (Archived needs contract/offer evidence to be
-    Lost rather than Expired). A terminal status is NEVER flipped — the
+    Upwork status recorded in `upwork_status`. Then the map: the proposal's
+    own status first (config.MCP_PROPOSAL_STATUS_MAP, decision 4: Hired →
+    Won, Declined → Lost, Withdrawn → Withdrawn, Activated → Interview) and,
+    when that writes nothing, the (list, own status) pair
+    (config.MCP_PROPOSAL_LIST_MAP, his 26 Aug 19:05 answer: submitted + job
+    closed/gone → Expired, invitation accepted + job closed/gone → Lost,
+    "Archived (job closed)" → Expired, or Lost on an Interview already
+    held). A terminal status is NEVER flipped — the
     UPDATE's WHERE clause excludes them, and a row whose stored verdict
     disagrees with Upwork's is counted (`terminal_disagreements`) for a
     human, never rewritten.
@@ -167,18 +170,40 @@ def _set_cursor(conn: sqlite3.Connection, status: str, value: str) -> None:
         " updated_at=datetime('now')", (CURSOR_PREFIX + status, value))
 
 
-def apply_outcome(conn: sqlite3.Connection, pid: str, upwork_status: str) -> str:
-    """The 0.3 map on one row: 'won' | 'lost' | 'withdrawn' | 'interview' when
-    written, 'kept' when the row already says so, 'terminal' when the stored
-    verdict is terminal (never flipped; a disagreement is counted by the
-    caller), 'none' when the map says leave it."""
-    target = config.MCP_PROPOSAL_STATUS_MAP.get(upwork_status)
-    if not target:
-        return "none"
+def verdict_for(upwork_status: Optional[str], list_status: Optional[str],
+                current: Optional[str]) -> Optional[str]:
+    """The status to write, or None: the proposal's own status first
+    (decision 4), then the (list, own status) pair (his 26 Aug 19:05 answer);
+    an Expired becomes Lost when our row already holds an Interview — we were
+    in the room, the job went elsewhere."""
+    own = config.MCP_PROPOSAL_STATUS_MAP.get(upwork_status or "")
+    listed = (config.MCP_PROPOSAL_LIST_MAP.get((list_status, upwork_status or ""))
+              if list_status else None)
+    if own in sync_state.TERMINAL:
+        target = own                       # Upwork's own verdict wins
+    elif listed:
+        target = listed                    # a closed job ends a live Interview
+    else:
+        target = own
+    if target == "Expired" and current == "Interview":
+        target = "Lost"
+    return target
+
+
+def apply_outcome(conn: sqlite3.Connection, pid: str, upwork_status: str,
+                  list_status: Optional[str] = None) -> str:
+    """The map on one row: 'won' | 'lost' | 'expired' | 'withdrawn' |
+    'interview' when written, 'kept' when the row already says so,
+    'terminal' when the stored verdict is terminal (never flipped; a
+    disagreement is counted by the caller), 'none' when the map says leave
+    it. A non-terminal Interview may become Lost / Expired / Won."""
     row = conn.execute("SELECT status FROM proposals WHERE id=?", (pid,)).fetchone()
     if row is None:
         return "none"
     current = row["status"]
+    target = verdict_for(upwork_status, list_status, current)
+    if not target:
+        return "none"
     if current == target:
         return "kept"
     if current in sync_state.TERMINAL:
@@ -189,6 +214,21 @@ def apply_outcome(conn: sqlite3.Connection, pid: str, upwork_status: str) -> str
         f" WHERE id=? AND (status IS NULL OR status NOT IN ({marks}))",
         (target, pid, *sync_state.TERMINAL))
     return target.lower()
+
+
+def backfill_verdicts(conn: sqlite3.Connection) -> dict:
+    """The map over every row already listed (mcp_list_status set) whose
+    verdict is missing or non-terminal — run once when the second half of
+    the map landed (26 Aug), harmless to repeat."""
+    marks = ",".join("?" * len(sync_state.TERMINAL))
+    out = {}
+    for r in conn.execute(
+            f"SELECT id, upwork_status, mcp_list_status FROM proposals"
+            f" WHERE mcp_list_status IS NOT NULL AND (status IS NULL OR status NOT IN ({marks}))",
+            sync_state.TERMINAL).fetchall():
+        o = apply_outcome(conn, r["id"], r["upwork_status"], r["mcp_list_status"])
+        out[o] = out.get(o, 0) + 1
+    return out
 
 
 def run(ctx, session, org: str, statuses=None, max_pages: Optional[int] = None) -> dict:
@@ -222,8 +262,8 @@ def run(ctx, session, org: str, statuses=None, max_pages: Optional[int] = None) 
                 record_listing(conn, pid, s, node)
                 node_status = status_of(node) or s
                 m["node_statuses"][node_status] = m["node_statuses"].get(node_status, 0) + 1
-                outcome = apply_outcome(conn, pid, node_status)
-                if outcome in ("won", "lost", "withdrawn", "interview"):
+                outcome = apply_outcome(conn, pid, node_status, s)
+                if outcome in ("won", "lost", "expired", "withdrawn", "interview"):
                     m["outcomes"][outcome] = m["outcomes"].get(outcome, 0) + 1
                     metrics["outcomes"][outcome] = metrics["outcomes"].get(outcome, 0) + 1
                 elif outcome == "terminal":
