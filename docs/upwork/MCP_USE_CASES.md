@@ -1,6 +1,6 @@
 # The Upwork MCP tools — what each one can do for us, and in what order
 
-**Written:** 2026-08-26 07:30 IST (the Upwork chat, overnight, on Abhijeet's 05:20: "look at all
+**Written:** 2026-08-26 06:00 IST (the Upwork chat, overnight, on Abhijeet's 05:20: "look at all
 the upwork other mcp tools that are available and let's start building a use case around it —
 for example if we can access transactions data then the import feature that we have will no
 longer be needed, it can completely be replaced with mcp").
@@ -24,7 +24,7 @@ name (0.2 proposals, 0.3 win/loss, 0.4 messages, 0.5 offers), and two give the M
 things it never had (hours logged but not yet invoiced; milestone money funded but not
 released).
 
-## 2. What the transactions picture is today (live DB, read-only, 07:05 IST)
+## 2. What the transactions picture is today (live DB, read-only, 05:55 IST)
 
 | source | profile | rows | first | last |
 |---|---|---|---|---|

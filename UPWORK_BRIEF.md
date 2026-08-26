@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; first MCP round 04:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`)
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; rounds 04:15, 05:15, 06:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`) · the overnight list of 26 Aug DONE (0o, 0p, 0r, next actions 5) — his review pending
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -454,7 +454,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    `healthy` and off the Inbox. Suite 1,733 OK, cockpit reloaded.
    ◆ The match is name-based; a client whose Upwork name and email name differ ("Bob" vs
    "Robert", a company address) will not link — the Review queue is the safety net.
-0o. DONE 2026-08-26 06:15 (overnight item 3, his 05:20: "it says 0 won this month which is
+0o. DONE 2026-08-26 05:53 (overnight item 3, his 05:20: "it says 0 won this month which is
    incorrect, we at least got 2 … I know we had more than 1 interview this week") — **the
    Jobs flow's last two tiles now count what happened.** Diagnosis on the live DB: the
    cohort funnel (decision 10) counted a win only when the CONTRACT carried the FETCHED
@@ -477,7 +477,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    second TCC contract exists, the hourly ROOM_LIST sync cannot see it: `list_contracts`
    (MCP plan, next actions 5) is the fix. Spec addendum written. 56 tests in
    test_upwork_tab (+3: the rooms rule, the new-posting hire, the repeat client).
-0p. DONE 2026-08-26 07:00 (overnight item a, his 05:20: "we told David that we will let him
+0p. DONE 2026-08-26 06:00 (overnight item a, his 05:20: "we told David that we will let him
    know immediately — that should become part of the Today tab because it's a task"; he
    believed it existed) — **promises typed on Upwork become tasks on Today.** Found: 660
    commitments in the table, every one from a Fathom call; the Upwork path (a `sources` row
@@ -504,7 +504,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    free but blunter — say if the spend matters. ◆ The first poll after deploy reads the
    last 7 days of his outbound mail (64 messages) → up to 12 extractor calls, the rest at
    the next poll.
-0r. DONE 2026-08-26 09:20 (overnight item 1, his 05:20: "I like the way you built UI for the
+0r. DONE 2026-08-26 06:29 (overnight item 1, his 05:20: "I like the way you built UI for the
    upwork tab or at least the direction you headed. I want UI of all the tabs improved now in
    the same way") — **the other six tabs, in the Upwork tab's style.** Mockups first
    (`var/patches/2026-08-26_mockups/` — eight pictures, his morning review), then built:
@@ -584,7 +584,9 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    → 3 hot**, 2 drafts grounded + 1 ungrounded (kept, flagged), 3 ClickUp cards pushed,
    0 failed, digest sent, 0 anomalies. The 04:45 sync (run 7149) ran as always (proposals
    35 updated / 43 terminal-preserved, contracts 54, transactions 22, submitted_proposals
-   still `scope_blocked`). Two clean rounds = the flip holds; the 13:15 watch list in the
+   still `scope_blocked`). Third round = run 7166, 06:15 (167 s): 6 claimed (claude 3, workflow automation 2,
+   automated reports 1), 3 scored → 1 hot, 1 draft (ungrounded, flagged), 3 cards, digest
+   sent, 0 anomalies. Three clean rounds = the flip holds; the 13:15 watch list in the
    runbook is the next check. Pre-flip preparation (03:40):
    `var/patches/2026-08-26_p11_THE_FLIP.patch` (checked clean against HEAD) + the runbook
    `var/patches/2026-08-26_FLIP_RUNBOOK.md` (8 steps, the 13:15 watch list, the one-line
@@ -608,7 +610,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    exists, the offers tile once 0.4 lands.
 3. (first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
 4. (when he says go) Phase 3 applicant pull for the LinkedIn-writer role.
-5. **The MCP use cases (overnight item 2, 07:30) — plan written: `docs/upwork/MCP_USE_CASES.md`.**
+5. **The MCP use cases (overnight item 2, 06:03) — plan written: `docs/upwork/MCP_USE_CASES.md`.**
    The short answer to his example: yes — `get_freelancer_financials transactions` per org
    (the agency is a second `org_uid`, not the ACE that fails "Authorization failed" on every
    hourly sync) replaces the CSV import for daily use; the CSV stays as the yearly audit

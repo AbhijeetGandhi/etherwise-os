@@ -621,7 +621,7 @@ the client's newest inbound message (Upwork or linked mail) and redrafts the roo
 "draft predates their message" flag should only ever be seen between a new message and the next
 poll (or a press of "Check Upwork now").
 
-**Addendum 2026-08-26 06:10 — Interviewing and Won count what happened (a decision taken while
+**Addendum 2026-08-26 05:50 — Interviewing and Won count what happened (a decision taken while
 he slept; recorded in UPWORK_BRIEF for his review).** His 05:20 message: "it says 0 won this
 month, which is incorrect — we at least got 2 … and more than one interview this week". The
 cohort funnel (decision 10) only counted a win when the contract carried the FETCHED job's id,
