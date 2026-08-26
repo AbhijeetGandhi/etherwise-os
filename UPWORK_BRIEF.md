@@ -330,6 +330,31 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
     (one component, one queue). Standing rule from his verdict: plain words on every
     screen — no statistics vocabulary; a comparison reads "usually N %".
 
+## Inbox — asks filed by other chats (see business/AGENT-ARCHITECTURE.md)
+
+Cross-domain work is WRITTEN here, never executed by the chat that wants it. Answer in
+the Upwork chat, write the answer back into this brief, and note who asked.
+
+1. **From: ops chat · 2026-08-26 · Asked by Abhijeet · Priority: before any growth build.**
+   **Is 10 applications/week the Upwork ceiling, or just current effort?** This gates the
+   whole second-channel decision: if the channel still has headroom, growth spend belongs
+   in working it harder (Hormozi's "max one channel first"); if it is saturated, the
+   single-channel risk has to be paid down with a new channel. Answer with numbers, not a
+   view. Suggested cuts — take what the data supports, say what it can't:
+   - **Supply**: hot (≥16) jobs surfaced per week vs applications sent. Today's pack says
+     101 hot / 3 applied this week, 15 last week — if supply is 10× throughput, effort is
+     the binding constraint, not the channel.
+   - **Quality by depth**: win rate and interview rate by score band. If the 20–22 band
+     converts as well as 24+, the applied-to bar can widen; if it collapses, more volume
+     buys nothing and the ceiling is real.
+   - **Connects**: headroom at current spend/application (~26.7) — could we sustain 20/week
+     without buying more, and what would more cost per incremental interview?
+   - **Founder time**: minutes per application now that drafts are automated — the actual
+     constraint if supply and connects are both fine.
+   - **Saturation signal**: is our proposal-to-view rate falling as volume rises?
+   Deliverable: a short verdict (headroom / near ceiling / saturated) + the number that
+   decides it + a recommended weekly quota. It feeds the cofounder chat's B1/B5 call.
+
 ## Next actions
 0. DONE 2026-08-25 14:30 (Upwork chat, on Abhijeet's "do 1-4"): sync fix committed
    (`42c9eaf`, live-verified: proposals NULL created_dt 10 → 0, contracts NULL title 59 → 5);

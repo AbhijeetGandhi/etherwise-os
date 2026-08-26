@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Print the context pack every Etherwise agent boots from.
+
+    bin/context-pack                     # shared core, markdown
+    bin/context-pack --for cofounder     # core + the cofounder slice
+    bin/context-pack --for upwork --json # machine-readable
+
+Agents: ops · upwork · cofounder · people · growth
+
+Run this ON THE MAC. SQLite WAL does not work through the Cowork FUSE mount,
+so a chat should invoke it via the Mac shell, not the sandbox.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from modules.context import pack as ctxpack                    # noqa: E402
+
+
+def main(argv) -> int:
+    agent = None
+    if "--for" in argv:
+        i = argv.index("--for")
+        if i + 1 >= len(argv):
+            print("--for needs an agent name:"
+                  f" {', '.join(ctxpack.AGENTS)}", file=sys.stderr)
+            return 2
+        agent = argv[i + 1]
+    doc = ctxpack.build(agent)
+    if "--json" in argv:
+        print(json.dumps(doc, indent=2, default=str))
+    else:
+        print(ctxpack.render_md(doc))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
