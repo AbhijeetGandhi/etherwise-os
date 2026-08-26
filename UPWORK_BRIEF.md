@@ -842,7 +842,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    reaches the Sunday email (its 7-day window on `modified_dt`).
    ◆ 0.5 substrate: `Offered` proposals now land hourly with `upwork_status='Offered'` — an
    offer card is one rule away.
-7. **Use case D — contracts through the MCP (Phase 0.3) — BUILT 2026-08-26 19:28 (`<p35>`),
+7. **Use case D — contracts through the MCP (Phase 0.3) — BUILT 2026-08-26 19:28 (`4a4aee6`),
    his 19:18 "0.3 — contracts".** The agency org REFUSES `list_contracts search` ("you don't
    have access to this data" — the GraphQL's wall, one tool over); the personal org lists
    every contract he holds, the agency's included (Ioannis P 43406906, Brandi Jordan 44099615
@@ -862,6 +862,14 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    (`tests/test_mcp_contracts.py`). The table goes 59 → ~64 on the first daily round (the
    19:45 sync): the search has no contract type, rate, job id or end date — `get` carries
    them (and the milestones), one read per contract.
+   **First daily round 19:45 (run 7253, 77 s, 6 contract reads): 5 new contracts (the ones
+   without rooms) → 64 rows, 34 ACTIVE = Upwork's count, 5 marked agency from the ledger's
+   evidence (Brandi Jordan, Ioannis P, Dhanya S, Hero Marketing Agency, Rick K), 0 ended,
+   0 paused.** The proposals round the same hour: 6 nodes at the cursor boundaries, nothing
+   new — and one false "disagreement": the 17 Aug Royan proposal sits in the Hired, Declined
+   AND Withdrawn lists at once; the first list gave Expired, the Declined list wanted Lost.
+   A job-level list never argues with a verdict already given now (`896d3ec`) — only
+   Upwork's own status field can.
    ◆ For him: read `get` for every active contract once (34 reads) and for each new one after
    — type, rate, job id, milestones (Money's "hours worked, not yet invoiced" is `timesheets`,
    use case H). ◆ The 30 personal "ACTIVE" contracts include 2023–2025 ones nobody works on
@@ -971,4 +979,4 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   "flip the April row to Won" (done by hand with an audit row: Brandi Jordan / AI Automation
   Specialist, hired 15 Jul; Won is now 43). The agency org refused the contracts search; his
   "yes, page the personal org" → 4 reads, 34 active contracts, ONE TCC contract. Use case D
-  built (`<p35>`, Next actions 7).
+  built (`4a4aee6`, Next actions 7).
