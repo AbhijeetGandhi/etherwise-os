@@ -590,6 +590,8 @@ clients:
     scope_notes: "Upwork contract 43941050 (Make.com: Calendly to Google Calendar, HOURLY, 2026-06-23 to 2026-07-23, CLOSED). 99 messages. The main thread is awaiting_reply_from=Abhijeet on a closed contract — check whether that is a real unanswered message or a stale flag."
     aliases:
       - rockychoy
+    emails:
+      - email.upwork.com
   -
     id: romain-de-braekeleer
     name: Romain De Braekeleer
