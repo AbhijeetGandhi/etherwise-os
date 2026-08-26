@@ -925,6 +925,49 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    18 Aug exists on either org yet — the 17–23 Aug week has not been invoiced by Upwork as
    of 16:53.
 
+8. **Use cases E + G + H — money in flight and the dashboard heartbeat — BUILT 2026-08-26
+   23:45 (`523dbe5` `5e74259` `7b0d773`), his 22:30 pick ("money in flight + offers",
+   "the dashboard heartbeat"; he explicitly did NOT pick the hiring side).**
+   `upwork_pulse` (new task, :05/:20/:35/:50, `modules/upwork/feeds/mcp_pulse.py`) reads
+   `get_freelancer_dashboard check` FIRST and fires a detail read only where a count is
+   non-zero — a quiet quarter-hour is exactly one call. It fills `offers` (whose last write
+   was 11 June) and `upwork_invitations`; `rule_upwork_waiting` cards a pending offer or
+   invitation due today. First live run 23:11: 0 offers, 0 invitations, 256 connects,
+   5 matching jobs.
+   `mcp_inflight.py` runs inside `upwork_financials` (06:05) — migration 033
+   (`upwork_timesheets`, `upwork_milestones`, `upwork_invitations`): 14 days of his own hour
+   entries, and `list_contracts get` on the fixed-price contracts touched in the last
+   `MCP_CONTRACT_DETAIL_DAYS` (5), `MCP_MILESTONE_MAX_GETS` (8) a run. Money's *waiting on*
+   block gained **$565.84 of hours worked since 24 Aug, not invoiced yet** (per contract; an
+   ESTIMATE to the cent, from his own entries — Upwork invoices the week on Sunday) and
+   **$3,000.00 agreed and never funded**: Mustafa A's milestones 2 and 3 on contract
+   43986743, `NotFunded` and past due since 15 and 22 July. Six weeks of a signed $4,500
+   contract stalled, and nothing in v3 could say so. `rule_stalled_milestone` cards each
+   with the client in the title and the amount as its stake.
+   **What only the live reads could teach:** (a) `timesheets` takes NO cursor — the WINDOW is
+   the paging unit, and the first live round read 10 of 24 entries and reported unbilled
+   **$0** on a week holding $565.83; `fetch_timesheets` now halves a window that comes back
+   short of its own `totalCount`, down to a single day (`MCP_TIMESHEET_MAX_CALLS` 12; 14 days
+   cost 7 reads), and a day that still overflows is reported truncated, never dropped.
+   (b) `list_offers` returns `hasMore: true` on an EMPTY page — a pager that loops on it never
+   terminates (`tests/fixtures/mcp/offers_pending_empty.json`). (c) On a milestone `state` is
+   the authority, NOT `fundedAmount`: the wire reports `fundedAmount` == the amount even on a
+   NotFunded one.
+   Five fixtures on his per-call OK: `timesheets`, `contract_get_milestones`,
+   `dashboard_check`, `offers_pending_empty`, `profile_and_rates`. 15 tests; suite **1,828
+   GREEN**; `bin/doctor --offline` 68 PASS / 4 WARN / 0 FAIL.
+   **The rate drift is closed.** `get_profile` reads $51.50/hr: `PROFILE_RATE_USD` 32.50 →
+   51.50, new `BID_RATE_USD` 50.00 (the standard bid the proposal-writing master reference
+   already ratified), and the `skills/` files that quoted $32.50 as his current rate are
+   corrected — lead-scorer's ladder rescaled off $50 on his word (its old whale tier,
+   $28–30/hr, sat below the $30 hard floor the scorer enforces). Separately: the "69 contracts
+   / 100% JSS / $100K+" line is his OWN free text inside `personalData.description`, not an
+   Upwork metric — Upwork computes **124 jobs (77 hourly, 47 fixed), $127,017.71, Top Rated
+   Plus, 44 feedbacks**. That is a Today card, `profile_stale_claim:2026-08`.
+   ◆ **still his:** use case F (messages, 0.4) is the only one left unbuilt; the day to set
+   `MCP_CONNECTS_SINCE` and retire the Chrome connects rail; the ~20 idle 2023–2025 contracts
+   still marked ACTIVE (537 h/week committed on paper); the hiring side (client org).
+
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated
   Upwork chat boots from this brief; ops chat keeps the overview. Learning loops 1–4 and

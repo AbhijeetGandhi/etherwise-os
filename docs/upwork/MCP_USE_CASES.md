@@ -14,6 +14,36 @@ get_freelancer_financials, list_freelancer_proposals, list_contracts, list_offer
 get_account, get_rate_insights, find_saved_jobs, get_tool_help, get_messages`). Everything
 below is a read. Nothing here sends, submits, accepts, boosts or spends — law 1 stands.
 
+## 0. Status — 2026-08-26 23:45 IST
+
+Written at 06:00 as a plan; everything below the line was built the same day. This
+section is the only place to trust for state — the sections themselves are the
+original plan, stamped where reality differed.
+
+| | use case | state | rail |
+|---|---|---|---|
+| A | transactions + weekly summary | **BUILT** | `upwork_financials`, daily 06:05 (CSV kept until 2026-09-09 as the tie-out) |
+| B | connects | **SHADOW** — writes to `upwork_mcp_rows`, does not yet own the table | waiting on his date to set `MCP_CONNECTS_SINCE` and retire `upwork_connects` (Chrome, 05:35) |
+| C | proposals (0.2) | **BUILT** | `mcp_proposals_pass`, hourly inside `upwork_sync`; win rate went from a frozen 46% to an honest 11.0% |
+| D | contracts + milestones (0.3) | **BUILT** | `mcp_contracts_pass` daily; milestones in `mcp_inflight` |
+| E | offers (0.5) | **BUILT** | `upwork_pulse`, :05/:20/:35/:50 |
+| F | messages (0.4) | not built | the only use case still open |
+| G | dashboard heartbeat | **BUILT** | `upwork_pulse` — the dashboard is read first and the detail reads only fire on a non-zero count |
+| H | timesheets | **BUILT** | `mcp_inflight` inside `upwork_financials`; Money shows uninvoiced hours |
+
+Three things the live reads corrected that no amount of reading `get_tool_help`
+would have:
+
+* transactions are dated by **invoice** date; the CSV carries the **payment**
+  date, ~10 days later. The weekly tie-out is a per-client subset-sum over a
+  28-day lag window, not a date-window sum.
+* `list_offers` returns `hasMore: true` on an **empty** page. A pager that loops
+  on `hasMore` never terminates (`tests/fixtures/mcp/offers_pending_empty.json`).
+* `timesheets` takes **no cursor**, so the window is the paging unit: a 14-day
+  window returned the oldest 10 of 24 entries and made `unbilled` read $0 on a
+  week holding $565.83. `fetch_timesheets` now halves a short window down to a
+  single day.
+
 ## 1. The short answer
 
 Yes: **transactions can come from the MCP, and the CSV import can retire from daily use** —
@@ -48,6 +78,8 @@ amount and a running balance that ties out to the cent. Any replacement has to a
 amounts on every row, and a tie-out.
 
 ## 3. Use case A — transactions and the weekly summary (replaces the CSV import)
+
+**Status:** **BUILT** — `modules/upwork/feeds/mcp_financials.py`, daily 06:05. Doctor #10 twins and the weekly tie-out both live. The GraphQL transactions pass is retired.
 
 > **STATUS 2026-08-26 evening — BUILT AND SCHEDULED.** Captures 1, 2, 3 and 5 below were run
 > at ~16:20 IST on his OK ("the three for transactions + connects") and pinned in
@@ -113,6 +145,8 @@ window, limit 200. One `summary` call (personal, August) for the tie-out shape.
 
 ## 4. Use case B — connects (retires the last Chrome rail)
 
+**Status:** **SHADOW** — the rows are read and written to `upwork_mcp_rows`; `upwork_connects` (Chrome) still owns the table until he names the day for `MCP_CONNECTS_SINCE`. Usage rows carry NO label: the kind is inferred from DEBIT/REFUND_CREDIT + the instant + `jobPost.jobId`.
+
 > **STATUS 2026-08-26 evening — IN SHADOW inside `upwork_financials`.** Capture 5 answered the
 > unknowns: the usage row has **no label** (`transactionType` DEBIT | REFUND_CREDIT, an
 > instant, `amount.rawValue`, `jobPost{jobId '~02…', jobTitle}` or null); the event time is an
@@ -150,6 +184,8 @@ Chrome rail stops, never both.
 
 ## 5. Use case C — proposals (Phase 0.2, de-risked on 25 Aug)
 
+**Status:** **BUILT** — `mcp_proposals.py`, hourly. The status lists are JOB-level buckets, not the proposal's own status; only Upwork's own status field is allowed to disagree with a terminal verdict (`verdict_with_source`), which is what stopped the hourly false `terminal_disagreement`.
+
 > **STATUS 2026-08-26 18:25 — BUILT** (`modules/upwork/feeds/mcp_proposals.py`, inside the
 > hourly `upwork_sync`; his 17:55 "use case C next"). One `list` per status per round,
 > newest-modified first to a stored cursor (7 calls a quiet hour; the first round pages the
@@ -170,6 +206,8 @@ connects page, and **invitations as a third source** for the Jobs flow's "came t
 There is no per-proposal *viewed* flag (checked on 25 Aug) — the Viewed stage stays undrawn.
 
 ## 6. Use case D — contracts, milestones, end reasons (Phase 0.3, and the TCC question)
+
+**Status:** **BUILT** — `mcp_contracts.py` (daily) and the milestone half of `mcp_inflight.py`. `list_contracts search` is refused by the agency org; the personal org lists agency contracts too. On a milestone, `state` is the authority — the wire reports `fundedAmount` == the amount even on a NotFunded one.
 
 > **STATUS 2026-08-26 19:28 — contracts BUILT** (`modules/upwork/feeds/mcp_contracts.py`, once
 > per IST day inside the hourly `upwork_sync`; his 19:18 "0.3 — contracts through the MCP").
@@ -201,6 +239,8 @@ this is also the direct answer to "did TCC start a second contract this month".
 
 ## 7. Use case E — offers (Phase 0.5)
 
+**Status:** **BUILT** — `mcp_pulse.py`, one page only, never paged on `hasMore`. Nothing was waiting on the first live read.
+
 **Tool:** `list_offers` — `list` / `list_mine` (newest first, states for the freelancer role:
 awaiting_your_acceptance, contract_started, awaiting_client_approval, expired, denied, draft,
 withdrawn, canceled), `get`, `get_attachments` (the documents a client attached, links that
@@ -215,6 +255,8 @@ fixture on the agency org settles it.
 
 ## 8. Use case F — messages (Phase 0.4)
 
+**Status:** **NOT BUILT** — the one use case still open.
+
 **Tool:** `get_messages` — `list_rooms` (most-recently-active first, `unread_only`,
 `room_type` ALL / GROUP / ONE_ON_ONE / INTERVIEW, cursor), `find_room` by context
 (contract / offer / proposal), `list_messages` (newest first, cursor), `get_message`.
@@ -228,6 +270,8 @@ room. The promise extractor (`modules/upwork/promises.py`, today) and the room l
 
 ## 9. Use case G — the dashboard (one call for "what is new")
 
+**Status:** **BUILT** — `mcp_pulse.py`, :05/:20/:35/:50. A quiet quarter-hour costs exactly one call.
+
 **Tool:** `get_freelancer_dashboard` action `check` — invitations, offers, messages, matching
 jobs, contract updates and the connects balance **in one call**, no params.
 
@@ -237,6 +281,8 @@ sweep's empty-skip pattern). It is also the cheapest possible early warning for 
 invitation between the hourly polls.
 
 ## 10. Use case H — timesheets (Money: hours worked, not yet invoiced)
+
+**Status:** **BUILT** — `mcp_inflight.py`. Money shows "$565.84 of hours worked since 24 Aug, not invoiced yet", per contract. It is an ESTIMATE to the cent (per-entry rounding), from his own entries — Upwork invoices the week on Sunday.
 
 **Tool:** `get_freelancer_financials` action `timesheets` (also `list_contracts timesheets`) —
 hours logged per contract for a window, `contract_ids` filter.
@@ -254,8 +300,11 @@ between worked and billed, which today only exists in his head.
 - `find_saved_jobs` — his own bookmarks as a shortlist source: a saved job the feed scored low
   is a disagreement worth a card; a saved job never applied to is a reminder.
 - `get_profile` / `get_account` — the profile's `totalJobs` and rate on the Health tab, and
-  the **$32.50 vs $50 rate drift** the briefs keep flagging, read from Upwork instead of
-  config.
+  the **$32.50 vs $50 rate drift** the briefs kept flagging. RESOLVED 2026-08-26: the
+  profile reads $51.50/hr, `PROFILE_RATE_USD` is 51.50 and `BID_RATE_USD` 50.00, and the
+  skills/ files were corrected. The profile's own description still claims "69 contracts
+  / $100K+" — free text he wrote, not an Upwork metric; Upwork computes 124 jobs and
+  $127,017.71. That is a Today card (`profile_stale_claim:2026-08`).
 - `get_job_posting` / `list_client_invitations` are the client role (his own postings, the
   LinkedIn-writer hire): Phase 3's applicant pull reads them.
 
