@@ -521,6 +521,12 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    was closed by a later hello). If that bites, the refinement is to auto-clear only
    promises whose text is a reply (let you know / get back / ping / send), and leave the
    rest to Done — his call.
+   Second run (10:26, run 7190, kicked through Run now): 42 scanned, 12 to the extractor,
+   5 found (Jarrod's proposal due today; Dhanya's two zaps by Thursday / Friday; David's
+   "review the brief and let him know" → due 28 Aug; one OTP promise already kept). After
+   the sweep, **six promise cards on Today** with Open on Upwork (`99f2eb8`: a dated Upwork
+   promise is carded by the Upwork branch too — named, with the room; its own date kept).
+   Model spend for the day at 10:35: $1.08 of $4 over 107 calls.
 0r. DONE 2026-08-26 06:29 (overnight item 1, his 05:20: "I like the way you built UI for the
    upwork tab or at least the direction you headed. I want UI of all the tabs improved now in
    the same way") — **the other six tabs, in the Upwork tab's style.** Mockups first
