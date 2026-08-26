@@ -592,6 +592,7 @@ clients:
       - rockychoy
     emails:
       - email.upwork.com
+      - upwork.com
   -
     id: romain-de-braekeleer
     name: Romain De Braekeleer
