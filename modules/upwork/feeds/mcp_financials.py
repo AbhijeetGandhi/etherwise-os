@@ -42,7 +42,7 @@ rule — never an MCP call inside an open transaction):
      typed like the CSV importer types it (upwork_csv.CSV_TYPE_MAP) and
      bucketed (pnl.bucket) on insert so the Money tab reads it the same hour.
      Withdrawal legs go in as `transfer` rows (signed negative like the 65
-     older withdrawal rows; excluded from the P&L) on his 26 Aug 17:10 word —
+     older withdrawal rows; excluded from the P&L) on his 26 Aug 16:50 word —
      the CSV importer had HELD them since Phase 1b and the ledger's last
      withdrawal was 27 May; counted as transfer_legs;
   4. every row read lands in `upwork_mcp_rows` (migration 030) — the MCP side
@@ -85,7 +85,7 @@ PROFILE_LABEL = {"personal": "Personal", "agency": "Agency"}
 
 # the withdrawal class (principal + its fee). bin/finance-import-upwork HELD
 # these "for Phase 2" since 2026-06-25 and nothing released them — the
-# ledger's last withdrawal row was 27 May. Abhijeet, 26 Aug 17:10: "insert them
+# ledger's last withdrawal row was 27 May. Abhijeet, 26 Aug 16:50: "insert them
 # as transfers" — signed negative (sync_state's rule), pnl_bucket 'transfer'
 # (transfers.is_transfer_leg), excluded from the P&L; counted as transfer_legs.
 TRANSFER_SUBTYPES = frozenset({"Withdrawal", "Withdrawal Fee"})

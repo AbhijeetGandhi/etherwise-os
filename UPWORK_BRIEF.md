@@ -51,7 +51,7 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   own canonical key; `upwork_mcp_rows` (030) is its audit twin; `bin/doctor` "upwork mcp
   twins" is the CSV-retirement criterion (2/2 clean completed weeks → the Money import card
   goes audit-only). Withdrawal legs booked as transfers and MCP rows invoice-dated — both
-  his 17:10 answers (Next actions 5). First live run 17:15 (below).
+  his 16:50 answers (Next actions 5). First live run 16:53 (below).
 - **Proposals sync frozen since 9 June** (scope_blocked vendorProposals) — local
   proposals table stale, win-rate wrong. Fix: `list_freelancer_proposals` (tasks #30–33).
   Also (found 2026-08-25, fixed same night — see Codebase findings 1): the hourly
@@ -699,7 +699,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    updated (status), never twinned — the fixture run against the live ledger's own rows
    reproduces every CSV sign (Service Fee −2400, WHT −24, Hourly +24000, connects −4500,
    Agency Plus −1999, the card settlement +4500 → bucket transfer, withdrawal −233514).
-   Withdrawal legs go in as `transfer` rows on his 17:10 word (below).
+   Withdrawal legs go in as `transfer` rows on his 16:50 word (below).
    Migration 030 `upwork_mcp_rows` = every row the rail read (profile, type, signed amount,
    invoice date, outcome inserted/updated/quarantined, first/last seen) — the
    MCP side of the tie-out; `bin/doctor` "upwork mcp twins" reads the CSV exports on disk
@@ -714,7 +714,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    (critical, backs money, 30 h), RERUN_JOBS + Run now, task words. The scan's start-failure
    text now says network vs auth (`mcp_client.start_failure_kind`; the 12:15 DNS outage had
    said "repair the OAuth token"). 25 tests (`tests/test_mcp_financials.py`).
-   DECIDED 17:10 — **dates:** MCP-inserted rows carry the invoice date (the only date the
+   DECIDED 16:50 — **dates:** MCP-inserted rows carry the invoice date (the only date the
    MCP gives; his 3 Aug accrual choice for the P&L month); CSV-inserted rows keep the
    payment date; a boundary week (an invoice of 26 Jul paid 5 Aug) lands in July when the
    MCP inserts it first; nothing is fabricated. **Withdrawals:** the ledger's last
@@ -736,11 +736,11 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    ◆ **For him — the GraphQL sync's transactions pass** has inserted nothing since 24 June
    and logs `errors_agency 1` every hour; with this rail live it is redundant on the money
    side (proposals/contracts/rooms stay). Retire that pass, or leave it as a second reader.
-   **17:10 his three answers: run it now once · invoice date, as built · insert the
+   **16:50 his three answers: run it now once · invoice date, as built · insert the
    withdrawals as transfers** → the hold removed before the first run (a Withdrawal is a
    `Withdrawal`/`transfer` row signed negative like the 65 older ones, its fee `Other`/
    `transfer`; finance-doctor's #7 is N/A, so it stays GREEN).
-   **First live run 17:15, run 7232, completed (four read-only calls):** personal 22 rows in
+   **First live run 16:53, run 7232, completed (four read-only calls):** personal 22 rows in
    the 12–26 Aug window, all UPDATED (his 25 Aug CSV import had every one); agency 21 rows,
    19 updated + **2 inserted — the 26 Aug withdrawal pair, −$2,335.14 / −$0.99, bucket
    transfer, fx 1, status SUCCESS** (the ledger's first withdrawal since 27 May); no
@@ -759,7 +759,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    all twinned with matching amounts, 22 older rows predate the rail, 0 of the two completed
    weeks fully in view — keep the CSV import until 2026-09-14.** No invoice dated after
    18 Aug exists on either org yet — the 17–23 Aug week has not been invoiced by Upwork as
-   of 17:15.
+   of 16:53.
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated

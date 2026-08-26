@@ -7,7 +7,7 @@ Pins: the org resolution (TALENT = personal, FL_AGENCY = agency, CLIENT
 ignored); the request shapes and the one-split paging; every row kind's
 signed amount against the ledger's own CSV rows (Service Fee / WHT /
 Membership Fee negative, Hourly positive, withdrawals negative as transfers
-— his 26 Aug 17:10 word — the card payment positive); the ledger type and P&L bucket an inserted row gets;
+— his 26 Aug 16:50 word — the card payment positive); the ledger type and P&L bucket an inserted row gets;
 that an MCP row UPDATES a CSV row and never twins it; the upwork_mcp_rows
 audit twin; the connects usage rows read into the Chrome rail's vocabulary
 (UTC day, '~02' stripped, pairs → applied + boost, twins with the rail's
@@ -279,7 +279,7 @@ class TestConnectsEvents(unittest.TestCase):
                               if e["job_id"] == "2091139773174847123"}, {"boost"})
 
     def test_an_events_own_chrome_twin_does_not_turn_it_into_a_boost(self):
-        """The first live run (17:15, run 7232) read the -18 proposal of 23 Aug
+        """The first live run (16:53, run 7232) read the -18 proposal of 23 Aug
         as a boost: the Chrome rail's row for the SAME event said 'applied'
         and the lone-debit rule took that as an earlier proposal."""
         fx = _fixture("connects_balance")
@@ -511,7 +511,7 @@ class TestDoctorTwins(unittest.TestCase):
         self.assertIn("clean completed weeks 0/2", c.detail)
 
     def test_the_coverage_line_is_the_rails_first_window_floor_not_the_smallest_id_it_read(self):
-        """Run 7232 (17:15) read a 2 Aug row inside a 12 Aug window (the MCP's
+        """Run 7232 (16:53) read a 2 Aug row inside a 12 Aug window (the MCP's
         date filter is loose on the old side) and the check then wanted a twin
         for a 10 Aug connects purchase the window never held."""
         self._csv([("Sep 8, 2026", "9500", "Hourly", 10000), ("Aug 27, 2026", "9300", "Hourly", 20000),
