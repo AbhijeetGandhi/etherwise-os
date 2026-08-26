@@ -345,6 +345,17 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    ③ Globaltize renegotiation to a flat rate is queued for **after 4 clean 40-hour weeks**, not
    now — its tier is $30 on ALL hours at 40+, so 39 h pays $1,365 and 40 h pays $1,200 (break-even
    45.5 h). Do not copy that structure into any new hourly contract; flat only.
+2. **[Cofounder · 2026-08-27 · source a contractor, do not post yet]** Sourcing is OPEN for an
+   automation contractor to absorb Globaltize delivery from Jay (~$1,000/mo, contractor form).
+   Spec: `business/hiring/2026-08-27-globaltize-support-contractor.md`.
+   **Constraints:** sourcing and uniform one-pager summaries ONLY — no scoring, no ranking (API &
+   MCP Terms §5.9). **Do not post the role live** and make no approach that reads as a commitment;
+   offers are gated on Globaltize holding 40 h/wk for 3 weeks + Horizons clearing. Shortlist goes
+   to `business/hiring/`; People chat owns everything past it.
+   Also: **the Globaltize contract is missing from `contracts`/`proposals`/`scored_jobs`** — it
+   exists only as an Upwork-CSV earnings row. A live 40 h/wk contract the pipeline cannot see.
+   Worth checking sync lag vs an agency-side ingest gap.
+
    **Still owed to the Cofounder chat:** is 10 applications/week the channel's ceiling or just
    current effort? Unanswered since AGENT-ARCHITECTURE.md was written; the Growth chat is gated
    on it, and this month's capacity crunch makes the answer matter more, not less.
@@ -1060,6 +1071,66 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    Suite **1,875 GREEN**; `bin/doctor --offline` 69 PASS / 4 WARN / 0 FAIL.
    ◆ **left for him:** the anomalies (he chose to leave 599-606 open); the 17 idle contracts
    are his to end on Upwork; `upwork_outcomes` stays STALE-warned until the 30 Aug run.
+
+10. **One person, several rooms (`b53d23d` `53e5d4b`, 2026-08-27 01:00-01:30), on his
+    "if I'm talking with Tanya and we have an old chat, but now they send out a new
+    contract and it starts the new chat, the context moves on to the new chat — but in the
+    Today tab we are still seeing if my reply was pending on the old chat."**
+
+    He was right, and it was live on three people that morning: a pending draft from
+    30 July on one of **Dhanya Sangolli's** rooms while he had answered her on 26 August
+    and started a $300 contract with her that day; a draft on a **Rocky Choy** room he had
+    never replied in at all while he spoke to Rocky on 25 August next door; and
+    **Royan Stomberg**, drafted on the 16 Aug room, answered on the 17th.
+
+    THE CARD was never the problem — `nudges.followup_key` has grouped by person since
+    12 August. What was wrong is narrower and worse: **the evidence read was handed only
+    the rooms carrying a pending draft**, so a reply sent in the sibling room was invisible,
+    `answered_since` could not become true, and even when it did, nothing let it suppress
+    anything.
+
+    * **The identity moved onto the thread** (migration 035, `counterparty_key`;
+      `modules/upwork/counterparty.py`): `c:<client_id>` when attributed, else
+      `p:<name-slug>` off the room name's first comma-field, else `t:<thread_id>` — a group
+      of one, never a pool of every unnamed room. Both message writers maintain it, and
+      `nudges.followup_key` is now built FROM it and still returns byte-for-byte what it
+      did, because re-keying a live card would strand his Done under the old key.
+    * **Every decision sees every room.** `rule_owed_replies` expands with
+      `counterparty.expand()` before reading evidence and puts the expanded set in the
+      payload, so `data._conversation` — which renders whatever it is given — shows the
+      chat the talking moved to. `answered_since` now SUPPRESSES. And `upwork_signals`
+      stops counting a room WE spoke last in as an obligation; without that, covering all
+      of a person's rooms would have dragged the age clock BACKWARDS and made an answered
+      person look more overdue, not less.
+    * **The stale draft is retired**, not deleted: `supersede_stale()` marks it
+      'superseded' (poll_inbox's own word, reversible) when we have spoken to that person
+      anywhere since it was written. Nothing on an unparseable timestamp.
+    * `promises.auto_close` moved into the quarter-hour sweep — the extractor needs a model
+      call and stays on the twice-daily poll, but auto_close is deterministic SQL, so a
+      promise he kept clears within 15 minutes instead of at 19:15.
+
+    **Measured on the live DB: owed-reply cards 9 -> 2, and every one of the seven that
+    went had him speaking AFTER the counterparty** (Amanda Thomas 08-20 15:01 vs their
+    14:15; Julie Heffernan 08-17 vs 08-14; Tousif Ahmed 08-13 vs 08-12; John Bohan 08-13
+    vs 08-12; Dhanya 08-26 16:38 vs 16:00; Adam Goldsmith 07-29 vs 07-28; Globaltize 08-24
+    vs 08-21). The two that stand are the two where the ball is genuinely his: Mustafa
+    spoke 22 Aug after his 21st, and Rocky's "Awesome" at 10:19:34 came after his "thanks"
+    at 10:19:10. The 01:20 pulse superseded 2 stale drafts and closed 1 kept promise.
+    17 + 1 tests.
+
+    **THE OUTCOME EMAIL SENT FOR THE FIRST TIME EVER** at 01:11, because p42 gave the rail
+    `catch_up` — the catch-up delivered week W34 (4 proposals) to contact@. Every item read
+    "no form link — rails/REGISTRY.md form_url is missing", and the registry's form_url was
+    fine: it is the PROPOSAL that has no Airtable record. `53e5d4b` makes the email name the
+    repair that applies. ◆ **for him: 309 of his 382 closed proposals have no Airtable
+    record** — every one imported through the MCP by use case C — so the weekly capture
+    cannot ask about them at all until the mirror covers MCP-imported rows.
+
+    **Dhanya, answered by him 2026-08-27:** on 44379117 the client sends the offer to the
+    AGENCY and he accepts it as the agency manager, so he is the freelancer and the $300 is
+    money IN — Money's "waiting on" reading was right. It is a real project started that
+    day, closing tomorrow, payment expected Monday. (v3 has the contract filed `personal`;
+    it marks agency from the ledger's evidence, so it corrects itself when the money lands.)
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated
