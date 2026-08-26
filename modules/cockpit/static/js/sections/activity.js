@@ -164,9 +164,9 @@ export async function render(root, ctx) {
   root.append(el("div", "up-head", [
     el("div", "hstack", [el("h2", "up-title", "Activity"), el("span", "muted small", fmt.date(day))]),
     el("p", "up-lede", [
-      el("b", null, `${fmt.num(r.started || 0)} run${(r.started || 0) === 1 ? "" : "s"}`),
+      el("b", null, `${fmt.num(r.total || 0)} run${(r.total || 0) === 1 ? "" : "s"}`),
       ` ${day === istToday() ? "today" : "that day"}`,
-      r.failed ? [", ", el("b", "neg", `${r.failed} failed`)] : (r.started ? ", all fine" : ""),
+      r.failed ? [", ", el("b", "neg", `${r.failed} failed`)] : (r.total ? ", all fine" : ""),
       " · ", el("b", null, fmt.usd2(sp.usd || 0)), " spent on the model",
       " · ", attention.length
         ? el("b", "neg", `${attention.length} system${attention.length === 1 ? "" : "s"} need${attention.length === 1 ? "s" : ""} a look`)

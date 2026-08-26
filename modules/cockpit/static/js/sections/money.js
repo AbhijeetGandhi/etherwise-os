@@ -1023,9 +1023,9 @@ export async function render(root, ctx) {
     const t = el("table");
     t.appendChild(el("thead", null, el("tr", null, [
       el("th", null, "Month"),
-      el("th", "num", "Revenue"),
-      el("th", "num", "Expenses"),
-      el("th", "num", "Profit"),
+      el("th", "num", "Came in"),
+      el("th", "num", "Went out"),
+      el("th", "num", "Left"),
     ])));
     const tb = el("tbody");
 
@@ -1077,7 +1077,7 @@ export async function render(root, ctx) {
     c.appendChild(el("div", "tablewrap", t));
     if (isAll() && months.length === 13) {
       c.appendChild(el("div", { class: "muted small", style: { padding: "10px 20px" } },
-        "Showing the last 13 months — pick a range above to reach further back."));
+        "The last 13 months; every month is a button. Older months are on the Ledger, filtered by month."));
     }
     return c;
   }
