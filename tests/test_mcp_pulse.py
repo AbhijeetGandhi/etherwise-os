@@ -271,14 +271,47 @@ class TestInFlight(Case):
             conn.execute("UPDATE upwork_milestones SET updated_at=datetime('now','-30 days')")
             self.assertIn("c0", mi.contracts_to_read(conn, 10))          # stale, read again
 
-    def test_a_short_read_is_reported_and_a_text_answer_fails_loud(self):
+    def test_a_short_window_is_halved_until_each_page_fits(self):
+        """The live miss on 2026-08-26: 14 days held 24 entries, the tool
+        returned the oldest 10, and the current week — the whole point of
+        `unbilled` — was invisible. The window is now the paging unit."""
+        full = fx("timesheets")["week_2026_08_24"]
+        short = fx("timesheets")["week_2026_08_17_page1"]
+
+        def answer(args):
+            p = args["params"]
+            return short if p["from_date"] <= "2026-08-19" and p["to_date"] >= "2026-08-22" else full
+
+        s = _Session({("get_freelancer_financials", "timesheets"): answer})
+        logs = []
+        got = mi.fetch_timesheets(s, ORG, "2026-08-17", "2026-08-23", logs.append)
+        self.assertFalse(got["truncated"])
+        self.assertEqual(got["total"], 17)                       # the root count, kept
+        self.assertTrue(any("17 entries, 3 read" in m for m in logs))
+        self.assertEqual([(a["params"]["from_date"], a["params"]["to_date"])
+                          for _t, a in s.calls][:3],
+                         [("2026-08-17", "2026-08-23"), ("2026-08-17", "2026-08-20"),
+                          ("2026-08-21", "2026-08-23")])
+        self.assertEqual(len(got["edges"]), 5)                   # deduped by wire cursor
+
+    def test_a_day_that_still_overflows_is_reported_not_dropped(self):
         short = json.loads(json.dumps(fx("timesheets")["week_2026_08_17_page1"]))
         s = _Session({("get_freelancer_financials", "timesheets"): short})
         logs = []
-        got = mi.fetch_timesheets(s, ORG, "2026-08-17", "2026-08-23", logs.append)
+        got = mi.fetch_timesheets(s, ORG, "2026-08-17", "2026-08-18", logs.append)
         self.assertTrue(got["truncated"])
-        self.assertEqual(got["total"], 17)
-        self.assertTrue(any("17 entries, 3 read" in m for m in logs))
+        self.assertTrue(any("entries in one day" in m for m in logs))
+
+    def test_the_call_budget_is_reported_when_spent(self):
+        short = json.loads(json.dumps(fx("timesheets")["week_2026_08_17_page1"]))
+        s = _Session({("get_freelancer_financials", "timesheets"): short})
+        logs = []
+        got = mi.fetch_timesheets(s, ORG, "2026-08-01", "2026-08-31", logs.append, max_calls=4)
+        self.assertEqual(len(s.calls), 4)
+        self.assertTrue(got["truncated"])
+        self.assertTrue(any("call budget spent" in m for m in logs))
+
+    def test_a_text_answer_fails_loud(self):
         with self.assertRaises(RuntimeError):
             mi.fetch_timesheets(_Session({("get_freelancer_financials", "timesheets"): {"text": "boom"}}),
                                 ORG, "2026-08-17", "2026-08-23", lambda m: None)
@@ -286,6 +319,8 @@ class TestInFlight(Case):
     def test_config_bounds(self):
         self.assertEqual((config.MCP_TIMESHEET_DAYS, config.MCP_MILESTONE_MAX_GETS,
                           config.MCP_CONTRACT_DETAIL_DAYS), (14, 8, 5))
+        self.assertEqual(config.MCP_TIMESHEET_MAX_CALLS, 12)
+        self.assertEqual((config.PROFILE_RATE_USD, config.BID_RATE_USD), (51.50, 50.00))
         self.assertEqual(config.MCP_OFFER_PENDING_STATES, ("awaiting_your_acceptance",))
         self.assertTrue((ROOT / "core" / "migrations" / "033_upwork_inflight.sql").is_file())
         for r in (rules.rule_upwork_waiting, rules.rule_stalled_milestone):

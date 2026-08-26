@@ -1298,6 +1298,8 @@ MCP_PROPOSAL_STATUS_MAP = {
 MCP_TIMESHEET_DAYS = 14
 MCP_MILESTONE_MAX_GETS = 8
 MCP_CONTRACT_DETAIL_DAYS = 5
+MCP_TIMESHEET_MAX_CALLS = 12   # window-halving budget: 14 days of entries
+                               # cost 7 reads on 2026-08-26
 MCP_OFFER_PENDING_STATES = ("awaiting_your_acceptance",)
 # Contracts through the MCP (use case D, Phase 0.3; Abhijeet 26 Aug 19:18):
 # `list_contracts search` on the PERSONAL org lists every contract he holds,
@@ -1324,7 +1326,8 @@ UPWORK_ORGS = {
     "agency":   "1910033523997712724",
 }
 ACE_IDS = {"personal": "70275816", "agency": "121356955"}
-PROFILE_RATE_USD = 32.50
+PROFILE_RATE_USD = 51.50       # read from the profile 2026-08-26; was 32.50
+BID_RATE_USD = 50.00           # standard hourly bid (proposal-writing master reference)
 HARD_FLOOR_HOURLY = 30.0       # v4.9: NO exceptions
 HARD_FLOOR_FIXED = 500.0       # v4.9: NO exceptions
 # Category-priority (whale) gate exemptions (v2.3 policy — these mirror the

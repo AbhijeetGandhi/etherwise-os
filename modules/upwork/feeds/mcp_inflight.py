@@ -12,7 +12,8 @@ read (26 Aug 22:42):
 
 WHAT IT READS (inside the daily upwork_financials rail):
   * `get_freelancer_financials timesheets` over the last
-    MCP_TIMESHEET_DAYS, paged 10 at a time -> upwork_timesheets, keyed on the
+    MCP_TIMESHEET_DAYS, the window halved until each page fits ->
+    upwork_timesheets, keyed on the
     wire's own cursor (a contract can log twice on one day). Every hour so far
     is manual (`totalOnlineHoursWorked` 0), and `memo` is his own work note.
   * `list_contracts get` for ACTIVE contracts, MCP_MILESTONE_MAX_GETS a run,
@@ -28,6 +29,7 @@ chief_of_staff.rules, not from here.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -65,21 +67,64 @@ def _edges_of(res) -> tuple:
     return edges, rep.get("pageInfo") or {}, rep.get("totalCount")
 
 
+def _split(a: date, b: date) -> tuple:
+    """[a,b] halved into two disjoint day ranges. b > a is the caller's job."""
+    mid = a + timedelta(days=(b - a).days // 2)
+    return (a, mid), (mid + timedelta(days=1), b)
+
+
 def fetch_timesheets(session, org: str, frm: str, to: str, log: Callable[[str], None],
-                     max_pages: int = 10) -> dict:
-    """Every time entry in [frm, to]. The tool takes no cursor param, so the
-    window itself is the paging unit: a page short of `totalCount` is reported,
-    never silently dropped."""
-    res = mcp_search.paced_call(session, FIN_TOOL, {
-        "action": "timesheets", "org_uid": org,
-        "params": {"from_date": frm, "to_date": to, "limit": PAGE}}, log) or {}
-    edges, page_info, total = _edges_of(res)
-    if not edges and total is None and (set(res) == {"text"} or res.get("status") not in (None, "ok")):
-        raise RuntimeError(f"{FIN_TOOL} timesheets {org}: not a timesheet answer: {str(res)[:160]!r}")
-    truncated = bool(page_info.get("hasNextPage")) or (total is not None and total > len(edges))
-    if truncated:
-        log(f"timesheets {frm}..{to}: {total} entries, {len(edges)} read — narrowing")
-    return {"edges": edges, "total": total if total is not None else len(edges),
+                     max_calls: Optional[int] = None) -> dict:
+    """Every time entry in [frm, to].
+
+    The tool takes no cursor, so THE WINDOW IS THE PAGING UNIT: a window that
+    comes back short of its own totalCount is halved and re-read, down to a
+    single day. Found live on 2026-08-26 — a 14-day window held 24 entries and
+    returned the oldest 10, which silently hid the whole current week and made
+    `unbilled` read $0 on a week with $565.83 in it.
+
+    A single day that still overflows PAGE is reported truncated, never
+    silently dropped; so is a window left unread when the call budget runs out.
+    """
+    budget = max_calls if max_calls is not None else config.MCP_TIMESHEET_MAX_CALLS
+    root = (date.fromisoformat(frm), date.fromisoformat(to))
+    queue, edges, seen = [root], [], set()
+    total_hint, truncated = None, False
+    while queue:
+        a, b = queue.pop(0)
+        if budget <= 0:
+            truncated = True
+            log(f"timesheets: call budget spent, {a}..{b} and {len(queue)} more unread")
+            break
+        budget -= 1
+        res = mcp_search.paced_call(session, FIN_TOOL, {
+            "action": "timesheets", "org_uid": org,
+            "params": {"from_date": a.isoformat(), "to_date": b.isoformat(),
+                       "limit": PAGE}}, log) or {}
+        got, page_info, total = _edges_of(res)
+        if not got and total is None and (set(res) == {"text"}
+                                          or res.get("status") not in (None, "ok")):
+            raise RuntimeError(f"{FIN_TOOL} timesheets {org}: not a timesheet answer:"
+                               f" {str(res)[:160]!r}")
+        if (a, b) == root:
+            total_hint = total
+        short = bool(page_info.get("hasNextPage")) or (total is not None and total > len(got))
+        if short and a < b:
+            log(f"timesheets {a}..{b}: {total} entries, {len(got)} read — splitting")
+            lo, hi = _split(a, b)
+            queue.insert(0, hi)
+            queue.insert(0, lo)
+            continue                      # the halves cover it; keep nothing from here
+        if short:
+            truncated = True
+            log(f"timesheets {a}: {total} entries in one day, {len(got)} read")
+        for e in got:
+            key = e.get("cursor") or json.dumps(e.get("node"), sort_keys=True, default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            edges.append(e)
+    return {"edges": edges, "total": total_hint if total_hint is not None else len(edges),
             "truncated": truncated}
 
 
