@@ -332,6 +332,23 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 
 ## Inbox — asks filed by other chats (see business/AGENT-ARCHITECTURE.md)
 
+1. **[Cofounder · 2026-08-27 · rate anchor + deal floor]** Two contracts signed this month at or
+   under our own floor while the profile rate is $51/hr: **Globaltize $30/hr** (exactly the hourly
+   hard floor) and **TCC / Brandi Jordan $32.50/hr** — the rate `CLAUDE.md` marks stale and
+   not-to-be-quoted. Together they are ≈$8k/mo of the run-rate, so this is precedent-setting, not
+   a one-off.
+   **Asks, per the rate-change ruling (Cofounder recommends the number, Upwork executes):**
+   ① add the **$1,000/mo or $2,000 fixed** deal floor (STRATEGY.md Constraints, set 2026-08-27) as
+   a screen at APPLICATION time — on posted budget and client hire history, not on outcome;
+   ② surface **landed value** beside application count in the weekly scoreboard — quota alone is
+   what let a 3-application week and an $845-average cohort both pass unremarked;
+   ③ Globaltize renegotiation to a flat rate is queued for **after 4 clean 40-hour weeks**, not
+   now — its tier is $30 on ALL hours at 40+, so 39 h pays $1,365 and 40 h pays $1,200 (break-even
+   45.5 h). Do not copy that structure into any new hourly contract; flat only.
+   **Still owed to the Cofounder chat:** is 10 applications/week the channel's ceiling or just
+   current effort? Unanswered since AGENT-ARCHITECTURE.md was written; the Growth chat is gated
+   on it, and this month's capacity crunch makes the answer matter more, not less.
+
 Cross-domain work is WRITTEN here, never executed by the chat that wants it. Answer in
 the Upwork chat, write the answer back into this brief, and note who asked.
 
@@ -967,6 +984,82 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    ◆ **still his:** use case F (messages, 0.4) is the only one left unbuilt; the day to set
    `MCP_CONNECTS_SINCE` and retire the Chrome connects rail; the ~20 idle 2023–2025 contracts
    still marked ACTIVE (537 h/week committed on paper); the hiring side (client org).
+
+9. **Everything left on the MCP list, built — use case F, the last Chrome rail retired,
+   the hiring side, the contracts nobody closed (`295d5d0` `99c0105`, 2026-08-27
+   00:00-02:00), on his "let's build out everything that's left to build" +
+   "prioritize the messages first".**
+
+   **USE CASE F — MESSAGES (0.4), `modules/upwork/feeds/mcp_messages.py`.** `upwork_inbox`
+   (GraphQL ROOM_LIST) runs at 10:15 and 19:15; between them v3 was blind, and at 23:50 the
+   newest row in `messages` was 08:18 with five rooms moved since. It costs NOTHING in the
+   usual case: the heartbeat's own `get_freelancer_dashboard` answer already carries
+   `data.messages.rooms[]` — the newest rooms with their last-message instants — so the
+   change detection is free and only a room that actually moved is read; the full room list
+   is paged once an IST hour (the preview said count 5 and carried 2). **The ids are ONE
+   space**: `room_<hash>` / `story_<hash>` are exactly what the GraphQL rail writes into
+   `threads`/`messages`, so an MCP row UPDATES a GraphQL row and never twins it, both
+   writers fill-or-keep. First live sweep 00:22: 30 rooms, 3 moved, 9 new stories, mirror
+   current. Wire facts: `from_self` is TRUE on his own stories and **ABSENT** on inbound
+   (never False); Upwork injects SYSTEM stories stamped `from_self: true` ("The freelancer
+   accepted your offer … Sender's note: …") which counted as outbound would tell him he
+   replied when he did not, so `MCP_MESSAGE_SYSTEM_MARKERS` demotes them to 'system' —
+   blunt on purpose, the error is one-directional; participant text arrives wrapped in
+   `<untrusted_participant_content>` and is stripped on the way in; `list_rooms
+   unread_only=true` is ordered by room CREATION, not activity (Upwork says so in a note),
+   so it is a detector and the rail does not use it; a room whose advertised story never
+   arrives is asked for ONCE (`sync_cursors upwork_room_story:<room>`), not for ever.
+   18 tests.
+
+   **THE LAST CHROME RAIL IS RETIRED.** `MCP_CONNECTS_SINCE = "2026-08-27"` on his word.
+   The evidence he decided on: 9 twins and one "untwinned" row that was only that day's
+   Availability Badge charge the Chrome rail (05:35) had not run for yet — the two rails
+   agreed on everything both had seen. The untwinned events are now NAMED in the metrics
+   rather than counted, which is what made the decision readable at all.
+   `io.etherwise.v3.upwork-connects` moved to `launchd/retired/` (install.sh globs
+   `launchd/*.plist`, so it cannot come back), booted out of launchd, dropped from
+   RERUN_JOBS, and the `connects_rail` health line now watches `upwork_financials` — the
+   task that actually fills `connects_history`. **v3 no longer drives Chrome for anything.**
+
+   **THE HIRING SIDE (Phase 3), `modules/upwork/feeds/mcp_hiring.py`, migration 034.**
+   Everything else in `modules/upwork/` is him bidding on other people's work; this is the
+   other direction, and the tables are deliberately separate (one table holding both sides
+   is how a win rate ends up counting the wrong direction). Daily 07:05 on the CLIENT org:
+   `get_job_posting list` (PAGE-based, and it already carries the whole funnel — applicants,
+   new_applicants, shortlisted, messaged, offered, hired, pending_invitations — so "how many
+   applied" costs no second call), `list_client_proposals list` per open posting (NOT
+   `get_client_dashboard`, which inlines every cover letter in full), and `get_rate_insights`
+   once a month per posting (that tool REFUSES the freelancer org; the client org answers).
+   **Live first round 01:5x: 25 postings, 9 applicants, 1 rate read.** The card:
+   *"9 people applied to 'LinkedIn Ghostwriter & Content Strategist' — 9 applied, 4 you have
+   not opened, 6 shortlisted. The market for Content Strategy runs $15-35/hr, and the bids
+   run $8.00-75.00. Nobody has been hired yet."* That post went up on 21 August and the only
+   place those numbers lived was a browser tab. Wire fact: **shortlisted and read are
+   ANNOTATIONS, not statuses** — a shortlisted applicant is still `status.status ==
+   "Created"`, and reading it off the status would have reported six people as nobody;
+   `bid` is a display string and the wire's rawValue is EMPTY on this side, so the number is
+   parsed or it is None, never 0. 12 tests.
+
+   **THE CONTRACTS NOBODY CLOSED.** Upwork never closes one on its own, so an abandoned
+   engagement stays ACTIVE for years and every "committed work" reading counts it: **35
+   ACTIVE, 17 of them with no message, no money and no logged hour for 90 days**, the oldest
+   quiet since 2023 (Dr Rajiv Siotia 2024-12-09, Orama Solutions 2023-12-23, Bailey Reid
+   2025-03-30). ONE card for the pile, not seventeen — seventeen cards is a flood and no
+   single one is worth a decision. Ending them is a click on Upwork this rail will never
+   make for him. 8 tests.
+
+   **HOUSEKEEPING.** `upwork_outcomes` gets `catch_up` (it was False for "an email must not
+   repeat", but `outcome_capture.already_sent()` has refused a second send inside one ISO
+   week all along — so 19 Jul and 23 Aug, two Sundays the Mac slept through, would have been
+   asked on the Monday instead of never); it joined RERUN_JOBS, which the catch_up invariant
+   requires and which the suite caught. `bin/upwork-clear-quarantine` resolved **30 of 30**
+   open Upwork quarantine entries — every one a duplicate whose canonical IS in the ledger
+   with an amount, checked per row, `audit_log` row each, dry run by default. `CLAUDE.md` no
+   longer says v2 owns the Upwork OAuth refresh.
+
+   Suite **1,875 GREEN**; `bin/doctor --offline` 69 PASS / 4 WARN / 0 FAIL.
+   ◆ **left for him:** the anomalies (he chose to leave 599-606 open); the 17 idle contracts
+   are his to end on Upwork; `upwork_outcomes` stays STALE-warned until the 30 Aug run.
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated

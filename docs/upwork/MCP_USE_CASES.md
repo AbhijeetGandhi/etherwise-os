@@ -14,22 +14,24 @@ get_freelancer_financials, list_freelancer_proposals, list_contracts, list_offer
 get_account, get_rate_insights, find_saved_jobs, get_tool_help, get_messages`). Everything
 below is a read. Nothing here sends, submits, accepts, boosts or spends — law 1 stands.
 
-## 0. Status — 2026-08-26 23:45 IST
+## 0. Status — 2026-08-27 01:30 IST
 
-Written at 06:00 as a plan; everything below the line was built the same day. This
-section is the only place to trust for state — the sections themselves are the
+Written at 06:00 on the 26th as a plan. **Every use case in it is now built** —
+A, C, D and E/G/H on the 26th, B and F and the hiring side on the 27th. This
+section is the only place to trust for state; the sections themselves are the
 original plan, stamped where reality differed.
 
 | | use case | state | rail |
 |---|---|---|---|
 | A | transactions + weekly summary | **BUILT** | `upwork_financials`, daily 06:05 (CSV kept until 2026-09-09 as the tie-out) |
-| B | connects | **SHADOW** — writes to `upwork_mcp_rows`, does not yet own the table | waiting on his date to set `MCP_CONNECTS_SINCE` and retire `upwork_connects` (Chrome, 05:35) |
+| B | connects | **LIVE from 2026-08-27** — the MCP owns `connects_history` | **the last Chrome rail is retired**: `io.etherwise.v3.upwork-connects` moved to `launchd/retired/`, `upwork_connects` left RERUN_JOBS, and the `connects_rail` health line now watches `upwork_financials` |
 | C | proposals (0.2) | **BUILT** | `mcp_proposals_pass`, hourly inside `upwork_sync`; win rate went from a frozen 46% to an honest 11.0% |
 | D | contracts + milestones (0.3) | **BUILT** | `mcp_contracts_pass` daily; milestones in `mcp_inflight` |
 | E | offers (0.5) | **BUILT** | `upwork_pulse`, :05/:20/:35/:50 |
-| F | messages (0.4) | not built | the only use case still open |
+| F | messages (0.4) | **BUILT 2026-08-27** | inside `upwork_pulse` — the dashboard's own room preview is the change detector, so it costs nothing; the full room list is paged once an IST hour |
 | G | dashboard heartbeat | **BUILT** | `upwork_pulse` — the dashboard is read first and the detail reads only fire on a non-zero count |
 | H | timesheets | **BUILT** | `mcp_inflight` inside `upwork_financials`; Money shows uninvoiced hours |
+| — | the hiring side (Phase 3) | **BUILT 2026-08-27** | `upwork_hiring`, daily 07:05, migration 034 — his OWN postings, who applied, and what the market pays |
 
 Three things the live reads corrected that no amount of reading `get_tool_help`
 would have:
@@ -43,6 +45,12 @@ would have:
   window returned the oldest 10 of 24 entries and made `unbilled` read $0 on a
   week holding $565.83. `fetch_timesheets` now halves a short window down to a
   single day.
+* on a story, `from_self` is TRUE on his own and **ABSENT** on inbound — never
+  False — and Upwork injects SYSTEM stories stamped `from_self: true`, which
+  counted as outbound would tell him he replied when he did not.
+* on the hiring side, **shortlisted and read are ANNOTATIONS, not statuses**: a
+  shortlisted applicant is still `status.status == "Created"`. Reading it off
+  the status would report six people as nobody.
 
 ## 1. The short answer
 
@@ -145,7 +153,7 @@ window, limit 200. One `summary` call (personal, August) for the tie-out shape.
 
 ## 4. Use case B — connects (retires the last Chrome rail)
 
-**Status:** **SHADOW** — the rows are read and written to `upwork_mcp_rows`; `upwork_connects` (Chrome) still owns the table until he names the day for `MCP_CONNECTS_SINCE`. Usage rows carry NO label: the kind is inferred from DEBIT/REFUND_CREDIT + the instant + `jobPost.jobId`.
+**Status:** **LIVE from 2026-08-27, and the last Chrome rail is retired.** Until then the rows were read and written to `upwork_mcp_rows`; `upwork_connects` (Chrome) owned the table until he named the day. Evidence at the flip: 9 twins and one "untwinned" row that was only that day's Availability Badge charge the Chrome rail (05:35) had not run for yet. Usage rows carry NO label: the kind is inferred from DEBIT/REFUND_CREDIT + the instant + `jobPost.jobId`.
 
 > **STATUS 2026-08-26 evening — IN SHADOW inside `upwork_financials`.** Capture 5 answered the
 > unknowns: the usage row has **no label** (`transactionType` DEBIT | REFUND_CREDIT, an
@@ -255,7 +263,14 @@ fixture on the agency org settles it.
 
 ## 8. Use case F — messages (Phase 0.4)
 
-**Status:** **NOT BUILT** — the one use case still open.
+**Status:** **BUILT 2026-08-27** — `mcp_messages.py`, inside the quarter-hour pulse.
+`get_freelancer_dashboard`'s own answer already carries `data.messages.rooms[]`
+(the newest rooms with their last-message instants), so noticing that a reply
+landed costs NO extra call and only a room that moved is read; the full room
+list is paged once an IST hour because the preview is short. The ids are the
+SAME space the GraphQL rail writes (`room_`/`story_`), so an MCP row updates a
+GraphQL row and never twins it. Live: the mirror went from nine hours behind
+(newest story 08:18) to current.
 
 **Tool:** `get_messages` — `list_rooms` (most-recently-active first, `unread_only`,
 `room_type` ALL / GROUP / ONE_ON_ONE / INTERVIEW, cursor), `find_room` by context
@@ -305,8 +320,12 @@ between worked and billed, which today only exists in his head.
   skills/ files were corrected. The profile's own description still claims "69 contracts
   / $100K+" — free text he wrote, not an Upwork metric; Upwork computes 124 jobs and
   $127,017.71. That is a Today card (`profile_stale_claim:2026-08`).
-- `get_job_posting` / `list_client_invitations` are the client role (his own postings, the
-  LinkedIn-writer hire): Phase 3's applicant pull reads them.
+- `get_job_posting` / `list_client_proposals` / `get_client_dashboard` are the client role.
+  **BUILT 2026-08-27** as `upwork_hiring` (daily 07:05, migration 034) on his "In — the
+  applicant pull": his own postings with the whole funnel (the list call carries it), the
+  people who applied to the open ones, and `get_rate_insights` for what the market pays.
+  Live: the LinkedIn Ghostwriter post had 9 applicants, 4 never opened, 6 shortlisted,
+  0 offered; the market is $15-35/hr and the bids ran $8-75.
 
 ## 12. Order, cost, and what needs his OK
 
