@@ -2,6 +2,12 @@
 (use case G; Abhijeet, 26 Aug 22:30: "the dashboard heartbeat" + "money in
 flight + offers").
 
+It also carries the room sweep (use case F, 0.4): the dashboard's own answer
+already lists the newest rooms with their last-message instants, so noticing
+that a reply landed is FREE — only a room that actually moved costs a read.
+Once an IST hour the full room list is paged, because the preview is only the
+newest five.
+
 WHY. Two things happen on Upwork that are worth money the hour they happen and
 that v3 could not see at all: an OFFER (the `offers` table's last write was
 11 June) and an INVITATION (never stored, no table). Polling both every hour
@@ -164,6 +170,30 @@ def upsert_invitation(conn: sqlite3.Connection, raw: dict) -> str:
 
 # ── the pass ─────────────────────────────────────────────────────────────────
 
+ROOMS_SWEEP_CURSOR = "upwork_rooms_hour"
+
+
+def _ist_hour(now=None) -> str:
+    from datetime import datetime as _dt
+    return (now or _dt.now(config.TZ)).strftime("%Y-%m-%dT%H")
+
+
+def rooms_sweep_due(conn, now=None) -> bool:
+    """The dashboard preview is the newest FIVE rooms. Once an IST hour the
+    room list is paged in full, so a reply on a quiet older room is not missed
+    for a day."""
+    row = conn.execute("SELECT value FROM sync_cursors WHERE name=?",
+                       (ROOMS_SWEEP_CURSOR,)).fetchone()
+    return not row or row["value"] < _ist_hour(now)
+
+
+def mark_rooms_sweep(conn, now=None) -> None:
+    conn.execute(
+        "INSERT INTO sync_cursors (name, value, updated_at) VALUES (?,?,datetime('now'))"
+        " ON CONFLICT(name) DO UPDATE SET value=excluded.value,"
+        " updated_at=excluded.updated_at", (ROOMS_SWEEP_CURSOR, _ist_hour(now)))
+
+
 def run(ctx, session_factory=None) -> dict:
     """One heartbeat. Metrics: the counts, plus what the detail reads did.
     Never raises on a dead session — the pulse is a watcher, and a watcher
@@ -174,7 +204,8 @@ def run(ctx, session_factory=None) -> dict:
         session = (session_factory or mcp_client.MCPSession)()
         if hasattr(session, "initialize"):
             session.initialize()
-        pulse = read(check(session, org, ctx.log))
+        raw_dashboard = check(session, org, ctx.log)
+        pulse = read(raw_dashboard)
     except Exception as exc:                                     # noqa: BLE001
         kind = mcp_client.start_failure_kind(exc)
         ctx.log(f"pulse FAILED ({kind}): {exc!r} — {mcp_client.START_FAILURE_ADVICE[kind]}")
@@ -206,6 +237,23 @@ def run(ctx, session_factory=None) -> dict:
             r = upsert_invitation(conn, raw)
             mi[r] = mi.get(r, 0) + 1
         metrics["invitations"] = mi
+    # Use case F rides the same heartbeat and the same session: the room list is
+    # ONE call and it is the only thing that can tell us a reply landed. Failing
+    # it must not fail the pulse — offers are the pulse's own job.
+    try:
+        from modules.upwork.feeds import mcp_messages
+        with db.connect(dbp) as conn:
+            full = rooms_sweep_due(conn)
+        metrics["messages"] = mcp_messages.run(ctx, session, org,
+                                               dashboard=raw_dashboard, full=full)
+        if full:
+            with db.connect(dbp) as conn:
+                mark_rooms_sweep(conn)
+    except Exception as exc:                                     # noqa: BLE001
+        ctx.log(f"messages pass FAILED: {exc!r}")
+        ctx.anomaly("messages_pass_failed", "warn", {"error": repr(exc)[:200]})
+        metrics["messages"] = {"status": "error"}
+
     if pulse.get("offers") or pulse.get("invitations"):
         ctx.log(f"pulse: {pulse.get('offers')} offer(s), {pulse.get('invitations')}"
                 f" invitation(s) — detail read and stored")

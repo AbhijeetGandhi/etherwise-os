@@ -85,7 +85,20 @@ class Case(unittest.TestCase):
 
 
 class TestHeartbeat(Case):
+    def _hour_spent(self):
+        """The room sweep (use case F) pages the full room list once an IST hour
+        and reads any room the dashboard preview says has moved. These tests
+        measure a STEADY-STATE quarter hour — hour spent, mirror current — so
+        neither fires; the sweep itself is covered in test_mcp_messages."""
+        from modules.upwork.feeds import mcp_messages as mm
+        with db.connect(self.db_path) as conn:
+            mp.mark_rooms_sweep(conn)
+            for room in mm.rooms_from_preview(fx("dashboard_check")["check"]):
+                mm.record_attempt(conn, room["id"],
+                                  mm._iso((room.get("latestStory") or {}).get("created")))
+
     def test_the_live_dashboard_reads_as_nothing_waiting_and_costs_one_read(self):
+        self._hour_spent()
         s = _Session({("get_freelancer_dashboard", "check"): fx("dashboard_check")["check"]})
         m = mp.run(_Ctx(self.db_path), session_factory=lambda: s)
         self.assertEqual(m["pulse"], {"offers": 0, "invitations": 0, "unread": 0, "rooms": 2,
@@ -94,7 +107,26 @@ class TestHeartbeat(Case):
         self.assertEqual(s.actions(), [("get_freelancer_dashboard", "check")])   # ONE read
         self.assertEqual((m["offers"]["seen"], m["invitations"]["seen"]), (0, 0))
 
+    def test_the_room_list_is_paged_once_an_hour_not_every_heartbeat(self):
+        """The full list costs a call, so it rides the FIRST heartbeat of an IST
+        hour. The other three read the dashboard's own room preview, which is
+        already in the answer they were making anyway."""
+        dash = fx("dashboard_check")["check"]
+        empty = {"data": {"rooms": []}, "hasMore": False, "status": "ok"}
+        s = _Session({("get_freelancer_dashboard", "check"): dash,
+                      ("get_messages", "list_rooms"): empty})
+        mp.run(_Ctx(self.db_path), session_factory=lambda: s)
+        self.assertEqual(s.actions(), [("get_freelancer_dashboard", "check"),
+                                       ("get_messages", "list_rooms")])
+        s2 = _Session({("get_freelancer_dashboard", "check"): dash,
+                       ("get_messages", "list_rooms"): empty,
+                       ("get_messages", "list_messages"): {"data": {"roomStories":
+                           {"edges": [], "pageInfo": {}}}, "hasMore": False}})
+        mp.run(_Ctx(self.db_path), session_factory=lambda: s2)
+        self.assertNotIn(("get_messages", "list_rooms"), s2.actions())
+
     def test_an_empty_page_still_says_hasMore_and_is_not_paged(self):
+        self._hour_spent()
         """The live capture: a filtered offers page comes back with zero offers
         and hasMore=True + a next_offset. A pager that loops on hasMore alone
         never terminates. fetch_offers reads one page, full stop."""
@@ -121,6 +153,7 @@ class TestHeartbeat(Case):
         self.assertEqual(mp.read({"data": {"offers": {"items": [{"id": "1"}]}}})["offers"], 1)
 
     def test_an_offer_waiting_is_fetched_stored_and_carded(self):
+        self._hour_spent()
         offer = dict(fx("offers_list")["data"]["offersByAttribute"]["offers"][0])
         offer["state"] = "awaiting_your_acceptance"
         offer["state_label"] = "Awaiting your acceptance"

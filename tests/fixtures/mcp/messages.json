@@ -1,0 +1,139 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~23:55 IST (Abhijeet's approval: 'Yes, all three'), personal org 1647672547786633217. Tool: get_messages, three actions. Structure verbatim; long message bodies truncated with ' [...]'. THE FINDINGS: (1) the room ids (`room_<hash>`) and story ids (`story_<hash>`) are the SAME id space the GraphQL ROOM_LIST rail already writes into `threads`/`messages` — an MCP row updates a GraphQL row, it never twins it. (2) `list_rooms unread_only=true` carries a NOTE saying the filtered list is ordered by room CREATION, not activity, and sorted by activity only within a page — so it is a change DETECTOR, never a 'most recent' list. (3) unread_only returns hasMore=false when empty (unlike list_offers, which says true). (4) On a story, `from_self` is TRUE on his own and ABSENT on inbound — never False. Direction is bool(node.get('from_self')). (5) Upwork injects SYSTEM stories that carry from_self=true ('The freelancer accepted your offer … Sender's note: …'). Treating those as outbound would falsely clear an owed-reply card, so config.MCP_MESSAGE_SYSTEM_MARKERS demotes them to direction 'system'. (6) The room list's latestStory.message prefixes the speaker ('You: …', 'Rocky: …') — a display convention, NOT parsed; direction always comes from list_messages' from_self. (7) `lastActivity` and `latestStory.created` are epoch MILLISECONDS as strings; `createdDateTime` on a story is a real ISO instant.",
+ "list_rooms_unread_empty": {
+  "data": {
+   "rooms": []
+  },
+  "hasMore": false,
+  "note": "This filtered list comes from an upstream field ordered by room creation, not by activity, and is sorted by activity only within this page. It is not the most recently active rooms overall — page through the results before describing which conversation is most recent.",
+  "status": "ok"
+ },
+ "list_rooms": {
+  "data": {
+   "rooms": [
+    {
+     "id": "room_4a52eb3c795fc42061df689b5e363c47",
+     "lastActivity": "1787766336128",
+     "latestStory": {
+      "created": "1787766336128",
+      "id": "story_5af20f3129f86b071b753bb07c6f8cf6",
+      "message": "<untrusted_participant_content>\nYou: Also as promised here's my breakdown of what we will cover in phase 1. (roughly 60-80 hours) [...]\n</untrusted_participant_content>"
+     },
+     "numUnread": 0,
+     "numUsers": 3,
+     "roomName": "<untrusted_participant_content>\nJarrod Roback\n</untrusted_participant_content>",
+     "roomType": "INTERVIEW"
+    },
+    {
+     "contractId": "44379117",
+     "contractStatus": "ACTIVE",
+     "id": "room_8987ec8ac9beae4d85d0e7653911dd61",
+     "lastActivity": "1787764023347",
+     "latestStory": {
+      "created": "1787764023347",
+      "id": "story_12df1a636443065a433a548b5c786050",
+      "message": "<untrusted_participant_content>\nYou: we will get started on the zap and try to wrap up as quick as we can. Will keep you posted with updates\n</untrusted_participant_content>"
+     },
+     "numUnread": 0,
+     "numUsers": 3,
+     "roomName": "<untrusted_participant_content>\nDhanya Sangolli, Dhanya S\n</untrusted_participant_content>",
+     "roomType": "INTERVIEW"
+    },
+    {
+     "id": "room_1f5d0e3d4bb2e1c2d26c98246c99fe9c",
+     "lastActivity": "1787762302046",
+     "latestStory": {
+      "created": "1787762302046",
+      "id": "story_df0eeb633f0e875e5dc0a4f3257dcd40",
+      "message": "<untrusted_participant_content>\nYou: sure, the fro point 1 only my budget would be 300$\n</untrusted_participant_content>"
+     },
+     "numUnread": 0,
+     "numUsers": 3,
+     "roomName": "<untrusted_participant_content>\nDhanya Sangolli, Dhanya S\n</untrusted_participant_content>",
+     "roomType": "INTERVIEW"
+    },
+    {
+     "id": "room_4b838a10b1c6ce290af71adb3470ddb9",
+     "lastActivity": "1787701048385",
+     "latestStory": {
+      "created": "1787701048385",
+      "id": "story_30433f54604f1e987d3b35e8b54a2d5a",
+      "message": "<untrusted_participant_content>\nYou: thank you david, I will take a look and let you know.\n</untrusted_participant_content>"
+     },
+     "numUnread": 0,
+     "numUsers": 4,
+     "roomName": "<untrusted_participant_content>\nNabil Tayeb Cherif, Recherches Super Nova Inc.\n</untrusted_participant_content>",
+     "roomType": "INTERVIEW"
+    },
+    {
+     "contractId": "44362102",
+     "contractStatus": "ACTIVE",
+     "id": "room_cebc094a59307695e7594404b2f841e8",
+     "lastActivity": "1787653174890",
+     "latestStory": {
+      "created": "1787653174890",
+      "id": "story_5957fa6e3fb5f1d5690917c822362f8f",
+      "message": "<untrusted_participant_content>\nRocky: Awesome\n</untrusted_participant_content>"
+     },
+     "numUnread": 0,
+     "numUsers": 3,
+     "roomName": "<untrusted_participant_content>\nRocky Choy\n</untrusted_participant_content>",
+     "roomType": "INTERVIEW"
+    }
+   ]
+  },
+  "hasMore": true,
+  "next_cursor": "1787653174890",
+  "status": "ok"
+ },
+ "list_messages": {
+  "data": {
+   "roomStories": {
+    "edges": [
+     {
+      "cursor": "story_12df1a636443065a433a548b5c786050",
+      "node": {
+       "createdDateTime": "2026-08-26T17:07:03.347Z",
+       "from": "<untrusted_participant_content>\nAbhijeet G.\n</untrusted_participant_content>",
+       "from_organization": "<untrusted_participant_content>\nAbhijeet Gandhi\n</untrusted_participant_content>",
+       "from_self": true,
+       "id": "story_12df1a636443065a433a548b5c786050",
+       "message": "<untrusted_participant_content>\nwe will get started on the zap and try to wrap up as quick as we can. Will keep you posted with updates\n</untrusted_participant_content>",
+       "updatedDateTime": "2026-08-26T17:11:37.284Z"
+      }
+     },
+     {
+      "cursor": "story_bddc655d5a884f45650d0e0ef9380cd4",
+      "node": {
+       "createdDateTime": "2026-08-26T17:03:44.081Z",
+       "from": "<untrusted_participant_content>\nAbhijeet G.\n</untrusted_participant_content>",
+       "from_organization": "<untrusted_participant_content>\nEtherwise\n</untrusted_participant_content>",
+       "from_self": true,
+       "id": "story_bddc655d5a884f45650d0e0ef9380cd4",
+       "message": "<untrusted_participant_content>\nThe freelancer accepted your offer. Please check your offers for details.\n\nSender's note: Thank you !\n</untrusted_participant_content>",
+       "updatedDateTime": "2026-08-26T17:03:44.452Z"
+      }
+     },
+     {
+      "cursor": "story_82e3d97be34e5de26fad9ee03d4377c9",
+      "node": {
+       "createdDateTime": "2026-08-26T17:02:27.356Z",
+       "from": "<untrusted_participant_content>\nDhanya S.\n</untrusted_participant_content>",
+       "from_organization": "<untrusted_participant_content>\nDhanya S\n</untrusted_participant_content>",
+       "id": "story_82e3d97be34e5de26fad9ee03d4377c9",
+       "message": "<untrusted_participant_content>\nSystem event: sent. View this conversation on upwork.com for full context.\n</untrusted_participant_content>"
+      }
+     }
+    ],
+    "pageInfo": {
+     "endCursor": "story_82e3d97be34e5de26fad9ee03d4377c9",
+     "hasNextPage": false
+    },
+    "visibleCount": 3
+   }
+  },
+  "hasMore": false,
+  "message_count": 3,
+  "status": "ok"
+ }
+}

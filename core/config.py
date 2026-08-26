@@ -874,13 +874,16 @@ SOURCES = (
     # shadow. Critical from day one: this is the rail the CSV import retires
     # into, so its silence must turn the doctor amber before a week of money
     # goes unread. degraded = a read that could not return every row.
-    {"key": "upwork_pulse", "label": "Upwork heartbeat (offers, invitations)",
+    {"key": "upwork_pulse", "label": "Upwork heartbeat (offers, invitations, messages)",
      "task_name": "upwork_pulse", "max_age_hours": 2,      # every 15 min + grace
-     "degrade_kinds": ("pulse_failed",), "critical": True, "backs": "pipeline",
+     "degrade_kinds": ("pulse_failed", "messages_pass_failed"),
+     "critical": True, "backs": "pipeline",
      "launchd_label": "io.etherwise.v3.upwork-pulse", "catch_up": True,
      "why": "one read a quarter hour that says whether an offer or an invitation"
             " is waiting — the only thing that sees either; stale means an offer"
-            " can sit unanswered for a day"},
+            " can sit unanswered for a day. It also carries the room sweep (0.4),"
+            " so a reply lands in v3 within 15 minutes instead of at the next"
+            " 10:15/19:15 inbox poll"},
     {"key": "upwork_financials", "label": "Upwork ledger (MCP, daily)",
      "task_name": "upwork_financials", "max_age_hours": 30,      # daily + grace
      "degrade_kinds": ("financials_truncated", "financials_no_agency", "inflight_failed"),
@@ -1301,6 +1304,21 @@ MCP_CONTRACT_DETAIL_DAYS = 5
 MCP_TIMESHEET_MAX_CALLS = 12   # window-halving budget: 14 days of entries
                                # cost 7 reads on 2026-08-26
 MCP_OFFER_PENDING_STATES = ("awaiting_your_acceptance",)
+# ── use case F: the message rail (0.4, 26 Aug) ───────────────────────────────
+# `get_messages` inside the quarter-hour pulse. The room list is the change
+# detector; a room whose newest story we do not hold is the only one whose
+# messages get read.
+MCP_ROOMS_PAGE = 10             # rooms per list_rooms call
+MCP_ROOMS_MAX_PAGES = 3         # 30 rooms is well past his active set
+MCP_MESSAGE_MAX_ROOMS = 5       # detail reads per heartbeat — a hard ceiling
+MCP_MESSAGES_PAGE = 20
+MCP_MESSAGES_MAX_PAGES = 3
+# Upwork writes SYSTEM stories stamped with from_self=true. Counted as his own
+# reply they would clear an owed-reply card he never answered, so any story
+# whose text carries one of these markers is direction 'system'. Blunt on
+# purpose: a missed outbound only leaves a card up longer, a false outbound
+# tells him he replied when he did not.
+MCP_MESSAGE_SYSTEM_MARKERS = ("System event:", "Sender's note:")
 # Contracts through the MCP (use case D, Phase 0.3; Abhijeet 26 Aug 19:18):
 # `list_contracts search` on the PERSONAL org lists every contract he holds,
 # the agency's included (the agency org refuses the search). Once a day
