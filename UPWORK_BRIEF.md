@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; rounds 04:15, 05:15, 06:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`) · the overnight list of 26 Aug DONE (0o, 0p, 0r, next actions 5) — his review pending · 16:12 answers: captures taken, promises reply-type only, **use case A built and scheduled** (`upwork_financials` 06:05 daily, `861b642`) — five ◆ under Next actions 5
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`) · Phase 1 BUILT, REDESIGNED, with Run-now buttons · the overnight list of 26 Aug DONE — his review of the tabs pending · **use case A live** (`upwork_financials` 06:05 daily, `861b642` `1ed25ea`: ledger, tie-out, twins) · **use case C live — Phase 0.2** (`f231295` `0569cb1`: every proposal with a verdict, win rate 11.0 %) · next: 0.3 contracts (call 6), 0.5 offers, the Chrome connects rail's day
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -828,15 +828,18 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    far is one Upwork's own status field states. **The 285 rows with no verdict or a stale
    Interview are his to map** (◆ below): the honest all-time win rate becomes ~42 of ~400
    (~11 %) instead of the May snapshot's 46 % of the rows that had rooms.
-   **19:05 his answers: "Expired / Lost as proposed" · "hourly is fine"** (`<p34>`):
+   **19:05 his answers: "Expired / Lost as proposed" · "hourly is fine"** (`0569cb1`):
    `config.MCP_PROPOSAL_LIST_MAP` — (list, own status) → verdict when Upwork's own status
    field writes none, and a closed job's list ends a live Interview: Submitted + job
    closed/gone/won by someone else → **Expired**; Invitation accepted + the same → **Lost**;
    "Archived (job closed)" → **Expired**, or **Lost** when our row already held an
    Interview; the Declined list → Lost. Upwork's own terminal status always wins.
-   `mcp_proposals.backfill_verdicts()` applied it once to the rows already listed (numbers
-   below); the hourly pass applies it from here on. Nothing older than a week reaches the
-   Sunday email (its 7-day window on `modified_dt`).
+   `mcp_proposals.backfill_verdicts()` applied it once to the rows already listed at 19:12:
+   **Lost 59 + Expired 230 written; the table now reads Won 42 · Lost 65 · Expired 255 ·
+   Withdrawn 20 · Interview 3 · open (submitted) 29 — the cockpit's win rate 42 of 382
+   decided = 11.0 %** (`/api/pipeline`; the line no longer calls itself an upper bound,
+   `0569cb1`). The hourly pass applies the map from here on. Nothing older than a week
+   reaches the Sunday email (its 7-day window on `modified_dt`).
    ◆ 0.5 substrate: `Offered` proposals now land hourly with `upwork_status='Offered'` — an
    offer card is one rule away.
    **16:50 his three answers: run it now once · invoice date, as built · insert the
@@ -938,4 +941,4 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   First live round on his word.
 - 2026-08-26 19:05 · The cross-tab of the two rounds → "Expired / Lost as proposed" (the
   second half of decision 4's map, `MCP_PROPOSAL_LIST_MAP`) and "hourly is fine" (the
-  proposals pass stays at :45). `<p34>`.
+  proposals pass stays at :45). `0569cb1`.
