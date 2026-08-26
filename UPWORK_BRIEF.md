@@ -572,6 +572,24 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    exists, the offers tile once 0.4 lands.
 3. (first Monday after 0.2) First Loop 2 skip review — even manual, to shape it.
 4. (when he says go) Phase 3 applicant pull for the LinkedIn-writer role.
+5. **The MCP use cases (overnight item 2, 07:30) — plan written: `docs/upwork/MCP_USE_CASES.md`.**
+   The short answer to his example: yes — `get_freelancer_financials transactions` per org
+   (the agency is a second `org_uid`, not the ACE that fails "Authorization failed" on every
+   hourly sync) replaces the CSV import for daily use; the CSV stays as the yearly audit
+   (its running-balance tie-out has no API twin; the weekly `summary` becomes the continuous
+   tie-out as a doctor check). Live picture that decided it: the GraphQL sync has inserted
+   no personal transaction since 24 June and no agency row since 3 June; all 72 of August's
+   Upwork rows are his CSV imports. Order: **A** transactions + summary → **B** connects
+   (`connects_balance`, the last Chrome rail retires) → **C** proposals (0.2) → **D**
+   contracts + milestones + end reasons (0.3; also the "second TCC contract?" answer) →
+   **E** offers (0.5) → **G** the one-call dashboard heartbeat → **F** messages (0.4) →
+   **H** timesheets (hours worked, not yet invoiced — new on Money) → the small ones (rate
+   insights as a scoring input, saved jobs, the profile's real rate). ~150 reads a day at the
+   proposed cadences. **Eight real-account calls wait on his OK, one at a time** (listed in
+   §12 of the plan: `list_accounts`, transactions on each org, summary, connects_balance,
+   contracts search on the agency org, dashboard check, list_rooms). Built without any new
+   call next: the `mcp_financials` / `mcp_connects` modules with the row-mapping left as one
+   function each for the fixture to pin — the way `mcp_search.py` was built before the flip.
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated
