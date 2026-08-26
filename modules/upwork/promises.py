@@ -71,12 +71,18 @@ def new_outbound(conn: sqlite3.Connection, now: Optional[datetime] = None) -> li
     floor = (_utc_now(now) - timedelta(days=config.UPWORK_PROMISE_LOOKBACK_DAYS)
              ).strftime("%Y-%m-%d %H:%M:%S")
     since = row["value"] if row and row["value"] > floor else floor
+    # both clocks: ingested after the cursor (new to us) AND said inside the
+    # window (new at all). The first live run (10:15, 26 Aug) read two 2025
+    # messages from a room whose history had just been re-pulled — a message
+    # can be ingested this week and a year old.
+    said_floor = floor.replace(" ", "T")
     return [dict(r) for r in conn.execute(
         "SELECT m.id, m.thread_id, m.message, m.created_dt, m.ingested_at,"
         " t.room_name, t.client_id FROM messages m JOIN threads t ON t.id = m.thread_id"
         " WHERE lower(m.direction) = 'outbound' AND m.ingested_at > ?"
+        " AND substr(replace(m.created_dt, ' ', 'T'), 1, 19) >= ?"
         " AND TRIM(COALESCE(m.message,'')) != '' ORDER BY m.ingested_at, m.created_dt",
-        (since,))]
+        (since, said_floor))]
 
 
 def _set_cursor(conn: sqlite3.Connection, value: str) -> None:
@@ -119,7 +125,15 @@ def _user_content(msg: dict, before: list) -> str:
     lines = [f"Source: Upwork room {msg['thread_id']} ({msg.get('room_name') or 'a client'})",
              f"Source date: {when}",
              "The LAST message below is by Abhijeet (us). Extract only the promises",
-             "HE makes in that last message; the earlier lines are context.", ""]
+             "HE makes in that last message; the earlier lines are context.",
+             # the first live run (26 Aug) minted "stay in the call waiting for
+             # Carly" from a check-in and "assist Rocky" from "I can definitely
+             # assist you" — a promise is a specific thing he will DO next
+             "A commitment is a specific thing he says he WILL DO after this message",
+             "(send, share, build, fix, check, call, get back, let them know).",
+             "NOT a commitment: saying he can or would be able to do something, offering",
+             "a time for a call, a check-in, thanks, or a description of work already done.",
+             ""]
     for b in before:
         who = "us" if (b.get("direction") or "").lower() == "outbound" else (b.get("sender_user_name") or "client")
         lines.append(f"[{(b.get('created_dt') or '')[:10]}] {who}: {(b.get('message') or '')[:600]}")

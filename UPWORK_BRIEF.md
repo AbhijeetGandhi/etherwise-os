@@ -504,6 +504,23 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    free but blunter — say if the spend matters. ◆ The first poll after deploy reads the
    last 7 days of his outbound mail (64 messages) → up to 12 extractor calls, the rest at
    the next poll.
+   **First live run (10:15, run 7188): 68 outbound messages scanned, 12 sent to the
+   extractor (the per-run cap; 1 deferred — David's, it comes at the next poll), 9 promises
+   found, 7 already kept (a later message of his in the room), 0 errors.** Read with his
+   eyes: 4 real (ping Mustafa when a window is found; walk Amanda through the demo — OPEN
+   since 20 Aug; send Carly the written breakdown — OPEN since 21 Aug; start Rocky's
+   automation within 2 days), 3 weak ("stay in the call waiting for Carly" from a check-in,
+   "assist Rocky" from "I can definitely assist", "available for a call at 10:30" from an
+   offer of a time — all three already closed by a later message, so no card), and 2 from
+   **2025** (Jonah Weber's room had its history re-pulled this week, so year-old messages
+   were "new" by ingested_at). Fixed the same hour (`<p26>`): a message must be SAID inside
+   the look-back window, not just stored inside it; the extractor is told what is not a
+   commitment (a capability, an offered time, a check-in, thanks, work already done).
+   ◆ The auto-clear rule ("your next message in the room = delivered") is right for
+   reply-type promises and blunt for deliverable-type ones (Rocky's "done within 2 days"
+   was closed by a later hello). If that bites, the refinement is to auto-clear only
+   promises whose text is a reply (let you know / get back / ping / send), and leave the
+   rest to Done — his call.
 0r. DONE 2026-08-26 06:29 (overnight item 1, his 05:20: "I like the way you built UI for the
    upwork tab or at least the direction you headed. I want UI of all the tabs improved now in
    the same way") — **the other six tabs, in the Upwork tab's style.** Mockups first

@@ -179,6 +179,19 @@ class TestExtractAndRecord(PromiseCase):
         self.assertEqual(m["promise_scanned"], 1)
         self.assertIn("tomorrow", ctx.calls[0]["user_content"])
 
+    def test_an_old_message_ingested_today_is_not_a_new_promise(self):
+        """First live run, 26 Aug: a room's 2025 history was re-pulled this
+        week, so two year-old messages were 'new' by ingested_at and cost two
+        extractor calls. Said-when matters as much as stored-when."""
+        self.msg("ancient", "room_nova", "I will fix the trigger quickly", hours_ago=24 * 400,
+                 ingested=(self.now - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"))
+        self.msg("fresh", "room_nova", "I will send it over tomorrow", hours_ago=2)
+        ctx = _Ctx(self.db_path)
+        m = promises.run(ctx, self.db_path, now=self.now)
+        self.assertEqual(m["promise_scanned"], 1)
+        self.assertIn("send it over tomorrow", ctx.calls[0]["user_content"])
+        self.assertIn("NOT a commitment", ctx.calls[0]["user_content"])   # the precision rule rides along
+
 
 class TestAutoClear(PromiseCase):
     def test_our_next_message_in_the_room_keeps_the_promise(self):
