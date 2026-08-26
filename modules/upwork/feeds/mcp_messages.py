@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from typing import Callable, List, Optional
 
 from core import config, db
+from modules.upwork import counterparty, promises
 from modules.upwork.feeds import mcp_search
 
 TOOL = "get_messages"
@@ -363,6 +364,8 @@ def run(ctx, session, org: Optional[str] = None, dashboard: Optional[dict] = Non
                "stories": {"read": 0, "inserted": 0, "updated": 0, "skipped": 0},
                "rooms_read": 0}
     if not rooms:
+        with db.connect(dbp) as conn:
+            counterparty.refresh(conn)
         return metrics
 
     with db.connect(dbp) as conn:
@@ -371,6 +374,10 @@ def run(ctx, session, org: Optional[str] = None, dashboard: Optional[dict] = Non
             if row is None:
                 continue
             metrics["rooms"][upsert_thread(conn, row)] += 1
+        # one person, several rooms: the key is derived from mutable data
+        # (attribution changes it), so it is recomputed here rather than
+        # trusted. A few hundred rows, no network.
+        metrics["counterparty_keys"] = counterparty.refresh(conn)
         targets = rooms_to_read(conn, rooms)
         stops = {rid: newest_held(conn, rid) for rid in targets}
 
@@ -392,9 +399,25 @@ def run(ctx, session, org: Optional[str] = None, dashboard: Optional[dict] = Non
                     metrics["stories"]["skipped"] += 1
                     continue
                 metrics["stories"][upsert_message(conn, row)] += 1
-    if metrics["rooms_read"]:
+    with db.connect(dbp) as conn:
+        # A promise closes when he replies. The extractor needs a model call and
+        # stays on the twice-daily inbox poll; auto_close is deterministic SQL,
+        # so it runs here and a kept promise clears within the quarter hour
+        # instead of waiting for 19:15.
+        try:
+            metrics["promises_kept"] = promises.auto_close(conn)
+        except Exception as exc:                                 # noqa: BLE001
+            ctx.log(f"promise auto-close skipped: {exc!r}")
+        # a draft on a room the conversation has left
+        gone = counterparty.supersede_stale(conn)
+        metrics["drafts_superseded"] = len(gone)
+    for g in gone:
+        ctx.log(f"draft superseded: {g['who']} — written {g['written'][:10]},"
+                f" but we spoke to them {g['spoke_at'][:10]}")
+    if metrics["rooms_read"] or gone:
         ctx.log(f"messages: {len(rooms)} rooms, {metrics['rooms_read']} moved,"
-                f" {metrics['stories']['inserted']} new stories")
+                f" {metrics['stories']['inserted']} new stories,"
+                f" {metrics['drafts_superseded']} stale draft(s) superseded")
     return metrics
 
 

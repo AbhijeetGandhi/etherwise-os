@@ -117,9 +117,17 @@ def upwork_signals(conn, thread_ids: Sequence[str]) -> dict:
                           f" WHERE id IN ({marks}) AND latest_message_dt IS"
                           f" NOT NULL", ids),
                 "has_messages": False}
+    # Per-thread newest inbound, but ONLY for threads still waiting on us —
+    # a room where WE spoke last holds no obligation. Before 2026-08-27 every
+    # room counted, so once the group covered ALL of a person's rooms (which is
+    # the fix for "the talking moved to the new chat and Today still nags about
+    # the old one") a long-finished room would have dragged `waiting_since`
+    # backwards and made an answered person look MORE overdue, not less.
     per_thread = [r[0] for r in conn.execute(
-        f"SELECT MAX(created_dt) FROM messages WHERE thread_id IN ({marks})"
-        f" AND lower(direction)='inbound' GROUP BY thread_id", ids) if r[0]]
+        f"SELECT MAX(CASE WHEN lower(direction)='inbound' THEN created_dt END) inb,"
+        f" MAX(CASE WHEN lower(direction)='outbound' THEN created_dt END) outb"
+        f" FROM messages WHERE thread_id IN ({marks}) GROUP BY thread_id", ids)
+        if r[0] and not (r[1] and nudges.ts_key(r[1]) > nudges.ts_key(r[0]))]
     return {
         "inbound": _one(conn, f"SELECT MAX(created_dt) FROM messages WHERE"
                               f" thread_id IN ({marks}) AND"

@@ -388,11 +388,28 @@ class TestRules(CoSCase):
         self.assertEqual(rules.rule_owed_replies(self.db_path, dt(d=22)), [])
 
     def test_our_own_slack_reply_is_not_the_client_speaking(self):
+        """Our own outbound must never be read as the counterparty speaking —
+        `evidence_ts` stays THEIR last word, 06-10."""
+        from modules.chief_of_staff import evidence as _ev
         self.seed_client()
         self.slack("2026-06-22T08:00:00+00:00", "outbound")
-        c = rules.rule_owed_replies(self.db_path, dt(d=22))[0]
-        self.assertEqual(c["payload"]["evidence_ts"][:10], "2026-06-10")
-        self.assertTrue(c["payload"]["evidence"]["answered_since"])
+        with db.connect(self.db_path) as conn:
+            ev = _ev.counterparty(conn, thread_ids=["room_b"],
+                                  client_id="the-cradle-company")
+        self.assertEqual(ev["ts"][:10], "2026-06-10")
+        self.assertTrue(ev["answered_since"])
+        self.assertEqual(ev["ours_channel"], "slack")
+
+    def test_answering_them_anywhere_retires_the_owed_reply_card(self):
+        """2026-08-27, on his "we are still seeing if my reply was pending on
+        the old chat": `answered_since` was computed and shown but never
+        allowed to SUPPRESS. A reply he had already sent — on another Upwork
+        room or on another channel — left the card up, pointing at an unsent
+        draft for a conversation that had moved on."""
+        self.seed_client()
+        self.assertEqual(len(rules.rule_owed_replies(self.db_path, dt(d=22))), 1)
+        self.slack("2026-06-22T08:00:00+00:00", "outbound")   # he answered
+        self.assertEqual(rules.rule_owed_replies(self.db_path, dt(d=22)), [])
 
     def test_an_unattributed_thread_admits_it_only_saw_upwork(self):
         self.seed_owed()          # no client_id -> no cross-channel key exists

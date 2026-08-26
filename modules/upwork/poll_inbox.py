@@ -75,6 +75,7 @@ def upsert_thread(conn, room: dict) -> None:
               (room.get("vendorProposal") or {}).get("id"),
               room.get("numUnread"), latest.get("id"),
               latest.get("createdDateTime"))
+    from modules.upwork import counterparty
     if conn.execute("SELECT 1 FROM threads WHERE id=?",
                     (room["id"],)).fetchone():
         conn.execute(
@@ -88,6 +89,9 @@ def upsert_thread(conn, room: dict) -> None:
             "INSERT INTO threads (room_name, topic, room_type, contract_id,"
             " proposal_id, num_unread, latest_message_id, latest_message_dt,"
             " id) VALUES (?,?,?,?,?,?,?,?,?)", (*fields, room["id"]))
+    # one person, several rooms (migration 035): written by BOTH message
+    # writers so no reader has to recompute who a thread belongs to.
+    counterparty.refresh(conn, [room["id"]])
 
 
 def upsert_message(conn, thread_id: str, story: dict) -> bool:

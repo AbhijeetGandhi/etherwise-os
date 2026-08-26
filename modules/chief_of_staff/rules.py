@@ -74,9 +74,16 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
             g = groups.setdefault(key, {"rows": [], "client_id": r["client_id"]})
             g["rows"].append(dict(r))
 
-        # one evidence read per counterparty, inside the same connection
+        # one evidence read per counterparty, inside the same connection.
+        # EVERY room that person holds, not the ones that happen to carry a
+        # pending draft (Abhijeet, 2026-08-27: Upwork opens a new room per job,
+        # the talking moves there, and this rule kept nagging about the room it
+        # left). counterparty.expand is the whole difference between "have we
+        # answered them" and "have we answered them in THIS room".
+        from modules.upwork import counterparty as _cp
         for key, g in groups.items():
-            tids = [r["thread_id"] for r in g["rows"]]
+            tids = _cp.expand(conn, [r["thread_id"] for r in g["rows"]])
+            g["thread_ids"] = tids
             g["ev"] = evidence.counterparty(
                 conn, thread_ids=tids, client_id=g["client_id"],
                 thread_latest=max(r["latest_message_dt"] for r in g["rows"]))
@@ -95,6 +102,14 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
         idle = evidence.age_days(ev["waiting_since"], nowdt)
         if idle is not None and idle < config.COS_FOLLOWUP_IDLE_DAYS:
             continue      # they spoke recently, just not on Upwork — not idle
+        # WE SPOKE AFTER THEY DID, anywhere: no reply is owed, whatever an
+        # unsent draft on one room says. Until 2026-08-27 `answered_since` was
+        # computed and shown but never allowed to suppress, and the group only
+        # covered the drafted rooms — so "Client comms: Dhanya Sangolli" sat on
+        # Today because of a draft from 30 July while he had answered her on
+        # 26 August and started a $300 contract with her that day.
+        if ev.get("answered_since"):
+            continue
         # the label: registry name for an attributed thread, else the room's
         # counterparty name. Never the raw room id.
         label = None
@@ -136,7 +151,11 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
             # person's two rooms now settles both.
             "payload": {"idle_days": idle,
                         "thread_id": head["thread_id"],
-                        "thread_ids": [r["thread_id"] for r in rows],
+                        # EVERY room this person holds, so the conversation
+                        # view (data._conversation renders whatever it is given)
+                        # shows the chat the talking actually moved to, not the
+                        # one that happens to hold an unsent draft.
+                        "thread_ids": g["thread_ids"],
                         "client_id": g["client_id"],
                         "engagement": eng, "evidence": ev,
                         "evidence_ts": ev["ts"]}})

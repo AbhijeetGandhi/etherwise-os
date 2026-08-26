@@ -158,11 +158,12 @@ def followup_key(client_id: Optional[str], room_name: Optional[str],
     the founder's Done is filed under the old one. Nothing here may assume the
     key is stable — see modules.chief_of_staff.decisions, which carries a
     decision across a re-keying through the threads it covered."""
-    if client_id:
-        return f"followup:c:{client_id}"
-    base = (room_name or "").split(",")[0].strip()
-    slug = _SLUG.sub("-", base.lower()).strip("-")
-    return f"followup:p:{slug}" if slug else f"followup:{thread_id}"
+    from modules.upwork import counterparty
+    key = counterparty.key_for(client_id, room_name, thread_id)
+    # byte-for-byte what this returned before the key moved to
+    # modules.upwork.counterparty (2026-08-27): re-keying a live card would
+    # strand the founder's Done under the old key.
+    return f"followup:{thread_id}" if key.startswith("t:") else f"followup:{key}"
 
 
 def followup_key_forms(client_id: Optional[str], room_name: Optional[str],
@@ -176,14 +177,11 @@ def followup_key_forms(client_id: Optional[str], room_name: Optional[str],
     again. It recovers room->person and person->client; it CANNOT recover a
     client merge or rename, because the retired client_id is no longer reachable
     from the thread. That gap is why decisions.record() exists."""
+    from modules.upwork import counterparty
     forms = []
-    if client_id:
-        forms.append(f"followup:c:{client_id}")
-    base = (room_name or "").split(",")[0].strip()
-    slug = _SLUG.sub("-", base.lower()).strip("-")
-    if slug:
-        forms.append(f"followup:p:{slug}")
-    forms.append(f"followup:{thread_id}")
+    for key in counterparty.key_forms(client_id, room_name, thread_id):
+        forms.append(f"followup:{thread_id}" if key.startswith("t:")
+                     else f"followup:{key}")
     return forms
 
 
