@@ -489,10 +489,14 @@ class TestRun(NoSleep):
         self.assertEqual(seen["944448026"]["outcome"], "updated")
         self.assertEqual((seen["944448040"]["outcome"], seen["944448040"]["profile"],
                           seen["944448040"]["invoice_dt"]), ("inserted", "Personal", "2026-08-16T00:00:00+0000"))
-        # connects: shadow — compared, never written
+        # connects: LIVE since 2026-08-27 (the Chrome rail retired that day),
+        # but every fixture event predates the handover, so they are still only
+        # compared. A row ON or after MCP_CONNECTS_SINCE is inserted — pinned in
+        # test_a_row_on_or_after_the_handover_is_written.
         c = m["connects"]
         self.assertEqual((c["mode"], c["inserted"], c["shadow_rows"], c["twins"], c["untwinned"]),
-                         ("shadow", 0, 10, 9, 1))
+                         ("live", 0, 10, 9, 1))
+        self.assertEqual([e["kind"] for e in c["untwinned_events"]], ["badge"])
         self.assertEqual(c["balance"]["total"], 256)
         self.assertEqual(self._t("SELECT COUNT(*) n FROM connects_history")[0]["n"], len(CHROME_ROWS))
         self.assertEqual(ctx.anomalies, [])
@@ -687,18 +691,30 @@ class TestScheduled(unittest.TestCase):
         self.assertEqual(doc["Label"], "io.etherwise.v3.upwork-financials")
         self.assertEqual(doc["ProgramArguments"][-2:], ["-m", "modules.upwork.feeds.mcp_financials"])
         self.assertEqual(doc["StartCalendarInterval"], {"Hour": 6, "Minute": 5})
-        src = next(s for s in config.SOURCES if s.get("task_name") == mf.TASK_NAME)
+        src = next(s for s in config.SOURCES if s.get("key") == "upwork_financials")
         self.assertEqual((src["key"], src["critical"], src["launchd_label"], src["backs"], src["catch_up"]),
                          ("upwork_financials", True, doc["Label"], "money", True))
         self.assertIn("financials_truncated", src["degrade_kinds"])
         from modules.cockpit import actions, data
+        # the retired Chrome rail's health line now watches THIS task
+        connects = next(s for s in config.SOURCES if s.get("key") == "connects_rail")
+        self.assertEqual(connects["task_name"], mf.TASK_NAME)
+        self.assertEqual(connects["launchd_label"], doc["Label"])
+        self.assertFalse((ROOT / "launchd" / "io.etherwise.v3.upwork-connects.plist").exists())
+        self.assertTrue((ROOT / "launchd" / "retired"
+                         / "io.etherwise.v3.upwork-connects.plist").is_file())
+        self.assertNotIn("upwork_connects", actions.RERUN_JOBS)
         self.assertEqual(actions.RERUN_JOBS[mf.TASK_NAME], doc["Label"])
         self.assertIn(mf.TASK_NAME, data._RUN_TASK_WORDS)
         self.assertTrue((ROOT / "core" / "migrations" / "030_upwork_mcp_rows.sql").is_file())
         self.assertTrue((ROOT / "core" / "migrations" / "031_upwork_mcp_summaries.sql").is_file())
         self.assertEqual(config.MCP_SUMMARY_WEEKS, 2)
         self.assertIn("get_freelancer_financials", mcp_client.READ_TOOLS)
-        self.assertIsNone(config.MCP_CONNECTS_SINCE)             # connects stay in shadow until he sets the day
+        # 2026-08-27, his word: the MCP owns connects from that day and the
+        # Chrome rail retired the SAME day (law 2 — never both on one day).
+        self.assertEqual(config.MCP_CONNECTS_SINCE, "2026-08-27")
+        self.assertFalse(any(s.get("task_name") == "upwork_connects"
+                             for s in config.SOURCES))
 
 
 if __name__ == "__main__":

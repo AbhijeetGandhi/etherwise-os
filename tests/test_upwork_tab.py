@@ -539,7 +539,11 @@ class TestUpworkRails(UpworkTabCase):
         self.assertIn("threads 12", inbox["result"])
         self.assertTrue(inbox["rerun"])
         outcome = next(r for r in out["rails"]["items"] if r["key"] == "outcome_email")
-        self.assertFalse(outcome["rerun"])                   # catch_up False -> no button
+        # 2026-08-27: this one has a button now. It SENDS, which is why it had
+        # none, but outcome_capture.already_sent() refuses a second send inside
+        # one ISO week — so a kick can only deliver a week that was missed
+        # (19 Jul and 23 Aug both were), never a duplicate.
+        self.assertTrue(outcome["rerun"])
 
     def test_clickup_line_is_derived_from_the_scan_and_the_missed_pushes(self):
         cu = next(r for r in self.out["rails"]["items"] if r["key"] == "clickup_push")
@@ -742,7 +746,10 @@ class TestRunStatus(unittest.TestCase):
         from modules.cockpit import actions
         for task in actions.RERUN_JOBS:
             self.assertNotIn("error", data.upwork_run_status(self.db_path, task=task))
-        self.assertIn("error", data.upwork_run_status(self.db_path, task="upwork_outcomes"))
+        # upwork_outcomes joined RERUN_JOBS on 2026-08-27 (see above); a task
+        # OUTSIDE the allowlist is still an error envelope, never a 500.
+        self.assertNotIn("error", data.upwork_run_status(self.db_path, task="upwork_outcomes"))
+        self.assertIn("error", data.upwork_run_status(self.db_path, task="not_a_task"))
 
 
 class TestNoLiteralBandsOnTheTab(unittest.TestCase):

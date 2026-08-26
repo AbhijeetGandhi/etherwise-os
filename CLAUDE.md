@@ -12,7 +12,8 @@ Complete rebuild of the agency OS. Spec: `../business/etherwise-v3-core-architec
 
 **v2 (`../etherwise-os/`) is LIVE in parallel. Do not touch it. Shadow rules:**
 - v3 makes ZERO external writes (Airtable/ClickUp/email/Upwork) while a module's `SHADOW_MODE` flag is True in `core/config.py` — intended writes go to `shadow_ledger`
-- v2 owns Upwork OAuth refresh; v3 reads `../etherwise-os/.credentials/upwork-api.json` READ-ONLY, never refreshes
+- Upwork OAuth: **v3 owns the refresh since 2026-06-30** (`var/upwork-token-owner` says `v3`);
+  the credentials file is still `../etherwise-os/.credentials/upwork-api.json`, shared with v2
 
 ## Conventions
 - stdlib-only Python (system python3); the Anthropic/Agent SDK is the one external dependency

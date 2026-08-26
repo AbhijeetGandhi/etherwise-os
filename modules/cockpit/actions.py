@@ -58,7 +58,9 @@ RERUN_JOBS = {
     "upwork_scan": "io.etherwise.v3.upwork-scan",
     "upwork_sync": "io.etherwise.v3.upwork-sync",
     "upwork_inbox": "io.etherwise.v3.upwork-inbox",
-    "upwork_connects": "io.etherwise.v3.upwork-connects",
+    # (upwork_connects sat here until 2026-08-27; the last Chrome rail retired
+    # when MCP_CONNECTS_SINCE was set — connects_history is filled by
+    # upwork_financials now, which is already in this table.)
     # (mcp_shadow_poll sat here 08-25 → 08-26; the poller retired at the 0.1
     # flip — the MCP round now runs inside upwork_scan.)
     "crm_mirror": "io.etherwise.v3.crm-mirror",
@@ -75,6 +77,13 @@ RERUN_JOBS = {
     "upwork_financials": "io.etherwise.v3.upwork-financials",
     # the quarter-hour heartbeat (2026-08-26): one read, no writes outward.
     "upwork_pulse": "io.etherwise.v3.upwork-pulse",
+    # the hiring side (2026-08-27, Phase 3): reads on his OWN postings.
+    "upwork_hiring": "io.etherwise.v3.upwork-hiring",
+    # 2026-08-27, with the catch_up flip. This one SENDS (the Sunday outcome
+    # email), and it is here anyway because outcome_capture.already_sent()
+    # refuses a second send inside one ISO week — so a kick can only ever
+    # deliver a week that was missed, never a duplicate.
+    "upwork_outcomes": "io.etherwise.v3.upwork-outcomes",
     # added 2026-08-13 with the SOURCES catch_up False->True flip. Safe to kick:
     # read-only IMAP, no sends, and upsert_provisional dedupes on canonical_key.
     "finance_payment_mail": "io.etherwise.v3.finance-payment-mail",

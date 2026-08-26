@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.upwork-hiring</string>
+  <!-- Framework Python (FDA-granted); logs OUTSIDE ~/Desktop. Phase 3, the
+       hiring side: his own postings on the CLIENT org and who applied. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>-m</string>
+    <string>modules.upwork.feeds.mcp_hiring</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/upwork-hiring.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/upwork-hiring.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- every 15 minutes: an offer or an invitation is worth money the hour it
+       lands. Deliberately off the :15/:45 marks so it never shares a minute
+       with the scan or the sync. -->
+  <!-- Daily 07:05 IST. Hiring is not money in flight: a shortlist does not
+       change between breakfast and lunch, and the postings list is one read. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>5</integer>
+  </dict>
+</dict>
+</plist>

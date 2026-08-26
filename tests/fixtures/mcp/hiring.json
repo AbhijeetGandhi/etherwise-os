@@ -1,0 +1,218 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-27 ~00:45 IST (Abhijeet's approval: 'Yes, all four'), CLIENT org 1715797263477194752 — the hiring side. Four tools. Structure verbatim; cover letters truncated with ' [...]'. THE FINDINGS: (1) get_job_posting action=list is PAGE-based (has_more + next_page), not cursor-based, and it already carries the whole applicant funnel — applicants, new_applicants, shortlisted, messaged, offered, hired, pending_invitations — so 'how many applied' needs no second call. (2) get_client_dashboard action=check returns every proposal's FULL cover letter inline; it is the wrong tool for the applicant list (thousands of characters a run). list_client_proposals action=list returns the same rows with a `cover_letter_snippet` and a totalCount, which is what the rail reads. (3) SHORTLISTED AND READ ARE ANNOTATIONS, not statuses: annotations[] carries Read, Shortlisted, Recommended, Sponsored. `status.status` is the client-side vocabulary (Created = applied, Activated = invitation accepted, Archived), NOT the freelancer-side one. (4) `bid` is a display string ('USD 10.0'); the wire's rawValue is EMPTY on this side, so the number is parsed out of the display value or it is not known. (5) get_rate_insights REQUIRES this client org (it refuses the freelancer org) and answers with an occupation it inferred from the text, plus the sample size. Live reading: the LinkedIn Ghostwriter post has 9 applicants, 4 unlooked-at, 6 shortlisted, 0 offered; the market for expert Content Strategy is $15-35/h and the bids run $8-27.",
+ "job_posting_list": {
+  "has_more": true,
+  "next_page": 2,
+  "total_count": 25,
+  "status": "ok",
+  "postings": [
+   {
+    "access": "PUBLIC_INDEX",
+    "applicants": 9,
+    "created_time": "2026-08-21T11:25:27.257Z",
+    "hired": 0,
+    "id": "2090762196989822650",
+    "messaged": 2,
+    "new_applicants": 4,
+    "offered": 0,
+    "pending_invitations": 2,
+    "premium": false,
+    "shortlisted": 6,
+    "status": "PUBLISHED",
+    "title": "LinkedIn Ghostwriter & Content Strategist for B2B AI/Automation Agency",
+    "type": "HOURLY",
+    "updated_time": "2026-08-21T11:25:27.257Z"
+   },
+   {
+    "access": "PUBLIC_INDEX",
+    "applicants": 0,
+    "created_time": "2026-05-20T22:06:10.421Z",
+    "hired": 0,
+    "id": "2057221367732992842",
+    "messaged": 7,
+    "new_applicants": 0,
+    "offered": 0,
+    "pending_invitations": 0,
+    "premium": false,
+    "shortlisted": 0,
+    "status": "CANCELLED",
+    "title": "Automation Engineer, Make.com + Airtable + Python (Full-Time, Long-Term)",
+    "type": "HOURLY",
+    "updated_time": "2026-07-04T22:24:23.833Z"
+   },
+   {
+    "access": "PUBLIC_INDEX",
+    "applicants": 10,
+    "created_time": "2026-01-01T19:42:09.955Z",
+    "hired": 1,
+    "id": "2006813214057080463",
+    "messaged": 5,
+    "new_applicants": 5,
+    "offered": 0,
+    "pending_invitations": 2,
+    "premium": false,
+    "shortlisted": 0,
+    "status": "FILLED",
+    "title": "Make.com, Airtable & Monday Expert",
+    "type": "HOURLY",
+    "updated_time": "2026-02-11T18:47:58.986Z"
+   }
+  ]
+ },
+ "client_proposals_list": {
+  "data": {
+   "pageInfo": {
+    "endCursor": "1:GBV3ZTV0fnJ1NSp9ejJrdyRxYXAyQFsWAkQf",
+    "hasNextPage": true
+   },
+   "proposals": [
+    {
+     "annotations": [
+      "Sponsored"
+     ],
+     "bid": "USD 10.0",
+     "cover_letter_snippet": "<untrusted_participant_content>\nHi Abhijeet\n\nI did something similar for this client: [...]\n</untrusted_participant_content>",
+     "id": "2090763057432716735",
+     "organization": {
+      "name": "Joseph Mathers"
+     },
+     "status": {
+      "status": "Activated",
+      "status_label": "Invitation accepted"
+     },
+     "user": {
+      "id": "1544927503852109824",
+      "name": "Joseph M."
+     }
+    },
+    {
+     "bid": "USD 8.0",
+     "cover_letter_snippet": "<untrusted_participant_content>\nHi,\n\nI've headed global growth marketing for two IT consulting companies [...]\n</untrusted_participant_content>",
+     "id": "2091490102528364545",
+     "organization": {
+      "name": "Binit Singh"
+     },
+     "status": {
+      "status": "Created"
+     },
+     "user": {
+      "id": "2082499540770985726",
+      "name": "Binit S."
+     }
+    },
+    {
+     "annotations": [
+      "Read",
+      "Shortlisted",
+      "Sponsored"
+     ],
+     "bid": "USD 15.0",
+     "cover_letter_snippet": "<untrusted_participant_content>\nHey there\n\nYou said this isn't just a writing role. [...]\n</untrusted_participant_content>",
+     "id": "2091092387036934145",
+     "organization": {
+      "name": "Mark Young"
+     },
+     "status": {
+      "status": "Created"
+     },
+     "user": {
+      "id": "1804046034695974912",
+      "name": "Mark Y."
+     }
+    },
+    {
+     "annotations": [
+      "Shortlisted"
+     ],
+     "bid": "USD 27.0",
+     "cover_letter_snippet": "<untrusted_participant_content>\nAn automation project can easily become a technical explanation [...]\n</untrusted_participant_content>",
+     "id": "2090889325146017793",
+     "organization": {
+      "name": "Quandeel Mazhar"
+     },
+     "status": {
+      "status": "Created"
+     },
+     "user": {
+      "id": "1248553259374776320",
+      "name": "Quandeel M."
+     }
+    }
+   ],
+   "totalCount": 9
+  },
+  "hasMore": true,
+  "next_cursor": "1:GBV3ZTV0fnJ1NSp9ejJrdyRxYXAyQFsWAkQf",
+  "status": "ok",
+  "totalCount": 9
+ },
+ "rate_insights": {
+  "based_on_jobs": 193,
+  "experience_level": "expert",
+  "occupation": "Content Strategy",
+  "rate_high": 35,
+  "rate_low": 15,
+  "scope": "global",
+  "status": "ok"
+ },
+ "client_dashboard": {
+  "_note": "Trimmed: the live answer inlines every cover letter in full (proposals.jobs[] .proposals[].coverLetter, thousands of characters). Only the shape is kept.",
+  "data": {
+   "active_contracts": {
+    "count": 2,
+    "contracts": [
+     {
+      "freelancer": {
+       "id": "1829888936099863541",
+       "name": "John Louisse Polong"
+      },
+      "id": "40531704",
+      "state": "Active",
+      "title": "AI & Automation Engineer (with Python and React knowledge)"
+     },
+     {
+      "freelancer": {
+       "id": "1674772938969116672",
+       "name": "Henry Ikeanyionwu"
+      },
+      "id": "41012684",
+      "state": "Active",
+      "title": "Create 4 design elements for website"
+     }
+    ]
+   },
+   "offers": {
+    "count": 0,
+    "offers": []
+   },
+   "proposals": {
+    "count": 15,
+    "jobs": [
+     {
+      "job_posting_id": "2090762196989822650",
+      "proposals": [
+       "[...] full cover letters"
+      ]
+     }
+    ]
+   },
+   "messages": {
+    "count": 5,
+    "preview_limit": 5,
+    "truncated": true,
+    "unread_in_preview": 1,
+    "note": "Preview only - the newest rooms [...]",
+    "rooms": [
+     {
+      "id": "room_86be53c14321812c1cb714951960cc75",
+      "last_message_at": "2026-08-25T14:15:45.324Z",
+      "num_unread": 1,
+      "room_name": "<untrusted_participant_content>\nRandi Sherman\n</untrusted_participant_content>",
+      "topic": "<untrusted_participant_content>\nLinkedIn Ghostwriter & Content Strategist for B2B AI/Automation Agency\n</untrusted_participant_content>"
+     }
+    ]
+   }
+  },
+  "status": "ok"
+ }
+}

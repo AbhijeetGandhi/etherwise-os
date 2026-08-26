@@ -188,3 +188,46 @@ def run(ctx, session, org: str, now: Optional[datetime] = None,
     ctx.log(f"contracts: {metrics['reads']} reads, {metrics['inserted']} new,"
             f" {metrics['ended']} ended, {metrics['paused']} paused, {metrics['agency']} agency")
     return metrics
+
+
+# ── the ones nobody closed (2026-08-27, on his "surface them") ───────────────
+
+IDLE_SQL = """
+SELECT c.id, c.title, c.client_company, c.contract_type, c.start_dt,
+       MAX(COALESCE((SELECT MAX(t.latest_message_dt) FROM threads t
+                     WHERE t.contract_id = c.id), ''),
+           COALESCE((SELECT MAX(x.creation_dt) FROM transactions x
+                     WHERE x.assignment_company = c.client_company), ''),
+           COALESCE((SELECT MAX(ts.date_worked) FROM upwork_timesheets ts
+                     WHERE ts.contract_id = c.id), '')) AS last_life
+  FROM contracts c
+ WHERE c.upwork_status = 'ACTIVE'
+ ORDER BY last_life, c.start_dt
+"""
+
+
+def idle(conn: sqlite3.Connection, days: Optional[int] = None,
+         now: Optional[datetime] = None) -> list:
+    """ACTIVE contracts with nothing on them — no message, no money, no logged
+    hour — for `days`. Upwork leaves a contract open until someone ends it, so
+    an abandoned engagement stays ACTIVE for years and quietly inflates every
+    "how much work is committed" reading. 17 of his 35 on 2026-08-27.
+
+    `last_life` is the newest of the three signals, or '' when there has never
+    been one; a contract that never showed a sign of life is idle by its start
+    date, which is why the ordering puts '' first."""
+    window = days if days is not None else config.MCP_CONTRACT_IDLE_DAYS
+    today = (now or datetime.now(config.TZ)).date()
+    cutoff = (today - timedelta(days=window)).isoformat()
+    out = []
+    for r in conn.execute(IDLE_SQL):
+        last = (r["last_life"] or "")[:10] or (r["start_dt"] or "")[:10]
+        if last and last >= cutoff:
+            continue
+        out.append({"id": r["id"], "title": r["title"],
+                    "client_company": r["client_company"],
+                    "contract_type": r["contract_type"],
+                    "start_dt": (r["start_dt"] or "")[:10],
+                    "last_life": (r["last_life"] or "")[:10] or None,
+                    "quiet_since": last or None})
+    return out

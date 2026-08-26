@@ -1,0 +1,70 @@
+#!/bin/bash
+# Resolve Upwork quarantine entries that are duplicates of a canonical row the
+# ledger already holds. Dry run by default; --apply writes.
+#
+#   bin/upwork-clear-quarantine            what would be resolved, and why
+#   bin/upwork-clear-quarantine --apply    resolve them (audit_log row each)
+#
+# A row is ONLY resolved when its canonical is in `transactions` WITH an
+# amount. Anything else stays quarantined and is listed as "left alone" —
+# nothing is silently dropped (CLAUDE.md).
+cd "$(dirname "$0")/.." && PYTHONPATH="$PWD" python3 -c "
+import json, re, sys
+from core import config, db
+
+apply = '--apply' in sys.argv
+CANON = re.compile(r'canonical ([0-9A-Za-z:_-]+)')
+PHANTOM = re.compile(r'\(upwork:([0-9]+)\)')
+
+def canonical_of(reason):
+    m = CANON.search(reason or '') or PHANTOM.search(reason or '')
+    if not m:
+        return None
+    key = m.group(1)
+    return key if key.startswith('upwork:') else 'upwork:' + key
+
+resolved, left = [], []
+with db.connect(config.DB_PATH) as conn:
+    rows = list(conn.execute(
+        'SELECT id, at, reason, payload_json FROM quarantine'
+        \" WHERE resolved_at IS NULL AND source='upwork' ORDER BY id\"))
+    for r in rows:
+        key = canonical_of(r['reason'])
+        hit = conn.execute(
+            'SELECT record_id, amount_minor, source FROM transactions'
+            ' WHERE canonical_key=? OR record_id=?',
+            (key, (key or '').replace('upwork:', ''))).fetchone() if key else None
+        if not hit or hit['amount_minor'] is None:
+            left.append((r['id'], (r['reason'] or '')[:70], key, bool(hit)))
+            continue
+        resolved.append((r['id'], key, hit['amount_minor'], hit['source'],
+                         (r['at'] or '')[:10]))
+        if apply:
+            conn.execute(
+                \"UPDATE quarantine SET resolved_at=datetime('now'),\"
+                \" resolution='discarded' WHERE id=?\", (r['id'],))
+            conn.execute(
+                'INSERT INTO audit_log (actor, entity, entity_id, field,'
+                ' old_value, new_value, source, note) VALUES'
+                \" ('bin/upwork-clear-quarantine','quarantine',?,'resolution',\"
+                \" NULL,'discarded','upwork',?)\",
+                (str(r['id']),
+                 'duplicate of ' + str(key) + ' which is in the ledger with amount_minor '
+                 + str(hit['amount_minor']) + ' (source ' + str(hit['source']) + ')'))
+
+print(('RESOLVED ' if apply else 'WOULD RESOLVE ') + str(len(resolved)) + ' of '
+      + str(len(resolved) + len(left)) + ' open Upwork quarantine entries')
+for qid, key, amt, src, at in resolved[:40]:
+    print('  #' + str(qid) + '  ' + str(at) + '  -> ' + str(key)
+          + '  ' + str(amt) + ' minor  ' + str(src))
+if len(resolved) > 40:
+    print('  ... and ' + str(len(resolved) - 40) + ' more')
+if left:
+    print('LEFT ALONE ' + str(len(left)) + ' (canonical missing or amountless):')
+    for qid, reason, key, hit in left[:20]:
+        print('  #' + str(qid) + '  ' + reason + '  canonical=' + str(key)
+              + ('  (row exists, no amount)' if hit else '  (no row)'))
+if not apply and resolved:
+    print()
+    print('Nothing was written. Re-run with --apply.')
+" "$@"

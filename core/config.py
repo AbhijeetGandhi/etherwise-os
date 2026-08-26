@@ -785,13 +785,18 @@ SELF_SUBJECT_PATTERNS = (
 #                   anything with an outward side-effect that must not repeat
 #                   (the brief emails), and for manually-fed sources.
 SOURCES = (
-    {"key": "connects_rail", "label": "Connects-history rail",
-     "task_name": "upwork_connects", "max_age_hours": 26,
-     # an empty window is degraded-not-failed: genuinely no activity looks
-     # identical to a throttled endpoint, and failing would spam criticals
+    # 2026-08-27: the LAST Chrome rail retired. connects_history is written by
+    # the MCP ledger read (mcp_financials, daily 06:05) from MCP_CONNECTS_SINCE
+    # on; io.etherwise.v3.upwork-connects moved to launchd/retired/. The health
+    # line stays — the applied-truth still needs a freshness signal — it just
+    # watches the task that actually fills the table now. An empty window is
+    # degraded-not-failed: genuinely no activity looks identical to a throttled
+    # endpoint, and failing would spam criticals.
+    {"key": "connects_rail", "label": "Connects history (MCP, in the ledger rail)",
+     "task_name": "upwork_financials", "max_age_hours": 30,      # daily + grace
      "degrade_kinds": ("connects_empty_window",),
      "critical": True, "backs": "applied",
-     "launchd_label": "io.etherwise.v3.upwork-connects", "catch_up": True,
+     "launchd_label": "io.etherwise.v3.upwork-financials", "catch_up": True,
      "why": "the applied-truth source; a stale rail makes 'applied' look like a"
             " live 0 when nobody is actually counting"},
     {"key": "scanner", "label": "Upwork job feed (MCP)",
@@ -822,7 +827,10 @@ SOURCES = (
     {"key": "upwork_outcomes", "label": "Sunday outcome email",
      "task_name": "upwork_outcomes", "max_age_hours": 192,    # weekly + a day of grace
      "degrade_kinds": (), "critical": False, "backs": "upwork", "empty_ok": True,
-     "launchd_label": "io.etherwise.v3.upwork-outcomes", "catch_up": False,   # an email must not repeat
+     # catch_up is SAFE despite this being an email: outcome_capture.already_sent
+     # refuses a second send in the same ISO week, so a Sunday the Mac slept
+     # through (19 Jul and 23 Aug both) is asked on the Monday instead of never.
+     "launchd_label": "io.etherwise.v3.upwork-outcomes", "catch_up": True,
      "why": "the Loop 2 outcome-reason capture; a week with nothing to ask is a"
             " clean skip, a week that never ran is not"},
     {"key": "cos_sweep", "label": "Card sweep (chief of staff)",
@@ -884,6 +892,12 @@ SOURCES = (
             " can sit unanswered for a day. It also carries the room sweep (0.4),"
             " so a reply lands in v3 within 15 minutes instead of at the next"
             " 10:15/19:15 inbox poll"},
+    {"key": "upwork_hiring", "label": "Hiring side (his own postings)",
+     "task_name": "upwork_hiring", "max_age_hours": 30,          # daily + grace
+     "degrade_kinds": (), "critical": False, "backs": "upwork",
+     "launchd_label": "io.etherwise.v3.upwork-hiring", "catch_up": True,
+     "why": "the applicants waiting on HIM; stale means a shortlist sits and the"
+            " hire quietly does not happen"},
     {"key": "upwork_financials", "label": "Upwork ledger (MCP, daily)",
      "task_name": "upwork_financials", "max_age_hours": 30,      # daily + grace
      "degrade_kinds": ("financials_truncated", "financials_no_agency", "inflight_failed"),
@@ -1250,7 +1264,13 @@ MCP_TIEOUT_SETTLE_DAYS = 10
 # delta, job) and never written. Set a 'YYYY-MM-DD' and rows from that day on
 # are written to connects_history — retire the Chrome rail (upwork_connects)
 # the SAME day, never both (law 2: no mixed provenance on one day).
-MCP_CONNECTS_SINCE = None
+# 2026-08-27, on his word: the MCP owns connects from TODAY. Evidence at the
+# flip: 9 twins and one "untwinned" row that was only today's Availability
+# Badge charge the Chrome rail (05:35) had not run for yet — the two rails
+# agreed on everything both had seen. The Chrome plist moved to
+# launchd/retired/ in the same commit (install.sh globs launchd/*.plist, so a
+# retired one cannot come back) and the SOURCES entry now points here.
+MCP_CONNECTS_SINCE = "2026-08-27"
 # Proposals through the MCP (use case C, Phase 0.2; Abhijeet 26 Aug 17:55 "use
 # case C next"; modules/upwork/feeds/mcp_proposals.py, run by the hourly
 # upwork_sync in place of the scope-blocked GraphQL vendorProposals pass).
@@ -1319,6 +1339,27 @@ MCP_MESSAGES_MAX_PAGES = 3
 # purpose: a missed outbound only leaves a card up longer, a false outbound
 # tells him he replied when he did not.
 MCP_MESSAGE_SYSTEM_MARKERS = ("System event:", "Sender's note:")
+# A contract Upwork still calls ACTIVE with no message, no money and no logged
+# hour for this long. Upwork never closes one on its own, so an abandoned
+# engagement stays open for years and inflates every "committed work" reading —
+# 17 of his 35 on 2026-08-27, the oldest quiet since 2023.
+MCP_CONTRACT_IDLE_DAYS = 90
+IDLE_CONTRACTS_CARD_MIN = 3     # below this it is not worth a card
+# ── Phase 3: the hiring side (2026-08-27, his "In — the applicant pull") ─────
+# His OWN postings on the CLIENT org and the people bidding on him. The list
+# call already carries the whole funnel, so "how many applied" costs one read.
+MCP_POSTINGS_PAGE = 10
+MCP_POSTINGS_MAX_PAGES = 3          # 25 postings live; 30 is the whole history
+MCP_APPLICANTS_PAGE = 10
+MCP_APPLICANTS_MAX_PAGES = 3
+MCP_APPLICANT_MAX_POSTINGS = 5      # detail reads per run, hard ceiling
+# get_rate_insights REFUSES the freelancer org; the client org answers. The
+# market does not move in a day, so a posting's range is re-read this rarely.
+MCP_RATE_INSIGHT_DAYS = 30
+MCP_RATE_MAX_READS = 3
+# A posting with people waiting on him. 2026-08-27: the LinkedIn Ghostwriter
+# post had 9 applicants, 4 never opened, 6 shortlisted and 0 offered.
+HIRING_CARD_MIN_APPLICANTS = 1
 # Contracts through the MCP (use case D, Phase 0.3; Abhijeet 26 Aug 19:18):
 # `list_contracts search` on the PERSONAL org lists every contract he holds,
 # the agency's included (the agency org refuses the search). Once a day

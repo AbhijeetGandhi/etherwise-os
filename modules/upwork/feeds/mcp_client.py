@@ -83,6 +83,8 @@ READ_TOOLS = frozenset({
     "get_freelancer_financials", "list_freelancer_proposals", "list_contracts",
     "list_offers", "get_profile", "get_account", "get_rate_insights",
     "find_saved_jobs", "get_tool_help", "get_messages",
+    # the hiring side (Phase 3, 2026-08-27) — reads on HIS OWN postings
+    "list_client_proposals", "list_client_invitations", "get_client_dashboard",
 })
 
 

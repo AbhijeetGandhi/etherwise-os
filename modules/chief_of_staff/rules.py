@@ -462,9 +462,106 @@ def rule_system(db_path, now=None) -> List[dict]:
     return out
 
 
+def rule_idle_contracts(db_path, now=None) -> List[dict]:
+    """Contracts Upwork still calls ACTIVE that nobody has touched in months.
+
+    ONE card, not one per contract: on 2026-08-27 seventeen of his thirty-five
+    open contracts had no message, no money and no logged hour for 90 days,
+    the oldest quiet since 2023. Seventeen cards would be a flood and each one
+    on its own is not worth a decision; the pile is. Ending them is a click on
+    Upwork that v3 will never make for him — this rail is read-only — so the
+    card exists to hand him the list, and it clears itself when the count
+    falls below `config.IDLE_CONTRACTS_CARD_MIN`."""
+    try:
+        with db.connect(db_path) as conn:
+            from modules.upwork.feeds import mcp_contracts
+            rows = mcp_contracts.idle(conn, now=_now(now))
+    except Exception:                           # noqa: BLE001 — pre-033 DB
+        return []
+    if len(rows) < config.IDLE_CONTRACTS_CARD_MIN:
+        return []
+    oldest = rows[0]
+    named = ", ".join(f"{r['client_company'] or r['title'] or r['id']}"
+                      f" (quiet since {r['quiet_since'] or 'ever'})"
+                      for r in rows[:3])
+    return [{
+        "source": "system", "dept": "ops", "kind": "system",
+        "title": f"{len(rows)} Upwork contracts are open with nothing on them",
+        "client": None,
+        "action": (f"No message, no money and no logged hour on any of them for"
+                   f" {config.MCP_CONTRACT_IDLE_DAYS} days. Oldest: {named}."
+                   f" Upwork never closes a contract on its own, so these keep"
+                   f" counting as committed work — end them on Upwork when you"
+                   f" agree they are done."),
+        "due": None,
+        "dedup_key": "idle_contracts",
+        "payload": {"count": len(rows), "days": config.MCP_CONTRACT_IDLE_DAYS,
+                    "oldest_quiet_since": oldest["quiet_since"],
+                    "contracts": [{"id": r["id"], "who": r["client_company"],
+                                   "title": r["title"],
+                                   "quiet_since": r["quiet_since"]} for r in rows]}}]
+
+
+def rule_applicants_waiting(db_path, now=None) -> List[dict]:
+    """People who applied to HIS posting and are waiting on him.
+
+    The other direction from every other Upwork card in here. On 2026-08-27 the
+    LinkedIn Ghostwriter post had 9 applicants — 4 he had never opened, 6
+    shortlisted, 0 offered — and the only place that number lived was a browser
+    tab. A shortlist that never becomes an offer is a hire that quietly does
+    not happen.
+
+    One card per open posting, because each posting is its own decision."""
+    out = []
+    try:
+        with db.connect(db_path) as conn:
+            from modules.upwork.feeds import mcp_hiring
+            postings = mcp_hiring.open_postings(conn)
+            ranges = {p["id"]: mcp_hiring.bid_range(conn, p["id"]) for p in postings}
+    except Exception:                           # noqa: BLE001 — pre-034 DB
+        return out
+    from modules.finance import money as _money
+    for p in postings:
+        total = p.get("applicants") or 0
+        if total < config.HIRING_CARD_MIN_APPLICANTS:
+            continue
+        unopened, short = p.get("new_applicants") or 0, p.get("shortlisted") or 0
+        bits = [f"{total} applied"]
+        if unopened:
+            bits.append(f"{unopened} you have not opened")
+        if short:
+            bits.append(f"{short} shortlisted")
+        if p.get("offered"):
+            bits.append(f"{p['offered']} offered")
+        rng, market = ranges.get(p["id"]), None
+        if p.get("rate_low") is not None and p.get("rate_high") is not None:
+            market = (f" The market for {p.get('rate_occupation') or 'this work'} runs"
+                      f" ${p['rate_low']:g}-{p['rate_high']:g}/hr")
+            if rng:
+                market += (f", and the bids run ${_money.from_minor(rng['low_minor'])}"
+                           f"-{_money.from_minor(rng['high_minor'])}")
+            market += "."
+        out.append({
+            "source": "system", "dept": "ops", "kind": "system",
+            "title": f"{total} people applied to \"{(p.get('title') or '')[:44]}\"",
+            "client": None,
+            "action": (", ".join(bits) + "."
+                       + (market or "")
+                       + " Nobody has been hired yet — open the shortlist on Upwork."),
+            "due": None,
+            "dedup_key": f"applicants:{p['id']}",
+            "payload": {"posting_id": p["id"], "title": p.get("title"),
+                        "applicants": total, "new": unopened, "shortlisted": short,
+                        "offered": p.get("offered"), "hired": p.get("hired"),
+                        "rate_low": p.get("rate_low"), "rate_high": p.get("rate_high"),
+                        "bid_range_minor": rng}})
+    return out
+
+
 ALL_RULES = (rule_owed_replies, rule_hotlead_no_loom, rule_won_no_outcome,
              rule_lost_pattern, rule_stale_dossier, rule_commitments_due,
-             rule_upwork_waiting, rule_stalled_milestone, rule_system)
+             rule_upwork_waiting, rule_stalled_milestone,
+             rule_idle_contracts, rule_applicants_waiting, rule_system)
 
 
 def gather(db_path, now=None) -> List[dict]:

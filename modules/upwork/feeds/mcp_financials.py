@@ -684,6 +684,7 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
 
         events = connects_events(connects, conn)
         kinds, twins, inserted, would = {}, 0, 0, 0
+        orphans = []
         for e in events:
             kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
             if since and e["event_date"] >= since:
@@ -695,12 +696,21 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
                 inserted += cur.rowcount
             else:
                 would += 1
-                twins += 1 if connects_twin(conn, e) else 0
+                if connects_twin(conn, e):
+                    twins += 1
+                else:
+                    # NAMED, not just counted: the retirement decision turns on
+                    # what the two rails disagree about, and "9 of 10" is not
+                    # something anyone can act on.
+                    orphans.append({"date": e["event_date"], "kind": e["kind"],
+                                    "delta": e["connects_delta"],
+                                    "job_id": e.get("job_id"),
+                                    "label": (e.get("label") or "")[:60]})
         metrics["connects"] = {
             "rows": len(events), "kinds": kinds, "balance": _balance_of(connects),
             "mode": "live" if since else "shadow", "since": since,
             "inserted": inserted, "shadow_rows": would, "twins": twins,
-            "untwinned": would - twins,
+            "untwinned": would - twins, "untwinned_events": orphans[:10],
             "oldest": min((e["event_date"] for e in events), default=None),
             "all_new": bool(events) and (inserted if since else (would - twins)) == len(events)}
         ctx.log(f"connects: {len(events)} usage rows {kinds}, {metrics['connects']['mode']},"
