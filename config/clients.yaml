@@ -594,6 +594,7 @@ clients:
     emails:
       - email.upwork.com
       - upwork.com
+      - mooymedia.com
   -
     id: romain-de-braekeleer
     name: Romain De Braekeleer
