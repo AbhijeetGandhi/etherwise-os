@@ -736,7 +736,7 @@ function eventRow(it, defaultClient, d, ctx, sel) {
   const wrap = el("div", "qitem");
 
   const what = it.kind === "recording" ? "a recording" : (it.source === "email" ? "an email" : it.source === "slack" ? "a Slack thread" : it.source === "loom" ? "a Loom" : it.source || "an item");
-  const guessName = d.clients && defaultClient ? ((d.clients.find((c) => c.client_id === defaultClient) || {}).name || defaultClient) : null;
+  const guessName = d.clients && defaultClient ? ((d.clients.find((c) => c.id === defaultClient) || {}).name || defaultClient) : null;
   const meta = el("div", "q-meta", [
     el("span", null, `${what}${it.ts ? ` · ${fmt.dateTime(it.ts)}` : ""}`),
     el("span", null, [" · the system thinks: ", guessName
