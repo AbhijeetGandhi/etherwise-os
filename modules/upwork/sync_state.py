@@ -11,13 +11,14 @@ Hard rules in code:
   and we assert the row was either terminal or updated.
 - recordId-first dedup: transactions key on the ported build_dedup_key
   (profile-scoped); all upserts are INSERT-or-UPDATE on primary key.
-- Dual-ACE: transactions fetched per profile (personal + agency tenants).
+- Transactions: the GraphQL pass is RETIRED (2026-08-26) — the MCP rail
+  (feeds/mcp_financials.py) writes them through upsert_transaction below.
 """
 from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from core import config, db, runner
@@ -493,31 +494,17 @@ def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14) -> dict:
         ctx.log(f"submitted-proposals pass errored (non-fatal): {exc!r}")
         metrics["submitted_proposals"] = {"status": "error", "error": str(exc)[:200]}
 
-    end_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    start_iso = (datetime.now(timezone.utc) - timedelta(days=lookback_days)
-                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    for profile, ace_id in config.ACE_IDS.items():
-        # v2 semantics: financial queries can return per-ACE auth errors as
-        # GraphQL partial errors — tolerate, log, continue with the other ACE.
-        env = client.graphql(
-            queries.TRANSACTION_HISTORY,
-            {"aceIds": [ace_id], "startISO": start_iso, "endISO": end_iso},
-            tolerate_errors=True)
-        if env.get("errors"):
-            msg = "; ".join(str(e.get("message"))
-                            for e in env["errors"])[:160]
-            ctx.log(f"transactions[{profile}] partial errors: {msg}")
-            metrics["transactions"][f"errors_{profile}"] = len(env["errors"])
-        txns = ((((env.get("data") or {}).get("transactionHistory") or {})
-                 .get("transactionDetail") or {})
-                .get("transactionHistoryRow")) or []
-        with db.connect(dbp) as conn:
-            for row in txns:
-                r = upsert_transaction(conn, row, profile)
-                metrics["transactions"][r] = \
-                    metrics["transactions"].get(r, 0) + 1
-        ctx.log(f"transactions[{profile}]: {len(txns)}")
-
+    # The GraphQL transactions pass RETIRED 2026-08-26 (Abhijeet, 17:55:
+    # "retire it"). It had inserted nothing since 24 June: the API hands back
+    # AP/AR rows WITHOUT amounts, so every new row went to the missing-amount
+    # quarantine (53 entries 17 Jul-19 Aug) and waited for the weekly CSV,
+    # while the agency accounting entity answered "Authorization failed"
+    # every hour. modules/upwork/feeds/mcp_financials.py (task
+    # upwork_financials, daily 06:05) reads both orgs through the MCP with
+    # amounts on every row, under the same canonical key. The query
+    # (queries.TRANSACTION_HISTORY), config.ACE_IDS and upsert_transaction
+    # stay: the MCP rail is the writer, this pass is the record of why.
+    metrics["transactions"] = {"retired": "upwork_financials (MCP) since 2026-08-26"}
     return metrics
 
 

@@ -722,20 +722,41 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    Withdrawal Fee legs "for Phase 2" and nothing ever released them; the rail now books
    them as transfers (the CSV importer still holds its own — the rail inserts first from
    here on, so that hold no longer bites).
-   ◆ **For him — two ledger readings the captures exposed** (CSV-path rows, untouched):
-   `941421323` (the $45 Visa payment for 300 connects, CSV type "Payment") is bucketed
-   **revenue** — the MCP's `ARPayment` type would make it `transfer`; and the two
-   "Subscription Renewal Charges" rows (−$19.99 each) are **uncategorized** where the MCP's
-   `Membership Fee` reads platform_fee. One-line rules in `pnl.bucket` fix both; his call
-   because they move his P&L (+$45 revenue out; $39.98 into platform fees).
-   ◆ **For him — the weekly `summary` tie-out** (plan step 3) needs §12 call 4 approved: one
-   read of `get_freelancer_financials summary` on the personal org, 1–26 Aug.
+   **17:55 "what's next" → four answers: use case C next · run the `summary` call · both
+   ledger fixes · retire the GraphQL transactions pass** (`<p32>`):
+   · **Summary captured 17:57** (`tests/fixtures/mcp/financials_summary_personal.json`):
+     per-client billed / earned / fee / tax + per-job lines, totals, `earnings_available`,
+     decimal strings, by INVOICE date (Amanda 866.67 = the 2 + 9 + 16 Aug invoices; earned
+     = billed + fee + tax). **Step 3 built:** the rail stores Upwork's summary for every
+     completed Mon–Sun week per org it has not stored yet (`upwork_mcp_summaries`,
+     migration 031, `MCP_SUMMARY_WEEKS = 2`; a missed Monday is read the next morning);
+     `bin/doctor` "upwork weekly tie-out" adds up what the rail read for the same days
+     (Hourly / Fixed / Bonus / Milestone → billed, Service Fee → fee, WHT → tax; memberships,
+     card payments and withdrawals are not in a summary) and compares exact in minor units,
+     naming the client and the figure on a gap; a week starting before the rail's floor or
+     one Upwork reports no data for is SKIPPED, never a false gap. 4 reads a week.
+   · **Ledger readings fixed** (`pnl.bucket`): an Upwork 'Payment' row whose text names the
+     instrument (Visa / Mastercard / Amex / PayPal / card) is the ARPayment settlement leg
+     → `transfer` — 941421323 ($45) AND 836457125 (the $22.50 "150 Connects · Visa 3368"
+     row of the same kind, found while checking) leave revenue; 'Subscription' /
+     'Membership Fee' → `platform_fee` — the two −$19.99 rows leave uncategorized.
+     Re-bucketized on the Mac with `bin/finance-bucketize --apply` (the doctor's #10
+     reproducibility check demands stored == computed).
+   · **The GraphQL transactions pass retired** in `sync_state.sync()` (the query, ACE ids
+     and `upsert_transaction` stay; metrics say `retired`). It had inserted nothing since
+     24 June: the API hands AP/AR rows back WITHOUT amounts, so every new row went to the
+     missing-amount quarantine (53 entries 17 Jul–19 Aug, 34 still open — mostly the
+     withdrawal legs the CSV importer held) and waited for the CSV.
+   · **The CSV importer's withdrawal hold lifted** (his 16:50 answer applies to it too):
+     a Withdrawal / Withdrawal Fee row is inserted like any other, with the CSV's own sign,
+     bucket `transfer`; the report counts them (`new_transfer_legs_inserted`).
+   ◆ **For him — one wider read to finish the ledger:** `python3 -m modules.upwork.feeds.
+   mcp_financials --lookback 90` (two reads, both orgs, June–August) inserts every
+   withdrawal leg since 27 May with its amount and resolves the 34 open missing-amount
+   quarantine entries the GraphQL pass left. Say the word.
    ◆ **For him — the Chrome connects rail.** After a few mornings of `connects.twins ==
    shadow_rows` in the run metrics, set `MCP_CONNECTS_SINCE` to a day and retire
    `io.etherwise.v3.upwork-connects` the same day — the last Chrome rail.
-   ◆ **For him — the GraphQL sync's transactions pass** has inserted nothing since 24 June
-   and logs `errors_agency 1` every hour; with this rail live it is redundant on the money
-   side (proposals/contracts/rooms stay). Retire that pass, or leave it as a second reader.
    **16:50 his three answers: run it now once · invoice date, as built · insert the
    withdrawals as transfers** → the hold removed before the first run (a Withdrawal is a
    `Withdrawal`/`transfer` row signed negative like the 65 older ones, its fee `Other`/
@@ -825,3 +846,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   comments) applied under his standing approval. Five ◆ decisions recorded under 5 (dates,
   withdrawals, two ledger readings, the summary call, the Chrome connects rail) — asked,
   not assumed.
+- 2026-08-26 17:55 · "ok so what's next now. do you need anything from me or what?" → four
+  answers: **use case C (proposals, 0.2) next**; the `summary` capture (run 17:57); both
+  ledger bucket fixes; the GraphQL transactions pass retired. Built as `<p32>` (summary
+  tie-out, migration 031; pnl rules; the importer's withdrawal hold lifted) before starting C.

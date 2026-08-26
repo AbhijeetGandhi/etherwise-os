@@ -908,6 +908,28 @@ class TestPnl(unittest.TestCase):
         # a real earning is still revenue
         self.assertEqual(pnl.bucket({"type": "Hourly Earning",
                                      "description": "work"}), "revenue")
+        # the CSV export spells the same leg 'Payment' + the card in the text
+        # (Abhijeet, 2026-08-26 17:55: the $45 Visa row was booked as revenue)
+        self.assertEqual(pnl.bucket({
+            "source": "Upwork-CSV", "type": "Other", "upwork_type": "Payment",
+            "accounting_subtype": "Payment",
+            "description": "300 Connects · Visa 3368 - Ref ID 941421323"}), "transfer")
+        # a 'Payment' subtype WITHOUT an instrument stays what it was: an
+        # earning mis-typed 'Other' by Upwork
+        self.assertEqual(pnl.bucket({"type": "Other", "accounting_subtype": "Payment",
+                                     "description": "Milestone payment for phase 2"}), "revenue")
+
+    def test_plan_subscriptions_are_platform_fees(self):
+        # the CSV's 'Subscription' and the API's 'Membership Fee' are the same
+        # Freelancer Plus / Agency Plus charge (2026-08-26: two -$19.99 CSV rows
+        # sat uncategorized because their text says nothing about membership)
+        from modules.finance import pnl
+        self.assertEqual(pnl.bucket({
+            "source": "Upwork-CSV", "type": "Other", "upwork_type": "Subscription",
+            "accounting_subtype": "Subscription",
+            "description": "Subscription Renewal Charges · Subscription Renewal Charges"}),
+            "platform_fee")
+        self.assertEqual(pnl.bucket({"accounting_subtype": "Membership Fee"}), "platform_fee")
 
     def test_fd_interest_and_refunds_are_not_revenue(self):
         # bank interest + expense refunds/reversals -> owner_draw, not revenue
@@ -1342,6 +1364,30 @@ class TestUpworkImportRecovery(unittest.TestCase):
             res2 = mod.run(commit=True)
         self.assertEqual(res2["new_inserted"], 0)
         self.assertEqual(res2["quarantine_resolved"], 0)
+
+    def test_withdrawal_legs_are_inserted_as_transfers_not_held(self):
+        """Abhijeet, 2026-08-26 16:50: "insert them as transfers". The hold of
+        2026-06-25 had kept every withdrawal since 27 May out of the ledger."""
+        from modules.finance import pnl
+        csv = (self.HEADER + "\n"
+               + '"Aug 26, 2026",TXN2,Withdrawal Fee,Withdrawal Fee,,Direct to Local Bank,,,,,,,'
+                 'Acc,,946740501,-0.99,,,100.00,\n'
+               + '"Aug 26, 2026",TXN1,Withdrawal,Withdrawal,,Direct to Local Bank Transfer,,,,,,,'
+                 'Acc,,946740500,-2335.14,,,100.99,')
+        (self.inbox / "2026-08-26-upwork-agency-fullhistory.csv").write_text(csv)
+        mod = self._bin()
+        with mock.patch.object(mod, "INBOX", self.inbox), \
+                mock.patch.object(mod.config, "DB_PATH", self.db_path), \
+                mock.patch.object(mod, "REPORT", self.tmp / "rep.md"):
+            res = mod.run(commit=True)
+        self.assertEqual((res["new_inserted"], res["new_transfer_legs_inserted"]), (2, 2))
+        with db.connect(self.db_path) as conn:
+            rows = {r["record_id"]: dict(r) for r in conn.execute(
+                "SELECT record_id, amount_minor, type, accounting_subtype, description"
+                " FROM transactions")}
+        self.assertEqual(rows["946740500"]["amount_minor"], -233514)      # the CSV's own sign
+        self.assertEqual(rows["946740500"]["type"], "Withdrawal")
+        self.assertEqual({pnl.bucket(r) for r in rows.values()}, {"transfer"})
 
 
 # ── Phase 5/6: finance-calendar nudges (pinned biweekly anchors) ─────────────

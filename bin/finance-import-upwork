@@ -16,6 +16,10 @@ What it does (dry-run by default; --commit to write):
     silently changed by an import.
   * DB-ONLY: an 'upwork:' row with no CSV twin (e.g. outside the export window)
     is counted and left untouched.
+  * SINCE 2026-08-26 the MCP rail (modules/upwork/feeds/mcp_financials.py, daily
+    06:05) inserts Upwork rows first under the same canonical key; this import
+    is the audit that every CSV ref is present (bin/doctor 'upwork mcp twins').
+    Withdrawal legs are no longer held (Abhijeet, 16:50): inserted as transfers.
 
 Provenance: source='Upwork-CSV', source_file=<export>, source_row=<line>,
 canonical_key='upwork:<ref>', fx_rate='1', amount_base_minor==amount_minor (USD
@@ -45,9 +49,13 @@ def _insert(conn, row) -> None:
     ledger.insert_upwork_csv_row(conn, row)
 
 
-# New rows that are part of a transfer (withdrawal principal + its fee) are HELD
-# for Phase 2, where the #3 statement tie-out forces the whole transfer class's
-# sign consistently — so we never create a mixed-sign ledger (Abhijeet, 2026-06-25).
+# New rows that are part of a transfer (withdrawal principal + its fee) were HELD
+# from 2026-06-25 "for Phase 2, where the #3 statement tie-out forces the whole
+# transfer class's sign consistently" — and nothing ever released them: the
+# ledger's last withdrawal row was 27 May until the MCP rail booked the 26 Aug
+# pair. Abhijeet, 2026-08-26 16:50: "insert them as transfers". The CSV's own
+# sign is the ledger's (negative), pnl.bucket puts them in `transfer` (excluded
+# from the P&L). Kept as a name so the report can still count the legs.
 TRANSFER_RAW = {"Withdrawal", "Withdrawal Fee"}
 
 # Value-mismatch refs Abhijeet explicitly approved to correct from the
@@ -126,11 +134,10 @@ def run(commit: bool) -> dict:
             if ref in ids:                       # record_id exists without upwork: key
                 value_diffs.append({"ref": ref, "note": "record_id exists, no upwork: key"})
                 continue
-            if row["type_raw"] in TRANSFER_RAW:  # new transfer leg -> held for Phase 2
+            if row["type_raw"] in TRANSFER_RAW:  # a transfer leg: inserted since 2026-08-26, counted
                 new_transfer_held.append({"ref": ref, "type_raw": row["type_raw"],
                                           "amount": str(money.from_minor(row["amount_minor"]))})
-                continue
-            new_inserted.append(row)             # safe non-transfer new row
+            new_inserted.append(row)             # a new row (transfer legs included)
             new_net += row["amount_minor"]
             new_by_type[row["type"]] += 1
             new_by_year[(row["date"] or "????")[:4]] += 1
@@ -152,7 +159,7 @@ def run(commit: bool) -> dict:
         "new_net_usd": str(money.from_minor(new_net)),
         "new_by_type": dict(new_by_type),
         "new_by_year": dict(sorted(new_by_year.items())),
-        "new_transfer_HELD_for_phase2": len(new_transfer_held),
+        "new_transfer_legs_inserted": len(new_transfer_held),
         "gst_charges_corrected": len(gst_corrected),
         "gst_swing_usd": str(money.from_minor(gst_swing)),
         "value_fixed_approved": len(value_fixed),
@@ -177,7 +184,7 @@ def main() -> int:
         body += "\n## Value mismatches — HELD for Abhijeet (not overwritten)\n\n```\n"
         body += json.dumps(res["_value_diffs"], indent=1) + "\n```\n"
     if res.get("_new_transfer_held"):
-        body += "\n## New transfer-leg rows — HELD for Phase 2\n\n```\n"
+        body += "\n## New transfer-leg rows (inserted as transfers since 2026-08-26)\n\n```\n"
         body += json.dumps(res["_new_transfer_held"], indent=1) + "\n```\n"
     REPORT.write_text(body)
     print(json.dumps(public, indent=1))

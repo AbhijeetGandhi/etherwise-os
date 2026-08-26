@@ -486,6 +486,80 @@ def check_upwork_mcp_twins(db_path: Optional[Path] = None, inbox: Optional[Path]
                   f" clean completed weeks {clean}/2 — {verdict}{older_note}")]
 
 
+def check_upwork_weekly_tieout(db_path: Optional[Path] = None) -> list:
+    """Upwork's own weekly summary (upwork_mcp_summaries, migration 031: per
+    org and completed week, billed / fee / tax by invoice date) against what
+    the MCP rail read for the same days (upwork_mcp_rows), exact in minor
+    units — use case A step 3, the continuous replacement for the CSV's
+    running-balance check (Upwork chat 2026-08-26). One line per stored
+    period. A week that starts before the rail's earliest window floor is
+    SKIPPED (the rail could not have read all of it); a week Upwork reports
+    no earnings data for is SKIPPED with its note. WARN on a gap, never FAIL
+    — a human reads which client and which of billed / fee / tax is off."""
+    from modules.upwork.feeds import mcp_financials as mf
+    db_path = db_path or config.DB_PATH
+    if not Path(db_path).is_file():
+        return [Check("SKIP", "upwork weekly tie-out", "no database yet")]
+    try:
+        with db.connect(db_path) as conn:
+            have = conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
+                                " AND name='upwork_mcp_summaries'").fetchone()
+            if not have:
+                return [Check("SKIP", "upwork weekly tie-out", "migration 031 not applied yet")]
+            floor_row = conn.execute("SELECT value FROM sync_cursors WHERE name=?",
+                                     (mf.FLOOR_CURSOR,)).fetchone()
+            floor_day = floor_row["value"] if floor_row else None
+            periods = [dict(r) for r in conn.execute(
+                "SELECT profile, period_start, period_end, billed_minor, fee_minor, tax_minor,"
+                " earnings_available, payload_json FROM upwork_mcp_summaries"
+                " ORDER BY period_start, profile")]
+            if not periods:
+                return [Check("SKIP", "upwork weekly tie-out", "no weekly summary stored yet")]
+            checks = []
+            for p in periods:
+                name = f"upwork tie-out {p['profile']} {p['period_start']}"
+                if not p["earnings_available"]:
+                    note = ""
+                    try:
+                        note = (json.loads(p["payload_json"] or "{}").get("note") or "")[:120]
+                    except ValueError:
+                        pass
+                    checks.append(Check("SKIP", name, f"Upwork reported no earnings data: {note}"))
+                    continue
+                if floor_day and p["period_start"] < floor_day:
+                    checks.append(Check("SKIP", name,
+                                        f"starts before the rail's floor {floor_day} — not all in view"))
+                    continue
+                got = mf.rows_summary(conn, p["profile"], p["period_start"], p["period_end"])
+                gaps = [f"{k} summary {p[k + '_minor']} rail {got[k]}" for k in ("billed", "fee", "tax")
+                        if (p[k + "_minor"] or 0) != got[k]]
+                if gaps:
+                    per_client = []
+                    try:
+                        want = {c.get("client"): c for c in
+                                (json.loads(p["payload_json"] or "{}").get("by_client") or [])}
+                    except ValueError:
+                        want = {}
+                    for client in sorted(set(want) | set(got["by_client"])):
+                        w = want.get(client) or {}
+                        g = got["by_client"].get(client) or {"billed": 0, "fee": 0, "tax": 0}
+                        for k in ("billed", "fee", "tax"):
+                            wm = mf._minor(w.get(k)) or 0
+                            if wm != g[k]:
+                                per_client.append(f"{client} {k} {wm} vs {g[k]}")
+                    checks.append(Check("WARN", name,
+                                        f"{p['period_start']}..{p['period_end']}: " + "; ".join(gaps)
+                                        + (f" — {'; '.join(per_client[:6])}" if per_client else "")))
+                else:
+                    checks.append(Check("PASS", name,
+                                        f"{p['period_start']}..{p['period_end']}: billed {p['billed_minor']},"
+                                        f" fee {p['fee_minor']}, tax {p['tax_minor']} — the rail read"
+                                        f" every row Upwork adds up"))
+            return checks
+    except Exception as exc:  # noqa: BLE001 — a decision aid must never crash doctor
+        return [Check("WARN", "upwork weekly tie-out", f"check failed: {exc!r}")]
+
+
 def check_cockpit() -> list:
     """Cockpit auth/bind hygiene (M2): token present, token file owner-only,
     server bound to loopback. No network."""
@@ -521,6 +595,7 @@ ALL_CHECKS = (
     ("calendar", check_calendar),
     ("source freshness", check_source_freshness),
     ("upwork ledger", check_upwork_mcp_twins),
+    ("upwork tie-out", check_upwork_weekly_tieout),
     ("models api", check_models_api),
     ("plists", check_plists),
     ("cockpit", check_cockpit),

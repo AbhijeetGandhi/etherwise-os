@@ -1221,6 +1221,11 @@ MCP_CLAIM_SINCE = "2026-08-25T21:45:00+00:00"
 # its payment. Scheduled 2026-08-26 evening on Abhijeet's "Finish use case A —
 # retire the CSV import"; the fixtures under tests/fixtures/mcp/ pin the shapes.
 MCP_FINANCIALS_LOOKBACK_DAYS = 14
+# Upwork's own weekly summary (get_freelancer_financials summary; his OK on
+# the capture 26 Aug 17:55): the rail stores every completed Mon-Sun week it
+# has not stored yet, this many back, per org — the doctor's tie-out reads
+# them. Two = the previous week plus one of grace for a missed morning.
+MCP_SUMMARY_WEEKS = 2
 # The connects usage rows the same rail reads (use case B). None = SHADOW: the
 # rows are mapped and compared with the Chrome rail's (a twin = same UTC day,
 # delta, job) and never written. Set a 'YYYY-MM-DD' and rows from that day on

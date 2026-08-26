@@ -61,11 +61,15 @@ amounts on every row, and a tie-out.
 > Two things the plan did not know: the MCP dates rows by **invoice date** where the CSV carries
 > the **payment date** (~10 days later for hourly) — MCP-inserted rows are invoice-dated (his
 > accrual month), CSV-inserted rows keep their payment date, nothing is fabricated; and
-> withdrawal legs are **held** exactly as the CSV importer holds them (the ledger's last
-> withdrawal row is 27 May) — both are decisions for him in UPWORK_BRIEF. Step 3 (the weekly
-> `summary` tie-out) still needs call 4 approved; step 4 (the Money import card audit-only)
-> waits for two clean weeks of the twins check. The connects half (use case B) runs in
-> **shadow** inside the same rail until `MCP_CONNECTS_SINCE` is set.
+> withdrawal legs were held the way the CSV importer held them — **decided 16:50: invoice
+> dates stay; withdrawals go in as transfers** (the importer's hold is lifted too). **Step 3
+> is built (17:55, his OK on call 4):** the rail stores Upwork's `summary` for every
+> completed Mon–Sun week per org (`upwork_mcp_summaries`, migration 031) and bin/doctor's
+> "upwork weekly tie-out" adds up what the rail read for the same days — billed / fee / tax
+> per client, exact in minor units. Step 4 (the Money import card audit-only) waits for two
+> clean weeks of the twins check. The GraphQL sync's transactions pass is retired (17:55).
+> The connects half (use case B) runs in **shadow** inside the same rail until
+> `MCP_CONNECTS_SINCE` is set.
 
 **Tool:** `get_freelancer_financials` — actions `transactions`, `summary`, `connects_balance`,
 `timesheets`; every action takes `org_uid` (from `list_accounts`), so the **agency is a second
@@ -260,8 +264,10 @@ concern, and every call is one `runs` row with a health line.
    `financials_transactions_personal.json` (12 of 32 rows kept).
 3. ~~the same on the agency org~~ — **DONE** → `financials_transactions_agency.json` (9 of 27);
    the agency answers.
-4. `get_freelancer_financials summary`, personal, `2026-08-01`…`2026-08-26` — the tie-out
-   shape. **Still needs his OK** (asked in UPWORK_BRIEF).
+4. ~~`get_freelancer_financials summary`, personal, `2026-08-01`…`2026-08-26`~~ — **DONE
+   26 Aug 17:57** → `financials_summary_personal.json` (verbatim: by_client billed / earned /
+   fee / tax + jobs, totals, `earnings_available`; amounts are decimal strings, by invoice
+   date).
 5. ~~`get_freelancer_financials connects_balance`, `limit 10`~~ — **DONE** →
    `connects_balance.json` (verbatim; no labels, see §4).
 6. `list_contracts search`, agency org, `contract_statuses ["ACTIVE"]`, `limit 10` — the TCC

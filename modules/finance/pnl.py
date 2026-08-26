@@ -59,6 +59,10 @@ _PERSONAL_COUNTERPARTIES = ("DYNATECH",)
 _NONREVENUE_BANK_RE = _re.compile(
     r"FD INTEREST|/REV/|REF/POS|REF/VISAPOS|-CANCELLED", _re.I)
 _SALARY_MIN_BASE_MINOR = 100_000                       # $1,000 — salary-shaped floor
+# an Upwork 'Payment' row whose text names the instrument is the card/PayPal
+# settlement of a connects or membership invoice — the ARPayment leg as the
+# CSV export spells it (2026-08-26)
+_CARD_SETTLEMENT_RE = _re.compile(r"\b(visa|mastercard|master card|amex|paypal|card)\b", _re.I)
 
 
 def _bank_spend(row: dict) -> str:
@@ -100,7 +104,13 @@ def bucket(row: dict) -> str:
     # paid via the freelancer's OWN card/PayPal (Abhijeet, 2026-07-30). The cost
     # is the paired ARInvoice (already platform_fee); the payment leg is a
     # non-P&L settlement, never revenue — it was inflating the top line.
+    # The CSV export spells the same leg 'Payment' with the card in the text
+    # ("300 Connects · Visa 3368"); the MCP capture of 26 Aug showed the $45
+    # Visa row booked as revenue that way (Abhijeet, 2026-08-26 17:55: fix it).
     if (row.get("upwork_type") or "").strip() == "ARPayment":
+        return "transfer"
+    if ((row.get("accounting_subtype") or row.get("upwork_type") or "").strip() == "Payment"
+            and _CARD_SETTLEMENT_RE.search(row.get("description") or "")):
         return "transfer"
     # personal counterparties override any category (incl. a mis-tagged 'income'
     # on a returned private transfer) — bank money with them is never business
@@ -139,6 +149,11 @@ def bucket(row: dict) -> str:
     if t == "Connect Purchase":
         return "platform_fee"
     if sub == "Service Fee":
+        return "platform_fee"
+    # the plan subscriptions (Freelancer Plus / Agency Plus): the CSV calls
+    # them 'Subscription', the API/MCP 'Membership Fee' — a platform cost
+    # either way. Two -$19.99 CSV rows sat uncategorized until 2026-08-26.
+    if sub in ("Subscription", "Membership Fee"):
         return "platform_fee"
     if sub in ("WHT", "Withholding Tax", "GST"):
         return "tax"

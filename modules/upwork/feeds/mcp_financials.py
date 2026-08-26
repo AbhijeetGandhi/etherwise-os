@@ -53,8 +53,13 @@ rule — never an MCP call inside an open transaction):
      delta, job), never inserted. Set the day and rows from that day on are
      written — the Chrome rail must stop the same day (law 2: never both).
 
-Read-only on Upwork by the transport's allowlist. The weekly `summary`
-tie-out (plan step 3) waits for his OK on that call.
+  6. (17:55, his OK on the capture) Upwork's own `summary` for every
+     completed Mon-Sun week not yet stored, per org → upwork_mcp_summaries
+     (migration 031); bin/doctor "upwork weekly tie-out" adds up what this
+     rail read for the same days and compares, exact in minor units — the
+     continuous replacement for the CSV's running-balance check.
+
+Read-only on Upwork by the transport's allowlist.
 """
 from __future__ import annotations
 
@@ -168,8 +173,11 @@ def fetch_transactions(session, org: str, frm: str, to: str, log: Callable[[str]
 
 
 def fetch_summary(session, org: str, frm: str, to: str, log: Callable[[str], None]) -> dict:
-    """The weekly financial summary for the window (per-client earned / billed
-    / fee / tax). NOT called by run() — the capture needs his OK first."""
+    """Upwork's own financial summary for the window: per-client billed / fee
+    / tax / earned and the totals, by INVOICE date (fixture
+    financials_summary_personal.json, his OK 26 Aug 17:55). run() stores one
+    per completed Mon-Sun week per org (upwork_mcp_summaries, migration 031)
+    for bin/doctor's "upwork weekly tie-out"."""
     return mcp_search.paced_call(session, TOOL, {
         "action": "summary", "org_uid": org,
         "params": {"from_date": frm, "to_date": to}}, log) or {}
@@ -450,6 +458,95 @@ def record_seen(conn, row: dict, profile: str, outcome: str, amount_minor) -> No
          row.get("status"), row.get("company"), outcome))
 
 
+# ── the weekly summary (Upwork's own totals, the tie-out's other side) ───────
+
+def completed_weeks(today: date, n: Optional[int] = None) -> list:
+    """The last n completed Mon-Sun weeks before `today`, oldest first, as
+    (start, end) ISO dates."""
+    n = config.MCP_SUMMARY_WEEKS if n is None else n
+    this_monday = today - timedelta(days=today.weekday())
+    out = []
+    for k in range(n, 0, -1):
+        start = this_monday - timedelta(days=7 * k)
+        out.append((start.isoformat(), (start + timedelta(days=6)).isoformat()))
+    return out
+
+
+def summaries_due(conn, today: date, profiles) -> list:
+    """(profile, start, end) for every completed week not yet stored — a
+    missed Monday is read on the next run, never lost."""
+    have = {(r["profile"], r["period_start"]) for r in conn.execute(
+        "SELECT profile, period_start FROM upwork_mcp_summaries")}
+    return [(p, a, b) for p in profiles for a, b in completed_weeks(today)
+            if (p, a) not in have]
+
+
+def _minor(v) -> Optional[int]:
+    if v in (None, ""):
+        return None
+    try:
+        return int((Decimal(str(v).replace(",", "").strip()) * 100).to_integral_value())
+    except InvalidOperation:
+        return None
+
+
+def summary_row(res: dict) -> Optional[dict]:
+    """One summary answer → the upwork_mcp_summaries columns; None when the
+    answer is not a summary at all (a text error)."""
+    if not isinstance(res, dict) or ("totals" not in res and "earnings_available" not in res):
+        return None
+    totals = res.get("totals") or {}
+    return {"billed_minor": _minor(totals.get("billed")), "fee_minor": _minor(totals.get("fee")),
+            "tax_minor": _minor(totals.get("tax")), "earned_minor": _minor(totals.get("earned")),
+            "currency": totals.get("currency") or "USD",
+            "earnings_available": 1 if res.get("earnings_available", True) else 0,
+            "payload_json": json.dumps(res, ensure_ascii=False)}
+
+
+def store_summary(conn, profile: str, start: str, end: str, row: dict) -> None:
+    conn.execute(
+        "INSERT INTO upwork_mcp_summaries (profile, period_start, period_end, billed_minor,"
+        " fee_minor, tax_minor, earned_minor, currency, earnings_available, payload_json)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(profile, period_start) DO UPDATE SET"
+        " period_end=excluded.period_end, billed_minor=excluded.billed_minor,"
+        " fee_minor=excluded.fee_minor, tax_minor=excluded.tax_minor,"
+        " earned_minor=excluded.earned_minor, currency=excluded.currency,"
+        " earnings_available=excluded.earnings_available, payload_json=excluded.payload_json,"
+        " fetched_at=datetime('now')",
+        (profile, start, end, row["billed_minor"], row["fee_minor"], row["tax_minor"],
+         row["earned_minor"], row["currency"], row["earnings_available"], row["payload_json"]))
+
+
+# what the summary adds up, by accounting subtype: billings (the earnings
+# rows), the service fee, the withholding tax. Memberships, card payments and
+# withdrawals are not in a summary and not in this sum.
+BILLED_SUBTYPES = frozenset({"Hourly", "Fixed Price", "Fixed-price", "Bonus", "Milestone"})
+FEE_SUBTYPES = frozenset({"Service Fee"})
+TAX_SUBTYPES = frozenset({"WHT", "Withholding Tax"})
+
+
+def rows_summary(conn, profile: str, start: str, end: str) -> dict:
+    """What the rail read for the period, added up the way Upwork's summary
+    adds: {billed, fee, tax, earned} in minor units plus by_client."""
+    by_client, tot = {}, {"billed": 0, "fee": 0, "tax": 0}
+    for r in conn.execute(
+            "SELECT accounting_subtype, amount_minor, company FROM upwork_mcp_rows"
+            " WHERE profile=? AND substr(invoice_dt,1,10) BETWEEN ? AND ?"
+            " AND amount_minor IS NOT NULL", (profile, start, end)):
+        sub = (r["accounting_subtype"] or "").strip()
+        key = ("billed" if sub in BILLED_SUBTYPES else "fee" if sub in FEE_SUBTYPES
+               else "tax" if sub in TAX_SUBTYPES else None)
+        if key is None:
+            continue
+        tot[key] += r["amount_minor"]
+        c = by_client.setdefault(r["company"] or "?", {"billed": 0, "fee": 0, "tax": 0})
+        c[key] += r["amount_minor"]
+    tot["earned"] = tot["billed"] + tot["fee"] + tot["tax"]
+    for c in by_client.values():
+        c["earned"] = c["billed"] + c["fee"] + c["tax"]
+    return {**tot, "by_client": by_client}
+
+
 # ── the pass (fetch everything, then write once) ─────────────────────────────
 
 _UNSET = object()
@@ -486,10 +583,28 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
                     {"note": "list_accounts returned no FL_AGENCY org — the agency"
                              " ledger was not read this run", "orgs": who})
     connects = fetch_connects(session, who["personal"], ctx.log)
-
-    metrics = {"window": [frm, to], "transactions": {}, "connects": {}}
+    # the completed weeks whose summary is not stored yet: a short read, the
+    # network calls, then the one write below (never a call inside a write)
     dbp = ctx.db_path or config.DB_PATH
+    day = today or datetime.now(timezone.utc).date()
     with db.connect(dbp) as conn:
+        due = summaries_due(conn, day, [PROFILE_LABEL[k] for k, v in who.items() if v])
+    summaries = []
+    for profile, a, b in due:
+        org = who["personal" if profile == "Personal" else "agency"]
+        res = fetch_summary(session, org, a, b, ctx.log)
+        row = summary_row(res)
+        if row is None:
+            ctx.log(f"summary {profile} {a}..{b}: not a summary answer: {str(res)[:120]!r}")
+            continue
+        summaries.append((profile, a, b, row))
+
+    metrics = {"window": [frm, to], "transactions": {}, "connects": {}, "summaries": {}}
+    with db.connect(dbp) as conn:
+        for profile, a, b, row in summaries:
+            store_summary(conn, profile, a, b, row)
+        metrics["summaries"] = {"due": len(due), "stored": len(summaries),
+                                "weeks": [f"{p} {a}" for p, a, _b, _r in summaries]}
         # the earliest window floor the rail has ever read from: every invoice
         # dated on or after it has been in view (bin/doctor's twins check
         # draws its coverage line there — a CSV row older than that predates
@@ -564,8 +679,22 @@ def task(ctx) -> dict:
     return run(ctx)
 
 
-def main() -> int:
-    result = runner.run_task(TASK_NAME, task, module="upwork")
+def main(argv=None) -> int:
+    """`python3 -m modules.upwork.feeds.mcp_financials [--lookback DAYS]` —
+    the daily read, or a ONE-OFF wider read (--lookback 90: the withdrawal
+    legs the CSV importer held since 27 May, with their amounts, resolving
+    the missing-amount quarantine entries the GraphQL pass left). A wider
+    read is the same two calls with a longer window; the split-once paging
+    still applies, `total_count` above two reads is a warn anomaly."""
+    import argparse
+    ap = argparse.ArgumentParser(description="Upwork ledger through the MCP")
+    ap.add_argument("--lookback", type=int, default=None,
+                    help=f"days to read (default config: {config.MCP_FINANCIALS_LOOKBACK_DAYS})")
+    args = ap.parse_args(argv)
+
+    def _task(ctx):
+        return run(ctx, lookback_days=args.lookback)
+    result = runner.run_task(TASK_NAME, _task, module="upwork")
     print(json.dumps({"run_id": result.run_id, "status": result.status,
                       "metrics": result.metrics}))
     return 0 if result.status in ("completed", "skipped_empty") else 1

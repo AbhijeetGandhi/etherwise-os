@@ -1,0 +1,65 @@
+{
+ "_note": "Captured read-only through the Upwork MCP on 2026-08-26 ~17:57 IST (Abhijeet's approval, Upwork chat: 'Yes, run it'). Verbatim. Tool: get_freelancer_financials action=summary org_uid=1647672547786633217 (TALENT) params={from_date:2026-08-01,to_date:2026-08-26}. Amounts are decimal strings; fee and tax negative; earned = billed + fee + tax per client (866.67 - 86.67 - 0.87 = 779.13). 'billed' is the sum of the APInvoice Hourly rows INVOICED in the window (Amanda 406.67 + 220.00 + 240.00), 'fee' the Service Fee rows, 'tax' the WHT rows - the same rows the transactions action returns, by invoice date. Membership fees, card payments and withdrawals are not in it. The weekly tie-out (doctor 'upwork weekly tie-out') compares upwork_mcp_rows per client per completed week against this.",
+ "by_client": [
+  {
+   "billed": "866.67",
+   "client": "Amanda T",
+   "earned": "779.13",
+   "fee": "-86.67",
+   "jobs": [
+    {
+     "billed": "866.67",
+     "fee": "-86.67",
+     "job": "Airtable Configuration and Automation",
+     "tax": "-0.87"
+    }
+   ],
+   "tax": "-0.87"
+  },
+  {
+   "billed": "162.00",
+   "client": "NETFLY",
+   "earned": "145.64",
+   "fee": "-16.20",
+   "jobs": [
+    {
+     "billed": "162.00",
+     "fee": "-16.20",
+     "job": "GoHighLevel (GHL) + Zapier/Webhooks Expert (Kixie Integration, Real-Time Data, Call Transcriptions)",
+     "tax": "-0.16"
+    }
+   ],
+   "tax": "-0.16"
+  },
+  {
+   "billed": "95.00",
+   "client": "Tomas Eklund",
+   "earned": "85.40",
+   "fee": "-9.50",
+   "jobs": [
+    {
+     "billed": "95.00",
+     "fee": "-9.50",
+     "job": "Airtable + Make Automation Specialist / Technical Coordinator (Ongoing Role)",
+     "tax": "-0.10"
+    }
+   ],
+   "tax": "-0.10"
+  }
+ ],
+ "earnings_available": true,
+ "org_uid": "1647672547786633217",
+ "period": {
+  "from": "2026-08-01",
+  "to": "2026-08-26"
+ },
+ "status": "ok",
+ "totals": {
+  "billed": "1123.67",
+  "currency": "USD",
+  "earned": "1010.17",
+  "fee": "-112.37",
+  "tax": "-1.13"
+ },
+ "trace_id": "d9405757995e75880ab8607cb08048fa"
+}
