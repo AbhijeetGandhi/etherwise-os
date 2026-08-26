@@ -625,9 +625,18 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    insights as a scoring input, saved jobs, the profile's real rate). ~150 reads a day at the
    proposed cadences. **Eight real-account calls wait on his OK, one at a time** (listed in
    §12 of the plan: `list_accounts`, transactions on each org, summary, connects_balance,
-   contracts search on the agency org, dashboard check, list_rooms). Built without any new
-   call next: the `mcp_financials` / `mcp_connects` modules with the row-mapping left as one
-   function each for the fixture to pin — the way `mcp_search.py` was built before the flip.
+   contracts search on the agency org, dashboard check, list_rooms). **Built without any
+   new call (06:55, `<p23>`): `modules/upwork/feeds/mcp_financials.py`** — the request side
+   to the tool reference (transactions / summary / connects_balance per `org_uid`, dated
+   windows, `limit` 200, truncation reported never swallowed), `orgs()` (TALENT = personal,
+   AGENCY = agency), the row mapping as ONE function per kind tolerant of both key
+   spellings (`transaction_row`, `connects_event` — the latter uses the Chrome rail's own
+   kind rule and id hash so the two sources agree), and `run()` that fetches everything then
+   writes once through the audited `upsert_transaction` (canonical `upwork:<recordId>` — an
+   MCP row UPDATES a CSV row, never twins it; new rows tagged `Upwork-MCP`) and
+   `connects_history`. `config.MCP_FINANCIALS_LOOKBACK_DAYS = 14`. NOT scheduled (no plist,
+   no SOURCES entry, not in RERUN_JOBS — a test pins that). 9 tests. The fixtures from his
+   three OKs (§12 items 2, 3, 5) pin the mapping; then the plist and the SOURCES entry.
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated

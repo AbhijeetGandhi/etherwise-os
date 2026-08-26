@@ -1199,6 +1199,11 @@ MCP_RATE_LIMIT_WAIT_S = 6.0
 # the scraper's to find; everything after is the MCP round's — no gap, no
 # stale backlog.
 MCP_CLAIM_SINCE = "2026-08-25T21:45:00+00:00"
+# Financials through the MCP (docs/upwork/MCP_USE_CASES.md, use cases A + B;
+# modules/upwork/feeds/mcp_financials.py). The look-back window of one
+# transactions read per org — the GraphQL sync's 14 days. NOT SCHEDULED until
+# the fixtures pin the row mapping (Abhijeet's OK per capture call).
+MCP_FINANCIALS_LOOKBACK_DAYS = 14
 
 # ── Upwork ───────────────────────────────────────────────────────────────────
 UPWORK_USER_ID = "1647672547786633216"
