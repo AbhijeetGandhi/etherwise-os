@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; rounds 04:15, 05:15, 06:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`) · the overnight list of 26 Aug DONE (0o, 0p, 0r, next actions 5) — his review pending · 16:12 answers: captures taken, promises reply-type only, **use case A built and scheduled** (`upwork_financials` 06:05 daily, `<p29>`) — five ◆ under Next actions 5
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`; rounds 04:15, 05:15, 06:15 clean) · Phase 1 BUILT, REDESIGNED, with Run-now buttons (`7279345`, `a10b421`, `7f7d710`) · the overnight list of 26 Aug DONE (0o, 0p, 0r, next actions 5) — his review pending · 16:12 answers: captures taken, promises reply-type only, **use case A built and scheduled** (`upwork_financials` 06:05 daily, `861b642`) — five ◆ under Next actions 5
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -534,7 +534,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    the sweep, **six promise cards on Today** with Open on Upwork (`99f2eb8`: a dated Upwork
    promise is carded by the Upwork branch too — named, with the room; its own date kept).
    Model spend for the day at 10:35: $1.08 of $4 over 107 calls.
-   **16:30 his answer to the ◆: "Reply-type promises only" → done (`<p29>`).**
+   **16:30 his answer to the ◆: "Reply-type promises only" → done (`861b642`).**
    `promises.is_reply_type()` — let X know / get back / ping / reply / respond / revert /
    update X / keep X posted / send / share / forward / follow up / circle back / confirm /
    call X / message X / write back / inform / notify / check in / touch base / reach out
@@ -690,7 +690,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    10–16 Aug week) where the CSV carries the PAYMENT date (08-26 for the same rows); the
    connects usage rows have NO label (DEBIT / REFUND_CREDIT, an instant, a `~02` job or
    null), and the Chrome rail's `event_date` is the UTC day of that instant.
-   **BUILT AND SCHEDULED (evening, `<p29>`): `upwork_financials`, daily 06:05 IST.**
+   **BUILT AND SCHEDULED (evening, `861b642`): `upwork_financials`, daily 06:05 IST.**
    `orgs()` FL_AGENCY; `signed_minor` = the ledger's rule + "an explicitly negative MCP row
    stays negative"; a NEW row gets `type` the way the CSV importer types it
    (`CSV_TYPE_MAP`: Hourly → Hourly Earning, Membership Fee → Connect Purchase as the 83
@@ -820,7 +820,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   from me or what?" → status (flip holds, DNS outage 12:15–13:15 self-healed, promises live,
   $1.65 spent) and three questions → "Yes — the three for transactions + connects" (the
   captures, 16:20), "Reply-type promises only" (0p), "Finish use case A — retire the CSV
-  import" (Next actions 5, `<p29>`: the rail built and scheduled, migration 030, the twins
+  import" (Next actions 5, `861b642`: the rail built and scheduled, migration 030, the twins
   doctor check, connects in shadow). Config diff (SOURCES entry, `MCP_CONNECTS_SINCE`,
   comments) applied under his standing approval. Five ◆ decisions recorded under 5 (dates,
   withdrawals, two ledger readings, the summary call, the Chrome connects rail) — asked,
