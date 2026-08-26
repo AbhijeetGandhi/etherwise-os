@@ -240,6 +240,11 @@ class TestOutcomes(Case):
         self.assertEqual(mp.verdict_for("Hired", "Archived", None), "Won")          # own status first
         self.assertIsNone(mp.verdict_for("Accepted", "Accepted", None))               # open stays open
         self.assertIsNone(mp.verdict_for("Offered", "Hired", None))                   # an offer is not a verdict
+        # one proposal sits in several lists (Hired, Declined, Withdrawn at once on 17 Aug):
+        # the first list's verdict stands, the others are not disagreements
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(mp.apply_outcome(conn, "s1", "Accepted", "Declined"), "kept")   # Expired stands
+            self.assertEqual(mp.apply_outcome(conn, "s1", "Hired", "Hired"), "terminal")     # Upwork's own word disagrees
         # the one-off backfill over rows already listed writes the same and is idempotent
         with db.connect(self.db_path) as conn:
             conn.execute("UPDATE proposals SET status=NULL WHERE id IN ('s1','s3')")

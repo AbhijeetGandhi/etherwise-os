@@ -176,18 +176,25 @@ def verdict_for(upwork_status: Optional[str], list_status: Optional[str],
     (decision 4), then the (list, own status) pair (his 26 Aug 19:05 answer);
     an Expired becomes Lost when our row already holds an Interview — we were
     in the room, the job went elsewhere."""
+    return verdict_with_source(upwork_status, list_status, current)[0]
+
+
+def verdict_with_source(upwork_status: Optional[str], list_status: Optional[str],
+                        current: Optional[str]) -> tuple:
+    """(target, 'own' | 'list' | None). 'own' = Upwork's own status field
+    states it; 'list' = read from the job-level list the proposal sits in."""
     own = config.MCP_PROPOSAL_STATUS_MAP.get(upwork_status or "")
     listed = (config.MCP_PROPOSAL_LIST_MAP.get((list_status, upwork_status or ""))
               if list_status else None)
     if own in sync_state.TERMINAL:
-        target = own                       # Upwork's own verdict wins
+        target, source = own, "own"        # Upwork's own verdict wins
     elif listed:
-        target = listed                    # a closed job ends a live Interview
+        target, source = listed, "list"    # a closed job ends a live Interview
     else:
-        target = own
+        target, source = own, ("own" if own else None)
     if target == "Expired" and current == "Interview":
         target = "Lost"
-    return target
+    return target, source
 
 
 def apply_outcome(conn: sqlite3.Connection, pid: str, upwork_status: str,
@@ -201,13 +208,18 @@ def apply_outcome(conn: sqlite3.Connection, pid: str, upwork_status: str,
     if row is None:
         return "none"
     current = row["status"]
-    target = verdict_for(upwork_status, list_status, current)
+    target, source = verdict_with_source(upwork_status, list_status, current)
     if not target:
         return "none"
     if current == target:
         return "kept"
     if current in sync_state.TERMINAL:
-        return "terminal"
+        # a verdict already given stands. Only Upwork's OWN status field can
+        # disagree with it (Hired against a stored Expired); a job-level list
+        # cannot — one proposal sits in several lists (the 17 Aug Royan
+        # proposal is in Hired, Declined and Withdrawn at once) and the first
+        # list read gave the verdict
+        return "terminal" if source == "own" else "kept"
     marks = ",".join("?" * len(sync_state.TERMINAL))
     conn.execute(
         f"UPDATE proposals SET status=?, updated_at=datetime('now')"
