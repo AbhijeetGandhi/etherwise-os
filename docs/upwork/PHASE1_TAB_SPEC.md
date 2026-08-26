@@ -647,3 +647,17 @@ Rocky Choy → hired), Won 2 (Royan, this month's jobs, hired on a new posting; 
 week of 24 Aug → Interviewing 2, Won 1. TCC (Brandi Jordan) is NOT in August by the DB: its
 contract (44099615) started 15 July — if a second TCC contract exists, the ROOM_LIST sync cannot
 see it (one contract id per room), which is the `list_contracts` use case in the MCP plan.
+
+**Addendum 2026-08-26 18:25 — Applied is observed from proposals too (use case C, Phase 0.2).**
+The hourly sync now lists every proposal Upwork holds, by status, through the MCP
+(`modules/upwork/feeds/mcp_proposals.py`; his 17:55 "use case C next"), so the `proposals`
+table carries the 30 open (submitted) proposals the room pass could never see, and
+`proposals.status` finally has a writer: Hired → Won, Declined → Lost, Withdrawn → Withdrawn,
+Activated → Interview (decision 4; Accepted / Offered / Archived write no verdict, a terminal
+verdict is never flipped). For the Jobs flow this means **a `proposals` row on a job IS an
+application** — `applied_raw` is a connects spend on the job (the Chrome rail) OR a proposal
+row; closure still infers "applied" only for a contract with no proposal at all. The win rate
+(`_DECIDED_PROP`) reads real verdicts from now on, and the Sunday outcome email finds closed
+proposals (their `modified_dt` is Upwork's own instant). The connects rail stops being the only
+applied-truth source: once a few days of rounds show the proposals list and the rail agree, the
+rail's "applied" role can retire with the rail itself (`MCP_CONNECTS_SINCE`).

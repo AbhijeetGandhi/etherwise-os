@@ -150,6 +150,12 @@ Chrome rail stops, never both.
 
 ## 5. Use case C — proposals (Phase 0.2, de-risked on 25 Aug)
 
+> **STATUS 2026-08-26 18:25 — BUILT** (`modules/upwork/feeds/mcp_proposals.py`, inside the
+> hourly `upwork_sync`; his 17:55 "use case C next"). One `list` per status per round,
+> newest-modified first to a stored cursor (7 calls a quiet hour; the first round pages the
+> backlog); decision 4's map writes the verdicts, never flips a terminal one. The tool's
+> `Accepted` = SUBMITTED. First live round on his word.
+
 **Tool:** `list_freelancer_proposals` — `list` (status: Accepted = submitted, Offered, Hired,
 Activated = invitation accepted, Pending, Declined, Withdrawn, Archived; cursor pagination),
 `invitations` (received, with `jobPosting.id`), `get`, `get_room`.

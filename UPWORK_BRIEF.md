@@ -723,7 +723,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    them as transfers (the CSV importer still holds its own — the rail inserts first from
    here on, so that hold no longer bites).
    **17:55 "what's next" → four answers: use case C next · run the `summary` call · both
-   ledger fixes · retire the GraphQL transactions pass** (`<p32>`):
+   ledger fixes · retire the GraphQL transactions pass** (`1ed25ea`):
    · **Summary captured 17:57** (`tests/fixtures/mcp/financials_summary_personal.json`):
      per-client billed / earned / fee / tax + per-job lines, totals, `earnings_available`,
      decimal strings, by INVOICE date (Amanda 866.67 = the 2 + 9 + 16 Aug invoices; earned
@@ -757,6 +757,61 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    ◆ **For him — the Chrome connects rail.** After a few mornings of `connects.twins ==
    shadow_rows` in the run metrics, set `MCP_CONNECTS_SINCE` to a day and retire
    `io.etherwise.v3.upwork-connects` the same day — the last Chrome rail.
+6. **Use case C — proposals through the MCP (Phase 0.2) — BUILT 2026-08-26 18:25 (`<p33>`),
+   his 17:55 "use case C next".** `modules/upwork/feeds/mcp_proposals.py`, run by the hourly
+   `upwork_sync` at :45 in place of the scope-blocked GraphQL vendorProposals pass (that
+   function stays as code, never activated). `list_freelancer_proposals list` filters ONE
+   status per call and pages 10 at a time by modified time — and the tool's **`Accepted`
+   means SUBMITTED** (validated by Upwork), not accepted by the client; `Activated` = an
+   invitation accepted. A round = one call per status (`MCP_PROPOSAL_STATUSES`: Accepted,
+   Offered, Hired, Activated, Declined, Withdrawn, Archived — Pending is transient, skipped),
+   newest first, stopping at the last modified instant the previous round stored
+   (`sync_cursors upwork_proposals_modified:<Status>`): a quiet hour is 7 calls; the FIRST
+   round has no cursors and pages back up to `MCP_PROPOSALS_MAX_PAGES` (20) per status — the
+   backlog since the 9 June freeze (30 submitted proposals are open on Upwork; the table
+   held 83 rows, every one with a room). Every node goes through the same
+   `upsert_proposal` (telemetry fill-or-keep, `thread_id` preserved, `upwork_status`
+   recorded); then **decision 4's map** (`config.MCP_PROPOSAL_STATUS_MAP`): Hired → Won,
+   Declined → Lost, Withdrawn → Withdrawn, Activated → Interview; Accepted / Offered /
+   Archived write nothing (Archived is Lost-or-Expired only with contract/offer evidence —
+   0.3). A terminal verdict is never flipped; a row whose stored verdict disagrees with
+   Upwork's is counted (`terminal_disagreements`, a warn anomaly) for a human. A pass failure
+   is a `proposals_pass_failed` warn anomaly on the sync (degraded, not failed — rooms and
+   contracts still landed), naming network vs auth. `modified_dt` carries Upwork's instant,
+   so the Sunday outcome email's 7-day window sees a closure the week it happens. **Jobs
+   flow:** a `proposals` row on a job now counts as APPLIED (with the connects spend) —
+   closure infers "applied" only for a contract with no proposal at all; the win rate reads
+   real verdicts. `upwork_sync` SOURCES entry: backs `pipeline`, degrade kind
+   `proposals_pass_failed`. 11 tests (`tests/test_mcp_proposals.py`), 2 pins moved in
+   `test_upwork_tab`. Config diff (statuses, page cap, the map, the SOURCES line) under his
+   standing approval.
+   Live DB before the first round: status × upwork_status = Expired/Archived 24 ·
+   Interview/Activated 21 · Won/Hired 21 · –/Activated 4 · Interview/Archived 4 ·
+   –/Archived 3 · –/Hired 2 · Interview/Hired 2 · –/Declined 1 · Expired/Hired 1. The first
+   round will write Won on the 2 –/Hired and the 2 Interview/Hired rows, Lost on –/Declined,
+   Interview on –/Activated; **Expired/Hired (1 row, 2026-04-10) is a terminal disagreement
+   it will report, never flip.**
+   **18:30 his "apply and run the first round now" → run 7241, 18:30–18:38 (480 s, ~100
+   reads): 818 proposals seen, 331 NEW rows (83 → 414), verdicts written: Won 21, Lost 6,
+   Withdrawn 20, Interview 37; 1 terminal disagreement (the April Expired/Hired row, kept).**
+   What the round taught, and it changes the map's second half: the list's `status` is NOT
+   the proposal's own status. The Hired list (231 in total, 200 read) held 42 nodes whose own
+   status says Hired, 29 that say Activated and ~129 that say **Accepted** — the JOB was
+   filled, by us or by someone else; the Declined list (186) held 6 Declined and ~175
+   Accepted; the Withdrawn list (209) 20 Withdrawn + Accepted; the Archived list (454, 200
+   read) Archived + Accepted; and 154 'Accepted' rows now date back to 2023 with no room and
+   no contract. So **the list is the job-level outcome bucket and the node status is our
+   proposal's own last state**; decision 4's map reads the node status and is right as far
+   as it goes (every verdict written is one Upwork's own status field states). The rest —
+   an Accepted proposal in the Hired list is a job someone else won; in the Declined list a
+   proposal the client declined; in the Withdrawn list one we withdrew; in the Archived list
+   one that expired — is his to decide with both dimensions in front of him: migration 032
+   (`proposals.mcp_list_status`, `upwork_status_label`, `mcp_listed_at`), the cursors reset
+   once so the 18:45 round re-reads everything and fills them (`<p33c>`). The cross-tab and
+   the question are below, after that round. Volume: the backfill was ~100 reads twice;
+   a quiet hour is 7.
+   ◆ 0.5 substrate: `Offered` proposals now land hourly with `upwork_status='Offered'` — an
+   offer card is one rule away.
    **16:50 his three answers: run it now once · invoice date, as built · insert the
    withdrawals as transfers** → the hold removed before the first run (a Withdrawal is a
    `Withdrawal`/`transfer` row signed negative like the 65 older ones, its fee `Other`/
@@ -848,5 +903,9 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   not assumed.
 - 2026-08-26 17:55 · "ok so what's next now. do you need anything from me or what?" → four
   answers: **use case C (proposals, 0.2) next**; the `summary` capture (run 17:57); both
-  ledger bucket fixes; the GraphQL transactions pass retired. Built as `<p32>` (summary
+  ledger bucket fixes; the GraphQL transactions pass retired. Built as `1ed25ea` (summary
   tie-out, migration 031; pnl rules; the importer's withdrawal hold lifted) before starting C.
+- 2026-08-26 18:25 · Use case C built (`<p33>`, Next actions 6): the hourly sync lists every
+  proposal by status through the MCP; decision 4's map writes Won / Lost / Withdrawn /
+  Interview, never flips a terminal verdict; a proposal row counts as applied on the Jobs flow.
+  First live round on his word.

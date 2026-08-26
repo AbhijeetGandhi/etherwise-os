@@ -517,34 +517,71 @@ def store_summary(conn, profile: str, start: str, end: str, row: dict) -> None:
          row["earned_minor"], row["currency"], row["earnings_available"], row["payload_json"]))
 
 
-# what the summary adds up, by accounting subtype: billings (the earnings
-# rows), the service fee, the withholding tax. Memberships, card payments and
-# withdrawals are not in a summary and not in this sum.
+# what the summary adds up: the billings (the earnings rows). Fee and tax are
+# derived from them (10 % / 0.1 %); memberships, card payments and
+# withdrawals are not in a summary.
 BILLED_SUBTYPES = frozenset({"Hourly", "Fixed Price", "Fixed-price", "Bonus", "Milestone"})
 FEE_SUBTYPES = frozenset({"Service Fee"})
 TAX_SUBTYPES = frozenset({"WHT", "Withholding Tax"})
+# WHAT THE FIRST STORED WEEKS TAUGHT (26 Aug 19:00): the summary's period is
+# the week the invoice was actually CREATED, and that instant is not what
+# `transactionCreationDate` shows — that field is the week-END label (a
+# Sunday), while the invoice is created the Monday after, or later for the
+# agency (its 2 Aug invoices sat in the 10-16 Aug summary; its 9 and 16 Aug
+# invoices in 17-23 Aug). So a week's summary is NOT "the rows dated inside
+# it"; it is a set of the rail's invoice rows dated up to MCP_TIEOUT_LAG_DAYS
+# before it. The tie-out therefore matches per client: the summary's billed
+# amount must be the sum of a subset of that client's invoice rows in the
+# window, each row used once across the weeks (oldest week first).
+MCP_TIEOUT_LAG_DAYS = 28
 
 
-def rows_summary(conn, profile: str, start: str, end: str) -> dict:
-    """What the rail read for the period, added up the way Upwork's summary
-    adds: {billed, fee, tax, earned} in minor units plus by_client."""
-    by_client, tot = {}, {"billed": 0, "fee": 0, "tax": 0}
-    for r in conn.execute(
-            "SELECT accounting_subtype, amount_minor, company FROM upwork_mcp_rows"
-            " WHERE profile=? AND substr(invoice_dt,1,10) BETWEEN ? AND ?"
-            " AND amount_minor IS NOT NULL", (profile, start, end)):
-        sub = (r["accounting_subtype"] or "").strip()
-        key = ("billed" if sub in BILLED_SUBTYPES else "fee" if sub in FEE_SUBTYPES
-               else "tax" if sub in TAX_SUBTYPES else None)
-        if key is None:
+def _subset_sum(amounts: list, target: int):
+    """Indices of a subset of `amounts` (ints, small n) summing to target, or
+    None. Prefers fewer, older rows (the list arrives date-ordered)."""
+    n = len(amounts)
+    if target == 0:
+        return []
+    if n > 12:                                   # never in practice; keep it bounded
+        amounts = amounts[:12]
+        n = 12
+    best = None
+    for mask in range(1, 1 << n):
+        if sum(amounts[i] for i in range(n) if mask >> i & 1) == target:
+            chosen = [i for i in range(n) if mask >> i & 1]
+            if best is None or len(chosen) < len(best):
+                best = chosen
+    return best
+
+
+def match_week(conn, profile: str, start: str, end: str, by_client: list, matched: set) -> dict:
+    """Upwork's per-client billed amounts for one summary week against the
+    rail's invoice rows (upwork_mcp_rows, BILLED_SUBTYPES, dated within
+    MCP_TIEOUT_LAG_DAYS before the week's end, not yet matched). Returns
+    {ok: [client…], gaps: [{client, billed, candidates}], used: [record_id…]}
+    and adds the used ids to `matched`."""
+    lo = (date.fromisoformat(start) - timedelta(days=MCP_TIEOUT_LAG_DAYS)).isoformat()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT record_id, amount_minor, company, substr(invoice_dt,1,10) AS d FROM upwork_mcp_rows"
+        " WHERE profile=? AND accounting_subtype IN ({}) AND amount_minor IS NOT NULL"
+        " AND substr(invoice_dt,1,10) BETWEEN ? AND ? ORDER BY invoice_dt, record_id"
+        .format(",".join("?" * len(BILLED_SUBTYPES))),
+        (profile, *sorted(BILLED_SUBTYPES), lo, end))]
+    out = {"ok": [], "gaps": [], "used": []}
+    for c in by_client or []:
+        client = c.get("client") or "?"
+        target = _minor(c.get("billed")) or 0
+        cand = [r for r in rows if (r["company"] or "?") == client and r["record_id"] not in matched]
+        pick = _subset_sum([r["amount_minor"] for r in cand], target)
+        if pick is None:
+            out["gaps"].append({"client": client, "billed": target,
+                                "candidates": [(r["d"], r["amount_minor"]) for r in cand]})
             continue
-        tot[key] += r["amount_minor"]
-        c = by_client.setdefault(r["company"] or "?", {"billed": 0, "fee": 0, "tax": 0})
-        c[key] += r["amount_minor"]
-    tot["earned"] = tot["billed"] + tot["fee"] + tot["tax"]
-    for c in by_client.values():
-        c["earned"] = c["billed"] + c["fee"] + c["tax"]
-    return {**tot, "by_client": by_client}
+        for i in pick:
+            matched.add(cand[i]["record_id"])
+            out["used"].append(cand[i]["record_id"])
+        out["ok"].append(client)
+    return out
 
 
 # ── the pass (fetch everything, then write once) ─────────────────────────────

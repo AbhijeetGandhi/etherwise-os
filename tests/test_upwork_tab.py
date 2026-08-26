@@ -228,7 +228,10 @@ class TestUpworkReader(UpworkTabCase):
 
     def test_closure_makes_the_outcome_chain_nested_and_says_what_it_inferred(self):
         applied = self.stage("week", "applied")
-        self.assertEqual(applied["inferred"], 3)    # J10 (proposal), J6 (contract), J9 (room)
+        # since 0.2 (26 Aug) a proposals row IS the application, so J10 and J9
+        # (proposal rows, no rail row) are observed, not inferred; J6 (a
+        # contract, no proposal at all) is the one closure still infers
+        self.assertEqual(applied["inferred"], 1)
         self.assertEqual(applied["hot_split"], {"hot": 4, "not_hot": 2})
         self.assertEqual(self.stage("week", "interviewed")["inferred"], 1)   # J6
         # inside the cohort every later stage is a subset of the earlier one
@@ -239,7 +242,7 @@ class TestUpworkReader(UpworkTabCase):
         self.assertLessEqual(n["applied"], n["fetched"])
         rows = self.rows(stage="applied", week=WEEK)["rows"]
         byid = {r["id"]: r for r in rows}
-        self.assertEqual(byid[J[10]]["inferred"], "interviewed")   # its Hired proposal
+        self.assertIsNone(byid[J[10]]["inferred"])                  # its proposal row is the application
         self.assertEqual(byid[J[6]]["inferred"], "won")             # its contract
         self.assertTrue(byid[J[6]]["interview_inferred"])
         self.assertIsNone(byid[J[7]]["inferred"])

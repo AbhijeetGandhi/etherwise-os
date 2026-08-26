@@ -849,10 +849,13 @@ SOURCES = (
             " it managed to read"},
     {"key": "upwork_sync", "label": "Upwork sync",
      "task_name": "upwork_sync", "max_age_hours": 3,     # hourly at :45
-     "degrade_kinds": (), "critical": True, "backs": "money",
+     # the MCP proposals pass inside the sync failing is a degraded sync, not
+     # a failed one: rooms and contracts still landed (2026-08-26)
+     "degrade_kinds": ("proposals_pass_failed",), "critical": True, "backs": "pipeline",
      "launchd_label": "io.etherwise.v3.upwork-sync", "catch_up": True,
-     "why": "feeds proposals, contracts and Upwork transactions — the Money"
-            " tab's revenue side and the pipeline's thread state"},
+     "why": "feeds rooms, contracts and — through the MCP since 26 Aug — every"
+            " proposal's status: the pipeline's thread state, the win rate and"
+            " the Sunday outcome email all read it"},
     {"key": "crm_mirror", "label": "CRM mirror (Airtable)",
      "task_name": "crm_mirror", "max_age_hours": 3,      # hourly at :50
      "degrade_kinds": (), "critical": True, "backs": "crm",
@@ -1226,12 +1229,41 @@ MCP_FINANCIALS_LOOKBACK_DAYS = 14
 # has not stored yet, this many back, per org — the doctor's tie-out reads
 # them. Two = the previous week plus one of grace for a missed morning.
 MCP_SUMMARY_WEEKS = 2
+# A week's invoices reach the `transactions` action days after the summary
+# already counts them (the 17-23 Aug agency invoices were in the summary on
+# 26 Aug and not in transactions); the tie-out reads a week only once it is
+# this many days old. Upwork's review + payment cycle is ~10 days.
+MCP_TIEOUT_SETTLE_DAYS = 10
 # The connects usage rows the same rail reads (use case B). None = SHADOW: the
 # rows are mapped and compared with the Chrome rail's (a twin = same UTC day,
 # delta, job) and never written. Set a 'YYYY-MM-DD' and rows from that day on
 # are written to connects_history — retire the Chrome rail (upwork_connects)
 # the SAME day, never both (law 2: no mixed provenance on one day).
 MCP_CONNECTS_SINCE = None
+# Proposals through the MCP (use case C, Phase 0.2; Abhijeet 26 Aug 17:55 "use
+# case C next"; modules/upwork/feeds/mcp_proposals.py, run by the hourly
+# upwork_sync in place of the scope-blocked GraphQL vendorProposals pass).
+# `list_freelancer_proposals list` filters ONE status per call and pages 10 at
+# a time by modified time, so a round is one call per status below, newest
+# first, stopping at the last modified instant the previous round stored
+# (sync_cursors upwork_proposals_modified:<Status>). 'Pending' (processing)
+# is transient and not read. The FIRST round has no cursor and pages back
+# through history up to MCP_PROPOSALS_MAX_PAGES per status (the backlog since
+# the 9 June freeze).
+MCP_PROPOSAL_STATUSES = ("Accepted", "Offered", "Hired", "Activated", "Declined",
+                         "Withdrawn", "Archived")
+MCP_PROPOSALS_MAX_PAGES = 20
+# The 0.3 status map (decision 4, 2026-08-25 — the first terminal write is
+# permanent, so conservative). Upwork's status -> proposals.status. The tool's
+# 'Accepted' means SUBMITTED (validated by Upwork), not accepted by the client;
+# 'Activated' = an invitation accepted = an interview. Archived is NEVER
+# written here: whether it is Lost or Expired needs contract/offer evidence
+# (0.3). None = the row's status is left as it is.
+MCP_PROPOSAL_STATUS_MAP = {
+    "Hired": "Won", "Declined": "Lost", "Withdrawn": "Withdrawn",
+    "Activated": "Interview",
+    "Accepted": None, "Offered": None, "Archived": None, "Pending": None,
+}
 
 # ── Upwork ───────────────────────────────────────────────────────────────────
 UPWORK_USER_ID = "1647672547786633216"

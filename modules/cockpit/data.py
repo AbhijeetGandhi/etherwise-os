@@ -2869,8 +2869,10 @@ _UPWORK_FLAGS_SQL = f"""
            j.clickup_task_id IS NOT NULL AS carded,
            j.draft_proposal IS NOT NULL AS has_draft,
            substr(j.fetched_at,1,10) AS d,
-           EXISTS (SELECT 1 FROM connects_history h WHERE h.kind='applied'
-                   AND h.job_id = j.id) AS applied_raw,
+           (EXISTS (SELECT 1 FROM connects_history h WHERE h.kind='applied'
+                    AND h.job_id = j.id)
+            OR EXISTS (SELECT 1 FROM proposals p WHERE p.marketplace_job_id = j.id))
+               AS applied_raw,
            EXISTS (SELECT 1 FROM proposals p WHERE p.marketplace_job_id = j.id
                    AND (p.upwork_status IN ({",".join("?" * len(_UPWORK_INTERVIEW_STATUSES))})
                         OR EXISTS (SELECT 1 FROM threads t WHERE t.proposal_id = p.id
@@ -2892,7 +2894,12 @@ def _upwork_jobs(conn, lo: str, hi: str) -> list:
     interview proves an application the rail may have missed). `inferred`
     names the stage that proved it, so the drill can say so. `won_via` is
     "job" (the contract carries the job id) or "client" (the same client hired
-    us on another posting after we applied here)."""
+    us on another posting after we applied here).
+
+    APPLIED is observed two ways since 2026-08-26 (use case C): a connects
+    spend on the job (the Chrome rail) OR a `proposals` row on the job — the
+    hourly MCP pass lists every proposal Upwork holds, submitted or later, so
+    a proposal row IS the application, not an inference from an interview."""
     out = []
     for r in conn.execute(_UPWORK_FLAGS_SQL, (*_UPWORK_INTERVIEW_STATUSES, lo, hi)):
         j = dict(r)

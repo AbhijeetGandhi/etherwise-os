@@ -249,7 +249,8 @@ class TestRoomListPass(M1bCase):
 
     def _sync(self, rooms):
         return sync_state.sync(_Ctx(self.db_path),
-                               client_factory=lambda: FakeRoomClient(rooms))
+                               client_factory=lambda: FakeRoomClient(rooms),
+                               mcp_session_factory=None)      # the MCP pass has its own tests
 
     def test_roomlist_pass_populates_proposal_telemetry(self):
         out = self._sync([room_list_node(vp=vp_room_node())])

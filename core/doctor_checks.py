@@ -405,6 +405,10 @@ def check_upwork_mcp_twins(db_path: Optional[Path] = None, inbox: Optional[Path]
             floor_row = conn.execute("SELECT value FROM sync_cursors WHERE name="
                                      "'upwork_financials_floor'").fetchone()
             floor_day = floor_row["value"] if floor_row else None
+            first_run = conn.execute(
+                "SELECT MIN(substr(started_at,1,10)) AS d FROM runs"
+                " WHERE task_name='upwork_financials' AND status='completed'").fetchone()
+            first_run_day = first_run["d"] if first_run else None
     except Exception as exc:  # noqa: BLE001 — a decision aid must never crash doctor
         return [Check("WARN", "upwork mcp twins", f"check failed: {exc!r}")]
     if not seen:
@@ -474,8 +478,15 @@ def check_upwork_mcp_twins(db_path: Optional[Path] = None, inbox: Optional[Path]
             parts.append(f"{len(mismatch)} amount mismatch(es): {'; '.join(mismatch[:4])}")
         return [Check("WARN", "upwork mcp twins",
                       "; ".join(parts) + f"; clean completed weeks {clean}/2{older_note}")]
-    if clean == 2 and in_view_weeks == 2:
+    # a one-off wider read puts old weeks in view at once (the 90-day read of
+    # 26 Aug); the verdict also wants the DAILY rail to have run for two weeks
+    running_since = _dt.date.fromisoformat(first_run_day) if first_run_day else None
+    rail_ready = running_since + _dt.timedelta(days=14) if running_since else None
+    if clean == 2 and in_view_weeks == 2 and rail_ready and today >= rail_ready:
         verdict = "the CSV import can go audit-only"
+    elif clean == 2 and in_view_weeks == 2:
+        verdict = (f"the daily rail has run since {first_run_day} — keep the CSV import until"
+                   f" {rail_ready}" if rail_ready else "the daily rail has not completed a run yet")
     elif in_view_weeks < 2:
         verdict = (f"the rail has read invoices since {floor_day}, {in_view_weeks} of the two"
                    f" completed weeks fully in view — keep the CSV import until {ready_on}")
@@ -486,20 +497,33 @@ def check_upwork_mcp_twins(db_path: Optional[Path] = None, inbox: Optional[Path]
                   f" clean completed weeks {clean}/2 — {verdict}{older_note}")]
 
 
-def check_upwork_weekly_tieout(db_path: Optional[Path] = None) -> list:
+def check_upwork_weekly_tieout(db_path: Optional[Path] = None, now=None) -> list:
     """Upwork's own weekly summary (upwork_mcp_summaries, migration 031: per
-    org and completed week, billed / fee / tax by invoice date) against what
-    the MCP rail read for the same days (upwork_mcp_rows), exact in minor
-    units — use case A step 3, the continuous replacement for the CSV's
-    running-balance check (Upwork chat 2026-08-26). One line per stored
-    period. A week that starts before the rail's earliest window floor is
-    SKIPPED (the rail could not have read all of it); a week Upwork reports
-    no earnings data for is SKIPPED with its note. WARN on a gap, never FAIL
-    — a human reads which client and which of billed / fee / tax is off."""
+    org and completed week, billed per client) against the invoice rows the
+    MCP rail read (upwork_mcp_rows) — use case A step 3, the continuous
+    replacement for the CSV's running-balance check (Upwork chat 2026-08-26).
+    The summary's week is the week the invoice was CREATED, which the
+    transactions row does not show (its date is the week-end label), so the
+    check does not sum a date window: for every client in a week, the billed
+    amount must be the sum of a subset of that client's invoice rows dated up
+    to MCP_TIEOUT_LAG_DAYS before the week's end, each row used once across
+    the weeks, oldest first (mcp_financials.match_week). One line per stored
+    period. SKIPPED: a week starting before the rail's earliest window floor
+    (not all in view), a week younger than MCP_TIEOUT_SETTLE_DAYS (its
+    invoices may not have posted to transactions yet), a week Upwork reports
+    no earnings data for. WARN on a gap — the client and the amount the rail
+    cannot account for — never FAIL."""
+    import datetime as _dt
     from modules.upwork.feeds import mcp_financials as mf
     db_path = db_path or config.DB_PATH
     if not Path(db_path).is_file():
         return [Check("SKIP", "upwork weekly tie-out", "no database yet")]
+    if isinstance(now, _dt.datetime):
+        today = now.date()
+    elif isinstance(now, _dt.date):
+        today = now
+    else:
+        today = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=5, minutes=30))).date()
     try:
         with db.connect(db_path) as conn:
             have = conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
@@ -510,51 +534,46 @@ def check_upwork_weekly_tieout(db_path: Optional[Path] = None) -> list:
                                      (mf.FLOOR_CURSOR,)).fetchone()
             floor_day = floor_row["value"] if floor_row else None
             periods = [dict(r) for r in conn.execute(
-                "SELECT profile, period_start, period_end, billed_minor, fee_minor, tax_minor,"
-                " earnings_available, payload_json FROM upwork_mcp_summaries"
-                " ORDER BY period_start, profile")]
+                "SELECT profile, period_start, period_end, billed_minor, earnings_available,"
+                " payload_json FROM upwork_mcp_summaries ORDER BY profile, period_start")]
             if not periods:
                 return [Check("SKIP", "upwork weekly tie-out", "no weekly summary stored yet")]
-            checks = []
+            checks, matched = [], {}
             for p in periods:
                 name = f"upwork tie-out {p['profile']} {p['period_start']}"
+                span = f"{p['period_start']}..{p['period_end']}"
+                try:
+                    payload = json.loads(p["payload_json"] or "{}")
+                except ValueError:
+                    payload = {}
                 if not p["earnings_available"]:
-                    note = ""
-                    try:
-                        note = (json.loads(p["payload_json"] or "{}").get("note") or "")[:120]
-                    except ValueError:
-                        pass
-                    checks.append(Check("SKIP", name, f"Upwork reported no earnings data: {note}"))
+                    checks.append(Check("SKIP", name, f"{span}: Upwork reported no earnings data:"
+                                                      f" {(payload.get('note') or '')[:120]}"))
                     continue
                 if floor_day and p["period_start"] < floor_day:
-                    checks.append(Check("SKIP", name,
-                                        f"starts before the rail's floor {floor_day} — not all in view"))
+                    checks.append(Check("SKIP", name, f"{span}: starts before the rail's floor"
+                                                      f" {floor_day} — not all in view"))
                     continue
-                got = mf.rows_summary(conn, p["profile"], p["period_start"], p["period_end"])
-                gaps = [f"{k} summary {p[k + '_minor']} rail {got[k]}" for k in ("billed", "fee", "tax")
-                        if (p[k + "_minor"] or 0) != got[k]]
-                if gaps:
-                    per_client = []
-                    try:
-                        want = {c.get("client"): c for c in
-                                (json.loads(p["payload_json"] or "{}").get("by_client") or [])}
-                    except ValueError:
-                        want = {}
-                    for client in sorted(set(want) | set(got["by_client"])):
-                        w = want.get(client) or {}
-                        g = got["by_client"].get(client) or {"billed": 0, "fee": 0, "tax": 0}
-                        for k in ("billed", "fee", "tax"):
-                            wm = mf._minor(w.get(k)) or 0
-                            if wm != g[k]:
-                                per_client.append(f"{client} {k} {wm} vs {g[k]}")
-                    checks.append(Check("WARN", name,
-                                        f"{p['period_start']}..{p['period_end']}: " + "; ".join(gaps)
-                                        + (f" — {'; '.join(per_client[:6])}" if per_client else "")))
+                settled = (_dt.date.fromisoformat(p["period_end"])
+                           + _dt.timedelta(days=config.MCP_TIEOUT_SETTLE_DAYS))
+                if today < settled:
+                    checks.append(Check("SKIP", name, f"{span}: still settling — its invoices post"
+                                                      f" to transactions by {settled}"))
+                    continue
+                used = matched.setdefault(p["profile"], set())
+                res = mf.match_week(conn, p["profile"], p["period_start"], p["period_end"],
+                                    payload.get("by_client") or [], used)
+                if res["gaps"]:
+                    parts = []
+                    for g in res["gaps"]:
+                        cands = ", ".join(f"{d} {a}" for d, a in g["candidates"][:5]) or "no invoice rows"
+                        parts.append(f"{g['client']} billed {g['billed']}: no set of the rail's rows"
+                                     f" adds up ({cands})")
+                    checks.append(Check("WARN", name, f"{span}: " + "; ".join(parts)))
                 else:
                     checks.append(Check("PASS", name,
-                                        f"{p['period_start']}..{p['period_end']}: billed {p['billed_minor']},"
-                                        f" fee {p['fee_minor']}, tax {p['tax_minor']} — the rail read"
-                                        f" every row Upwork adds up"))
+                                        f"{span}: billed {p['billed_minor']} over {len(res['ok'])}"
+                                        f" client(s) = {len(res['used'])} invoice rows the rail read"))
             return checks
     except Exception as exc:  # noqa: BLE001 — a decision aid must never crash doctor
         return [Check("WARN", "upwork weekly tie-out", f"check failed: {exc!r}")]

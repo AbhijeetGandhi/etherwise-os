@@ -362,13 +362,30 @@ class TestWeeklySummary(unittest.TestCase):
         na = mf.summary_row({"earnings_available": False, "note": "No earnings data", "status": "ok"})
         self.assertEqual((na["earnings_available"], na["billed_minor"]), (0, None))
 
-    def test_the_rails_rows_add_up_to_upworks_summary(self):
+    def test_a_weeks_billed_amounts_are_sets_of_the_rails_invoice_rows(self):
+        """The summary's week is the week the invoice was CREATED — not what
+        the transactions date shows — so the match is per client, a subset of
+        invoice rows in the lag window, each row used once across weeks."""
         with db.connect(self.db_path) as conn:
             _seed_summary_rows(conn)
-            got = mf.rows_summary(conn, "Personal", "2026-08-01", "2026-08-26")
-        self.assertEqual((got["billed"], got["fee"], got["tax"], got["earned"]), (112367, -11237, -113, 101017))
-        self.assertEqual(got["by_client"]["Amanda T"], {"billed": 86667, "fee": -8667, "tax": -87, "earned": 77913})
-        self.assertNotIn("?", got["by_client"])                       # membership/payment/withdrawal excluded
+            by_client = _fixture("financials_summary_personal")["by_client"]
+            used = set()
+            res = mf.match_week(conn, "Personal", "2026-08-01", "2026-08-26", by_client, used)
+        self.assertEqual(res["gaps"], [])
+        self.assertEqual(sorted(res["ok"]), ["Amanda T", "NETFLY", "Tomas Eklund"])
+        self.assertEqual(len(used), 6)                            # 3 Amanda + 2 NETFLY + 1 Tomas invoices
+        self.assertIn("945000001", used)
+        self.assertNotIn("944697095", used)                       # a membership fee is never a billing
+        # the same rows cannot pay for a second week: NETFLY 162 has no rows left
+        with db.connect(self.db_path) as conn:
+            res2 = mf.match_week(conn, "Personal", "2026-08-01", "2026-08-26", by_client, used)
+        self.assertEqual([g["client"] for g in res2["gaps"]], ["Amanda T", "NETFLY", "Tomas Eklund"])
+
+    def test_subset_sum_prefers_fewer_rows_and_says_none(self):
+        self.assertEqual(mf._subset_sum([8100, 8100, 24000], 16200), [0, 1])
+        self.assertEqual(mf._subset_sum([8100, 8100, 24000], 24000), [2])
+        self.assertIsNone(mf._subset_sum([8100, 8100], 9000))
+        self.assertEqual(mf._subset_sum([], 0), [])
 
     def test_doctor_passes_on_a_matching_week_and_names_the_client_on_a_gap(self):
         with db.connect(self.db_path) as conn:
@@ -376,29 +393,35 @@ class TestWeeklySummary(unittest.TestCase):
             mf.store_summary(conn, "Personal", "2026-08-01", "2026-08-26",
                              mf.summary_row(_fixture("financials_summary_personal")))
             conn.execute("INSERT INTO sync_cursors (name, value) VALUES (?, '2026-07-01')", (mf.FLOOR_CURSOR,))
-        c = doctor_checks.check_upwork_weekly_tieout(self.db_path)
+        c = doctor_checks.check_upwork_weekly_tieout(self.db_path, now=date(2026, 9, 9))
         self.assertEqual([x.status for x in c], ["PASS"], [x.detail for x in c])
-        self.assertIn("billed 112367", c[0].detail)
+        self.assertIn("billed 112367 over 3 client(s) = 6 invoice rows", c[0].detail)
         with db.connect(self.db_path) as conn:                      # the rail misses NETFLY's 16 Aug invoice
             conn.execute("DELETE FROM upwork_mcp_rows WHERE record_id='944268907'")
-        c = doctor_checks.check_upwork_weekly_tieout(self.db_path)
+        c = doctor_checks.check_upwork_weekly_tieout(self.db_path, now=date(2026, 9, 9))
         self.assertEqual(c[0].status, "WARN")
-        self.assertIn("billed summary 112367 rail 104267", c[0].detail)
-        self.assertIn("NETFLY billed 16200 vs 8100", c[0].detail)
+        self.assertIn("NETFLY billed 16200: no set of the rail's rows adds up (2026-08-09 8100)", c[0].detail)
+        self.assertNotIn("Amanda", c[0].detail)
 
-    def test_doctor_skips_a_week_the_rail_could_not_have_read_and_an_unavailable_one(self):
+    def test_doctor_skips_a_week_before_the_floor_a_settling_one_and_an_unavailable_one(self):
         with db.connect(self.db_path) as conn:
             mf.store_summary(conn, "Personal", "2026-08-10", "2026-08-16",
+                             mf.summary_row(_fixture("financials_summary_personal")))
+            mf.store_summary(conn, "Personal", "2026-08-17", "2026-08-23",
                              mf.summary_row(_fixture("financials_summary_personal")))
             mf.store_summary(conn, "Agency", "2026-08-17", "2026-08-23",
                              mf.summary_row({"earnings_available": False, "note": "No earnings data for this period"}))
             conn.execute("INSERT INTO sync_cursors (name, value) VALUES (?, '2026-08-12')", (mf.FLOOR_CURSOR,))
-        c = {x.name: x for x in doctor_checks.check_upwork_weekly_tieout(self.db_path)}
+        c = {x.name: x for x in doctor_checks.check_upwork_weekly_tieout(self.db_path, now=date(2026, 8, 26))}
         self.assertEqual(c["upwork tie-out Personal 2026-08-10"].status, "SKIP")
         self.assertIn("before the rail's floor", c["upwork tie-out Personal 2026-08-10"].detail)
+        self.assertEqual(c["upwork tie-out Personal 2026-08-17"].status, "SKIP")
+        self.assertIn("still settling — its invoices post to transactions by 2026-09-02",
+                      c["upwork tie-out Personal 2026-08-17"].detail)
         self.assertEqual(c["upwork tie-out Agency 2026-08-17"].status, "SKIP")
         self.assertIn("No earnings data", c["upwork tie-out Agency 2026-08-17"].detail)
         self.assertIn(doctor_checks.check_upwork_weekly_tieout, [fn for _, fn in doctor_checks.ALL_CHECKS])
+        self.assertEqual(config.MCP_TIEOUT_SETTLE_DAYS, 10)
 
 
 class TestRun(NoSleep):
@@ -576,6 +599,11 @@ class TestDoctorTwins(unittest.TestCase):
         (self.inbox / "2026-09-09-upwork-personal-fullhistory.csv").write_text(
             self.HEADER + "\n" + "\n".join(lines))
 
+    def _ran(self, day):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO runs (task_name, started_at, status) VALUES"
+                         " ('upwork_financials', ?, 'completed')", (day + "T06:05:00+05:30",))
+
     def _seen(self, rows, floor=None):
         with db.connect(self.db_path) as conn:
             for ref, amount, *inv in rows:
@@ -594,11 +622,23 @@ class TestDoctorTwins(unittest.TestCase):
                    ("Aug 27, 2026", "9300", "Hourly", 20000), ("Aug 26, 2026", "9000", "Hourly", 5000)])
         self._seen([("9500", 10000), ("9400", -1000), ("9300", 20000), ("9200", 1)],
                    floor="2026-07-20")                                          # 9000 predates the rail
+        self._ran("2026-08-20")
         c = doctor_checks.check_upwork_mcp_twins(self.db_path, self.inbox, now=self.now)[0]
         self.assertEqual(c.status, "PASS", c.detail)
         self.assertIn("clean completed weeks 2/2", c.detail)
         self.assertIn("audit-only", c.detail)
         self.assertIn("1 older CSV rows predate the rail", c.detail)
+
+    def test_a_wide_one_off_read_does_not_shortcut_the_two_weeks_of_daily_running(self):
+        """The 90-day read of 26 Aug put every week since May in view at once;
+        the daily rail had run for one afternoon."""
+        self._csv([("Sep 8, 2026", "9500", "Hourly", 10000), ("Aug 27, 2026", "9300", "Hourly", 20000)])
+        self._seen([("9500", 10000), ("9300", 20000)], floor="2026-05-28")
+        self._ran("2026-09-01")
+        c = doctor_checks.check_upwork_mcp_twins(self.db_path, self.inbox, now=self.now)[0]
+        self.assertEqual(c.status, "PASS", c.detail)
+        self.assertNotIn("audit-only", c.detail)
+        self.assertIn("the daily rail has run since 2026-09-01 — keep the CSV import until 2026-09-15", c.detail)
 
     def test_a_young_rail_does_not_read_two_clean_weeks_on_its_first_morning(self):
         """Run 7232's first doctor read said "can go audit-only": every covered

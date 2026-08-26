@@ -452,7 +452,37 @@ def sync_submitted_proposals(ctx, client, page_size: int = 100,
 
 # ── task ──────────────────────────────────────────────────────────────────────
 
-def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14) -> dict:
+_MCP_DEFAULT = object()
+
+
+def mcp_proposals_pass(ctx, session_factory=None) -> dict:
+    """Use case C (2026-08-26): every proposal by status through the MCP —
+    modules/upwork/feeds/mcp_proposals.run. Non-fatal for the sync: a failure
+    is a `proposals_pass_failed` warn anomaly (a degraded sync, the rooms and
+    contracts still landed) with the start-failure kind named."""
+    from modules.upwork.feeds import mcp_client, mcp_proposals
+    try:
+        session = (session_factory or mcp_client.MCPSession)()
+        if hasattr(session, "initialize"):
+            session.initialize()
+        return mcp_proposals.run(ctx, session, config.UPWORK_ORGS["personal"])
+    except Exception as exc:                                     # noqa: BLE001
+        kind = mcp_client.start_failure_kind(exc)
+        ctx.log(f"proposals pass FAILED ({kind}): {exc!r} —"
+                f" {mcp_client.START_FAILURE_ADVICE[kind]}")
+        if hasattr(ctx, "anomaly"):
+            ctx.anomaly("proposals_pass_failed", "warn",
+                        {"kind": kind, "error": repr(exc)[:200],
+                         "note": mcp_client.START_FAILURE_ADVICE[kind]})
+        return {"status": "error", "kind": kind, "error": repr(exc)[:200]}
+
+
+def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14,
+         mcp_session_factory=_MCP_DEFAULT) -> dict:
+    """The hourly sync: ROOM_LIST (proposals with rooms, contracts, offers)
+    through GraphQL, then every proposal by status through the MCP
+    (`mcp_session_factory`: the default is a real MCPSession; None skips the
+    pass — tests and offline runs)."""
     dbp = ctx.db_path or config.DB_PATH
     client = client_factory()
     metrics = {"proposals": {}, "contracts": {}, "offers": {},
@@ -485,14 +515,16 @@ def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14) -> dict:
     ctx.log(f"rooms-state: {len(rooms)} rooms,"
             f" {json.dumps(metrics['proposals'])} proposals")
 
-    # 2nd pass: catch submitted-but-roomless proposals (the freeze since June 9).
-    # ARMED but INACTIVE — auto-skips until the cutover re-OAuth grants the
-    # vendorProposals scope; never fails the sync on the scope error.
-    try:
-        metrics["submitted_proposals"] = sync_submitted_proposals(ctx, client)
-    except Exception as exc:                        # noqa: BLE001
-        ctx.log(f"submitted-proposals pass errored (non-fatal): {exc!r}")
-        metrics["submitted_proposals"] = {"status": "error", "error": str(exc)[:200]}
+    # 2nd pass: every proposal by status through the MCP (use case C,
+    # 2026-08-26) — the roomless ones the roomList pass cannot see, and the
+    # 0.3 outcome map. The GraphQL vendorProposals pass it replaces
+    # (sync_submitted_proposals above) stays as code: scope-blocked since
+    # 9 June, never activated.
+    if mcp_session_factory is None:
+        metrics["submitted_proposals"] = {"status": "skipped", "note": "no MCP session"}
+    else:
+        metrics["submitted_proposals"] = mcp_proposals_pass(
+            ctx, None if mcp_session_factory is _MCP_DEFAULT else mcp_session_factory)
 
     # The GraphQL transactions pass RETIRED 2026-08-26 (Abhijeet, 17:55:
     # "retire it"). It had inserted nothing since 24 June: the API hands back
