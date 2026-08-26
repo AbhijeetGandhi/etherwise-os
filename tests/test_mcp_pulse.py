@@ -247,8 +247,10 @@ class TestInFlight(Case):
         self.assertEqual(m["stalled_milestones"], 2)
         cards = rules.rule_stalled_milestone(self.db_path)
         self.assertEqual(len(cards), 2)
-        self.assertTrue(cards[0]["title"].startswith("Unfunded milestone: $1500.00"))
+        self.assertEqual(cards[0]["title"], "Unfunded milestone 2: $1,500.00 — Mustafa A")
+        self.assertEqual(cards[1]["title"], "Unfunded milestone 3: $1,500.00 — Mustafa A")
         self.assertEqual(cards[0]["client"], "Mustafa A")
+        self.assertEqual(cards[0]["money_at_stake"], 1500.0)
         self.assertEqual(cards[0]["due"], "2026-07-15")
         self.assertIn("never funded this milestone", cards[0]["action"])
         # a milestone that gets funded and paid stops being a card

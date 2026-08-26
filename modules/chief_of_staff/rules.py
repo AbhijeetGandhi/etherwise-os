@@ -405,10 +405,13 @@ def rule_stalled_milestone(db_path, now=None) -> List[dict]:
         who = r["client_company"] or r["contract_title"] or r["contract_id"]
         out.append({
             "source": "sales", "dept": "sales", "kind": "stalled_milestone",
-            "title": (f"Unfunded milestone: ${amount} on {(r['contract_title'] or '')[:40]}"
-                      if amount is not None else
-                      f"Unfunded milestone on {(r['contract_title'] or '')[:40]}"),
+            # the client leads the title: two milestones on one contract read as
+            # duplicates otherwise (Mustafa's are $1,500 each, 15 and 22 Jul).
+            "title": (f"Unfunded milestone {r['sequence_id'] or ''}".rstrip() +
+                      (f": ${amount:,.2f}" if amount is not None else "") +
+                      f" — {str(who)[:40]}"),
             "client": r["client_company"],
+            "money_at_stake": float(amount) if amount is not None else None,
             "action": "The client never funded this milestone and its date has passed —"
                       " ask them to fund it, or agree to drop it.",
             "due": (r["due_dt"] or "")[:10] or None,
