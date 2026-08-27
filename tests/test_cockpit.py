@@ -1874,6 +1874,48 @@ class TestCrossChannelEvidence(unittest.TestCase):
         self.assertEqual(out["updated"], 1)
         self.assertIsNone(self.card())
 
+    def test_confirming_a_chip_on_an_OPEN_card_marks_it_done(self):
+        """Abhijeet, 2026-08-27: "there is one Globaltize email which says
+        probably resolved, and if I mark it as done it is still there — it
+        refreshes the page but it is still there."
+
+        The button says "Done — nothing owed". With an OPEN engine row it only
+        stamped closure_state and left state='open', so the card came straight
+        back on the next read. The no-row branch had been fixed; this one had
+        not."""
+        from modules.chief_of_staff import nudges
+        k = "followup:c:the-cradle-company"
+        self.add_contract()
+        nudges.write_nudge(self.db_path, source="sales", dept="sales",
+                           kind="owed_reply", title="Client comms: Globaltize",
+                           dedup_key=k, payload={"thread_id": "rK"})
+        self.assertIsNotNone(self.card())
+        out = actions.card_closure(self.db_path,
+                                   {"item_key": k, "action": "confirm"})
+        self.assertEqual(out["closure_state"], "confirmed")
+        self.assertEqual(out["via"], "closure+done")
+        self.assertEqual(out["engine_rows"], 1)
+        self.assertIsNone(self.card())                  # gone, and STAYS gone
+        with db.connect(self.db_path) as conn:
+            row = conn.execute("SELECT state, closure_state FROM nudges"
+                               " WHERE dedup_key=? ORDER BY id DESC LIMIT 1",
+                               (k,)).fetchone()
+        self.assertEqual((row["state"], row["closure_state"]), ("done", "confirmed"))
+
+    def test_keep_open_undoes_a_confirm_so_a_misclick_is_not_final(self):
+        from modules.chief_of_staff import nudges
+        k = "followup:c:the-cradle-company"
+        self.add_contract()
+        nudges.write_nudge(self.db_path, source="sales", dept="sales",
+                           kind="owed_reply", title="Client comms: Globaltize",
+                           dedup_key=k, payload={"thread_id": "rK"})
+        actions.card_closure(self.db_path, {"item_key": k, "action": "confirm"})
+        self.assertIsNone(self.card())
+        out = actions.card_closure(self.db_path, {"item_key": k, "action": "reject"})
+        self.assertEqual(out["closure_state"], "rejected")
+        self.assertEqual(out["reopened"], 1)
+        self.assertIsNotNone(self.card())               # back on the board
+
     def test_a_done_survives_a_sweep_re_mint_but_not_a_slack_reply(self):
         k = "followup:c:the-cradle-company"
         actions.nudge(self.db_path, {"item_key": k, "action": "done"},

@@ -744,7 +744,34 @@ def card_closure(db_path, body: dict) -> dict:
                 " LIMIT 1", (dedup_key,)).fetchone()
     state = "confirmed" if action == "confirm" else "rejected"
     if row:
-        return nudges.set_closure(db_path, row["id"], closure_state=state)
+        out = nudges.set_closure(db_path, row["id"], closure_state=state)
+        # THE BUTTON SAYS "Done — nothing owed", SO IT MUST MEAN DONE.
+        # Abhijeet, 2026-08-27: "there is one Globaltize email which says
+        # probably resolved, and if I mark it as done it is still there — it
+        # refreshes the page but it is still there." Stamping closure_state
+        # alone left nudges.state 'open', so the card rendered again on the
+        # next read. The no-engine-row branch below already did the right
+        # thing and its comment already named this exact failure ("made the
+        # founder press a button that visibly did nothing"); the branch WITH a
+        # row never got the same treatment.
+        if action == "confirm":
+            res = apply_nudge(db_path, item_key, "done")
+            out["engine_rows"] = res.get("engine_rows", 0)
+            out["via"] = "closure+done"
+        else:
+            # "Keep open" must be able to UNDO a confirm, or the card is gone
+            # for good on a misclick.
+            # by ID, not dedup_key: set_state's key path only moves rows that
+            # are already open|snoozed, which cannot undo a 'done'.
+            reopened = nudges.set_state(db_path, state="open",
+                                        nudge_id=row["id"])["updated"]
+            with db.connect(db_path) as conn:
+                conn.execute("UPDATE nudge_state SET state='open',"
+                             " updated_at=datetime('now') WHERE item_key=?"
+                             " AND state='done'", (item_key,))
+            out["reopened"] = reopened
+            out["via"] = "closure+open"
+        return out
     # no engine row at all -> record it where a follow-up card's actions live.
     # 'confirm' means handled (same as Done); 'reject' means keep it open, which
     # for a card with no stored state is already true, so it is a no-op we SAY.
