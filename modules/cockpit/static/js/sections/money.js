@@ -775,6 +775,22 @@ export async function render(root, ctx) {
         ? `${fmt.pct(r.pct_to_target, 1)} of the ${fmt.usd(r.target_usd)} target`
         : "no target measured",
     ]));
+    // BILLED vs RECEIVED. The headline is what we billed; this line is what
+    // actually arrived, and the reason the two differ (2026-08-27).
+    if (r.received_usd != null) {
+      const why = [];
+      if (r.billed_lands_later_usd) {
+        why.push(`${fmt.usd(r.billed_lands_later_usd)} billed this month lands later`);
+      }
+      if (r.received_billed_earlier_usd) {
+        why.push(`${fmt.usd(r.received_billed_earlier_usd)} arrived for earlier months`);
+      }
+      subBits.push(el("div", null, [
+        el("b", null, fmt.usd(r.received_usd)),
+        " actually reached the account",
+        why.length ? " · " + why.join(" · ") : "",
+      ]));
+    }
     // the figure is bigger than the ledger when a fixed-price milestone has
     // been released but not paid out — say so rather than let the two disagree
     if (r.released_usd) {
@@ -786,7 +802,7 @@ export async function render(root, ctx) {
       ]));
     }
     g.appendChild(kpi({
-      label: `This month (${thisM || "—"})`,
+      label: `Billed this month (${thisM || "—"})`,
       ...kv(mtd, fmt.usd),
       sub: el("div", null, subBits),
       onClick: () => drillTx({

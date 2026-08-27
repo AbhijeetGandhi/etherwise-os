@@ -673,6 +673,15 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
                         " WHERE record_id=?",
                         (SOURCE, ledger_type(row), bucket_for(row), row.get("company"),
                          row["recordId"]))
+                # WHEN THE CLIENT WAS BILLED, on every row we see — the CSV
+                # carries only the payout date, so without this the ledger can
+                # answer "what came in" and not "what did we bill" (migration
+                # 037; his 2026-08-27 "I wanna see both").
+                if row.get("createdDateTime"):     # Upwork's INVOICE instant
+                    conn.execute(
+                        "UPDATE transactions SET billed_dt=? WHERE record_id=?"
+                        " AND (billed_dt IS NULL OR billed_dt != ?)",
+                        (row["createdDateTime"], row["recordId"], row["createdDateTime"]))
                 record_seen(conn, row, profile, outcome, amt)
             if got["truncated"]:
                 ctx.anomaly("financials_truncated", "warn",

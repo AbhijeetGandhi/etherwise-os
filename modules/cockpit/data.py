@@ -3986,8 +3986,8 @@ def money(db_path: Optional[Path] = None,
     try:
         rows = [dict(r) for r in conn.execute(
             "SELECT source, type, upwork_type, category, accounting_subtype,"
-            " description, pnl_bucket, amount_base_minor, creation_dt, pnl_month"
-            " FROM transactions WHERE canonical_key IS NOT NULL")]
+            " description, pnl_bucket, amount_base_minor, creation_dt, pnl_month,"
+            " billed_dt FROM transactions WHERE canonical_key IS NOT NULL")]
         # LATEST closing per account: with overlapping/re-imported statements an
         # account has several balance rows — summing them double-counted cash
         # (2026-07-07: two idfc statements would have shown ~2x savings).
@@ -4014,15 +4014,35 @@ def money(db_path: Optional[Path] = None,
         return round(float(fmoney.from_minor(int(minor or 0))), 2)
 
     def mo(r):
-        # pnl_month accrual override (late salaries etc.) wins over the payment
-        # date for the monthly P&L split; cash + all-time totals are unaffected
-        return r.get("pnl_month") or (r.get("creation_dt") or "")[:7]
+        """The month we BILLED it — what the monthly P&L is split by.
+
+        Abhijeet, 2026-08-27: "I wanna see both — how much money we billed to
+        the clients in a month, and actual receivables to the account in that
+        month." Upwork's CSV carries only the PAYOUT date, so until migration
+        037 there was one date and "revenue this month" silently meant cash.
+        `billed_dt` is Upwork's own invoice instant; NULL falls back to the
+        payment date, so a row whose invoice date we do not know never invents
+        a gap. `pnl_month` is still the manual override and still wins.
+        Cash and all-time totals are unaffected — `cash_mo` answers those."""
+        return (r.get("pnl_month")
+                or (r.get("billed_dt") or r.get("creation_dt") or "")[:7])
+
+    def cash_mo(r):
+        """The month the money actually reached the account."""
+        return (r.get("creation_dt") or "")[:7]
 
     # revenue = the pnl 'revenue' bucket (base-USD), MTD-vs-same-day-last-month
     def rev_minor(pred):
         return sum(r["amount_base_minor"] or 0 for r in rows
                    if r.get("pnl_bucket") == "revenue" and pred(r))
     month_minor = rev_minor(lambda r: mo(r) == month)
+    # BILLED vs RECEIVED, the two halves of his question. `month_minor` is
+    # billed; these are the cash side and the bridge between them.
+    received_minor = rev_minor(lambda r: cash_mo(r) == month)
+    billed_not_yet_in_minor = rev_minor(
+        lambda r: mo(r) == month and cash_mo(r) > month)
+    received_billed_earlier_minor = rev_minor(
+        lambda r: cash_mo(r) == month and mo(r) < month)
     # FIXED-PRICE RELEASED BUT NOT YET PAID OUT counts as revenue the day the
     # client releases it (Abhijeet, 2026-08-27: "we can consider that fifteen
     # hundred as the revenue … I never had this situation where a fixed price
@@ -4089,6 +4109,11 @@ def money(db_path: Optional[Path] = None,
             "released_usd": usd(released_minor),
             "released": [{"who": r["client_company"] or r["contract_title"],
                           "usd": usd(r["amount_minor"])} for r in released_rows],
+            # what we BILLED (month_usd, above) against what actually ARRIVED,
+            # and the two flows that explain the difference
+            "received_usd": usd(received_minor),
+            "billed_lands_later_usd": usd(billed_not_yet_in_minor),
+            "received_billed_earlier_usd": usd(received_billed_earlier_minor),
         },
         "pnl": {
             "net_revenue_usd": usd(allp["net_revenue_minor"]),
