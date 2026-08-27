@@ -421,6 +421,63 @@ class TestInFlight(Case):
             conn.execute("UPDATE contracts SET title=NULL WHERE id='c1'")
             self.assertEqual(len(mi.released_clearing(conn)), 1)
 
+    def test_release_is_stamped_the_first_time_it_is_seen_and_never_moved(self):
+        """Upwork's milestone node carries no paid-at, so the release date is
+        when the rail first SEES Paid (migration 036). It dates the revenue, so
+        it must not drift on every later read."""
+        node = {"id": "m1", "sequenceId": 1, "description": "x",
+                "dueDateTime": "2026-07-15T00:00:00.000Z", "state": "NotFunded",
+                "state_label": "Not funded",
+                "depositAmount": {"rawValue": "1500.00"},
+                "fundedAmount": {"rawValue": "1500.00"},
+                "paid": {"rawValue": "0.00"}}
+        with db.connect(self.db_path) as conn:
+            row = mi.milestone_rows({"offer": {"milestones": [node]}})[0]
+            self.assertEqual(mi.upsert_milestone(conn, "c1", row), "inserted")
+        self.assertIsNone(self.rows("SELECT released_at r FROM upwork_milestones")[0]["r"])
+        node["state"], node["paid"] = "Paid", {"rawValue": "1500.00"}
+        row = mi.milestone_rows({"offer": {"milestones": [node]}})[0]
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(mi.upsert_milestone(conn, "c1", row), "paid")
+        stamped = self.rows("SELECT released_at r FROM upwork_milestones")[0]["r"]
+        self.assertIsNotNone(stamped)
+        with db.connect(self.db_path) as conn:          # read it again, unchanged
+            mi.upsert_milestone(conn, "c1", row)
+        self.assertEqual(self.rows("SELECT released_at r FROM upwork_milestones")[0]["r"],
+                         stamped)
+
+    def test_released_fixed_price_counts_as_revenue_in_the_month_released(self):
+        """Abhijeet, 2026-08-27: "we can consider that fifteen hundred as the
+        revenue … I never had this situation where a fixed price was reversed."
+        Hourly is deliberately NOT accrued this way — his call."""
+        from modules.cockpit import data
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO contracts (id, upwork_status, title)"
+                         " VALUES ('c1','ACTIVE','A fixed price job')")
+            conn.execute("INSERT INTO upwork_milestones (id, contract_id, sequence_id,"
+                         " state, amount_minor, released_at) VALUES"
+                         " ('m1','c1',1,'Paid',150000,'2026-08-27 18:00:00')")
+        minor, rows = data.released_revenue_minor(self.db_path, "2026-08")
+        self.assertEqual((minor, len(rows)), (150000, 1))
+        self.assertEqual(data.released_revenue_minor(self.db_path, "2026-07")[0], 0)
+        # once the earning lands it stops being an accrual — no double count
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, dedup_key, amount_minor,"
+                         " pnl_bucket, description, creation_dt) VALUES ('t1','t1',150000,"
+                         " 'revenue','A fixed price job','2026-09-02')")
+        self.assertEqual(data.released_revenue_minor(self.db_path, "2026-08")[0], 0)
+
+    def test_a_release_we_cannot_date_is_never_counted_into_a_month(self):
+        from modules.cockpit import data
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO contracts (id, upwork_status, title)"
+                         " VALUES ('c1','ACTIVE','An older job')")
+            conn.execute("INSERT INTO upwork_milestones (id, contract_id, sequence_id,"
+                         " state, amount_minor) VALUES ('m1','c1',1,'Paid',150000)")
+        self.assertEqual(data.released_revenue_minor(self.db_path, "2026-08")[0], 0)
+        with db.connect(self.db_path) as conn:          # but it still SHOWS
+            self.assertEqual(len(mi.released_clearing(conn)), 1)
+
     def test_config_bounds(self):
         self.assertEqual((config.MCP_TIMESHEET_DAYS, config.MCP_MILESTONE_MAX_GETS,
                           config.MCP_CONTRACT_DETAIL_DAYS), (14, 8, 5))

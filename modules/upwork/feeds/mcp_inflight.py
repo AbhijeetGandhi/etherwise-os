@@ -210,11 +210,17 @@ def upsert_milestone(conn: sqlite3.Connection, cid: str, m: dict) -> str:
     fields = (str(cid), m["sequence_id"], m["description"], m["due_dt"], m["amount_minor"],
               m["funded_minor"], m["paid_minor"], m["state"], m["state_label"])
     if exists:
+        became_paid = exists["state"] != m["state"] and m["state"] == "Paid"
         conn.execute(
             "UPDATE upwork_milestones SET contract_id=?, sequence_id=?, description=?,"
             " due_dt=?, amount_minor=?, funded_minor=?, paid_minor=?, state=?, state_label=?,"
-            " updated_at=datetime('now') WHERE id=?", (*fields, m["id"]))
-        return "paid" if exists["state"] != m["state"] and m["state"] == "Paid" else "updated"
+            # the first moment we SEE it released — Upwork's milestone node has
+            # no paid-at, and this is what dates the revenue (migration 036)
+            " released_at=CASE WHEN ? AND released_at IS NULL THEN datetime('now')"
+            "                  ELSE released_at END,"
+            " updated_at=datetime('now') WHERE id=?",
+            (*fields, 1 if became_paid else 0, m["id"]))
+        return "paid" if became_paid else "updated"
     conn.execute(
         "INSERT INTO upwork_milestones (contract_id, sequence_id, description, due_dt,"
         " amount_minor, funded_minor, paid_minor, state, state_label, id)"
@@ -384,7 +390,7 @@ def released_clearing(conn: sqlite3.Connection) -> list:
     out = []
     rows = list(conn.execute(
         "SELECT m.id, m.contract_id, m.amount_minor, m.sequence_id, m.due_dt,"
-        " c.title AS contract_title, c.client_company"
+        " m.released_at, c.title AS contract_title, c.client_company"
         " FROM upwork_milestones m LEFT JOIN contracts c ON c.id = m.contract_id"
         " WHERE m.state = 'Paid' AND m.amount_minor IS NOT NULL"
         " ORDER BY m.contract_id, m.sequence_id"))
@@ -406,5 +412,6 @@ def released_clearing(conn: sqlite3.Connection) -> list:
                         "amount_minor": r["amount_minor"],
                         "contract_title": r["contract_title"],
                         "client_company": r["client_company"],
+                        "released_at": r["released_at"],
                         "due_dt": r["due_dt"]})
     return out

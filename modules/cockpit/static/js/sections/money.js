@@ -775,6 +775,16 @@ export async function render(root, ctx) {
         ? `${fmt.pct(r.pct_to_target, 1)} of the ${fmt.usd(r.target_usd)} target`
         : "no target measured",
     ]));
+    // the figure is bigger than the ledger when a fixed-price milestone has
+    // been released but not paid out — say so rather than let the two disagree
+    if (r.released_usd) {
+      subBits.push(el("div", "muted", [
+        `includes ${fmt.usd(r.released_usd)} released and not paid out yet`,
+        r.released && r.released.length
+          ? " — " + r.released.map((x) => x.who).join(", ")
+          : "",
+      ]));
+    }
     g.appendChild(kpi({
       label: `This month (${thisM || "—"})`,
       ...kv(mtd, fmt.usd),

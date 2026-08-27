@@ -3890,8 +3890,38 @@ def _money_in_flight(db_path: Optional[Path] = None) -> dict:
             "clearing_usd": usd(sum(r["amount_minor"] or 0 for r in clearing)),
             "clearing": [{"who": r["client_company"] or r["contract_title"],
                           "contract_id": r["contract_id"],
+                          "released": (r["released_at"] or "")[:10] or None,
                           "usd": usd(r["amount_minor"])} for r in clearing]},
     }
+
+
+def released_revenue_minor(db_path: Optional[Path], month: str) -> tuple:
+    """Fixed-price money RELEASED in `month` that has no earning row yet.
+
+    Abhijeet, 2026-08-27: "we can consider that fifteen hundred as the revenue,
+    because it's a fixed amount and it was released by the client … I've been
+    working with that for three years and I never had this situation where a
+    fixed price was reversed." So it counts the day he can count on it, not the
+    day Upwork moves it.
+
+    HOURLY IS DELIBERATELY NOT HERE (his call, same conversation): only
+    fixed-price releases are recognised before a transaction exists.
+
+    Returns (minor, rows). A milestone whose release date we never stamped —
+    it was already Paid before migration 036 — is NOT counted into a month it
+    cannot be dated to; it stays visible in the in-flight block and out of the
+    revenue line, which is the honest half of a fact we only half know."""
+    from modules.upwork.feeds import mcp_inflight
+    try:
+        conn = _ro(db_path)
+        try:
+            rows = [r for r in mcp_inflight.released_clearing(conn)
+                    if (r.get("released_at") or "")[:7] == month]
+        finally:
+            conn.close()
+    except Exception:                            # noqa: BLE001 — pre-036 DB
+        return 0, []
+    return sum(r["amount_minor"] or 0 for r in rows), rows
 
 
 def _money_source_health(db_path: Optional[Path]) -> Optional[dict]:
@@ -3993,6 +4023,14 @@ def money(db_path: Optional[Path] = None,
         return sum(r["amount_base_minor"] or 0 for r in rows
                    if r.get("pnl_bucket") == "revenue" and pred(r))
     month_minor = rev_minor(lambda r: mo(r) == month)
+    # FIXED-PRICE RELEASED BUT NOT YET PAID OUT counts as revenue the day the
+    # client releases it (Abhijeet, 2026-08-27: "we can consider that fifteen
+    # hundred as the revenue … I never had this situation where a fixed price
+    # was reversed"). Only fixed-price — hourly stays on the ledger's dating,
+    # his call in the same conversation. It self-reconciles: the moment the
+    # earning row lands, released_clearing stops counting the milestone.
+    released_minor, released_rows = released_revenue_minor(db_path, month)
+    month_minor += released_minor
     last_minor = rev_minor(lambda r: mo(r) == last_month)
     last_mtd_minor = rev_minor(lambda r: mo(r) == last_month
                                and (r.get("creation_dt") or "")[8:10] <= dom)
@@ -4046,6 +4084,11 @@ def money(db_path: Optional[Path] = None,
             "pct_to_target": round(100 * usd(month_minor) / tgt, 1) if tgt else None,
             "last_month": last_month, "last_month_usd": usd(last_minor),
             "last_month_mtd_usd": usd(last_mtd_minor), "by_month": by_month,
+            # named separately so the screen can say WHY the figure is bigger
+            # than the ledger, rather than the two quietly disagreeing
+            "released_usd": usd(released_minor),
+            "released": [{"who": r["client_company"] or r["contract_title"],
+                          "usd": usd(r["amount_minor"])} for r in released_rows],
         },
         "pnl": {
             "net_revenue_usd": usd(allp["net_revenue_minor"]),
