@@ -348,3 +348,63 @@ def stalled(conn: sqlite3.Connection, today: Optional[date] = None) -> list:
         " LEFT JOIN contracts c ON c.id = m.contract_id"
         " WHERE m.state IN ('NotFunded', 'Not funded') AND substr(m.due_dt,1,10) < ?"
         " ORDER BY m.due_dt", (day,))]
+
+
+# ── released, not yet on the ledger (2026-08-27) ─────────────────────────────
+
+# How much of the contract title has to match a transaction's description.
+# Upwork writes the JOB TITLE into the fixed-price earning's description and
+# leaves assignment_company EMPTY, so the title is the only join there is.
+_TITLE_MATCH_CHARS = 24
+
+
+def released_clearing(conn: sqlite3.Connection) -> list:
+    """Milestones the client has RELEASED that no ledger row exists for yet.
+
+    Abhijeet, 2026-08-27: "these 1500, why aren't they showing up on the
+    current month revenue". Because Upwork marks a milestone Paid the moment
+    the client releases it, and only creates the earning transaction days
+    later when the payment clears review. Between those two moments the money
+    is real and appears NOWHERE in v3: not in `stalled` (it is funded), not in
+    `open` (it is paid), not in revenue (there is no row). His milestone 1 on
+    the same contract shows the shape — released in July, and the Fixed
+    Earning lands on 30 July.
+
+    MATCHED BY COUNT, not by existence. Mustafa's milestones are $1,500 each,
+    so "is there a $1,500 earning for this contract" would match milestone 2
+    against milestone 1's July transaction and wrongly call it landed. Per
+    (contract, amount) the paid milestones are counted against the earnings of
+    that amount, and only the surplus is still clearing.
+
+    An approximation, and labelled as one: Upwork gives no paid-at timestamp
+    on the milestone, so this cannot be exact. It errs toward SHOWING money —
+    a released milestone that has in fact landed reads as clearing for a day,
+    which is a much cheaper mistake than $1,500 vanishing from every screen.
+    """
+    out = []
+    rows = list(conn.execute(
+        "SELECT m.id, m.contract_id, m.amount_minor, m.sequence_id, m.due_dt,"
+        " c.title AS contract_title, c.client_company"
+        " FROM upwork_milestones m LEFT JOIN contracts c ON c.id = m.contract_id"
+        " WHERE m.state = 'Paid' AND m.amount_minor IS NOT NULL"
+        " ORDER BY m.contract_id, m.sequence_id"))
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault((r["contract_id"], r["amount_minor"]), []).append(r)
+    for (cid, amount), paid in groups.items():
+        title = (paid[0]["contract_title"] or "")[:_TITLE_MATCH_CHARS]
+        landed = 0
+        if title:
+            landed = conn.execute(
+                "SELECT COUNT(*) FROM transactions WHERE pnl_bucket='revenue'"
+                " AND amount_minor=? AND ("
+                "   COALESCE(description,'') LIKE ? OR COALESCE(assignment_company,'') LIKE ?)",
+                (amount, title + "%", title + "%")).fetchone()[0]
+        for r in paid[landed:]:                  # the surplus, oldest first
+            out.append({"id": r["id"], "contract_id": r["contract_id"],
+                        "sequence_id": r["sequence_id"],
+                        "amount_minor": r["amount_minor"],
+                        "contract_title": r["contract_title"],
+                        "client_company": r["client_company"],
+                        "due_dt": r["due_dt"]})
+    return out

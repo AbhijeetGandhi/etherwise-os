@@ -680,6 +680,17 @@ export async function render(root, ctx) {
           + " you cannot submit work against it until they do"),
       ]));
     }
+    if (m.clearing && m.clearing.length) {
+      // released by the client, no earning row on Upwork yet. Without this the
+      // money sits in a hole: not stalled, not open, not revenue (2026-08-27).
+      rows.push(el("div", "pad", [
+        el("b", "pos", `${fmt.usd2(m.clearing_usd)} released, clearing`),
+        el("div", "muted small", m.clearing.map((x) =>
+          `${x.who} — ${fmt.usd2(x.usd)}`).join(" · ")),
+        el("div", "muted small", "the client released it; Upwork holds a fixed-price payment"
+          + " for a few days before it becomes an earning, so it is not in revenue yet"),
+      ]));
+    }
     if (m.open && m.open.length) {
       rows.push(el("div", "pad", [
         el("b", null, `${fmt.usd2(m.open_usd)} in funded milestones still open`),

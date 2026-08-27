@@ -3842,9 +3842,11 @@ def _money_in_flight(db_path: Optional[Path] = None) -> dict:
 
     `hours_usd` is an estimate to the cent, `stalled` is not: a milestone the
     client never funded whose date has passed is a fact, and the first read
-    found $3,000 of them six weeks overdue. Empty and unavailable are
-    different: a DB without migration 033 returns available False, never a
-    reassuring zero."""
+    found $3,000 of them six weeks overdue. `clearing` is the third state and
+    the one that was missing — released by the client, not yet an earning on
+    Upwork's ledger, and therefore previously invisible everywhere. Empty and
+    unavailable are different: a DB without migration 033 returns available
+    False, never a reassuring zero."""
     from modules.finance import money as _m
     from modules.upwork.feeds import mcp_inflight
     try:
@@ -3852,6 +3854,7 @@ def _money_in_flight(db_path: Optional[Path] = None) -> dict:
         try:
             un = mcp_inflight.unbilled(conn)
             stalled = mcp_inflight.stalled(conn)
+            clearing = mcp_inflight.released_clearing(conn)
             funded = [dict(r) for r in conn.execute(
                 "SELECT m.id, m.contract_id, m.amount_minor, m.due_dt, m.state,"
                 " c.title AS contract_title, c.client_company FROM upwork_milestones m"
@@ -3881,7 +3884,13 @@ def _money_in_flight(db_path: Optional[Path] = None) -> dict:
             "open_usd": usd(sum(r["amount_minor"] or 0 for r in funded)),
             "open": [{"who": r["client_company"] or r["contract_title"],
                       "contract_id": r["contract_id"], "usd": usd(r["amount_minor"]),
-                      "due": (r["due_dt"] or "")[:10], "state": r["state"]} for r in funded]},
+                      "due": (r["due_dt"] or "")[:10], "state": r["state"]} for r in funded],
+            # released by the client, no earning row yet — the gap that made
+            # $1,500 disappear from every screen on 2026-08-27
+            "clearing_usd": usd(sum(r["amount_minor"] or 0 for r in clearing)),
+            "clearing": [{"who": r["client_company"] or r["contract_title"],
+                          "contract_id": r["contract_id"],
+                          "usd": usd(r["amount_minor"])} for r in clearing]},
     }
 
 

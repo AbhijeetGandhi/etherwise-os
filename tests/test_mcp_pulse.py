@@ -385,6 +385,42 @@ class TestInFlight(Case):
             mi.fetch_timesheets(_Session({("get_freelancer_financials", "timesheets"): {"text": "boom"}}),
                                 ORG, "2026-08-17", "2026-08-23", lambda m: None)
 
+    def test_released_money_that_has_no_earning_row_yet_is_still_shown(self):
+        """Abhijeet, 2026-08-27: "these 1500, why aren't they showing up on the
+        current month revenue". Because Upwork marks a milestone Paid when the
+        client releases it and only writes the earning days later. In between,
+        the money was in no bucket at all: not stalled, not open, not revenue."""
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO contracts (id, upwork_status, title) VALUES"
+                         " ('c1','ACTIVE','AI automation architect(Airtable + make.com + x')")
+            for seq, state in ((1, "Paid"), (2, "Paid"), (3, "NotFunded")):
+                conn.execute("INSERT INTO upwork_milestones (id, contract_id, sequence_id,"
+                             " state, amount_minor) VALUES (?,?,?,?,150000)",
+                             (f"m{seq}", "c1", seq, state))
+            # milestone 1 landed in July; milestone 2 was released today
+            conn.execute("INSERT INTO transactions (record_id, dedup_key, amount_minor,"
+                         " pnl_bucket, description, creation_dt) VALUES ('t1','t1',150000,"
+                         " 'revenue','AI automation architect(Airtable + make.com + x',"
+                         " '2026-07-30')")
+            got = mi.released_clearing(conn)
+        self.assertEqual([r["sequence_id"] for r in got], [2])   # counted, not matched
+        self.assertEqual(got[0]["amount_minor"], 150000)
+
+    def test_every_released_milestone_that_landed_stays_off_the_list(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO contracts (id, upwork_status, title) VALUES"
+                         " ('c1','ACTIVE','Airtable Configuration and Automation')")
+            conn.execute("INSERT INTO upwork_milestones (id, contract_id, sequence_id,"
+                         " state, amount_minor) VALUES ('m1','c1',1,'Paid',50000)")
+            conn.execute("INSERT INTO transactions (record_id, dedup_key, amount_minor,"
+                         " pnl_bucket, assignment_company, creation_dt) VALUES"
+                         " ('t1','t1',50000,'revenue','Airtable Configuration and Automation',"
+                         " '2026-08-01')")
+            self.assertEqual(mi.released_clearing(conn), [])
+            # a milestone with no title to join on is never guessed at
+            conn.execute("UPDATE contracts SET title=NULL WHERE id='c1'")
+            self.assertEqual(len(mi.released_clearing(conn)), 1)
+
     def test_config_bounds(self):
         self.assertEqual((config.MCP_TIMESHEET_DAYS, config.MCP_MILESTONE_MAX_GETS,
                           config.MCP_CONTRACT_DETAIL_DAYS), (14, 8, 5))
