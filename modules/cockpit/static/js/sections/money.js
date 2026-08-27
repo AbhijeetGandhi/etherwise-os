@@ -445,7 +445,12 @@ export async function render(root, ctx) {
     const mtd = r.month_usd;
     const monthRows = rows.filter((x) => x.m === thisM);
     const left = sumB(OPERATING_ALL, monthRows);
-    const parts = [el("b", null, dash(mtd, fmt.usd)), " came in this month"];
+    // `month_usd` is what we BILLED (migration 037). Calling it "came in" was
+    // true until the two dates were separated and is not true now.
+    const parts = [el("b", null, dash(mtd, fmt.usd)), " billed this month"];
+    if (r.received_usd != null) {
+      parts.push(", ", el("b", null, fmt.usd(r.received_usd)), " received");
+    }
     if (mtd != null) parts.push(", ", el("b", null, fmt.usd(left)), " left after costs");
     parts.push(" · ", el("b", null, dash(cash.value_usd, fmt.usd)), " in the bank");
     const st = (d.provisional || {}).staleness || {};
@@ -525,8 +530,22 @@ export async function render(root, ctx) {
     const usual = usualMonthUsd();
     const byB = (b) => sumB([b], scoped);
 
-    // came in — against the same day last month when the range is this month
+    // came in — against the same day last month when the range is this month.
+    // For THIS month the cell leads with what we BILLED and says what actually
+    // arrived underneath (Abhijeet, 2026-08-27: "we billed for like twenty five
+    // thousand, but in account we received like twenty two thousand"). Other
+    // ranges keep the cash view: `cameIn` is summed from payment dates.
     const cameSub = [];
+    if (isThis && r.received_usd != null) {
+      cameSub.push(el("b", null, fmt.usd(r.received_usd)), " reached the account");
+      if (r.billed_lands_later_usd) {
+        cameSub.push(" · ", fmt.usd(r.billed_lands_later_usd), " lands later");
+      }
+      if (r.received_billed_earlier_usd) {
+        cameSub.push(" · ", fmt.usd(r.received_billed_earlier_usd), " arrived for earlier months");
+      }
+      cameSub.push(el("div", null, []));
+    }
     if (isThis && r.last_month_mtd_usd != null) {
       const cmp = round2((r.month_usd || 0) - r.last_month_mtd_usd);
       cameSub.push("by this day last month ", el("b", null, fmt.usd(r.last_month_mtd_usd)), " ",
@@ -554,9 +573,10 @@ export async function render(root, ctx) {
     leftSub.push("you took out ", el("b", null, fmt.usd(Math.abs(draws))), isThis ? " so far" : "");
 
     const flow = el("div", { class: "flow", style: { gridTemplateColumns: "repeat(3, 1fr)" } }, [
-      storyCell("Came in", cameIn, cameSub, () => drillTx({
-        title: `Came in — ${rl}`, buckets: ["revenue", "refund"], ranged: true,
-        subtitle: "revenue less refunds; the top line" })),
+      storyCell(isThis ? "Billed" : "Came in",
+        isThis && r.month_usd != null ? r.month_usd : cameIn, cameSub, () => drillTx({
+          title: `Came in — ${rl}`, buckets: ["revenue", "refund"], ranged: true,
+          subtitle: "revenue less refunds; the top line" })),
       storyCell("Went out", costs, [costBits.join(" · ")], () => drillTx({
         title: `Went out — ${rl}`, buckets: OPERATING_COSTS, ranged: true, sortAmount: true,
         subtitle: "fees, taxes, payroll and tools; biggest first" }), costs < 0 ? "neg" : ""),
