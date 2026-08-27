@@ -222,17 +222,48 @@ def upsert_milestone(conn: sqlite3.Connection, cid: str, m: dict) -> str:
     return "inserted"
 
 
+# a milestone in one of these states is finished; anything else is money that
+# can still move today, and the number on the Money tab depends on catching it.
+SETTLED_STATES = ("Paid", "Cancelled")
+
+TO_READ_SQL = """
+SELECT id FROM (
+  SELECT c.id AS id, c.start_dt AS start_dt,
+         (SELECT MAX(m.updated_at) FROM upwork_milestones m
+           WHERE m.contract_id = c.id) AS seen,
+         EXISTS (SELECT 1 FROM upwork_milestones m2
+                  WHERE m2.contract_id = c.id
+                    AND m2.state NOT IN (%s)) AS live_money
+    FROM contracts c WHERE c.upwork_status = 'ACTIVE')
+ WHERE seen IS NULL OR live_money = 1 OR seen < ?
+ ORDER BY live_money DESC, (seen IS NOT NULL), COALESCE(seen, ''), start_dt DESC
+ LIMIT ?
+"""
+
+
 def contracts_to_read(conn: sqlite3.Connection, limit: int, now: Optional[datetime] = None) -> list:
-    """ACTIVE contracts whose detail has never been read, or was read more
-    than MCP_CONTRACT_DETAIL_DAYS ago — never-read first, then oldest."""
+    """Which contracts to re-read the detail of this run.
+
+    PRIORITY, NOT JUST AGE. A contract with a milestone that is neither Paid
+    nor Cancelled is where the money is still moving, and it is re-read EVERY
+    run. Everything else keeps the MCP_CONTRACT_DETAIL_DAYS cycle.
+
+    WHY (Abhijeet, 2026-08-27, correcting me): "mustafa just funded and
+    released the 1500 milestone." He had, and v3 still said $3,000 was sitting
+    unfunded. The row had last been read on the 26th at 17:54; with ~35 active
+    contracts, 8 reads a run and a 5-day floor, his contract was simply not due
+    again until the 31st — so money arriving today was invisible for five days
+    on the one screen that exists to show money that has not arrived.
+
+    Two bugs, not one. The floor was also applied in PYTHON after the SQL had
+    already taken `limit` rows, so a run whose oldest few happened to be fresh
+    read FEWER than `limit` contracts while others sat due. The filter is in
+    the query now, and the limit applies to what survives it."""
     floor = ((now or datetime.now(timezone.utc))
              - timedelta(days=config.MCP_CONTRACT_DETAIL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    marks = ",".join("?" * len(SETTLED_STATES))
     return [r["id"] for r in conn.execute(
-        "SELECT c.id, (SELECT MAX(updated_at) FROM upwork_milestones m"
-        "               WHERE m.contract_id = c.id) AS seen"
-        " FROM contracts c WHERE c.upwork_status='ACTIVE'"
-        " ORDER BY (seen IS NOT NULL), COALESCE(seen, ''), c.start_dt DESC LIMIT ?",
-        (limit,)) if r["seen"] is None or r["seen"] < floor]
+        TO_READ_SQL % marks, (*SETTLED_STATES, floor, limit))]
 
 
 # ── the pass (called by the daily financials rail) ───────────────────────────

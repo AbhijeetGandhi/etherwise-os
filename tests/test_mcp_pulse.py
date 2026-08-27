@@ -302,9 +302,43 @@ class TestInFlight(Case):
             self.assertEqual(len(mi.contracts_to_read(conn, 2)), 2)      # bounded
             conn.execute("INSERT INTO upwork_milestones (id, contract_id, state, updated_at)"
                          " VALUES ('m1', 'c0', 'Paid', datetime('now'))")
-            self.assertNotIn("c0", mi.contracts_to_read(conn, 10))       # read today, not again
+            self.assertNotIn("c0", mi.contracts_to_read(conn, 10))       # settled + read today
             conn.execute("UPDATE upwork_milestones SET updated_at=datetime('now','-30 days')")
             self.assertIn("c0", mi.contracts_to_read(conn, 10))          # stale, read again
+
+    def test_money_still_moving_is_re_read_every_run_not_every_five_days(self):
+        """Abhijeet, 2026-08-27: "mustafa just funded and released the 1500
+        milestone" — and v3 still said $3,000 was unfunded, because his
+        contract had been read the day before and was not due again for five.
+        A contract with a milestone that is neither Paid nor Cancelled is read
+        EVERY run; that is the only place the number can change."""
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO contracts (id, upwork_status, start_dt) VALUES"
+                         " ('live', 'ACTIVE', '2026-06-01'), ('done', 'ACTIVE', '2026-06-02')")
+            conn.execute("INSERT INTO upwork_milestones (id, contract_id, state, updated_at)"
+                         " VALUES ('a', 'live', 'NotFunded', datetime('now')),"
+                         "        ('b', 'done', 'Paid', datetime('now'))")
+            due = mi.contracts_to_read(conn, 10)
+            self.assertIn("live", due)                  # read minutes ago, still due
+            self.assertNotIn("done", due)               # settled and fresh -> skip
+            self.assertEqual(due[0], "live")            # and it comes FIRST
+            conn.execute("UPDATE upwork_milestones SET state='Paid' WHERE id='a'")
+            self.assertEqual(mi.contracts_to_read(conn, 10), [])
+
+    def test_the_limit_applies_to_what_survives_the_filter(self):
+        """The floor used to be applied in Python AFTER the SQL had taken
+        `limit` rows, so a run whose oldest few happened to be fresh read fewer
+        contracts than it was allowed to while others sat waiting."""
+        with db.connect(self.db_path) as conn:
+            for i in range(4):
+                conn.execute("INSERT INTO contracts (id, upwork_status, start_dt)"
+                             " VALUES (?, 'ACTIVE', '2026-06-01')", (f"c{i}",))
+                # c0/c1 settled and freshly read; c2/c3 settled and long stale
+                age = "now" if i < 2 else "now','-30 days"
+                conn.execute("INSERT INTO upwork_milestones (id, contract_id, state,"
+                             f" updated_at) VALUES (?,?, 'Paid', datetime('{age}'))",
+                             (f"m{i}", f"c{i}"))
+            self.assertEqual(sorted(mi.contracts_to_read(conn, 2)), ["c2", "c3"])
 
     def test_a_short_window_is_halved_until_each_page_fits(self):
         """The live miss on 2026-08-26: 14 days held 24 entries, the tool
