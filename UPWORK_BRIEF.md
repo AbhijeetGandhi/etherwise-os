@@ -345,6 +345,17 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
    ③ Globaltize renegotiation to a flat rate is queued for **after 4 clean 40-hour weeks**, not
    now — its tier is $30 on ALL hours at 40+, so 39 h pays $1,365 and 40 h pays $1,200 (break-even
    45.5 h). Do not copy that structure into any new hourly contract; flat only.
+3. **[Cofounder · 2026-08-27 · the CLIENT account is reachable — capability note]** Abhijeet
+   believed the hiring account was not connected to Cowork. It is. `list_accounts` returns three
+   orgs on this token: Freelancer `1647672547786633217`, **CLIENT `Etherwise`
+   `1715797263477194752`**, Agency `Etherwise` `1910033523997712724`. Hiring funnels are readable
+   via `get_job_posting action=list` and `list_client_proposals` on the CLIENT org_uid — which is
+   what makes AGENT-ARCHITECTURE boundary ruling #1 executable at all. Live example: ghostwriter
+   posting `2090762196989822650` — 9 applicants, 6 shortlisted, 4 unreviewed.
+   **Constraint stands:** summaries only, uniform one-pagers, no scoring or ranking of freelancers
+   (API & MCP Terms §5.9). Worth adding the client org to whatever this chat boots from; today it
+   is invisible to every brief.
+
 2. **[Cofounder · 2026-08-27 · source a contractor, do not post yet]** Sourcing is OPEN for an
    automation contractor to absorb Globaltize delivery from Jay (~$1,000/mo, contractor form).
    Spec: `business/hiring/2026-08-27-globaltize-support-contractor.md`.
@@ -1131,6 +1142,45 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     money IN — Money's "waiting on" reading was right. It is a real project started that
     day, closing tomorrow, payment expected Monday. (v3 has the contract filed `personal`;
     it marks agency from the ledger's evidence, so it corrects itself when the money lands.)
+
+11. **Two corrections from him, both right (`e24e2ae` `bc08740`, 2026-08-27 evening).**
+
+    **(a) "mustafa just funded and released the 1500 milestone" — and v3 said $3,000 was still
+    unfunded.** A forced re-read proved him right: milestone 2 is Paid, funded AND released,
+    leaving $1,500 (milestone 3, due 22 Jul). WHY v3 was blind: milestone detail rotates at
+    `MCP_MILESTONE_MAX_GETS` (8) contracts a run with a `MCP_CONTRACT_DETAIL_DAYS` (5) floor,
+    and across ~35 ACTIVE contracts his was read on the 26th at 17:54 and not due again until
+    the 31st. Both of that day's runs read 8 contracts and updated 0 milestones, exactly as
+    designed — so money ARRIVING today was invisible for five days on the one screen whose job
+    is money that has not arrived. Now: **a contract with a milestone that is neither Paid nor
+    Cancelled is re-read EVERY run and sorted first**; dormant contracts keep the 5-day cycle,
+    so the cost is a couple of reads. A second bug in the same function: the staleness floor
+    was applied in PYTHON after the SQL had already taken `limit` rows, so a run whose oldest
+    few happened to be fresh read FEWER contracts than allowed while others sat due — the
+    filter is in the query now. The next run picked up 4 milestone changes it would have missed.
+
+    **(b) "these 1500, why aren't they showing up on the current month revenue" — because
+    there was no bucket for them.** Upwork marks a milestone Paid the moment the client
+    RELEASES it and only writes the earning transaction days later, when the fixed-price
+    payment clears review. Between those moments the money was in NO bucket: not `stalled`
+    (funded), not `open` (paid), not revenue (no row). $1,500 vanished from every screen. The
+    same contract shows the shape — milestone 1 released in July, Fixed Earning lands
+    **2026-07-30**, three weeks later and dated by the PAYMENT, which is also why a
+    fixed-price release earned in August can appear in September's revenue.
+    `mcp_inflight.released_clearing()` matches BY COUNT per (contract, amount), not by
+    existence — Mustafa's milestones are $1,500 each, so "is there a $1,500 earning for this
+    contract" would match milestone 2 against milestone 1's July row and wrongly call it
+    landed. The join is the contract TITLE: Upwork writes the job title into a fixed-price
+    earning's description and leaves `assignment_company` empty. An approximation, labelled as
+    one, erring toward SHOWING money. Money's "waiting on" block gained the line; no new rail,
+    no new read. Live: **clearing $1,500 · stalled $1,500 · open $300**.
+
+    ◆ **HIS STANDING RULE, recorded 2026-08-27: "why are we building artifacts we already have
+    our own dashboard we make changes there."** He has the cockpit. Every number, status, list
+    or screen belongs in `modules/cockpit/` where it is one source of truth, tested, and stays
+    current. Do NOT publish a parallel status page for his operational data — one was published
+    that evening and was wrong about Mustafa within twenty minutes, which is the failure mode
+    exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated
