@@ -3857,6 +3857,7 @@ def _money_in_flight(db_path: Optional[Path] = None) -> dict:
             clearing = mcp_inflight.released_clearing(conn)
             funded = [dict(r) for r in conn.execute(
                 "SELECT m.id, m.contract_id, m.amount_minor, m.due_dt, m.state,"
+                " m.sequence_id,"
                 " c.title AS contract_title, c.client_company FROM upwork_milestones m"
                 " LEFT JOIN contracts c ON c.id = m.contract_id"
                 " WHERE m.state NOT IN ('Paid', 'NotFunded', 'Not funded')"
@@ -3880,16 +3881,19 @@ def _money_in_flight(db_path: Optional[Path] = None) -> dict:
             "stalled_usd": usd(sum(r["amount_minor"] or 0 for r in stalled)),
             "stalled": [{"who": r["client_company"] or r["contract_title"],
                          "contract_id": r["contract_id"], "usd": usd(r["amount_minor"]),
+                         "seq": r["sequence_id"],
                          "due": (r["due_dt"] or "")[:10]} for r in stalled],
             "open_usd": usd(sum(r["amount_minor"] or 0 for r in funded)),
             "open": [{"who": r["client_company"] or r["contract_title"],
                       "contract_id": r["contract_id"], "usd": usd(r["amount_minor"]),
+                      "seq": r["sequence_id"],
                       "due": (r["due_dt"] or "")[:10], "state": r["state"]} for r in funded],
             # released by the client, no earning row yet — the gap that made
             # $1,500 disappear from every screen on 2026-08-27
             "clearing_usd": usd(sum(r["amount_minor"] or 0 for r in clearing)),
             "clearing": [{"who": r["client_company"] or r["contract_title"],
                           "contract_id": r["contract_id"],
+                          "seq": r["sequence_id"],
                           "released": (r["released_at"] or "")[:10] or None,
                           "usd": usd(r["amount_minor"])} for r in clearing]},
     }

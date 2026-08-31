@@ -30,6 +30,7 @@ chief_of_staff.rules, not from here.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -360,8 +361,44 @@ def stalled(conn: sqlite3.Connection, today: Optional[date] = None) -> list:
 
 # How much of the contract title has to match a transaction's description.
 # Upwork writes the JOB TITLE into the fixed-price earning's description and
-# leaves assignment_company EMPTY, so the title is the only join there is.
+# leaves assignment_company nearly useless ("Mustafa A"), so the title is the
+# only join there is.
 _TITLE_MATCH_CHARS = 24
+
+# "Invoice for <contract title>: Milestone 2 - <deliverables>" — Upwork's own
+# wording on EVERY fixed-price earning both the API and the MCP return, all the
+# way back through his history. The number is the milestone's sequence, which
+# is the exact answer the count below can only approximate, so it is tried
+# first. The CSV export drops it ("<title> - Contract earnings"), which is why
+# the count has to survive as the fallback.
+_MILESTONE_IN_TEXT = re.compile(r"\bMilestone\s+(\d+)\b", re.IGNORECASE)
+
+
+def _landed(conn: sqlite3.Connection, title: Optional[str], amount: int) -> tuple:
+    """Earnings of `amount` whose text names this contract: the milestone
+    NUMBERS they name, and a count of the ones that name none.
+
+    The description is searched with LIKE %title%, not LIKE title% — Upwork's
+    own earning line starts "Invoice for ", so an anchored match found the CSV
+    rows and missed every MCP one. That single anchor is the whole of the
+    2026-08-31 defect: Mustafa's milestone 2 landed on 26 Aug as record
+    946830746 and still read as clearing five days later, AND was counted into
+    August revenue a second time on top of its own transaction."""
+    probe = (title or "")[:_TITLE_MATCH_CHARS]
+    if not probe:
+        return set(), 0
+    named, unnumbered = set(), 0
+    for r in conn.execute(
+            "SELECT COALESCE(description,'') d FROM transactions"
+            " WHERE pnl_bucket='revenue' AND amount_minor=? AND ("
+            "   COALESCE(description,'') LIKE ? OR COALESCE(assignment_company,'') LIKE ?)",
+            (amount, "%" + probe + "%", probe + "%")):
+        hit = _MILESTONE_IN_TEXT.search(r["d"])
+        if hit:
+            named.add(int(hit.group(1)))
+        else:
+            unnumbered += 1
+    return named, unnumbered
 
 
 def released_clearing(conn: sqlite3.Connection) -> list:
@@ -372,20 +409,21 @@ def released_clearing(conn: sqlite3.Connection) -> list:
     the client releases it, and only creates the earning transaction days
     later when the payment clears review. Between those two moments the money
     is real and appears NOWHERE in v3: not in `stalled` (it is funded), not in
-    `open` (it is paid), not in revenue (there is no row). His milestone 1 on
-    the same contract shows the shape — released in July, and the Fixed
-    Earning lands on 30 July.
+    `open` (it is paid), not in revenue (there is no row).
 
-    MATCHED BY COUNT, not by existence. Mustafa's milestones are $1,500 each,
-    so "is there a $1,500 earning for this contract" would match milestone 2
-    against milestone 1's July transaction and wrongly call it landed. Per
-    (contract, amount) the paid milestones are counted against the earnings of
-    that amount, and only the surplus is still clearing.
+    MATCHED BY NUMBER FIRST. Upwork names the milestone in the earning's own
+    description, so a milestone whose number appears against this contract and
+    amount has landed, full stop. Only earnings that carry no number (the CSV
+    export writes none) fall back to being counted off the remaining
+    milestones oldest-first, which is what keeps two $1,500 milestones on one
+    contract from both matching a single $1,500 earning.
 
-    An approximation, and labelled as one: Upwork gives no paid-at timestamp
-    on the milestone, so this cannot be exact. It errs toward SHOWING money —
-    a released milestone that has in fact landed reads as clearing for a day,
-    which is a much cheaper mistake than $1,500 vanishing from every screen.
+    Still an approximation at the edges, and labelled as one: Upwork gives no
+    paid-at timestamp on the milestone. It errs toward SHOWING money — a
+    released milestone that has in fact landed reads as clearing for a day,
+    which is a cheaper mistake than $1,500 vanishing from every screen. The
+    opposite error is not cheap, because `cockpit.data.released_revenue_minor`
+    recognises this list as revenue: a false "clearing" is money counted twice.
     """
     out = []
     rows = list(conn.execute(
@@ -398,15 +436,9 @@ def released_clearing(conn: sqlite3.Connection) -> list:
     for r in rows:
         groups.setdefault((r["contract_id"], r["amount_minor"]), []).append(r)
     for (cid, amount), paid in groups.items():
-        title = (paid[0]["contract_title"] or "")[:_TITLE_MATCH_CHARS]
-        landed = 0
-        if title:
-            landed = conn.execute(
-                "SELECT COUNT(*) FROM transactions WHERE pnl_bucket='revenue'"
-                " AND amount_minor=? AND ("
-                "   COALESCE(description,'') LIKE ? OR COALESCE(assignment_company,'') LIKE ?)",
-                (amount, title + "%", title + "%")).fetchone()[0]
-        for r in paid[landed:]:                  # the surplus, oldest first
+        named, unnumbered = _landed(conn, paid[0]["contract_title"], amount)
+        left = [r for r in paid if r["sequence_id"] not in named]
+        for r in left[unnumbered:]:              # the surplus, oldest first
             out.append({"id": r["id"], "contract_id": r["contract_id"],
                         "sequence_id": r["sequence_id"],
                         "amount_minor": r["amount_minor"],

@@ -478,6 +478,111 @@ class TestInFlight(Case):
         with db.connect(self.db_path) as conn:          # but it still SHOWS
             self.assertEqual(len(mi.released_clearing(conn)), 1)
 
+    # ── the 31 Aug defect ────────────────────────────────────────────────────
+
+    def _mustafa(self, conn):
+        """The real shape: a $4,500 fixed-price contract, three $1,500
+        milestones, 1 and 2 released, 3 never funded."""
+        conn.execute("INSERT INTO contracts (id, upwork_status, title, client_company)"
+                     " VALUES ('43986743','ACTIVE','AI automation architect(Airtable +"
+                     " make.com + Gohigh level + Evoto','Mustafa Ahmed, Mustafa A')")
+        for seq, state in ((1, "Paid"), (2, "Paid"), (3, "NotFunded")):
+            conn.execute("INSERT INTO upwork_milestones (id, contract_id, sequence_id,"
+                         " state, amount_minor, due_dt) VALUES (?,?,?,?,150000,?)",
+                         (f"m{seq}", "43986743", seq, state,
+                          f"2026-07-{seq * 7 + 1:02d}T00:00:00.000Z"))
+
+    def test_upworks_own_invoice_wording_counts_as_the_earning_landing(self):
+        """THE 2026-08-31 DEFECT. Abhijeet: "I just ran upwork finance activity
+        and 1500$ is cleared even I withdraewd why does it still show like
+        this". It did land — record 946830746, 26 Aug. Upwork writes
+        "Invoice for <title>: Milestone 2 - ..." on every fixed-price earning
+        the API and the MCP return, and the join was anchored at the START of
+        the description, so it matched only the CSV export's wording and missed
+        every MCP row. The milestone read as clearing for five days AND was
+        counted into August revenue on top of its own transaction."""
+        with db.connect(self.db_path) as conn:
+            self._mustafa(conn)
+            conn.execute(
+                "INSERT INTO transactions (record_id, dedup_key, amount_minor, pnl_bucket,"
+                " description, assignment_company, creation_dt) VALUES"
+                " ('938207313','a',150000,'revenue','AI automation architect(Airtable +"
+                " make.com + Gohigh level + Evoto - Contract earnings','','2026-07-30')")
+            conn.execute(
+                "INSERT INTO transactions (record_id, dedup_key, amount_minor, pnl_bucket,"
+                " description, assignment_company, creation_dt) VALUES"
+                " ('946830746','b',150000,'revenue','Invoice for AI automation"
+                " architect(Airtable + make.com + Gohigh level + Evoto: Milestone 2 -"
+                " Deliverables * Updated KPI dashboards','Mustafa A','2026-08-26')")
+            self.assertEqual(mi.released_clearing(conn), [])
+            # and the milestone he was really being shown is a DIFFERENT one
+            self.assertEqual([r["sequence_id"] for r in mi.stalled(conn, date(2026, 8, 31))],
+                             [3])
+
+    def test_the_milestone_number_beats_the_order_the_money_arrives_in(self):
+        """Counting off oldest-first is only a fallback. When Upwork names the
+        milestone, a later one landing first must not settle an earlier one."""
+        with db.connect(self.db_path) as conn:
+            self._mustafa(conn)
+            conn.execute(
+                "INSERT INTO transactions (record_id, dedup_key, amount_minor, pnl_bucket,"
+                " description, creation_dt) VALUES ('t2','t2',150000,'revenue',"
+                " 'Invoice for AI automation architect(Airtable + make.com + Gohigh level"
+                " + Evoto: Milestone 2 - x','2026-08-26')")
+            self.assertEqual([r["sequence_id"] for r in mi.released_clearing(conn)], [1])
+
+    def test_a_numbered_earning_and_a_csv_one_settle_both_milestones(self):
+        with db.connect(self.db_path) as conn:
+            self._mustafa(conn)
+            conn.execute(
+                "INSERT INTO transactions (record_id, dedup_key, amount_minor, pnl_bucket,"
+                " description, creation_dt) VALUES ('t1','t1',150000,'revenue',"
+                " 'AI automation architect(Airtable + make.com + Gohigh level + Evoto -"
+                " Contract earnings','2026-07-30')")
+            conn.execute(
+                "INSERT INTO transactions (record_id, dedup_key, amount_minor, pnl_bucket,"
+                " description, creation_dt) VALUES ('t2','t2',150000,'revenue',"
+                " 'Invoice for AI automation architect(Airtable + make.com + Gohigh level"
+                " + Evoto: Milestone 2 - x','2026-08-26')")
+            self.assertEqual(mi.released_clearing(conn), [])
+
+    def test_a_landed_milestone_is_not_counted_into_revenue_a_second_time(self):
+        """The expensive half of the same defect: `released_revenue_minor` reads
+        this list AS revenue, so a false "clearing" is $1,500 counted twice in
+        the month total, not merely an extra line on a screen."""
+        from modules.cockpit import data
+        with db.connect(self.db_path) as conn:
+            self._mustafa(conn)
+            conn.execute("UPDATE upwork_milestones SET released_at='2026-08-27 12:00:00'"
+                         " WHERE id='m2'")
+            conn.execute(
+                "INSERT INTO transactions (record_id, dedup_key, amount_minor, pnl_bucket,"
+                " description, creation_dt, billed_dt) VALUES ('t1','t1',150000,'revenue',"
+                " 'AI automation architect(Airtable + make.com + Gohigh level + Evoto -"
+                " Contract earnings','2026-07-30','2026-07-25')")
+        self.assertEqual(data.released_revenue_minor(self.db_path, "2026-08")[0], 150000)
+        with db.connect(self.db_path) as conn:          # then milestone 2 lands
+            conn.execute(
+                "INSERT INTO transactions (record_id, dedup_key, amount_minor, pnl_bucket,"
+                " description, creation_dt, billed_dt) VALUES ('t2','t2',150000,'revenue',"
+                " 'Invoice for AI automation architect(Airtable + make.com + Gohigh level"
+                " + Evoto: Milestone 2 - x','2026-08-26','2026-08-26')")
+        self.assertEqual(data.released_revenue_minor(self.db_path, "2026-08")[0], 0)
+
+    def test_the_screen_can_tell_two_milestones_of_one_client_apart(self):
+        """Both lines said "$1,500.00 - Mustafa Ahmed, Mustafa A" and read as
+        one number shown twice. They were milestones 3 and 2."""
+        from modules.cockpit import data
+        with db.connect(self.db_path) as conn:
+            self._mustafa(conn)
+            conn.execute("UPDATE upwork_milestones SET released_at='2026-08-27 12:00:00'"
+                         " WHERE id='m2'")
+        f = data._money_in_flight(self.db_path)["milestones"]
+        self.assertEqual([x["seq"] for x in f["stalled"]], [3])
+        self.assertEqual([x["seq"] for x in f["clearing"]], [1, 2])
+        js = (ROOT / "modules" / "cockpit" / "static" / "js" / "sections" / "money.js").read_text()
+        self.assertIn("milestone ${x.seq}", js)
+
     def test_config_bounds(self):
         self.assertEqual((config.MCP_TIMESHEET_DAYS, config.MCP_MILESTONE_MAX_GETS,
                           config.MCP_CONTRACT_DETAIL_DAYS), (14, 8, 5))

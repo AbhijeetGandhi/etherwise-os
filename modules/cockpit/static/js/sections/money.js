@@ -672,6 +672,15 @@ export async function render(root, ctx) {
 
   /** hours logged and milestones agreed that no invoice covers yet (2026-08-26).
    *  Never added to revenue: this is money coming, shown beside money that came. */
+  /** "Mustafa Ahmed, Mustafa A - milestone 3". Two milestones on one contract
+   *  for the same amount are two different sums of money, and on 31 Aug the
+   *  screen printed both as "$1,500.00 - Mustafa Ahmed, Mustafa A" with nothing
+   *  to tell them apart; it read as one bug shown twice. The number is the
+   *  cheapest thing that makes them distinguishable. */
+  function who(x) {
+    return x.seq ? `${x.who} · milestone ${x.seq}` : x.who;
+  }
+
   function inFlightRows() {
     const f = d.in_flight || {};
     if (!f.available) {
@@ -695,7 +704,7 @@ export async function render(root, ctx) {
       rows.push(el("div", "pad", [
         el("b", "neg", `${fmt.usd2(m.stalled_usd)} agreed and never funded`),
         el("div", "muted small", m.stalled.map((x) =>
-          `${x.who} — ${fmt.usd2(x.usd)}, was due ${fmt.dateShort(x.due)}`).join(" · ")),
+          `${who(x)} — ${fmt.usd2(x.usd)}, was due ${fmt.dateShort(x.due)}`).join(" · ")),
         el("div", "muted small", "the client set the milestone and never put the money in escrow;"
           + " you cannot submit work against it until they do"),
       ]));
@@ -706,7 +715,7 @@ export async function render(root, ctx) {
       rows.push(el("div", "pad", [
         el("b", "pos", `${fmt.usd2(m.clearing_usd)} released, clearing`),
         el("div", "muted small", m.clearing.map((x) =>
-          `${x.who} — ${fmt.usd2(x.usd)}`).join(" · ")),
+          `${who(x)} — ${fmt.usd2(x.usd)}${x.released ? ", released " + fmt.dateShort(x.released) : ""}`).join(" · ")),
         el("div", "muted small", "the client released it; Upwork holds a fixed-price payment"
           + " for a few days before it becomes an earning, so it is not in revenue yet"),
       ]));
@@ -715,7 +724,7 @@ export async function render(root, ctx) {
       rows.push(el("div", "pad", [
         el("b", null, `${fmt.usd2(m.open_usd)} in funded milestones still open`),
         el("div", "muted small", m.open.map((x) =>
-          `${x.who} — ${fmt.usd2(x.usd)}${x.due ? ", due " + fmt.dateShort(x.due) : ""}`).join(" · ")),
+          `${who(x)} — ${fmt.usd2(x.usd)}${x.due ? ", due " + fmt.dateShort(x.due) : ""}`).join(" · ")),
       ]));
     }
     return rows;
