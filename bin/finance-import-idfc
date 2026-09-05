@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import money, ledger, fx  # noqa: E402
+from modules.finance import money, ledger, fx, deposits  # noqa: E402
 from modules.finance.importers import bank_xlsx  # noqa: E402
 
 INBOX = Path(__file__).resolve().parents[1] / "finance-inbox" / "bank"
@@ -133,32 +133,41 @@ def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
                  f.name, meta.get("period_start") or win_lo,
                  meta.get("period_end") or win_hi))
 
-    # 5) FD/deposit balance — the savings closing OMITS the linked fixed deposits.
-    # AUTHORITATIVE (Abhijeet's IDFC-app FD list) wins when given via --fd-balance-inr;
-    # else a DERIVED estimate = -(net internal_sweep) (sweepouts minus sweep-ins,
-    # incl. manual FD creation), which assumes FD=0 at the window open and so
-    # UNDERSTATES if standing FD existed pre-window. The deposit principal (not the
-    # maturity value) is the cash figure. Once an authoritative row exists, plain
-    # re-runs never clobber it.
-    fd_principal = -sum(r["amount_minor"] for r in good if r["category"] == "internal_sweep")
+    # 5) FD/deposit balance — the savings closing OMITS the linked fixed deposits,
+    # and IDFC's auto-sweep pins savings near Rs 5,00,000, so the deposits ARE the
+    # cash position. AUTHORITATIVE (his IDFC-app FD list) via --fd-balance-inr sets
+    # the anchor; otherwise the newest anchor is ROLLED FORWARD through the sweep
+    # legs (modules/finance/deposits.py) and written as its own dated `derived:`
+    # row, leaving the anchor in place as the provenance.
+    #
+    # 2026-09-05, his "cash in the bank doesn't seems updated": it was not. The old
+    # branch only wrote a derived row when NO anchor existed, so the 26 June figure
+    # sat unmoved for 71 days beside an hour-fresh savings balance — Rs 14.8 lakh
+    # light. The per-window estimate it used could not replace it either: it assumes
+    # FD=0 at the window open, so on an account with standing deposits it would not
+    # have been stale, it would have been wrong by the whole standing balance.
     fd_as_of = fd_as_of or meta.get("period_end") or win_hi
+    roll = None
     if apply:
         with db.connect(config.DB_PATH) as conn:
-            if fd_override is not None:                  # authoritative override
-                conn.execute("DELETE FROM account_balances WHERE account='idfc-fd'")
-                conn.execute(
-                    "INSERT INTO account_balances (account, currency, opening_minor,"
-                    " closing_minor, statement_date, source_file) VALUES"
-                    " ('idfc-fd','INR',0,?,?,?)",
-                    (fd_override, fd_as_of, f"authoritative:idfc-app-fd:{fd_as_of}"))
-            elif not conn.execute("SELECT 1 FROM account_balances WHERE account='idfc-fd'"
-                                  " AND source_file LIKE 'authoritative:%'").fetchone():
+            if fd_override is not None:                  # a fact from him: new anchor
                 conn.execute(
                     "INSERT OR REPLACE INTO account_balances (account, currency,"
                     " opening_minor, closing_minor, statement_date, source_file)"
                     " VALUES ('idfc-fd','INR',0,?,?,?)",
-                    (fd_principal, meta.get("period_end") or win_hi,
-                     f"derived:sweep-legs:{f.name}"))
+                    (fd_override, fd_as_of, f"authoritative:idfc-app-fd:{fd_as_of}"))
+            roll = deposits.rolled(conn, as_of=fd_as_of)
+            if roll and roll["as_of"] > roll["anchor_date"]:
+                conn.execute(
+                    "INSERT OR REPLACE INTO account_balances (account, currency,"
+                    " opening_minor, closing_minor, statement_date, source_file)"
+                    " VALUES ('idfc-fd','INR',?,?,?,?)",
+                    (roll["anchor_minor"], roll["balance_minor"], roll["as_of"],
+                     deposits.source_label(roll)))
+    else:
+        with db.connect(config.DB_PATH) as conn:
+            roll = deposits.rolled(conn, as_of=fd_as_of)
+    fd_principal = roll["balance_minor"] if roll else 0
 
     res = {"mode": "APPLY" if apply else "DRY-RUN", "file": f.name,
            "inbox_files": len(files),   # transparency: how many staged, which used
@@ -167,7 +176,13 @@ def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
            "category_breakdown": dict(Counter(r["category"] for r in good)),
            "v2_superseded_quarantined": superseded, "v3_inserted": inserted,
            "reclassified": reclassified if apply else 0,
-           "derived_fd_principal_inr": str(money.from_minor(fd_principal)),
+           "fd_principal_inr": str(money.from_minor(fd_principal)),
+           "fd_anchor_inr": (str(money.from_minor(roll["anchor_minor"]))
+                             if roll else None),
+           "fd_anchor_date": roll["anchor_date"] if roll else None,
+           "fd_rolled_inr": (str(money.from_minor(roll["net_minor"]))
+                             if roll else None),
+           "fd_sweep_legs": roll["legs"] if roll else None,
            "fd_authoritative_inr": (str(money.from_minor(fd_override))
                                     if fd_override is not None else None),
            "opening_inr": str(money.from_minor(meta.get("opening_balance_minor", 0))),

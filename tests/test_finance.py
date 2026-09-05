@@ -780,6 +780,99 @@ class TestBankXlsx(unittest.TestCase):
 
 
 # ── Phase 1b: FX pinning (§3.10) — injectable fetch, Decimal only ────────────
+class TestDeposits(unittest.TestCase):
+    """The fixed-deposit principal — the biggest number in 'in the bank'.
+
+    Abhijeet, 2026-09-05: "cash in the bank doesn't seems updated". IDFC's
+    auto-sweep pins savings near Rs 5,00,000, so the deposits ARE the cash
+    position, and the figure was hand-entered on 26 June and had not moved in
+    71 days. It is now rolled forward through the sweep legs."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db_path = Path(self.tmp) / "t.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _bal(self, conn, minor, day, source):
+        conn.execute("INSERT INTO account_balances (account, currency, opening_minor,"
+                     " closing_minor, statement_date, source_file)"
+                     " VALUES ('idfc-fd','INR',0,?,?,?)", (minor, day, source))
+
+    def _sweep(self, conn, rid, minor, day, desc):
+        conn.execute("INSERT INTO transactions (record_id, canonical_key, type, source,"
+                     " category, amount_minor, currency, description, creation_dt)"
+                     " VALUES (?,?,'Other','IDFC','internal_sweep',?,'INR',?,?)",
+                     (rid, "b-" + rid, minor, desc, day + "T00:00:00+0000"))
+
+    def test_no_anchor_is_none_and_never_zero(self):
+        """Without a figure from him there is nothing to say. Zero would present
+        an invented cash position as fact."""
+        from modules.finance import deposits
+        with db.connect(self.db_path) as conn:
+            self._sweep(conn, "s1", -800000, "2026-07-04", "Sweepout FD 1029 booked")
+            self.assertIsNone(deposits.rolled(conn))
+
+    def test_the_anchor_rolls_forward_through_the_sweep_legs(self):
+        from modules.finance import deposits
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, 586878353, "2026-06-26", "authoritative:idfc-app-fd:2026-06-26")
+            self._sweep(conn, "s1", -800000, "2026-07-04", "Sweepout FD 10297298229 booked")
+            self._sweep(conn, "s2", 304800, "2026-07-05",
+                        "Auto sweep in from 10297298229/Principal:3048/ TDS return filing")
+            roll = deposits.rolled(conn, as_of="2026-09-05")
+            self.assertEqual(roll["into_minor"], 800000)
+            self.assertEqual(roll["out_minor"], 304800)
+            self.assertEqual(roll["balance_minor"], 586878353 + 495200)
+            self.assertEqual((roll["anchor_date"], roll["as_of"]),
+                             ("2026-06-26", "2026-09-05"))
+
+    def test_interest_does_not_shrink_the_deposit_that_paid_it(self):
+        """A sweep-in credits principal PLUS net interest ('Principal:21917/
+        Gross Interest:14/TDS:1' arrives as Rs 21,930). Subtracting the CREDITED
+        amount would quietly erode the FD by its own interest every quarter."""
+        from modules.finance import deposits
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, 10000000, "2026-06-26", "authoritative:idfc-app-fd:2026-06-26")
+            self._sweep(conn, "s1", 2193000, "2026-08-06",
+                        "Auto sweep in from 10296227258/Principal:21917/Gross Interest:14/TDS:1/")
+            roll = deposits.rolled(conn)
+            self.assertEqual(roll["out_minor"], 2191700)      # the principal, not 2193000
+            self.assertEqual(roll["interest_minor"], 1300)
+            self.assertEqual(roll["balance_minor"], 10000000 - 2191700)
+
+    def test_a_sweep_in_with_no_principal_stated_is_taken_whole_and_counted(self):
+        from modules.finance import deposits
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, 10000000, "2026-06-26", "authoritative:idfc-app-fd:2026-06-26")
+            self._sweep(conn, "s1", 500000, "2026-08-06", "Auto sweep in from 102962 (no label)")
+            roll = deposits.rolled(conn)
+            self.assertEqual((roll["out_minor"], roll["unparsed"]), (500000, 1))
+
+    def test_a_derived_row_never_anchors_the_next_roll(self):
+        """Otherwise the estimate compounds on itself and drifts away from the
+        last fact he actually supplied, with no way back."""
+        from modules.finance import deposits
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, 10000000, "2026-06-26", "authoritative:idfc-app-fd:2026-06-26")
+            self._bal(conn, 99999999, "2026-09-05", "derived:fd-rolled-from-authoritative:2026-06-26")
+            self._sweep(conn, "s1", -400000, "2026-07-04", "Sweepout FD 1 booked")
+            roll = deposits.rolled(conn)
+            self.assertEqual(roll["anchor_minor"], 10000000)
+            self.assertEqual(roll["balance_minor"], 10400000)
+
+    def test_the_anchor_days_own_legs_are_already_in_his_figure(self):
+        from modules.finance import deposits
+        with db.connect(self.db_path) as conn:
+            self._bal(conn, 10000000, "2026-06-26", "authoritative:idfc-app-fd:2026-06-26")
+            self._sweep(conn, "s0", -700000, "2026-06-26", "Sweepout FD 0 booked")
+            self._sweep(conn, "s1", -300000, "2026-06-27", "Sweepout FD 1 booked")
+            roll = deposits.rolled(conn)
+            self.assertEqual((roll["legs"], roll["balance_minor"]), (1, 10300000))
+
+
 class TestFxPin(unittest.TestCase):
     def _fetch(self, date, base, quote):
         return (Decimal("0.012"), date)             # 1 INR = 0.012 USD
