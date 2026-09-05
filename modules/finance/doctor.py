@@ -13,6 +13,7 @@ Every check reports delta in MINOR UNITS — never a float.
 """
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -386,6 +387,55 @@ def _check_bucket_reproducibility(conn) -> Check:
                  f"{len(rows)} rows: stored pnl_bucket reproduces bucket()")
 
 
+# A Stripe settlement leaves Stripe and lands at IDFC 1-3 days later; 7 days is slack
+# for a weekend plus a bank holiday, not a licence to pair unrelated amounts.
+_STRIPE_ARRIVAL_DAYS = 7
+
+
+def _check_stripe_arrival(conn) -> Check:
+    """#11 Stripe arrival (added 2026-09-05). A 'GLOBAL REMITTANCE' credit on the
+    bank is kept OUT of revenue because it is the INR landing of a Stripe
+    settlement whose revenue the Stripe rail has already booked. Citi's wire carries no
+    remitter name, so that exclusion rests entirely on the pairing -- and the
+    failure it would cause is the expensive one: a genuine client wire labelled
+    the same way would disappear from the top line rather than merely double.
+    So every one of them must tie, to the paisa, to a Stripe transfer-out inside
+    _STRIPE_ARRIVAL_DAYS. An unpaired landing is RED and names itself."""
+    arrivals = [dict(r) for r in conn.execute(
+        "SELECT record_id, substr(creation_dt,1,10) d, amount_minor FROM transactions"
+        " WHERE source IN ('IDFC','Bank') AND amount_minor > 0"
+        "   AND upper(COALESCE(description,'')) LIKE '%GLOBAL REMITTANCE%'"
+        " ORDER BY creation_dt")]
+    if not arrivals:
+        return Check("#11 Stripe arrival", "N/A", "no GLOBAL REMITTANCE credits on the bank")
+    settlements = [dict(r) for r in conn.execute(
+        "SELECT record_id, substr(creation_dt,1,10) d, amount_minor FROM transactions"
+        " WHERE source='Stripe' AND amount_minor < 0")]
+    used, orphans = set(), []
+    for a in arrivals:
+        hit = next((p for p in settlements
+                    if p["record_id"] not in used
+                    and -p["amount_minor"] == a["amount_minor"]
+                    and p["d"] <= a["d"] <= _plus_days(p["d"], _STRIPE_ARRIVAL_DAYS)), None)
+        if hit is None:
+            orphans.append({"record_id": a["record_id"], "date": a["d"],
+                            "amount_minor": a["amount_minor"],
+                            "error": "no Stripe settlement of this amount in the window"})
+        else:
+            used.add(hit["record_id"])
+    if orphans:
+        return Check("#11 Stripe arrival", "RED",
+                     f"{len(orphans)} of {len(arrivals)} GLOBAL REMITTANCE credits tie to no"
+                     " Stripe settlement — they are excluded from revenue and may be real income",
+                     orphans[:20])
+    return Check("#11 Stripe arrival", "GREEN",
+                 f"{len(arrivals)} GLOBAL REMITTANCE credits each tie to a Stripe settlement")
+
+
+def _plus_days(iso: str, n: int) -> str:
+    return (_dt.date.fromisoformat(iso) + _dt.timedelta(days=n)).isoformat()
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
@@ -394,5 +444,5 @@ def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
                   _check_statement_integrity(conn), _check_continuity(conn),
                   _check_ledger_tieout(conn), _check_cash(conn),
                   _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
-                  _check_payroll(conn)]
+                  _check_payroll(conn), _check_stripe_arrival(conn)]
     return DoctorResult(checks)

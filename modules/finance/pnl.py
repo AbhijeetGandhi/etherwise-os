@@ -51,7 +51,18 @@ _EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
 # personal, never revenue/opex. Dynatech was a private transfer Abhijeet sent
 # (-$11,140, correctly owner_draw) that was returned (+$10,550) — but the return
 # carried category='income' and got mis-booked as revenue (Abhijeet, 2026-07-30).
-_PERSONAL_COUNTERPARTIES = ("DYNATECH",)
+# PRASHANT JAWAHARLAL BHANDARI (2026-09-05): Rs 65,000 on 15 Aug and again on
+# 2 Sep, both lines reading "Salary august", a payee with no history before this
+# statement. Abhijeet: a family member who returns the money to him in cash. So
+# no work was bought and no wage was borne -- the cash comes back -- and filing
+# it under payroll would put Rs 1,30,000 of cost into the P&L that the business
+# never paid, which is the one thing this ledger exists to prevent. It is a
+# draw. What his RETURN says about it is between him and his CA; what this
+# records is where the money went and that it came back.
+# AVANTIKA DNYANESHWAR BHAMBURE (2026-09-05, "avantika is also a draw"): the
+# same arrangement, Rs 14,800 on 2 Sep.
+_PERSONAL_COUNTERPARTIES = ("DYNATECH", "PRASHANT JAWAHARLAL BHANDARI",
+                            "AVANTIKA DNYANESHWAR BHAMBURE")
 # bank CREDITS that are NOT client revenue (Abhijeet, 2026-07-30): quarterly FD
 # interest (bank interest income) and refunds/reversals of expenses (cancelled
 # subscriptions, POS refunds, UPI reversals). Excluded from revenue -> owner_draw
@@ -63,6 +74,21 @@ _SALARY_MIN_BASE_MINOR = 100_000                       # $1,000 — salary-shape
 # settlement of a connects or membership invoice — the ARPayment leg as the
 # CSV export spells it (2026-08-26)
 _CARD_SETTLEMENT_RE = _re.compile(r"\b(visa|mastercard|master card|amex|paypal|card)\b", _re.I)
+# Upwork bills TWO unrelated things down one bank line and the line cannot tell
+# them apart: Connects/membership on his FREELANCER side (a platform cost) and
+# the CLIENT side paying a freelancer he HIRED (an operating cost). Every one of
+# them reads "POS-VISA/Upwork -<ref>REF/.../Dublin"; the merchant string is
+# truncated differently by the day, so one October 2024 row happens to read
+# "ConneDublin" and the rest say nothing at all.
+# 26 of these exist, Feb 2024 to Sep 2026. Abhijeet, 2026-09-05: "16661 is a
+# hire everything else is connects". So the DEFAULT stays platform_fee, which is
+# right 25 times out of 26, and a hire is named here by its own Upwork
+# reference. Not a date fence: he will buy Connects on this card again, and a
+# fence would quietly file that as a hire. Both land in the operating P&L, so a
+# wrong one costs presentation, not profit -- but a list of facts he confirmed
+# beats a pattern he never stated. The real fix is reading the CLIENT org's own
+# ledger through the MCP, which would say which it was without asking.
+_UPWORK_HIRE_REFS = ("948419050",)                     # 2 Sep 2026, Rs 16,661.39
 
 
 def _bank_spend(row: dict) -> str:
@@ -74,7 +100,9 @@ def _bank_spend(row: dict) -> str:
         return "cc_settlement"                          # bill payment, not a spend
     if d.startswith("POS") or "POS-VISA/" in d:
         if "UPWORK" in d or "UPWRKESCROW" in d:
-            return "platform_fee"                       # Upwork charges off the bank
+            if any(ref in d for ref in _UPWORK_HIRE_REFS):
+                return "opex"                           # a freelancer he hired
+            return "platform_fee"                       # Connects/plan off the bank
         if any(v in d for v in BUSINESS_POS_VENDORS):
             return "opex"                               # business SaaS on debit card
         return "owner_draw"                             # personal card-on-bank spend

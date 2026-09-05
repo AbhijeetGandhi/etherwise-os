@@ -207,6 +207,61 @@ class DoctorCase(unittest.TestCase):
         self.assertIn("excluded from P&L", c7.detail)
         self.assertTrue(res.green)
 
+    def _gr(self, conn, rid, minor, day, source="IDFC"):
+        conn.execute(
+            "INSERT INTO transactions (record_id, amount_minor, amount_base_minor,"
+            " currency, canonical_key, type, source, category, description, creation_dt)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (rid, minor, minor, "INR", "bank-" + rid, "Other", source, "transfer_in",
+             "NEFT/CITIN1/GLOBAL REMITTANCE-OTHERS/CITI0100000/388 GREENWICH ST",
+             day + "T00:00:00+0000"))
+
+    def _stripe_out(self, conn, rid, minor, day):
+        conn.execute(
+            "INSERT INTO transactions (record_id, amount_minor, amount_base_minor,"
+            " currency, canonical_key, type, source, creation_dt)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (rid, minor, minor, "INR", "stripe-" + rid, "Other", "Stripe",
+             day + "T00:00:00+0000"))
+
+    def test_stripe_arrival_11_green_when_every_landing_ties(self):
+        with db.connect(self.db_path) as conn:
+            self._stripe_out(conn, "s1", -1457408, "2026-08-02")
+            self._gr(conn, "g1", 1457408, "2026-08-03")
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#11 Stripe arrival"][0]
+        self.assertEqual(c.status, "GREEN")
+
+    def test_stripe_arrival_11_red_when_a_landing_ties_to_nothing(self):
+        """The exclusion is what makes this check necessary: an unpaired landing
+        has been kept OUT of revenue, so a real client wire Citi labelled the
+        same way would go missing rather than double. Missing money must shout."""
+        with db.connect(self.db_path) as conn:
+            self._gr(conn, "g1", 5610357, "2026-08-17")
+        res = doctor.run(self.db_path)
+        c = [x for x in res.checks if x.invariant == "#11 Stripe arrival"][0]
+        self.assertEqual(c.status, "RED")
+        self.assertEqual(c.deltas[0]["amount_minor"], 5610357)
+        self.assertFalse(res.green)
+
+    def test_stripe_arrival_11_will_not_pair_one_settlement_twice(self):
+        # two identical landings, one settlement -> the second is an orphan
+        with db.connect(self.db_path) as conn:
+            self._stripe_out(conn, "s1", -400000, "2026-08-02")
+            self._gr(conn, "g1", 400000, "2026-08-03")
+            self._gr(conn, "g2", 400000, "2026-08-04")
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#11 Stripe arrival"][0]
+        self.assertEqual((c.status, len(c.deltas)), ("RED", 1))
+
+    def test_stripe_arrival_11_window_is_not_open_ended(self):
+        with db.connect(self.db_path) as conn:
+            self._stripe_out(conn, "s1", -400000, "2026-08-02")
+            self._gr(conn, "g1", 400000, "2026-08-20")        # 18 days later
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#11 Stripe arrival"][0]
+        self.assertEqual(c.status, "RED")
+
     def test_bucket_reproducibility_10(self):
         from modules.finance import pnl
         with db.connect(self.db_path) as conn:
@@ -646,6 +701,22 @@ class TestBankXlsx(unittest.TestCase):
             "NEFT/CITIN26664234140/WISE PAYMENTS IPL PA CB EXP ESCROW/CITI", "credit"),
             "transfer_in")
 
+    def test_a_stripe_settlement_landing_is_not_client_income(self):
+        """2026-09-05. Citi labels the inward wire 'GLOBAL REMITTANCE-OTHERS'
+        with no remitter name, so nothing in the text says Stripe and the row
+        read as INCOME. It is the INR landing of money the Stripe rail has
+        already booked as revenue: five for five, to the paisa, 1-3 days after
+        the Stripe transfer-out leg. Rs 1,21,463.71 of Aug/Sep Stripe revenue
+        would have been counted twice; the two July rows had been corrected by
+        hand at import, which is how the gap stayed invisible."""
+        from modules.finance.importers import bank_xlsx
+        self.assertEqual(bank_xlsx.classify_category(
+            "NEFT/CITIN26709851278/GLOBAL REMITTANCE-OTHERS/CITI0100000/"
+            "388 GREENWICH ST.NEW YORK, NYUSA 10013", "credit"), "transfer_in")
+        # a DEBIT is never a landing, whatever the label says
+        self.assertEqual(bank_xlsx.classify_category(
+            "NEFT/CITIN1/GLOBAL REMITTANCE-OTHERS/CITI0100000/x", "debit"), "expense")
+
     def test_manual_fd_creation_is_internal_sweep_not_expense(self):
         # 'FD <acct> ETHERWISE' moves cash into a fixed deposit -> internal_sweep
         # (NOT opex); missing this mis-booked -Rs 5L as expense + understated cash.
@@ -836,6 +907,41 @@ class TestPnl(unittest.TestCase):
         self.assertEqual(r["excluded_minor"]["transfer"], 888888)
         self.assertEqual(r["uncategorized_count"], 1)
 
+    def test_a_named_upwork_hire_is_opex_and_the_rest_stay_platform_fee(self):
+        """One bank line carries two unrelated things: Connects/membership on his
+        FREELANCER side and the CLIENT side paying someone he HIRED. Every row
+        reads "POS-VISA/Upwork -<ref>REF/.../Dublin" and the merchant string is
+        truncated differently by the day, so nothing in the text decides it.
+        Abhijeet, 2026-09-05: "16661 is a hire everything else is connects" — 26
+        rows since Feb 2024, one of them a hire. So the default holds and the
+        hire is named by its reference. A DATE FENCE WOULD BE WRONG: he will buy
+        Connects on this card again and a fence would file it as a hire."""
+        from modules.finance import pnl
+        idfc = lambda d: {"category": "expense", "source": "IDFC", "description": d}
+        self.assertEqual(pnl.bucket(idfc(
+            "POS-VISA/Upwork -948419050REF/624422352895/Dublin/22:50:09")), "opex")
+        for connects in ("POS-VISA/Upwork -882708855REF/601218347342/Dublin/18:47:49",
+                         "POS-VISA/Upwork -743830485ConneDublin/429012383409/Dublin/",
+                         "POS-VISA/Upwork -799420395REF/1234"):
+            self.assertEqual(pnl.bucket(idfc(connects)), "platform_fee", connects)
+
+    def test_a_salary_line_to_a_personal_counterparty_is_a_draw(self):
+        """A payroll line is a cost the business BORE. Where the money comes
+        back to him (2026-09-05), calling it payroll puts an expense in the P&L
+        that was never paid — the personal-counterparty rule already exists for
+        exactly that shape and it outranks the category."""
+        from modules.finance import pnl
+        row = {"category": "salary", "source": "IDFC", "amount_base_minor": -73000,
+               "description": "NEFT/IDFB6227M1102099/Mr PRASHANT JAWAHARLAL"
+                              " BHANDARI/MAHB0000978/Salary august"}
+        self.assertEqual(pnl.bucket(row), "owner_draw")
+        row["description"] = ("NEFT/IDFB6245M6033101/AVANTIKA DNYANESHWAR"
+                              " BHAMBURE/BARB0GOREAS/Salary august")
+        self.assertEqual(pnl.bucket(row), "owner_draw")
+        # everyone else on the payroll is untouched
+        row["description"] = "NEFT/IDFB6243M5276361/YOGITA SUDHIR SOMA/BKID/Salary august"
+        self.assertEqual(pnl.bucket(row), "payroll")
+
     def test_bank_spend_rules_2026_07(self):
         # Abhijeet's reclassification: opex = credit-card statement; bank spends
         # are personal (owner_draw) except the explicit business rules.
@@ -843,7 +949,7 @@ class TestPnl(unittest.TestCase):
         b = pnl.bucket
         idfc = lambda desc, **kw: dict({"category": "expense", "source": "IDFC",
                                         "description": desc}, **kw)
-        # Upwork platform charges off the bank -> platform_fee
+        # Upwork platform charges off the bank -> platform_fee (25 of 26 rows)
         self.assertEqual(b(idfc("POS-VISA/UPWORK -799420395REF/1234")), "platform_fee")
         self.assertEqual(b(idfc("POS-VISA/PAYPAL *UPWRKESCROW/99")), "platform_fee")
         # business-SaaS vendor allowlist on debit card -> opex

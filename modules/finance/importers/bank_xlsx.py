@@ -134,11 +134,26 @@ def _is_already_tracked_credit(desc: str) -> bool:
       - IMPS / RDA-Vostro rail = INCOME: foreign client payments delivered via a
         Rupee Drawing Arrangement ('.../VISAPAYMENTSLIM/...', '.../WISEPAYMENTSLIM/
         ...RDAVostro'). These have NO matching self-transfer out-leg -> NOT a
-        transfer. (Name-based matching wrongly split Wise-RDA from Visa-RDA.)"""
+        transfer. (Name-based matching wrongly split Wise-RDA from Visa-RDA.)
+      - GLOBAL REMITTANCE rail = where a STRIPE SETTLEMENT LANDS (2026-09-05).
+        Citi writes 'GLOBAL REMITTANCE-OTHERS/CITI0100000/388 GREENWICH ST.NEW
+        YORK' and carries NO remitter name, so nothing in the text says Stripe.
+        The money says it: five for five, to the paisa, 1-3 days after the
+        Stripe rail's own transfer-out leg -- Rs 23,111.76 (8 Jul), 17,329.69
+        (22 Jul), 14,574.08 (3 Aug), 56,103.57 (17 Aug), 50,786.06 (1 Sep).
+        Stripe has ALREADY booked that money as revenue, so reading the landing
+        as income counts it twice; the two July rows were corrected by hand at
+        import and this is that correction made permanent (Rs 1,21,463.71 of
+        August/September Stripe revenue would have doubled otherwise).
+        THE DANGEROUS DIRECTION IS THE OTHER ONE -- a genuine client wire that
+        Citi labels the same way would vanish from the top line instead of
+        merely being counted twice -- so finance.doctor #11 re-proves the Stripe
+        pairing for every one of these rows, and says so when it cannot."""
     s = (desc or "").upper()
     if "RDA" in s or "PAYMENTSLIM" in s:        # inward-remittance rail -> income
         return False
-    return any(k in s for k in ("ESCROW", "WISE PAYMENTS", "TRANSFERWISE", "TW INDIA"))
+    return any(k in s for k in ("ESCROW", "WISE PAYMENTS", "TRANSFERWISE", "TW INDIA",
+                                "GLOBAL REMITTANCE"))
 
 
 def _is_credit_card_bill_payment(desc: str) -> bool:
