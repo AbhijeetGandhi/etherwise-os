@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import subprocess
 import time
@@ -3835,6 +3836,36 @@ def _upwork_attach_outcomes(conn, stage: str, rows: list) -> None:
                             "contract_title": r["title"]})
 
 
+# When THIS server process started. It matters because doctor #10 asks whether
+# the stored pnl_bucket reproduces bucket() *as the asker computes it* — so a
+# cockpit that has been up since before a rule change scores the ledger with the
+# rules it loaded then, goes RED, and sends him to `bin/finance-doctor`, which is
+# a fresh process and answers GREEN. On 2026-09-05 that contradiction blocked the
+# whole Money page after a CLI re-bucketize, and nothing on the screen could say
+# why. The gate cannot reload its own rules safely, so it says so instead.
+_LOADED_AT = time.time()
+
+
+def _stale_rules_hint() -> Optional[str]:
+    """'This server started 31 Aug 22:19 and pnl.py changed 05 Sep 19:41' — or
+    None when the running rules are the rules on disk. Never raises: a hint that
+    breaks the page it is explaining is worse than no hint."""
+    try:
+        from modules.finance import pnl, transfers
+        when, name = max((os.path.getmtime(m.__file__), m.__name__)
+                         for m in (pnl, transfers))
+    except Exception:                        # noqa: BLE001
+        return None
+    if when <= _LOADED_AT:
+        return None
+    def _at(t):
+        return datetime.fromtimestamp(t).strftime("%d %b %H:%M")
+    return (f"This server started {_at(_LOADED_AT)} and {name.rsplit('.', 1)[-1]}.py"
+            f" changed {_at(when)}, so it is scoring the ledger with the rules it"
+            " loaded then — which is what #10 compares against. Run"
+            " `bash bin/cockpit reload`; the ledger itself is probably fine.")
+
+
 def _money_in_flight(db_path: Optional[Path] = None) -> dict:
     """Hours logged that Upwork has not invoiced yet, and fixed-price
     milestones — the money that exists before a transaction row does
@@ -3981,10 +4012,17 @@ def money(db_path: Optional[Path] = None,
 
     dr = doctor.run(dbp)
     if not dr.green:                          # hard gate — show nothing on RED
-        return {"doctor": "RED", "blocked": True,
-                "reds": [c.invariant for c in dr.reds()],
-                "note": "Finance blocked — finance-doctor is RED; no figures "
-                        "are shown until every invariant is GREEN."}
+        reds = [c.invariant for c in dr.reds()]
+        out = {"doctor": "RED", "blocked": True, "reds": reds,
+               "note": "Finance blocked — finance-doctor is RED; no figures "
+                       "are shown until every invariant is GREEN."}
+        # #10 is the one invariant a STALE SERVER can fail on its own (see
+        # _stale_rules_hint) — say so rather than let the ledger take the blame.
+        if any(r.startswith("#10") for r in reds):
+            hint = _stale_rules_hint()
+            if hint:
+                out["stale_rules"] = hint
+        return out
 
     conn = _ro(db_path)
     try:

@@ -192,6 +192,13 @@ export async function render(root, ctx) {
           ? el("ul", { style: { margin: "10px 0 0", paddingLeft: "18px" } },
               (d.reds || []).map((x) => el("li", "small", x)))
           : el("div", "small muted", "The doctor did not name the failing invariant."),
+        // A server running yesterday's P&L rules fails #10 by itself while
+        // bin/finance-doctor — a fresh process — says GREEN. That contradiction
+        // is not a ledger fault and must not be read as one (2026-09-05).
+        d.stale_rules
+          ? el("div", { class: "pos", style: { marginTop: "12px", fontWeight: "600" } },
+              d.stale_rules)
+          : null,
         el("div", { class: "small muted", style: { marginTop: "12px" } },
           "Run bin/finance-doctor for the detail. Nothing on this page is"
           + " rendered from a partially-reconciled ledger — a plausible wrong"

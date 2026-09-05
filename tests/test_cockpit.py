@@ -2430,6 +2430,52 @@ class TestMoneyReader(unittest.TestCase):
         self.assertEqual(out["pnl"]["net_revenue_usd"],
                          round(float(fmoney.from_minor(want["net_revenue_minor"])), 2))
 
+    def test_a_stale_server_says_so_instead_of_blaming_the_ledger(self):
+        """2026-09-05. `bin/finance-bucketize --apply` wrote buckets from new
+        rules while the cockpit had been up since 31 Aug holding the old ones,
+        so doctor #10 went RED here and GREEN on the command line — and the
+        blocked page told him to run the very command that disagreed with it.
+        The ledger was fine. The gate now names the real cause when, and only
+        when, #10 is the invariant that failed."""
+        from modules.finance import pnl
+        with db.connect(self.db_path) as conn:                # force #10 RED
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, type,"
+                         " amount_minor, currency, pnl_bucket) VALUES"
+                         " ('s1','ks1','Hourly Earning',1000,'USD','opex')")
+        real = os.path.getmtime(pnl.__file__)
+        try:
+            os.utime(pnl.__file__, (real, data._LOADED_AT + 3600))
+            out = data.money(self.db_path, today="2026-06-15")
+            self.assertTrue(out["blocked"])
+            self.assertTrue(any(r.startswith("#10") for r in out["reds"]))
+            self.assertIn("bin/cockpit reload", out["stale_rules"])
+            self.assertIn("pnl.py", out["stale_rules"])
+        finally:
+            os.utime(pnl.__file__, (real, real))
+        # rules as old as the process -> no hint, and the RED stands on its own
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertTrue(out["blocked"])
+        self.assertNotIn("stale_rules", out)
+
+    def test_the_stale_hint_is_only_for_the_invariant_it_explains(self):
+        # #8 (a NULL amount) is a real ledger fault — a fresh server fails it
+        # too, so a reload hint would be a lie even with newer rules on disk.
+        from modules.finance import pnl
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, type,"
+                         " amount_minor, currency) VALUES ('bad','kbad','Other',NULL,'USD')")
+        real = os.path.getmtime(pnl.__file__)
+        try:
+            os.utime(pnl.__file__, (real, data._LOADED_AT + 3600))
+            out = data.money(self.db_path, today="2026-06-15")
+        finally:
+            os.utime(pnl.__file__, (real, real))
+        self.assertTrue(out["blocked"])
+        self.assertNotIn("stale_rules", out)
+        js = (Path(__file__).resolve().parents[1] / "modules" / "cockpit" / "static"
+              / "js" / "sections" / "money.js").read_text()
+        self.assertIn("d.stale_rules", js)
+
     def test_doctor_gate_blocks_on_red(self):
         # a NULL-amount_minor row -> doctor #8 RED -> money() shows nothing
         with db.connect(self.db_path) as conn:
