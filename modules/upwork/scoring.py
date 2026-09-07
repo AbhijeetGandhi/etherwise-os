@@ -73,6 +73,24 @@ _PLATFORMS_RE = re.compile(
 _OFF_DOMAIN_TITLE_RE = re.compile(
     r"\bvoice\b|marketing|funnel|\bads\b|\bseo\b|copywrit|\bcontent\b", re.I)
 
+# HIS OWN CATEGORY OVERRIDES THE PLATFORM GATE. Abhijeet, 2026-09-08: "make sure
+# that if something says AI automation develoepr it is not skipped and then you
+# make decision based on the actual descipriton for."
+#
+# He is right, and the first cut of the gate proved it: "AI Automation
+# Specialist for Business Solutions" scored 30 and he bid on it, and it named
+# no platform in either field. A post that calls itself automation, integration
+# or workflow work is his trade by its own description; whether it is REALLY
+# his is a judgment about the body, and judgment is what the scorer is for. So
+# the title exempts it from the gate and it goes to the model, which grades
+# skill fit on what the description actually says — and a bad one then dies at
+# the score, which is the right place for a close call to die.
+#
+# Deliberately these three words and no more. Adding systems / ops / no-code /
+# crm lets 99 further cards through and recovers not one additional
+# application; the exemption is a door, not a hole.
+_CATEGORY_TITLE_RE = re.compile(r"automation|integrat|workflow", re.I)
+
 # A description too thin to read cannot be used as evidence of ABSENCE. ~200 of
 # 4,451 scored rows have almost no body; they fall through to the model rather
 # than being dropped on a technicality (quarantine over silent drop).
@@ -92,14 +110,12 @@ SCHEMA = {
             "properties": {"core_stack": {"type": "integer"},
                            "long_term": {"type": "integer"},
                            "invite": {"type": "integer"},
-                           "whale_client": {"type": "integer"},
-                           "fresh": {"type": "integer"}},
-            # long_term / whale_client / fresh stay in the shape so the row
-            # keeps recording them (they are real facts about a job and a
-            # future re-measure needs them); `claude` is gone entirely, because
-            # a field the model is asked to fill is a field it weighs.
-            "required": ["core_stack", "long_term", "invite",
-                         "whale_client", "fresh"],
+                           "whale_client": {"type": "integer"}},
+            # `claude` and `fresh` are gone entirely, not zero-weighted: a field
+            # the model is asked to fill is a field it weighs, and both were
+            # pulling toward the pile he skips. The four that remain are the
+            # four that count.
+            "required": ["core_stack", "long_term", "invite", "whale_client"],
             "additionalProperties": False,
         },
         "raw_total": {"type": "integer"},
@@ -162,7 +178,9 @@ def hard_rule_skip(job: dict) -> Optional[str]:
         return "onsite_required"
     if _OFF_DOMAIN_TITLE_RE.search(title):
         return "off_domain_title"       # voice / marketing / funnel / content
-    if len(desc) >= _MIN_DESC_FOR_GATE and not _PLATFORMS_RE.search(text):
+    if (len(desc) >= _MIN_DESC_FOR_GATE
+            and not _CATEGORY_TITLE_RE.search(title)      # his trade: let it score
+            and not _PLATFORMS_RE.search(text)):
         return "no_platform_named"      # an AI-engineering post, not his work
     return None
 
@@ -192,12 +210,12 @@ Dimensions (base, max 28):
 - Description Quality 1-5 — same: scored, reported, not in the total (4.39 vs
   4.33, no signal).
 
-Bonuses: core stack +3 · direct invite +4. Nothing else.
-  Long-term, whale-client, posted-under-an-hour and mentions-Claude were all
-  bonuses until 2026-09-08 and ALL FOUR fired more often on the jobs he skipped
-  than on the ones he took. The Claude one was the worst: +2 for a word that
-  appeared in 182 hot cards and produced zero applications. Do not reward a
-  buzzword; reward the work.
+Bonuses: core stack +3 · direct invite +4 · long-term/ongoing (20+ hr/wk or
+multi-month) +3 · client spent $100K+ +2. Nothing else.
+  Posted-under-an-hour and mentions-Claude were bonuses until 2026-09-08 and
+  both fired more often on the jobs he skipped than on the ones he took — the
+  Claude one worst of all, +2 for a word that appeared in 182 hot cards and
+  produced zero applications. Do not reward a buzzword; reward the work.
 
 Category Priority Gate (v2.3): if the job CENTERS on GoHighLevel/GHL, Vapi,
 or Retell, it is gated UNLESS any of: client total spent >= $50,000, hourly
@@ -250,11 +268,18 @@ def job_input(job: dict) -> str:
 
 SCORER_VERSION = "3.0"
 
-# The two bonuses that survived the 2026-09-08 measurement. The other four
-# (long_term, whale_client, fresh, claude) each fired MORE often on the jobs he
-# skipped than on the ones he bid on, so they were not weak signals — they were
-# the wrong ones, pulling the ranking away from him.
-COUNTED_BONUSES = ("core_stack", "invite")
+# All four of long_term, whale_client, fresh and claude fired MORE often on the
+# jobs he skipped than on the ones he bid on. HIS CALL, 2026-09-08, on what to
+# do about that: "for four bonuses just delete claude and fresh keep the long
+# term and whale". Claude and fresh are gone from the schema entirely; long-term
+# and whale-client stay, because a signal that has not moved his BIDDING can
+# still be the kind of client he wants more of, and that is a business call, not
+# a correlation.
+#
+# The cost is small and real, so it is written down: ranked by this set, the top
+# 500 of the gated pool holds 31 of his 52 applications against 32 with
+# core_stack+invite alone, and the top 800 holds 40 against 43.
+COUNTED_BONUSES = ("core_stack", "invite", "long_term", "whale_client")
 _SKILL_FIT_WEIGHT = 4          # of a 1-5 grade; see _MATRIX for the evidence
 
 

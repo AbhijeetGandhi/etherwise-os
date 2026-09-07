@@ -140,15 +140,15 @@ class TestPromptAssembly(unittest.TestCase):
 
 class TestScoreJob(unittest.TestCase):
     def verdict(self, fit=4, budget=4, client=2, core=3, invite=0,
-                gated=False, claims=99):
+                long_term=0, whale=0, gated=False, claims=99):
         """A model verdict. `claims` is what the model SAYS the total is — the
         code ignores it and computes from the components (v3.0, 2026-09-08),
         so every test here pins the arithmetic rather than the model's word.
         `fit` is the wire shape: skill_fit arrives already weighted x2."""
         return {"skill_fit": fit, "budget": budget, "client_quality": client,
                 "competition": 3, "description_quality": 4, "base_total": claims,
-                "bonuses": {"core_stack": core, "long_term": 3, "invite": invite,
-                            "whale_client": 2, "fresh": 1},
+                "bonuses": {"core_stack": core, "long_term": long_term,
+                            "invite": invite, "whale_client": whale},
                 "raw_total": claims, "gated": gated,
                 "effective_total": claims, "recommendation": "bid"}
 
@@ -250,6 +250,23 @@ class TestPlatformGateAndWeights(unittest.TestCase):
         return {"title": title, "description": desc, "contract_type": "Hourly",
                 "hourly_min": 40.0, "hourly_max": 80.0}
 
+    def test_his_own_category_in_the_title_beats_the_gate(self):
+        """Abhijeet, 2026-09-08: "make sure that if something says AI automation
+        develoepr it is not skipped and then you make decision based on the
+        actual descipriton for." The first cut proved him right — "AI Automation
+        Specialist for Business Solutions" scored 30, he bid on it, and it named
+        no platform anywhere. The title buys it a reading, not a pass."""
+        body = ("Build autonomous agents in Python with Claude and GPT-4 on "
+                "AWS. Strong backend and API design required. " * 4)
+        for title in ("AI Automation Developer", "Systems Integration Lead",
+                      "Workflow Engineer for Operations"):
+            self.assertIsNone(scoring.hard_rule_skip(self._job(title, body)), title)
+        # ...and the exemption is a door, not a hole: the trades next door are
+        # still skipped even when they say automation.
+        self.assertEqual(
+            scoring.hard_rule_skip(self._job("Marketing Automation Specialist", body)),
+            "off_domain_title")
+
     def test_a_job_naming_no_platform_he_works_in_never_reaches_the_model(self):
         """"claude" appeared in 182 hot cards and produced zero applications;
         so did "full stack", "api" and "voice". They are AI-engineering posts,
@@ -270,9 +287,9 @@ class TestPlatformGateAndWeights(unittest.TestCase):
         """Adding openai/gpt/claude to the vocabulary passes 218 more cards and
         keeps exactly the same 47 of his 50 applications. A model vendor says
         nothing about whether a client is buying configuration work."""
-        j = self._job("AI Integration Expert",
-                      "Looking for someone to integrate OpenAI and Claude into "
-                      "our own product. TypeScript, Next.js, Postgres. " * 4)
+        j = self._job("LLM Application Developer",
+                      "Looking for someone to wire OpenAI and Claude into our "
+                      "own product. TypeScript, Next.js, Postgres. " * 4)
         self.assertEqual(scoring.hard_rule_skip(j), "no_platform_named")
 
     def test_the_trades_next_door_are_skipped_on_the_title_alone(self):
@@ -311,15 +328,25 @@ class TestPlatformGateAndWeights(unittest.TestCase):
         self.assertGreater(scoring.compute_total(great_fit)[1],
                            scoring.compute_total(great_client)[1])
 
-    def test_the_four_backwards_bonuses_no_longer_count(self):
-        """long_term, whale_client, fresh and claude each fired MORE often on
-        the jobs he skipped than the ones he took. Only core_stack and invite
-        survived the measurement."""
+    def test_claude_and_fresh_are_weightless_even_if_a_row_carries_them(self):
+        """All four of long_term / whale_client / fresh / claude measured
+        backwards. His call, 2026-09-08: "just delete claude and fresh keep the
+        long term and whale" — a client who spends and stays is the kind he
+        wants more of, which is a business decision, not a correlation. Old
+        rows still carry the two deleted keys and must be unaffected by them."""
         v = {"skill_fit": 6, "budget": 3, "client_quality": 2,
              "bonuses": {"core_stack": 0, "invite": 0}}
-        loud = dict(v, bonuses={"core_stack": 0, "invite": 0, "long_term": 3,
-                                "whale_client": 2, "fresh": 1, "claude": 2})
-        self.assertEqual(scoring.compute_total(v), scoring.compute_total(loud))
+        stale = dict(v, bonuses={"core_stack": 0, "invite": 0,
+                                 "fresh": 1, "claude": 2})
+        self.assertEqual(scoring.compute_total(v), scoring.compute_total(stale))
+
+    def test_long_term_and_whale_still_count(self):
+        v = {"skill_fit": 6, "budget": 3, "client_quality": 2,
+             "bonuses": {"core_stack": 0, "invite": 0}}
+        rich = dict(v, bonuses={"core_stack": 0, "invite": 0,
+                                "long_term": 3, "whale_client": 2})
+        self.assertEqual(scoring.compute_total(v)[1] + 5,
+                         scoring.compute_total(rich)[1])
 
     def test_the_model_does_not_get_to_do_the_arithmetic(self):
         """The score has to be re-derivable from the stored breakdown — which
@@ -330,7 +357,11 @@ class TestPlatformGateAndWeights(unittest.TestCase):
              "bonuses": {"core_stack": 3, "invite": 0}}
         self.assertEqual(scoring.compute_total(v), (23, 26))   # 4*4+4+3, +3
 
-    def test_the_claude_bonus_is_gone_from_the_schema(self):
+    def test_claude_and_fresh_are_gone_from_the_schema(self):
+        """Deleted, not zero-weighted: a field the model is asked to fill is a
+        field it weighs."""
         props = scoring.SCHEMA["properties"]["bonuses"]["properties"]
         self.assertNotIn("claude", props)
-        self.assertIn("core_stack", props)
+        self.assertNotIn("fresh", props)
+        self.assertEqual(sorted(props),
+                         ["core_stack", "invite", "long_term", "whale_client"])
