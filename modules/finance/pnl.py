@@ -90,6 +90,35 @@ _CARD_SETTLEMENT_RE = _re.compile(r"\b(visa|mastercard|master card|amex|paypal|c
 # ledger through the MCP, which would say which it was without asking.
 _UPWORK_HIRE_REFS = ("948419050",)                     # 2 Sep 2026, Rs 16,661.39
 
+# TDS remitted to the CA is PAYROLL (Abhijeet, 2026-09-07: "even if I am sending
+# less salary you need to include tds that we share as well?"). It is wage that
+# was earned and withheld — every payroll figure here was the net transfer, so a
+# month of employing people looked cheaper than it was by the whole of the TDS,
+# and the tax sat in owner draws where it meant nothing.
+#
+# NARROW ON PURPOSE: his CA's name AND the word TDS. Two other payments go to
+# the same CA and are NOT payroll — the quarterly return-filing fee (Rs 4,000,
+# 4 Aug: a professional fee, still a draw pending his word) and "Tax 2026"
+# (Rs 4,72,710, 31 Aug: his own FY25-26 liability, which never says TDS). Both
+# are excluded by name, not by an amount or a date.
+#
+# The wide end of this lives in `payroll_tax.uncovered` + doctor #14, which
+# looks at EVERY bank debit naming TDS and goes RED on one this rule books
+# without his month behind it. A rule that cannot mis-book, a check that cannot
+# miss — the amounts here are ~Rs 30,000 a month and the months are his to say.
+_CA_PAYEE = "PRITI BORA & CO"
+_TDS_WORD_RE = _re.compile(r"\bTDS\b", _re.I)
+_NOT_TDS_REMITTANCE_RE = _re.compile(r"RETURN\s+FILING|FILING\s+FEE", _re.I)
+
+
+def is_tds_remittance(description: Optional[str]) -> bool:
+    """Does this bank line say 'TDS on wages, paid to the CA'? Public because
+    doctor #14 must ask the SAME question the booking asks — a check that
+    re-implements the rule it is checking is not a check."""
+    d = (description or "").upper()
+    return bool(_CA_PAYEE in d and _TDS_WORD_RE.search(d)
+                and not _NOT_TDS_REMITTANCE_RE.search(d))
+
 
 def _bank_spend(row: dict) -> str:
     """Classify a bank-statement spend (a row that would previously have been
@@ -108,6 +137,8 @@ def _bank_spend(row: dict) -> str:
         return "owner_draw"                             # personal card-on-bank spend
     if "UPWRKESCROW" in d:
         return "platform_fee"
+    if is_tds_remittance(d):
+        return "payroll"                                # wage withheld, then remitted
     if any(p in d for p in _RENT_PAYEES):
         return "opex"                                   # office rent
     if any(p in d for p in _CONTRACTOR_PAYEES):

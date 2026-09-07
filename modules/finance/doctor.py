@@ -498,6 +498,64 @@ def _check_salary_lines(conn) -> Check:
                   for r in missed[:20]])
 
 
+def _check_payroll_tax(conn) -> Check:
+    """#14 payroll TDS (added 2026-09-07). The tax withheld from wages is payroll
+    cost, and this is the loop that keeps it honest.
+
+    Abhijeet, 2026-09-07: "Also even if I am sending less salary you need to
+    include tds that we share as well?" — and then, when asked how to know what
+    each month owed: "Ask me tds amount each month I will give you. then you can
+    match it against the deduct from bank account." So his figures are the source
+    and the bank is the check, and this is the check, run in BOTH directions:
+
+      HIS FIGURES vs THE BANK. A month's TDS is a number only he has (one
+      payment can cover two months, so the statement cannot decompose it). If
+      the months he gave do not add up to the payment that carried them, some
+      other tax is inside that payment and the payroll figure is wrong.
+
+      THE BANK vs HIS FIGURES. Every bank debit `pnl` books as a TDS remittance
+      must be a payment he has given me months for. This is the half that makes
+      it self-running: when September's statement lands with August's remittance
+      in it — "august you will see in the next statement" — the ledger asks him
+      for the figure instead of quietly booking a month's payroll on the day it
+      cleared, which is exactly how the effective-month drift (#12) survived for
+      five months.
+
+    RED here needs HIM, not a re-run, which is unusual for this doctor and is the
+    point: roughly Rs 30,000 of monthly payroll cost has no other source."""
+    from modules.finance import payroll_tax
+    try:
+        bad = payroll_tax.mismatches(conn)
+        loose = payroll_tax.uncovered(conn)
+        unwritten = payroll_tax.rows_to_write(conn)
+    except Exception:                            # noqa: BLE001 — pre-016 DB
+        return Check("#14 payroll TDS", "N/A", "pnl_month not available")
+    if not payroll_tax.remitted(conn) and not loose:
+        return Check("#14 payroll TDS", "N/A", "no TDS remittances in the ledger")
+    if loose:
+        return Check("#14 payroll TDS", "RED",
+                     f"{len(loose)} TDS remittance(s) booked as payroll with no month"
+                     " behind them — ask Abhijeet which month(s) each covers and add"
+                     " it to payroll_tax.MONTHLY_TDS/REMITTANCES",
+                     [{"record_id": r["record_id"], "key": r["canonical_key"],
+                       "paid": r["d"], "amount_minor": r["amount_minor"],
+                       "line": (r["description"] or "")[:80]} for r in loose[:20]])
+    if bad:
+        return Check("#14 payroll TDS", "RED",
+                     f"{len(bad)} TDS remittance(s) do not equal the months they cover", bad)
+    if unwritten:
+        return Check("#14 payroll TDS", "RED",
+                     f"{len(unwritten)} TDS split row(s) missing — a multi-month"
+                     " remittance is sitting whole in one month; run bin/finance-bucketize",
+                     [{"key": r["canonical_key"], "month": r["month"],
+                       "amount_minor": r["amount_minor"]} for r in unwritten])
+    months = sorted(payroll_tax.MONTHLY_TDS)
+    total = sum(payroll_tax.MONTHLY_TDS.values())
+    return Check("#14 payroll TDS", "GREEN",
+                 f"{len(months)} month(s) {months[0]}..{months[-1]} of TDS"
+                 f" ({total} paise) tie to {len(payroll_tax.REMITTANCES)} bank remittance(s)")
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
@@ -507,5 +565,6 @@ def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
                   _check_ledger_tieout(conn), _check_cash(conn),
                   _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
                   _check_payroll(conn), _check_stripe_arrival(conn),
-                  _check_effective_month(conn), _check_salary_lines(conn)]
+                  _check_effective_month(conn), _check_salary_lines(conn),
+                  _check_payroll_tax(conn)]
     return DoctorResult(checks)

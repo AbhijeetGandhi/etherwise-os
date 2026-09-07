@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import pnl, accrual, salary_lines  # noqa: E402
+from modules.finance import pnl, accrual, payroll_tax, salary_lines  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
 
@@ -36,6 +36,18 @@ def run(apply: bool) -> dict:
     with db.connect(config.DB_PATH) as conn:
         named = (salary_lines.apply(conn) if apply
                  else {"changed": len(salary_lines.rows_to_fix(conn)), "payees": []})
+
+    # AND the TDS withheld from those salaries, which never showed up as payroll
+    # at all. Abhijeet, 2026-09-07: "even if I am sending less salary you need to
+    # include tds that we share as well?" The remittance rows are the bank's own
+    # and `pnl` books them; what has to be WRITTEN is the split of the one
+    # payment that covers two months (Rs 60,985 on 7 July is May and June), which
+    # no single row can express. Here for the same reason as the pass above: the
+    # cockpit runs bucketize after every import, so nothing waits on a human.
+    with db.connect(config.DB_PATH) as conn:
+        tds = (payroll_tax.apply(conn) if apply
+               else {"written": len(payroll_tax.rows_to_write(conn)), "keys": []})
+        tds_bad = len(payroll_tax.mismatches(conn)) + len(payroll_tax.uncovered(conn))
 
     changed = 0
     counts = Counter()
@@ -67,7 +79,9 @@ def run(apply: bool) -> dict:
             "effective_month_changed": months["changed"],
             "effective_month_since": accrual.ACCRUAL_SINCE,
             "unnarrated_salary_fixed": named["changed"],
-            "unnarrated_salary_payees": named.get("payees", [])}
+            "unnarrated_salary_payees": named.get("payees", []),
+            "tds_split_rows": tds["written"],
+            "tds_unreconciled": tds_bad}
 
 
 def main() -> int:

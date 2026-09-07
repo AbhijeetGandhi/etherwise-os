@@ -284,6 +284,84 @@ class DoctorCase(unittest.TestCase):
              if x.invariant == "#12 effective month"][0]
         self.assertEqual(c.status, "GREEN")
 
+    def _tds(self, conn, key, minor, day, desc, rate="0.0105"):
+        conn.execute(
+            "INSERT INTO transactions (record_id, canonical_key, type, source,"
+            " category, pnl_bucket, amount_minor, amount_base_minor, currency,"
+            " fx_rate, fx_date, description, creation_dt) VALUES"
+            " (?,?,'Other','IDFC','expense','payroll',?,?,'INR',?,?,?,?)",
+            (key, key, minor, money.apply_rate(minor, rate), rate, day, desc,
+             day + "T00:00:00+0000"))
+
+    def _all_tds(self, conn):
+        from modules.finance import payroll_tax as pt
+        self._tds(conn, "bank:553f3afc6c497e3e", -2808000, "2026-05-06",
+                  "IFT/10171724864/PRITI BORA & CO /13337732/TDS for april")
+        self._tds(conn, "bank:04607cb1178e7003", -6098500, "2026-07-07",
+                  "IFT/10171724864/PRITI BORA & CO /26482502/TDS may and june")
+        self._tds(conn, "bank:1b70a0304700d50b", -3055500, "2026-08-06",
+                  "IFT/10171724864/PRITI BORA & CO /27883768/TDS July")
+        pt.apply(conn)
+
+    def test_payroll_tds_14_green_when_his_months_tie_to_the_bank(self):
+        """His design, 2026-09-07: "Ask me tds amount each month I will give you.
+        then you can match it against the deduct from bank account."""
+        with db.connect(self.db_path) as conn:
+            self._all_tds(conn)
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#14 payroll TDS"][0]
+        self.assertEqual(c.status, "GREEN")
+
+    def test_payroll_tds_14_is_na_on_a_ledger_with_no_remittances(self):
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#14 payroll TDS"][0]
+        self.assertEqual(c.status, "N/A")
+        self.assertTrue(doctor.run(self.db_path).green)
+
+    def test_payroll_tds_14_asks_for_the_month_of_a_remittance_it_has_not_got(self):
+        """"august you will see in the next statement". When it does, the ledger
+        must ask him for the figure — not book a month's payroll on the day it
+        cleared, which is exactly how the #12 drift survived five months."""
+        with db.connect(self.db_path) as conn:
+            self._all_tds(conn)
+            self._tds(conn, "bank:aug-tds", -3100000, "2026-09-06",
+                      "IFT/10171724864/PRITI BORA & CO /99999999/TDS August")
+        res = doctor.run(self.db_path)
+        c = [x for x in res.checks if x.invariant == "#14 payroll TDS"][0]
+        self.assertEqual(c.status, "RED")
+        self.assertEqual(c.deltas[0]["key"], "bank:aug-tds")
+        self.assertFalse(res.green)
+
+    def test_payroll_tds_14_red_when_the_months_do_not_add_up_to_the_payment(self):
+        with db.connect(self.db_path) as conn:
+            self._all_tds(conn)
+            conn.execute("UPDATE transactions SET amount_minor=-6200000"
+                         " WHERE canonical_key='bank:04607cb1178e7003'")
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#14 payroll TDS"][0]
+        self.assertEqual(c.status, "RED")
+        self.assertEqual(c.deltas[0]["delta_minor"], 6200000 - 6098500)
+
+    def test_payroll_tds_14_red_while_a_two_month_remittance_sits_whole(self):
+        """Self-healing, like #12 and #13: run bin/finance-bucketize."""
+        with db.connect(self.db_path) as conn:
+            self._tds(conn, "bank:04607cb1178e7003", -6098500, "2026-07-07",
+                      "IFT/10171724864/PRITI BORA & CO /26482502/TDS may and june")
+            self._tds(conn, "bank:553f3afc6c497e3e", -2808000, "2026-05-06",
+                      "IFT/10171724864/PRITI BORA & CO /13337732/TDS for april")
+            self._tds(conn, "bank:1b70a0304700d50b", -3055500, "2026-08-06",
+                      "IFT/10171724864/PRITI BORA & CO /27883768/TDS July")
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#14 payroll TDS"][0]
+        self.assertEqual(c.status, "RED")
+        self.assertIn("bucketize", c.detail)
+        with db.connect(self.db_path) as conn:
+            from modules.finance import payroll_tax
+            payroll_tax.apply(conn)
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#14 payroll TDS"][0]
+        self.assertEqual(c.status, "GREEN")
+
     def test_stripe_arrival_11_green_when_every_landing_ties(self):
         with db.connect(self.db_path) as conn:
             self._stripe_out(conn, "s1", -1457408, "2026-08-02")
@@ -1025,6 +1103,212 @@ class TestAccrual(unittest.TestCase):
         self.assertEqual(a.effective_month(row), "2026-07")   # "a July top-up"
         row["canonical_key"] = "bank:someone-else"
         self.assertIsNone(a.effective_month(row))             # never inferred
+
+
+class TestPayrollTax(unittest.TestCase):
+    """The TDS withheld from salaries — payroll cost the bank never shows.
+
+    Abhijeet, 2026-09-07: "Also even if I am sending less salary you need to
+    include tds that we share as well?" Every payroll figure here was the NET
+    transfer; the withheld tax sat in owner draws, so a month of employing
+    people looked cheaper than it was by the whole of the TDS."""
+
+    # the three real lines, verbatim from the IDFC statement
+    APRIL = "IFT/10171724864/PRITI BORA & CO /13337732/TDS for april"
+    MAYJUN = "IFT/10171724864/PRITI BORA & CO /26482502/TDS may and june"
+    JULY = "IFT/10171724864/PRITI BORA & CO /27883768/TDS July"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db_path = Path(self.tmp) / "t.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _remit(self, conn, key, minor, day, desc, rate="0.01053"):
+        conn.execute(
+            "INSERT INTO transactions (record_id, canonical_key, type, source,"
+            " category, pnl_bucket, amount_minor, amount_base_minor, currency,"
+            " fx_rate, fx_date, description, creation_dt) VALUES"
+            " (?,?,'Other','IDFC','expense','payroll',?,?,'INR',?,?,?,?)",
+            (key, key, minor, money.apply_rate(minor, rate), rate, day, desc,
+             day + "T00:00:00+0000"))
+
+    def _remit_all(self, conn):
+        self._remit(conn, "bank:553f3afc6c497e3e", -2808000, "2026-05-06",
+                    self.APRIL, "0.01057")
+        self._remit(conn, "bank:04607cb1178e7003", -6098500, "2026-07-07",
+                    self.MAYJUN, "0.01053")
+        self._remit(conn, "bank:1b70a0304700d50b", -3055500, "2026-08-06",
+                    self.JULY, "0.0105")
+
+    # ── the booking rule ─────────────────────────────────────────────────────
+
+    def test_tds_to_the_ca_is_payroll_and_the_ca_s_other_bills_are_not(self):
+        """Narrow on purpose: his CA's name AND the word TDS. Two other payments
+        go to the same CA and are not payroll — the quarterly return-filing fee
+        and 'Tax 2026', his own FY25-26 liability."""
+        from modules.finance import pnl
+        for line in (self.APRIL, self.MAYJUN, self.JULY):
+            self.assertEqual(pnl._bank_spend({"description": line}), "payroll", line)
+        for line in ("IFT/10171724864/PRITI BORA & CO /14039720/TDS return filing Q1",
+                     "IFT/10171724864/PRITI BORA & CO /35546417/Tax 2026",
+                     "IFT/10171724864/PRITI BORA & CO /19225121/Advance tax and pt"
+                     " payments"):
+            self.assertEqual(pnl._bank_spend({"description": line}), "owner_draw", line)
+
+    def test_a_sweep_line_that_mentions_tds_is_not_a_remittance(self):
+        """Every FD sweep-in carries 'Gross Interest:14/TDS:1' in its text, and
+        one reads 'Principal:60985/ TDS may and june'. They are the FD side of
+        the same payment, already excluded from the P&L as sweeps — matching on
+        the word alone would have booked the money twice."""
+        from modules.finance import pnl
+        self.assertFalse(pnl.is_tds_remittance(
+            "Auto sweep in from 10291859328/Principal:60985/ TDS may and june"))
+        self.assertEqual(pnl.bucket(
+            {"source": "IDFC", "category": "internal_sweep", "amount_base_minor": 6098500,
+             "description": "Auto sweep in from 10291859328/Principal:60985/"
+                            " TDS may and june"}), "sweep")
+
+    # ── his figures vs the bank ──────────────────────────────────────────────
+
+    def test_his_months_add_up_to_what_left_the_account(self):
+        """His design: "Ask me tds amount each month I will give you. then you
+        can match it against the deduct from bank account." April Rs 28,080,
+        May+June Rs 60,985, July Rs 30,555."""
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            self.assertEqual(pt.mismatches(conn), [])
+            self.assertEqual(sum(pt.MONTHLY_TDS.values()),
+                             sum(pt.remitted(conn).values()))
+
+    def test_a_month_he_got_wrong_says_so_instead_of_absorbing_it(self):
+        """If May + June is not Rs 60,985 then something else is inside that
+        payment, and the payroll figure for both months is wrong."""
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            conn.execute("UPDATE transactions SET amount_minor=-6200000"
+                         " WHERE canonical_key='bank:04607cb1178e7003'")
+            bad = pt.mismatches(conn)
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0]["delta_minor"], 6200000 - 6098500)
+
+    def test_a_missing_remittance_row_is_reported_not_treated_as_zero(self):
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            bad = pt.mismatches(conn)
+        self.assertEqual(len(bad), 3)
+        self.assertTrue(all("not in the ledger" in b["error"] for b in bad))
+
+    def test_a_remittance_he_has_not_given_a_month_for_is_named(self):
+        """The half that makes it self-running. "august you will see in the next
+        statement" — when that statement lands, the ledger must ask him for the
+        figure, not book a month's payroll on the day it cleared."""
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            self.assertEqual(pt.uncovered(conn), [])
+            self._remit(conn, "bank:september-tds", -3100000, "2026-09-06",
+                        "IFT/10171724864/PRITI BORA & CO /99999999/TDS August", "0.0105")
+            loose = pt.uncovered(conn)
+        self.assertEqual([r["canonical_key"] for r in loose], ["bank:september-tds"])
+
+    def test_the_march_advance_tax_is_before_the_regime_and_is_not_scanned(self):
+        """"we started giving tds from apr that is this year" — January to March
+        carry none, and Rs 1,16,000 of 9 March is advance tax, not payroll."""
+        from modules.finance import payroll_tax as pt
+        self.assertEqual(pt.SINCE, "2026-04-01")
+        with db.connect(self.db_path) as conn:
+            self._remit(conn, "bank:899f5c4ed0ac91fb", -11600000, "2026-03-09",
+                        "IFT/10171724864/PRITI BORA & CO /19225121/Advance tax and"
+                        " pt payments", "0.0116")
+            self.assertEqual(pt.uncovered(conn), [])
+
+    # ── the split ────────────────────────────────────────────────────────────
+
+    def test_the_split_carries_june_out_of_may_and_nets_to_zero(self):
+        """One bank row cannot sit in two months. The remittance lands whole in
+        May (pinned by accrual) and these carry June's share across — in paise
+        AND in the USD presentation, at the remittance's own pinned rate."""
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            res = pt.apply(conn)
+            rows = [dict(r) for r in conn.execute(
+                "SELECT pnl_month, pnl_bucket, category, amount_minor,"
+                " amount_base_minor, fx_rate FROM transactions WHERE source='Direct'"
+                " ORDER BY pnl_month")]
+        self.assertEqual(res["written"], 2)
+        self.assertEqual([r["pnl_month"] for r in rows], ["2026-05", "2026-06"])
+        self.assertEqual([r["amount_minor"] for r in rows], [3290500, -3290500])
+        self.assertEqual(sum(r["amount_minor"] for r in rows), 0)
+        self.assertEqual(sum(r["amount_base_minor"] for r in rows), 0)
+        self.assertTrue(all(r["pnl_bucket"] == "payroll" for r in rows))
+        self.assertTrue(all(r["fx_rate"] == "0.01053" for r in rows))
+
+    def test_the_split_rows_bucket_back_to_payroll_so_10_stays_reproducible(self):
+        """They are written with pnl_bucket already set; bucket() must agree, or
+        the reproducibility check would go RED the moment they are inserted."""
+        from modules.finance import payroll_tax as pt, pnl
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            pt.apply(conn)
+            rows = [dict(r) for r in conn.execute(
+                "SELECT source, type, category, description, pnl_bucket,"
+                " amount_base_minor FROM transactions WHERE source='Direct'")]
+        for r in rows:
+            self.assertEqual(pnl.bucket(r), r["pnl_bucket"])
+
+    def test_no_split_without_the_payment_behind_it(self):
+        """An adjustment to a payment that does not exist is a number with
+        nothing behind it."""
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(pt.rows_to_write(conn), [])
+            self.assertEqual(pt.apply(conn)["written"], 0)
+
+    def test_no_split_when_the_remittance_carries_no_pinned_rate(self):
+        """The USD legs only net to zero when both use the remittance's own
+        rate; pricing them at some other day's would leave cents in the P&L."""
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            conn.execute("UPDATE transactions SET fx_rate=NULL"
+                         " WHERE canonical_key='bank:04607cb1178e7003'")
+            self.assertEqual(pt.rows_to_write(conn), [])
+
+    def test_applying_twice_writes_nothing_new(self):
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            pt.apply(conn)
+            self.assertEqual(pt.apply(conn)["written"], 0)
+            n = conn.execute("SELECT COUNT(*) FROM transactions"
+                             " WHERE source='Direct'").fetchone()[0]
+        self.assertEqual(n, 2)
+
+    def test_the_pin_and_the_split_cannot_disagree(self):
+        """The month the bank row is attributed to and the month the split
+        carries out of it are ONE decision. Two copies of a decision drift, so
+        accrual merges the pin from here rather than re-typing it."""
+        from modules.finance import payroll_tax as pt, accrual
+        for key, months in pt.REMITTANCES.items():
+            if len(months) > 1:
+                self.assertEqual(accrual.EXPLICIT[key], months[0])
+
+    def test_the_split_rows_are_not_bank_rows_and_cannot_move_the_tie_out(self):
+        """#3 sums ledger rows by the statement's source_file. An adjustment
+        that claimed a statement file would break the reconcile it depends on."""
+        from modules.finance import payroll_tax as pt
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            pt.apply(conn)
+            files = {r[0] for r in conn.execute(
+                "SELECT DISTINCT source_file FROM transactions WHERE source='Direct'")}
+        self.assertEqual(files, {"derived:tds-split"})
 
 
 class TestDeposits(unittest.TestCase):

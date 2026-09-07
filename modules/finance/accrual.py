@@ -33,6 +33,8 @@ import re
 import sqlite3
 from typing import Optional
 
+from modules.finance import payroll_tax
+
 BANK_SOURCES = ("IDFC", "Bank")
 
 # How far back to correct. Abhijeet, 2026-09-07, offered 2026 / August-onward /
@@ -60,8 +62,13 @@ _MONTH = re.compile(
 # Jay's Rs 2,18,350 of 31 Aug ("Salary plus old tdf diff") is August — the month
 # it was paid — so it needs no entry: an override that agrees with the date is
 # noise that later reads as a decision.
+# The TDS remittances that name TWO months ("TDS may and june") are pinned by
+# `payroll_tax`, which also writes the adjustment rows that carry the second
+# month's share across. MERGED, not re-typed: the pin and the split are one
+# decision and two copies of a decision drift apart silently.
 EXPLICIT = {
     "bank:1df7ad18f0be4511": "2026-07",       # Ranjana, Rs 20,000, paid 19 Aug
+    **payroll_tax.accrual_pins(),             # e.g. bank:04607cb1178e7003 -> 2026-05
 }
 
 
