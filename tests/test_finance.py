@@ -224,6 +224,32 @@ class DoctorCase(unittest.TestCase):
             (rid, minor, minor, "INR", "stripe-" + rid, "Other", "Stripe",
              day + "T00:00:00+0000"))
 
+    def test_unnarrated_salary_13_catches_a_payroll_payment_filed_as_a_draw(self):
+        """Yogita's 31 July lines stopped at the IFSC, so Rs 49,800 of payroll
+        read as an owner draw and nothing anywhere could notice."""
+        with db.connect(self.db_path) as conn:
+            for rid, minor, day, desc, cat in (
+                    ("j", -4980000, "2026-06-30",
+                     "NEFT/a/YOGITA SUDHIR SOMA/BKID/Salary june", "salary"),
+                    ("y", -4880000, "2026-07-31",
+                     "NEFT/b/YOGITA SUDHIR SOMA/BKID0000098", "expense")):
+                conn.execute(
+                    "INSERT INTO transactions (record_id, canonical_key, type, source,"
+                    " category, pnl_bucket, amount_minor, currency, description, creation_dt)"
+                    " VALUES (?,?,'Other','IDFC',?,'owner_draw',?,'INR',?,?)",
+                    (rid, "bank:" + rid, cat, minor, desc, day + "T00:00:00+0000"))
+        res = doctor.run(self.db_path)
+        c = [x for x in res.checks if x.invariant == "#13 unnarrated salary"][0]
+        self.assertEqual(c.status, "RED")
+        self.assertEqual(c.deltas[0]["who"], "YOGITA SUDHIR SOMA")
+        self.assertFalse(res.green)
+        with db.connect(self.db_path) as conn:
+            from modules.finance import salary_lines
+            salary_lines.apply(conn)
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#13 unnarrated salary"][0]
+        self.assertEqual(c.status, "GREEN")
+
     def test_effective_month_12_catches_a_salary_on_the_wrong_month(self):
         """The check that did not exist. Migration 016 decided this on 3 August,
         two rows were fixed by hand, and nothing watched — so it drifted for five
@@ -814,6 +840,106 @@ class TestBankXlsx(unittest.TestCase):
 
 
 # ── Phase 1b: FX pinning (§3.10) — injectable fetch, Decimal only ────────────
+class TestSalaryLines(unittest.TestCase):
+    """A salary the narration forgot to call one.
+
+    Abhijeet, 2026-09-07: "There's something wrong yogita must have got paid on
+    july". She was — Rs 48,800 + Rs 1,000 on 31 July, both lines stopping at the
+    IFSC. No "Salary" in the text, so Rs 49,800 of payroll became an owner
+    draw."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db_path = Path(self.tmp) / "t.db"
+        db.migrate(self.db_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _row(self, conn, rid, minor, day, desc, category="expense"):
+        conn.execute(
+            "INSERT INTO transactions (record_id, canonical_key, type, source, category,"
+            " pnl_bucket, amount_minor, currency, description, creation_dt)"
+            " VALUES (?,?,'Other','IDFC',?,'owner_draw',?,'INR',?,?)",
+            (rid, "bank:" + rid, category, minor, desc, day + "T00:00:00+0000"))
+
+    def test_the_payee_is_the_third_field(self):
+        from modules.finance import salary_lines as sl
+        self.assertEqual(sl.payee("NEFT/IDFB6212M5765601/YOGITA SUDHIR SOMA/BKID0000098"),
+                         "YOGITA SUDHIR SOMA")
+        self.assertEqual(sl.payee("NEFT/x/Mr PRASHANT JAWAHARLAL BHANDARI/MAHB/Salary"),
+                         "PRASHANT JAWAHARLAL BHANDARI")
+        # a shape it does not understand is a refusal, not a match on everything
+        self.assertEqual(sl.payee("POS-VISA/CHESS.COM"), "")
+        self.assertEqual(sl.payee(None), "")
+
+    def test_one_narrated_salary_makes_a_payee_payroll_for_ever(self):
+        from modules.finance import salary_lines as sl
+        with db.connect(self.db_path) as conn:
+            self._row(conn, "jun", -4980000, "2026-06-30",
+                      "NEFT/a/YOGITA SUDHIR SOMA/BKID0000098/Salary june", "salary")
+            self._row(conn, "jul1", -4880000, "2026-07-31",
+                      "NEFT/b/YOGITA SUDHIR SOMA/BKID0000098")
+            self._row(conn, "jul2", -100000, "2026-07-31",
+                      "NEFT/c/YOGITA SUDHIR SOMA/BKID0000098")
+            self.assertEqual(sl.payroll_payees(conn), {"YOGITA SUDHIR SOMA"})
+            self.assertEqual(sorted(r["record_id"] for r in sl.rows_to_fix(conn)),
+                             ["jul1", "jul2"])
+            self.assertEqual(sl.apply(conn)["changed"], 2)
+            got = [r[0] for r in conn.execute(
+                "SELECT category FROM transactions WHERE record_id IN ('jul1','jul2')")]
+            self.assertEqual(got, ["salary", "salary"])
+            self.assertEqual(sl.rows_to_fix(conn), [])          # idempotent
+
+    def test_a_line_that_says_what_it_is_is_left_alone(self):
+        """His call: "read the line when it says something". Rs 1,25,000 to
+        Ranjana reading "Cash withdraw" is a draw, and says so."""
+        from modules.finance import salary_lines as sl
+        with db.connect(self.db_path) as conn:
+            self._row(conn, "sal", -1980000, "2026-08-02",
+                      "NEFT/a/RANJANA ASHOK GANDHI/BARB0KOTHRU/Salary july", "salary")
+            self._row(conn, "cash", -12500000, "2026-08-19",
+                      "NEFT/b/RANJANA ASHOK GANDHI/BARB0KOTHRU/Cash withdraw")
+            self.assertEqual(sl.rows_to_fix(conn), [])
+
+    def test_a_stranger_is_never_swept_in(self):
+        from modules.finance import salary_lines as sl
+        with db.connect(self.db_path) as conn:
+            self._row(conn, "sal", -4980000, "2026-06-30",
+                      "NEFT/a/YOGITA SUDHIR SOMA/BKID/Salary june", "salary")
+            self._row(conn, "other", -29183900, "2026-02-28",
+                      "NEFT/b/TRUPTI ASHOK GANDHI/SBIN0007484")
+            self.assertEqual(sl.rows_to_fix(conn), [])
+
+    def test_a_credit_from_an_employee_is_not_a_salary(self):
+        from modules.finance import salary_lines as sl
+        with db.connect(self.db_path) as conn:
+            self._row(conn, "sal", -4980000, "2026-06-30",
+                      "NEFT/a/YOGITA SUDHIR SOMA/BKID/Salary june", "salary")
+            self._row(conn, "back", 4980000, "2026-07-05",
+                      "NEFT/b/YOGITA SUDHIR SOMA/BKID")
+            self.assertEqual(sl.rows_to_fix(conn), [])
+
+    def test_the_2026_floor_holds(self):
+        from modules.finance import salary_lines as sl
+        with db.connect(self.db_path) as conn:
+            self._row(conn, "sal", -8000000, "2025-10-31",
+                      "NEFT/a/ALPHONS JAIMON/ICIC0000004/Salary october", "salary")
+            self._row(conn, "nov", -8000000, "2025-11-30",
+                      "NEFT/b/ALPHONS JAIMON/ICIC0000004")
+            self.assertEqual(sl.rows_to_fix(conn), [])          # his scope: 2026 only
+            self.assertEqual(len(sl.rows_to_fix(conn, since=None)), 1)
+
+    def test_a_draw_he_named_outranks_the_repair(self):
+        """Prashant and Avantika are personal counterparties by his word, and
+        pnl.bucket checks that BEFORE the salary category — so marking their
+        rows salary cannot drag them back into payroll."""
+        from modules.finance import pnl
+        row = {"source": "IDFC", "category": "salary", "amount_base_minor": -73000,
+               "description": "NEFT/x/Mr PRASHANT JAWAHARLAL BHANDARI/MAHB/Salary august"}
+        self.assertEqual(pnl.bucket(row), "owner_draw")
+
+
 class TestAccrual(unittest.TestCase):
     """The month a bank row belongs to.
 

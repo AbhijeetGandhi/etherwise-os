@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import pnl, accrual  # noqa: E402
+from modules.finance import pnl, accrual, salary_lines  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
 
@@ -26,6 +26,17 @@ _COLS = ("record_id, source, type, upwork_type, category, accounting_subtype,"
 
 
 def run(apply: bool) -> dict:
+    # FIRST, before anything is bucketed: a salary whose narration forgot to say
+    # so. Abhijeet, 2026-09-07, on Yogita's July pay reading as an owner draw:
+    # "There's something wrong yogita must have got paid on july". Her lines
+    # stopped at the IFSC, so the classifier saw a generic bank expense. This
+    # writes `category='salary'` from the ledger's own knowledge of who his
+    # payroll people are; pnl.bucket then does the rest with no new branch, and
+    # it has to happen HERE because the bucket pass below reads that category.
+    with db.connect(config.DB_PATH) as conn:
+        named = (salary_lines.apply(conn) if apply
+                 else {"changed": len(salary_lines.rows_to_fix(conn)), "payees": []})
+
     changed = 0
     counts = Counter()
     with db.connect(config.DB_PATH) as conn:
@@ -54,7 +65,9 @@ def run(apply: bool) -> dict:
     return {"mode": "APPLY" if apply else "DRY-RUN", "rows": len(rows),
             "changed": changed, "by_bucket": dict(counts),
             "effective_month_changed": months["changed"],
-            "effective_month_since": accrual.ACCRUAL_SINCE}
+            "effective_month_since": accrual.ACCRUAL_SINCE,
+            "unnarrated_salary_fixed": named["changed"],
+            "unnarrated_salary_payees": named.get("payees", [])}
 
 
 def main() -> int:

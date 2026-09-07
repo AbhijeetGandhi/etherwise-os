@@ -467,6 +467,37 @@ def _check_effective_month(conn) -> Check:
                    "amount_minor": r["amount_minor"]} for r in wrong[:20]])
 
 
+def _check_salary_lines(conn) -> Check:
+    """#13 unnarrated salary (added 2026-09-07). A bank debit to someone who has
+    been paid a narrated salary before, that is NOT filed as salary and whose
+    line does not say what else it is.
+
+    Abhijeet, 2026-09-07: "There's something wrong yogita must have got paid on
+    july". She was. Both her lines that day stopped at the IFSC with no "Salary
+    july" on the end, so the classifier saw a generic bank expense and Rs 49,800
+    of payroll became an owner draw — with nothing anywhere that could notice.
+    Alphons and Dnyaneshwari went the same way. Payroll cannot depend on a word
+    being typed, and it cannot depend on him reading a table to spot the gap.
+
+    Self-healing, like #12: `bin/finance-bucketize` runs the pass and the cockpit
+    runs bucketize after every import."""
+    from modules.finance import salary_lines
+    try:
+        missed = salary_lines.rows_to_fix(conn)
+    except Exception:                            # noqa: BLE001
+        return Check("#13 unnarrated salary", "N/A", "category not available")
+    if not missed:
+        return Check("#13 unnarrated salary", "GREEN",
+                     "no bank debit to a payroll payee is filed as anything else")
+    return Check("#13 unnarrated salary", "RED",
+                 f"{len(missed)} payment(s) to a payroll payee are not filed as salary"
+                 " and the line does not say why — run bin/finance-bucketize",
+                 [{"record_id": r["record_id"], "paid": (r["creation_dt"] or "")[:10],
+                   "who": salary_lines.payee(r["description"]),
+                   "bucket": r["pnl_bucket"], "amount_minor": r["amount_minor"]}
+                  for r in missed[:20]])
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
@@ -476,5 +507,5 @@ def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
                   _check_ledger_tieout(conn), _check_cash(conn),
                   _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
                   _check_payroll(conn), _check_stripe_arrival(conn),
-                  _check_effective_month(conn)]
+                  _check_effective_month(conn), _check_salary_lines(conn)]
     return DoctorResult(checks)
