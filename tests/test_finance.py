@@ -224,6 +224,40 @@ class DoctorCase(unittest.TestCase):
             (rid, minor, minor, "INR", "stripe-" + rid, "Other", "Stripe",
              day + "T00:00:00+0000"))
 
+    def test_effective_month_12_catches_a_salary_on_the_wrong_month(self):
+        """The check that did not exist. Migration 016 decided this on 3 August,
+        two rows were fixed by hand, and nothing watched — so it drifted for five
+        months in silence. RED here is self-healing: bucketize writes the months,
+        and the cockpit runs bucketize after every import."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type, source,"
+                " category, pnl_bucket, amount_minor, currency, description, creation_dt)"
+                " VALUES ('s1','bank:s1','Other','IDFC','salary','payroll',-14100000,"
+                " 'INR','NEFT/x/SHRUTI DEEPAK DHUMNE/HDFC/Salary august','2026-09-01')")
+        res = doctor.run(self.db_path)
+        c = [x for x in res.checks if x.invariant == "#12 effective month"][0]
+        self.assertEqual(c.status, "RED")
+        self.assertEqual(c.deltas[0]["named"], "2026-08")
+        self.assertFalse(res.green)
+        with db.connect(self.db_path) as conn:          # the pass runs
+            from modules.finance import accrual
+            accrual.apply(conn)
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#12 effective month"][0]
+        self.assertEqual(c.status, "GREEN")
+
+    def test_effective_month_12_ignores_an_on_time_payment(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type, source,"
+                " category, pnl_bucket, amount_minor, currency, description, creation_dt)"
+                " VALUES ('s2','bank:s2','Other','IDFC','salary','payroll',-4980000,"
+                " 'INR','NEFT/x/YOGITA SUDHIR SOMA/BKID/Salary august','2026-08-31')")
+        c = [x for x in doctor.run(self.db_path).checks
+             if x.invariant == "#12 effective month"][0]
+        self.assertEqual(c.status, "GREEN")
+
     def test_stripe_arrival_11_green_when_every_landing_ties(self):
         with db.connect(self.db_path) as conn:
             self._stripe_out(conn, "s1", -1457408, "2026-08-02")
@@ -780,6 +814,93 @@ class TestBankXlsx(unittest.TestCase):
 
 
 # ── Phase 1b: FX pinning (§3.10) — injectable fetch, Decimal only ────────────
+class TestAccrual(unittest.TestCase):
+    """The month a bank row belongs to.
+
+    Abhijeet, 2026-09-07: "I know I sent some salries in september but that
+    really is of august. I know we discussed this in the past I don't know why
+    this mistake was made." He had discussed it — migration 016, 2026-08-03,
+    quotes him. Two rows were set by hand that day and no rule was ever built."""
+
+    def test_the_line_names_the_month_and_the_year_follows_the_payment(self):
+        from modules.finance import accrual as a
+        self.assertEqual(a.month_named("Salary august", "2026-09-03"), "2026-08")
+        self.assertEqual(a.month_named("Rent april", "2026-05-03"), "2026-04")
+        # a December named in January is LAST year's; January named in December
+        # is next year's — six months is the fold
+        self.assertEqual(a.month_named("Salary december", "2026-01-01"), "2025-12")
+        self.assertEqual(a.month_named("Salary january", "2026-12-28"), "2027-01")
+        self.assertIsNone(a.month_named("Creditcardpaym", "2026-08-26"))
+
+    def test_two_months_in_one_line_is_not_a_reading(self):
+        """"TDS may and june", Rs 60,985 paid 7 July, covers both. Taking May
+        because May is written first would be a guess dressed as a reading."""
+        from modules.finance import accrual as a
+        self.assertIsNone(a.month_named("TDS may and june", "2026-07-07"))
+        # the same month twice is still one month
+        self.assertEqual(a.month_named("Earnings for Aug 10-Aug 16", "2026-09-02"),
+                         "2026-08")
+
+    def test_an_on_time_payment_stays_null(self):
+        """pnl_month means 'this row is NOT where its date puts it'. Filling it
+        in on every on-time payment would bury the exceptions."""
+        from modules.finance import accrual as a
+        row = {"source": "IDFC", "pnl_bucket": "payroll", "creation_dt": "2026-08-31",
+               "description": "NEFT/x/YOGITA SUDHIR SOMA/BKID/Salary august"}
+        self.assertIsNone(a.effective_month(row))
+        row["creation_dt"] = "2026-09-03"
+        self.assertEqual(a.effective_month(row), "2026-08")
+
+    def test_only_bank_rows_and_only_pnl_buckets(self):
+        """The Upwork/Wise/Stripe rails carry their own dates and their own
+        unsettled re-dating question; an Upwork line reading 'Earnings for
+        Aug 10-Aug 16' must not be re-dated by a rule aimed at payroll. Sweeps
+        and transfers are out of the P&L, so a month on them says nothing."""
+        from modules.finance import accrual as a
+        base = {"pnl_bucket": "revenue", "creation_dt": "2026-09-02",
+                "description": "Earnings for Aug 10-Aug 16"}
+        self.assertIsNone(a.effective_month(dict(base, source="Upwork-MCP")))
+        self.assertEqual(a.effective_month(dict(base, source="IDFC")), "2026-08")
+        self.assertIsNone(a.effective_month(
+            {"source": "IDFC", "pnl_bucket": "sweep", "creation_dt": "2026-09-02",
+             "description": "Auto sweep in from 1029/ Salary august"}))
+
+    def test_a_hand_set_month_on_an_unreadable_line_survives(self):
+        """Silence from the reader is not evidence against a fact somebody
+        entered. The first cut of this cleared them, and the cockpit's own
+        August test for the READER side of this feature caught it."""
+        import tempfile as _t, shutil as _s
+        from pathlib import Path as _P
+        from modules.finance import accrual as a
+        tmp = _t.mkdtemp()
+        try:
+            p = _P(tmp) / "t.db"
+            db.migrate(p)
+            with db.connect(p) as conn:
+                conn.execute(
+                    "INSERT INTO transactions (record_id, canonical_key, type, source,"
+                    " category, pnl_bucket, amount_minor, currency, description,"
+                    " creation_dt, pnl_month) VALUES ('late','bank:late','Salary','IDFC',"
+                    " 'salary','payroll',-21600000,'INR','NEFT/x/JAY/y',"
+                    " '2026-07-02T00:00:00+0000','2026-06')")
+                self.assertEqual(a.rows_to_set(conn), [])
+                a.apply(conn)
+                kept = conn.execute("SELECT pnl_month FROM transactions"
+                                    " WHERE record_id='late'").fetchone()[0]
+            self.assertEqual(kept, "2026-06")
+        finally:
+            _s.rmtree(tmp, ignore_errors=True)
+
+    def test_an_unreadable_line_takes_his_answer_not_a_guess(self):
+        from modules.finance import accrual as a
+        row = {"source": "IDFC", "pnl_bucket": "payroll", "creation_dt": "2026-08-19",
+               "canonical_key": "bank:1df7ad18f0be4511",
+               "description": "NEFT/x/RANJANA ASHOK GANDHI/BARB0KOTHRU/Salary raise"}
+        self.assertEqual(a.effective_month(row), "2026-07")   # "a July top-up"
+        row["canonical_key"] = "bank:someone-else"
+        self.assertIsNone(a.effective_month(row))             # never inferred
+
+
 class TestDeposits(unittest.TestCase):
     """The fixed-deposit principal — the biggest number in 'in the bank'.
 

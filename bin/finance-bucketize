@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import pnl  # noqa: E402
+from modules.finance import pnl, accrual  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
 
@@ -40,8 +40,21 @@ def run(apply: bool) -> dict:
                     conn.execute("UPDATE transactions SET pnl_bucket=?,"
                                  " updated_at=datetime('now') WHERE record_id=?",
                                  (b, r["record_id"]))
+    # THE EFFECTIVE MONTH, in the same pass and for the same reason. A bank line
+    # that names the month it is FOR ("Salary august" paid 3 Sep) must be
+    # attributed to that month; migration 016 decided this on 2026-08-03 and
+    # nothing was ever built, so it drifted for five months (Abhijeet,
+    # 2026-09-07: "I know we discussed this in the past I don't know why this
+    # mistake was made"). It belongs HERE because it needs pnl_bucket to be
+    # fresh, this is the step that makes it fresh, and the cockpit already runs
+    # this step after every import — so the loop closes with no human in it.
+    with db.connect(config.DB_PATH) as conn:
+        months = (accrual.apply(conn) if apply
+                  else {"changed": len(accrual.rows_to_set(conn))})
     return {"mode": "APPLY" if apply else "DRY-RUN", "rows": len(rows),
-            "changed": changed, "by_bucket": dict(counts)}
+            "changed": changed, "by_bucket": dict(counts),
+            "effective_month_changed": months["changed"],
+            "effective_month_since": accrual.ACCRUAL_SINCE}
 
 
 def main() -> int:

@@ -436,6 +436,37 @@ def _plus_days(iso: str, n: int) -> str:
     return (_dt.date.fromisoformat(iso) + _dt.timedelta(days=n)).isoformat()
 
 
+def _check_effective_month(conn) -> Check:
+    """#12 effective month (added 2026-09-07). A bank line that names the month it
+    is FOR must be attributed to that month, not to the day it cleared.
+
+    Abhijeet, 2026-09-07: "I know I sent some salries in september but that really
+    is of august. I know we discussed this in the past I don't know why this
+    mistake was made." He had: migration 016, 2026-08-03, quotes him deciding it.
+    Two rows were fixed by hand that day and NOTHING WAS BUILT, so it drifted
+    every month for five months and nobody could see it. A decision that lives
+    only in a migration comment is not a decision, it is a memory — this is the
+    check that makes it a fact.
+
+    Self-healing: `bin/finance-bucketize` writes the months, and the cockpit runs
+    bucketize after every import, so RED here means the pass has not run yet
+    rather than that the ledger is unfixable."""
+    from modules.finance import accrual
+    try:
+        wrong = accrual.rows_to_set(conn)
+    except Exception:                            # noqa: BLE001 — pre-016 DB
+        return Check("#12 effective month", "N/A", "pnl_month not available")
+    if not wrong:
+        return Check("#12 effective month", "GREEN",
+                     "every bank row that names its month is attributed to it")
+    return Check("#12 effective month", "RED",
+                 f"{len(wrong)} bank row(s) sit on their payment month while the line"
+                 " names another — run bin/finance-bucketize",
+                 [{"record_id": r["record_id"], "paid": (r["creation_dt"] or "")[:10],
+                   "stored": r["pnl_month"], "named": r["want"],
+                   "amount_minor": r["amount_minor"]} for r in wrong[:20]])
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
@@ -444,5 +475,6 @@ def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
                   _check_statement_integrity(conn), _check_continuity(conn),
                   _check_ledger_tieout(conn), _check_cash(conn),
                   _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
-                  _check_payroll(conn), _check_stripe_arrival(conn)]
+                  _check_payroll(conn), _check_stripe_arrival(conn),
+                  _check_effective_month(conn)]
     return DoctorResult(checks)
