@@ -103,9 +103,12 @@ class TestPacing(PacedCase):
         with mock.patch.object(config, "MCP_CALL_INTERVAL_S", 5.0):
             mcp_search.fetch_new(s, "org", lambda m: None, known=set())
         find_calls = [c for c in s.calls if c[0] == "find_jobs"]
-        # 1 smart page + 13 terms + 3 gets = 17 find_jobs calls -> 16 waits
-        self.assertEqual(len(find_calls), 17)
-        self.assertEqual(len(self.sleeps), 16)
+        # 1 smart page + every standing term + 3 gets, one wait between each.
+        # Bound to the config list rather than a literal: the terms were
+        # rebalanced on measured yield (2026-09-08) and will be again.
+        expect = 1 + len(config.MCP_TERM_QUERIES) + 3
+        self.assertEqual(len(find_calls), expect)
+        self.assertEqual(len(self.sleeps), expect - 1)
         self.assertTrue(all(0 < w <= 5.0 for w in self.sleeps), self.sleeps)
 
     def test_a_rate_limited_call_is_retried_once_after_the_advised_wait(self):

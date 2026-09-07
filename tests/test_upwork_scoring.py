@@ -139,14 +139,18 @@ class TestPromptAssembly(unittest.TestCase):
 
 
 class TestScoreJob(unittest.TestCase):
-    def verdict(self, effective=18, gated=False):
-        return {"skill_fit": 4, "budget": 4, "client_quality": 2,
-                "competition": 3, "description_quality": 4, "base_total": 21,
-                "bonuses": {"core_stack": 3, "long_term": 0, "invite": 0,
-                            "claude": 0, "whale_client": 0, "fresh": 0},
-                "raw_total": effective if not gated else effective + 6,
-                "gated": gated, "effective_total": effective,
-                "recommendation": "bid"}
+    def verdict(self, fit=4, budget=4, client=2, core=3, invite=0,
+                gated=False, claims=99):
+        """A model verdict. `claims` is what the model SAYS the total is — the
+        code ignores it and computes from the components (v3.0, 2026-09-08),
+        so every test here pins the arithmetic rather than the model's word.
+        `fit` is the wire shape: skill_fit arrives already weighted x2."""
+        return {"skill_fit": fit, "budget": budget, "client_quality": client,
+                "competition": 3, "description_quality": 4, "base_total": claims,
+                "bonuses": {"core_stack": core, "long_term": 3, "invite": invite,
+                            "whale_client": 2, "fresh": 1},
+                "raw_total": claims, "gated": gated,
+                "effective_total": claims, "recommendation": "bid"}
 
     def test_returns_effective_score_and_breakdown(self):
         with mock.patch.object(scoring.runner, "claude_call") as cc:
@@ -155,18 +159,22 @@ class TestScoreJob(unittest.TestCase):
                 usage={}, cost_usd=0.001, stop_reason="end_turn",
                 duration_ms=5)
             out = scoring.score_job(job(), task_name="t", db_path=None)
-        self.assertEqual(out["score"], 18)
+        # skill_fit 4 on the wire is a raw grade of 2: 2*4 + budget 4 +
+        # client 2 = 14, + core_stack 3 = 17. The model claimed 99.
+        self.assertEqual(out["score"], 17)
         self.assertFalse(out["gated"])
         self.assertEqual(out["breakdown"]["skill_fit"], 4)
+        self.assertEqual(out["breakdown"]["scorer_version"], "3.0")
         self.assertEqual(out["loom_flag"], 0)
 
     def test_loom_flag_at_22_effective(self):
         with mock.patch.object(scoring.runner, "claude_call") as cc:
             cc.return_value = gw.GatewayResult(
-                text="{}", parsed=self.verdict(effective=24), model="m",
-                route="payg", usage={}, cost_usd=0.001,
+                text="{}", parsed=self.verdict(fit=10, budget=5, client=3),
+                model="m", route="payg", usage={}, cost_usd=0.001,
                 stop_reason="end_turn", duration_ms=5)
             out = scoring.score_job(job(), task_name="t", db_path=None)
+        self.assertEqual(out["score"], 31)       # 5*4 + 5 + 3 + core 3
         self.assertEqual(out["loom_flag"], 1)
 
     def _score(self, verdict, j):
@@ -177,7 +185,7 @@ class TestScoreJob(unittest.TestCase):
             return scoring.score_job(j, task_name="t", db_path=None)
 
     def test_gated_verdict_never_exceeds_15(self):
-        bad = self.verdict(effective=19, gated=True)  # raw_total = 25
+        bad = self.verdict(fit=10, budget=5, client=3, gated=True)  # raw 31
         # a job with NO exemption (sub-$45 hourly, tiny spend) stays capped
         out = self._score(bad, job(hourly_max=40.0, fixed_budget=None,
                                    client_total_spent=100.0))
@@ -187,8 +195,7 @@ class TestScoreJob(unittest.TestCase):
     # ── whale-gate EXEMPTION code-enforced (2026-06-22 lead-loss fix) ──
     def test_gate_lifted_by_hourly_exemption(self):
         # model wrongly gated a GHL/Vapi job that clears $45/hr -> code lifts it
-        v = self.verdict(effective=15, gated=True)   # model capped to 15
-        v["raw_total"] = 28
+        v = self.verdict(fit=10, budget=5, client=3, core=0, gated=True)
         out = self._score(v, job(hourly_max=47.0, fixed_budget=None,
                                  client_total_spent=2000.0))
         self.assertFalse(out["gated"])
@@ -197,21 +204,21 @@ class TestScoreJob(unittest.TestCase):
         self.assertIn("lifted by code", out["breakdown"]["gate"])
 
     def test_gate_lifted_by_fixed_budget(self):
-        v = self.verdict(effective=15, gated=True); v["raw_total"] = 24
+        v = self.verdict(fit=8, budget=5, client=3, core=0, gated=True)
         out = self._score(v, job(hourly_max=None, contract_type="Fixed",
                                  fixed_budget=3000.0, client_total_spent=10.0))
         self.assertFalse(out["gated"])
-        self.assertEqual(out["score"], 24)
+        self.assertEqual(out["score"], 24)       # 4*4 + 5 + 3
 
     def test_gate_lifted_by_whale_spend(self):
-        v = self.verdict(effective=15, gated=True); v["raw_total"] = 26
+        v = self.verdict(fit=10, budget=3, client=3, core=0, gated=True)
         out = self._score(v, job(hourly_max=40.0, fixed_budget=None,
                                  client_total_spent=50000.0))
         self.assertFalse(out["gated"])
-        self.assertEqual(out["score"], 26)
+        self.assertEqual(out["score"], 26)       # 5*4 + 3 + 3
 
     def test_gate_held_when_no_exemption(self):
-        v = self.verdict(effective=15, gated=True); v["raw_total"] = 28
+        v = self.verdict(fit=10, budget=5, client=3, core=0, gated=True)
         out = self._score(v, job(hourly_max=40.0, fixed_budget=None,
                                  client_total_spent=100.0))
         self.assertTrue(out["gated"])
@@ -228,3 +235,102 @@ class TestScoreJob(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPlatformGateAndWeights(unittest.TestCase):
+    """v3.0, 2026-09-08. Abhijeet: "there is lot of noise we definitely need to
+    improve our socring. like past 150 jobs I looked at I probably just opened
+    10 and skipped 140 or afteropening I kep only 2 for applying."
+
+    Measured over 2,006 hot cards and the 50 he actually bid on, the split was
+    not in the client fields — it was in what the job IS. These pin the two
+    rules that came out of it and the arithmetic that ranks what survives."""
+
+    def _job(self, title, desc):
+        return {"title": title, "description": desc, "contract_type": "Hourly",
+                "hourly_min": 40.0, "hourly_max": 80.0}
+
+    def test_a_job_naming_no_platform_he_works_in_never_reaches_the_model(self):
+        """"claude" appeared in 182 hot cards and produced zero applications;
+        so did "full stack", "api" and "voice". They are AI-engineering posts,
+        and he is a no-code systems consultant."""
+        j = self._job("Senior AI Engineer - Build Autonomous AI Agents",
+                      "We need a senior engineer to build agentic systems in "
+                      "Python with Claude and GPT-4, deploying to AWS. Strong "
+                      "backend and API design skills required. " * 4)
+        self.assertEqual(scoring.hard_rule_skip(j), "no_platform_named")
+
+    def test_the_same_job_passes_the_moment_it_names_one(self):
+        j = self._job("Senior AI Engineer - Build Autonomous AI Agents",
+                      "We need a senior engineer to build agentic systems on "
+                      "top of our Airtable base and Make.com scenarios. " * 4)
+        self.assertIsNone(scoring.hard_rule_skip(j))
+
+    def test_an_ai_vendor_name_is_not_a_platform(self):
+        """Adding openai/gpt/claude to the vocabulary passes 218 more cards and
+        keeps exactly the same 47 of his 50 applications. A model vendor says
+        nothing about whether a client is buying configuration work."""
+        j = self._job("AI Integration Expert",
+                      "Looking for someone to integrate OpenAI and Claude into "
+                      "our own product. TypeScript, Next.js, Postgres. " * 4)
+        self.assertEqual(scoring.hard_rule_skip(j), "no_platform_named")
+
+    def test_the_trades_next_door_are_skipped_on_the_title_alone(self):
+        """212 cards since June across voice / marketing / funnel / content,
+        zero applications between them. Title only: the words appear harmlessly
+        inside a body ("...for our marketing team") and would over-fire."""
+        for title in ("AI Voice Agent for Home Services",
+                      "Marketing Automation Specialist",
+                      "Funnel Builder and Manager",
+                      "Content Production System"):
+            j = self._job(title, "Airtable and Make.com throughout. " * 20)
+            self.assertEqual(scoring.hard_rule_skip(j), "off_domain_title", title)
+
+    def test_a_body_too_thin_to_read_is_never_gated_on_absence(self):
+        """Silence is not evidence. ~200 scored rows have almost no body; they
+        go to the model rather than being dropped on a technicality."""
+        j = self._job("Automation help needed", "Need help. Call me.")
+        self.assertIsNone(scoring.hard_rule_skip(j))
+
+    def test_marketing_in_the_body_does_not_skip_a_platform_job(self):
+        j = self._job("Airtable Consultant for Business Operations",
+                      "You will work alongside our marketing team on the "
+                      "Airtable base that runs content ops. " * 6)
+        self.assertIsNone(scoring.hard_rule_skip(j))
+
+    # ── the arithmetic ───────────────────────────────────────────────────────
+
+    def test_skill_fit_is_the_spine_and_the_rest_are_tie_breakers(self):
+        """7.11 average on the jobs he took vs 4.62 on the ones he skipped,
+        while budget / client quality / competition / description quality were
+        flat. A perfect fit with a poor budget must outrank the reverse."""
+        great_fit = {"skill_fit": 10, "budget": 1, "client_quality": 1,
+                     "bonuses": {}}
+        great_client = {"skill_fit": 2, "budget": 5, "client_quality": 3,
+                        "bonuses": {}}
+        self.assertGreater(scoring.compute_total(great_fit)[1],
+                           scoring.compute_total(great_client)[1])
+
+    def test_the_four_backwards_bonuses_no_longer_count(self):
+        """long_term, whale_client, fresh and claude each fired MORE often on
+        the jobs he skipped than the ones he took. Only core_stack and invite
+        survived the measurement."""
+        v = {"skill_fit": 6, "budget": 3, "client_quality": 2,
+             "bonuses": {"core_stack": 0, "invite": 0}}
+        loud = dict(v, bonuses={"core_stack": 0, "invite": 0, "long_term": 3,
+                                "whale_client": 2, "fresh": 1, "claude": 2})
+        self.assertEqual(scoring.compute_total(v), scoring.compute_total(loud))
+
+    def test_the_model_does_not_get_to_do_the_arithmetic(self):
+        """The score has to be re-derivable from the stored breakdown — which
+        is also what let this whole re-weighting be back-tested over 4,343 rows
+        of history without spending one model call."""
+        v = {"skill_fit": 8, "budget": 4, "client_quality": 3,
+             "base_total": 999, "raw_total": 999,
+             "bonuses": {"core_stack": 3, "invite": 0}}
+        self.assertEqual(scoring.compute_total(v), (23, 26))   # 4*4+4+3, +3
+
+    def test_the_claude_bonus_is_gone_from_the_schema(self):
+        props = scoring.SCHEMA["properties"]["bonuses"]["properties"]
+        self.assertNotIn("claude", props)
+        self.assertIn("core_stack", props)

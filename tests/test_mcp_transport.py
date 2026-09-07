@@ -82,14 +82,25 @@ class ReadOnlyLaw(unittest.TestCase):
 
 
 class ShadowQueries(unittest.TestCase):
-    def test_the_four_test_b_gaps_are_covered(self):
-        """Test B found four >=16 jobs no standing term matched; the fix was
-        adding terms, and this pins them so a future edit can't quietly drop
-        the coverage they bought."""
+    def test_the_standing_terms_are_the_ones_that_convert(self):
+        """This test used to pin pipedrive / activecampaign / clay /
+        automated reports — four terms added in the shadow era because Test B
+        found >=16 jobs no standing query matched. It asked that a future edit
+        not drop them QUIETLY, which is right, so here is the edit, loudly:
+
+        measured over the live MCP era (2026-08-26 to 09-08) those four fetched
+        222 jobs between them and produced zero applications, while "airtable"
+        — starved at 45 fetched — converts at 14.1%. Coverage of a job he never
+        bids on is not coverage. The terms now name the platforms a client buys
+        configuration of; "claude" went with them (965 fetched, 0 applications,
+        and 182 hot cards carrying the word, none of them bid on)."""
         from modules.upwork.feeds import shadow_poll as sp
         qs = " ".join(sp.TERM_QUERIES)
-        for term in ("pipedrive", "activecampaign", "clay", "automated reports"):
+        for term in ("airtable", "make.com", "zapier", "hubspot"):
             self.assertIn(term, qs)
+        for dropped in ("claude", "pipedrive", "activecampaign", "clay",
+                        "workflow automation", "automated reports"):
+            self.assertNotIn(dropped, qs, dropped)
 
     def test_n8n_is_not_a_standing_query(self):
         """The n8n EXCLUSION belongs to hard_rule_skip; searching for n8n would

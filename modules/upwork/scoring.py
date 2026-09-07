@@ -34,6 +34,50 @@ _NO_ASIA_RE = re.compile(r"no\s+asia", re.I)
 _ONSITE_RE = re.compile(r"\bon[- ]?site\b", re.I)
 _GATE_CAP = 15
 
+# ── v3.0, 2026-09-08: the platform gate + the off-domain titles ───────────────
+# Abhijeet: "there is lot of noise we definitely need to improve our socring.
+# like past 150 jobs I looked at I probably just opened 10 and skipped 140 or
+# afteropening I kep only 2 for applying."
+#
+# MEASURED, not guessed. 2,006 hot cards from 1 June to 8 September against the
+# 50 he actually submitted a proposal on. The split is not in the client fields
+# — spend, hires, rating and applicant count all convert within a point of the
+# 2.5% base rate — it is in WHAT THE JOB IS. Title words, cards / his
+# applications:
+#
+#     airtable 122/20 (14.1%)   make.com 127/11   zapier 45/3   n8n 82/4
+#     claude   182/0            voice     90/0    marketing 199/0   api 82/0
+#     full stack 78/0           agent(ic) 245/2   engineer 264/5
+#
+# He is a no-code systems consultant. The feed had been hunting AI engineers.
+# So: a job must NAME a platform he works in, and must not be one of the
+# adjacent trades he has never once bid on.
+#
+# THE VOCABULARY IS PLATFORMS, NOT TECHNOLOGIES. Adding openai/gpt/claude to
+# this list passes 218 more cards and keeps exactly the same 47 of his 50
+# applications — an AI vendor name predicts nothing about whether he bids. The
+# tools below are the ones a client BUYS configuration of.
+_PLATFORMS_RE = re.compile(
+    r"airtable|make\.com|integromat|zapier|n8n|hubspot|gohighlevel|\bghl\b|twilio"
+    r"|clickup|monday\.com|notion|smartsuite|softr|glide|retool|pipedrive"
+    r"|activecampaign|klaviyo|salesforce|quickbooks|calendly|webflow|apify"
+    r"|squarespace|teachable|pandadoc|workiz|google sheets|google workspace"
+    r"|apps script|xero|stripe|shopify|typeform|jotform|vapi|retell|zoho"
+    r"|freshdesk|intercom|mailchimp|instantly|apollo\.io|clay\.com|slack|asana"
+    r"|trello|wordpress|bubble\.io|supabase|\bwix\b|close\.com|copper crm", re.I)
+
+# Trades that are next door to his and are not his. Every one of these is a
+# TITLE test — the words appear harmlessly inside descriptions ("...for our
+# marketing team") and would over-fire on the body. 212 cards since June, zero
+# applications between them.
+_OFF_DOMAIN_TITLE_RE = re.compile(
+    r"\bvoice\b|marketing|funnel|\bads\b|\bseo\b|copywrit|\bcontent\b", re.I)
+
+# A description too thin to read cannot be used as evidence of ABSENCE. ~200 of
+# 4,451 scored rows have almost no body; they fall through to the model rather
+# than being dropped on a technicality (quarantine over silent drop).
+_MIN_DESC_FOR_GATE = 200
+
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -48,10 +92,13 @@ SCHEMA = {
             "properties": {"core_stack": {"type": "integer"},
                            "long_term": {"type": "integer"},
                            "invite": {"type": "integer"},
-                           "claude": {"type": "integer"},
                            "whale_client": {"type": "integer"},
                            "fresh": {"type": "integer"}},
-            "required": ["core_stack", "long_term", "invite", "claude",
+            # long_term / whale_client / fresh stay in the shape so the row
+            # keeps recording them (they are real facts about a job and a
+            # future re-measure needs them); `claude` is gone entirely, because
+            # a field the model is asked to fill is a field it weighs.
+            "required": ["core_stack", "long_term", "invite",
                          "whale_client", "fresh"],
             "additionalProperties": False,
         },
@@ -113,6 +160,10 @@ def hard_rule_skip(job: dict) -> Optional[str]:
         return "no_asia_timezone"
     if _ONSITE_RE.search(text):
         return "onsite_required"
+    if _OFF_DOMAIN_TITLE_RE.search(title):
+        return "off_domain_title"       # voice / marketing / funnel / content
+    if len(desc) >= _MIN_DESC_FOR_GATE and not _PLATFORMS_RE.search(text):
+        return "no_platform_named"      # an AI-engineering post, not his work
     return None
 
 
@@ -126,17 +177,27 @@ GoHighLevel, Python, AI/LLM). v2.3 scoring matrix — score each dimension, then
 bonuses, then the gate:
 
 Dimensions (base, max 28):
-- Skill Fit 1-5, WEIGHTED x2 (strongest win predictor)
+- Skill Fit 1-5, WEIGHTED x4 — this is the score. Everything else is a
+  tie-breaker. Measured over 2,006 scored jobs against the 50 he actually bid
+  on: skill fit averaged 7.1 (of 10) on the ones he took and 4.6 on the ones he
+  ignored, while budget, client quality, competition and description quality
+  were flat to within a point. Grade it as "is this the work he sells", not "is
+  this a good job".
 - Budget 1-5
 - Client Quality 1-3 (capped; NEVER penalize a new client — $0 spent with no
   red flags = 2)
-- Competition 1-5 (20-50 proposals is normal; only 150+ saturation without a
-  whale client is disqualifying)
-- Description Quality 1-5
+- Competition 1-5 — SCORED FOR THE RECORD, NOT IN THE TOTAL. It came out
+  slightly backwards (3.95 on the ones he took, 4.26 on the ones he skipped):
+  the crowded posts are the good ones. Report it; it does not move the score.
+- Description Quality 1-5 — same: scored, reported, not in the total (4.39 vs
+  4.33, no signal).
 
-Bonuses: core stack +3 · long-term/ongoing (20+ hr/wk or multi-month) +3 ·
-direct invite +4 · mentions Claude/Claude Code +2 · client spent $100K+ +2 ·
-posted <1h ago +1.
+Bonuses: core stack +3 · direct invite +4. Nothing else.
+  Long-term, whale-client, posted-under-an-hour and mentions-Claude were all
+  bonuses until 2026-09-08 and ALL FOUR fired more often on the jobs he skipped
+  than on the ones he took. The Claude one was the worst: +2 for a word that
+  appeared in 182 hot cards and produced zero applications. Do not reward a
+  buzzword; reward the work.
 
 Category Priority Gate (v2.3): if the job CENTERS on GoHighLevel/GHL, Vapi,
 or Retell, it is gated UNLESS any of: client total spent >= $50,000, hourly
@@ -147,7 +208,10 @@ exempt; GHL/Vapi as one endpoint in a Make/Airtable-primary build is NOT
 gated. Set gated=true and cap effective_total accordingly; record raw_total
 uncapped.
 
-Return effective_total = min(raw_total, 15) when gated else raw_total.
+Report every dimension and both bonuses. THE ARITHMETIC IS NOT YOURS TO DO —
+code computes base_total = skill_fit*4 + budget + client_quality, adds the two
+bonuses, and applies the gate cap. Fill the numbers in honestly; a total you
+return is recorded and ignored.
 """
 
 
@@ -184,6 +248,34 @@ def job_input(job: dict) -> str:
 
 # ── the judgment call ─────────────────────────────────────────────────────────
 
+SCORER_VERSION = "3.0"
+
+# The two bonuses that survived the 2026-09-08 measurement. The other four
+# (long_term, whale_client, fresh, claude) each fired MORE often on the jobs he
+# skipped than on the ones he bid on, so they were not weak signals — they were
+# the wrong ones, pulling the ranking away from him.
+COUNTED_BONUSES = ("core_stack", "invite")
+_SKILL_FIT_WEIGHT = 4          # of a 1-5 grade; see _MATRIX for the evidence
+
+
+def compute_total(v: dict) -> tuple:
+    """(base_total, raw_total) from the graded dimensions. ARITHMETIC IN CODE,
+    never the model's — the score has to be re-derivable from the stored
+    breakdown, which is also what lets a re-weighting be back-tested over
+    history without spending a single model call.
+
+    `skill_fit` comes off the wire already weighted x2 (the v2.3 shape, and
+    every stored row carries it that way), so the raw 1-5 grade is half of it.
+    Competition and description quality are graded and recorded but do not
+    enter: measured over 2,006 jobs they carried no signal, and one of them
+    carried it backwards."""
+    fit = (v.get("skill_fit") or 0) / 2.0
+    base = int(round(fit * _SKILL_FIT_WEIGHT
+                     + (v.get("budget") or 0) + (v.get("client_quality") or 0)))
+    bon = v.get("bonuses") or {}
+    return base, base + sum(bon.get(k) or 0 for k in COUNTED_BONUSES)
+
+
 def score_job(job: dict, task_name: str, db_path=None) -> dict:
     """Returns {score, gated, loom_flag, breakdown} — effective score, gate
     cap re-enforced in code."""
@@ -193,9 +285,10 @@ def score_job(job: dict, task_name: str, db_path=None) -> dict:
         schema=SCHEMA, purpose=f"score {job.get('id')}",
         max_output_tokens=700, db_path=db_path)
     v = result.parsed
-    effective = v["effective_total"]
+    base, raw = compute_total(v)
+    v["base_total"], v["raw_total"] = base, raw
     gated = bool(v.get("gated"))
-    raw = v.get("raw_total")
+    effective = min(raw, _GATE_CAP) if gated else raw
     gate_note = None
     # CODE-ENFORCE the whale-gate EXEMPTION (v2.3). The model identifies whether a
     # job centers on GHL/Vapi/Retell (the gated category), but it applies the
@@ -221,6 +314,7 @@ def score_job(job: dict, task_name: str, db_path=None) -> dict:
         "recommendation")}
     breakdown["gate"] = gate_note
     breakdown["total"] = effective
+    breakdown["scorer_version"] = SCORER_VERSION
     return {"score": effective, "gated": gated,
             "loom_flag": 1 if effective >= config.LOOM_FLAG_THRESHOLD else 0,
             "breakdown": breakdown}

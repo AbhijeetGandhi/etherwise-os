@@ -172,7 +172,14 @@ INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately
 # nothing; 20 keeps 35 of 36 matched applications inside 'hot' and cuts the
 # drafted/carded volume ~40% ahead of the MCP flip (~70-90 hot/day at 16).
 # LOOM stays 22: Loom-flag band = 22+, hot band = 20-21.
-HOT_LEAD_THRESHOLD = 20
+# 2026-09-08, SCORER v3.0 — THE NUMBERS BELOW ARE ON A NEW SCALE. The score is
+# now skill_fit(1-5) x4 + budget + client_quality + core_stack/invite bonuses
+# (max 35), because skill fit was the only component that predicted whether he
+# bids (7.11 on the 50 he took vs 4.62 on the 1,956 he skipped) and the other
+# four were flat or backwards. The cuts are re-derived from the same history,
+# re-scored arithmetically: a bar of 16 yields ~49 hot cards a week and keeps 42
+# of his 49 applications; the old bar of 20 on the old scale yielded ~143/wk.
+HOT_LEAD_THRESHOLD = 16
 LOOM_FLAG_THRESHOLD = 22
 
 # ── Score bands — ONE source (Upwork chat, 2026-08-25, decision 1) ───────────
@@ -191,8 +198,11 @@ LOOM_FLAG_THRESHOLD = 22
 #   SCORE_STANDARD <= score < HOT            -> Standard list
 #   HOT            <= score < LOOM           -> Hot list, draft at scan, digest
 #   LOOM           <= score                  -> Hot + custom-Loom flag, priority 1
-SCORE_FLOOR = 8
-SCORE_STANDARD = 12
+# Re-cut for v3.0 (see HOT_LEAD_THRESHOLD). The floor rose most: 54% of the
+# cards he was being shown sat BELOW the old hot bar and produced 1 application
+# in 1,475 — the Low and Standard lists were the noise he was complaining about.
+SCORE_FLOOR = 12
+SCORE_STANDARD = 14
 SCORE_BANDS = (SCORE_FLOOR, SCORE_STANDARD, HOT_LEAD_THRESHOLD, LOOM_FLAG_THRESHOLD)
 if list(SCORE_BANDS) != sorted(set(SCORE_BANDS)):
     raise ValueError(f"SCORE_BANDS must be strictly increasing: {SCORE_BANDS}")
@@ -1212,10 +1222,19 @@ JOB_FEED_PROVIDER = "mcp"
 # expression plus the four gaps the 08-24 Test B found. n8n is deliberately
 # absent — the n8n EXCLUSION is a hard rule, not a search. Terms §4.1 bounds:
 # first pages only, one `get` per NEW job, a hard per-run ceiling on gets.
+# Rebalanced 2026-09-08 on measured yield. Since the flip these terms fetched
+# 3,948 jobs and produced TWO applications; the dead weight was concentrated:
+#   claude 965 fetched -> 0 · gohighlevel 725 -> 0 · workflow automation 577 -> 0
+#   automated reports 175 -> 0 · clay outreach 37 -> 0 · pipedrive 2 -> 0
+# while the terms that name the platforms he actually bids on were starved
+# (airtable 45 fetched, and an "airtable" job converts at 14.1%). "claude" is
+# gone entirely: it was also a +2 scoring bonus, and across 182 hot cards
+# carrying the word he applied to none. GoHighLevel stays — it is his own core
+# stack and 2 of his applications carry it — but as one term, not a firehose.
 MCP_TERM_QUERIES = (
-    "make.com", "airtable", "gohighlevel", "vapi", "claude",
-    "ai automation", "workflow automation", "zapier", "twilio",
-    "pipedrive", "activecampaign", "clay outreach", "automated reports",
+    "airtable", "make.com", "zapier", "hubspot", "smartsuite",
+    "airtable automation", "crm automation", "no code automation",
+    "ai automation", "gohighlevel", "twilio", "vapi",
 )
 MCP_SMART_PAGES = 2            # smart_search page 1 + 2 (profile-matched)
 MCP_PER_QUERY_LIMIT = 10       # server max per page anyway
