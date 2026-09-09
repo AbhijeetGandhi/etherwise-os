@@ -179,8 +179,19 @@ INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately
 # four were flat or backwards. The cuts are re-derived from the same history,
 # re-scored arithmetically: a bar of 16 yields ~49 hot cards a week and keeps 42
 # of his 49 applications; the old bar of 20 on the old scale yielded ~143/wk.
-HOT_LEAD_THRESHOLD = 16
-LOOM_FLAG_THRESHOLD = 22
+# 2026-09-09 — RE-CUT AFTER THE HALVING BUG. The cuts below were calibrated on
+# 2026-09-08 against scores whose skill-fit component was being halved in code
+# (scoring._raw_fit); every score has since risen 4-8 points, so a bar of 16 now
+# means something completely different. Re-derived the same way, against the 63
+# proposals he submitted since 1 June: a bar of 23 yields ~87 hot cards a week
+# and keeps 56 of them (89%), which is the same operating point 16 was CHOSEN
+# for, expressed on the corrected scale. Not a new decision — a translation.
+#   bar 23: 87/wk, 89% · bar 24: 73/wk, 81% · bar 25: 60/wk, 71%
+# The knee is right here; tightening past 24 costs an application for every
+# three cards it saves.
+HOT_LEAD_THRESHOLD = 23
+# Loom was hot+6 and stays hot+5: ~31 cards a week, the ones worth a video.
+LOOM_FLAG_THRESHOLD = 28
 
 # ── Score bands — ONE source (Upwork chat, 2026-08-25, decision 1) ───────────
 # Until this block the four cuts lived as literals in clickup_push (list
@@ -201,8 +212,8 @@ LOOM_FLAG_THRESHOLD = 22
 # Re-cut for v3.0 (see HOT_LEAD_THRESHOLD). The floor rose most: 54% of the
 # cards he was being shown sat BELOW the old hot bar and produced 1 application
 # in 1,475 — the Low and Standard lists were the noise he was complaining about.
-SCORE_FLOOR = 12
-SCORE_STANDARD = 14
+SCORE_FLOOR = 19
+SCORE_STANDARD = 21
 SCORE_BANDS = (SCORE_FLOOR, SCORE_STANDARD, HOT_LEAD_THRESHOLD, LOOM_FLAG_THRESHOLD)
 if list(SCORE_BANDS) != sorted(set(SCORE_BANDS)):
     raise ValueError(f"SCORE_BANDS must be strictly increasing: {SCORE_BANDS}")

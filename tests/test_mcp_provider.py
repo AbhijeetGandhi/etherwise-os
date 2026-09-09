@@ -255,7 +255,7 @@ class McpScanCase(PacedCase):
         score_map = score_map or {}
 
         def fake_score(row, task_name, db_path=None):
-            return verdict(score_map.get(row["id"], 14))
+            return verdict(score_map.get(row["id"], 21))
 
         from modules.upwork.feeds import mcp_client
         with mock.patch.object(mcp_client, "MCPSession", return_value=session), \
@@ -272,7 +272,7 @@ class TestScanMcpProvider(McpScanCase):
     def test_claims_with_mcp_feed_sources_and_runs_the_same_tail(self):
         result = self.run_scan(FakeSession(),
                                score_map={J_HOURLY: config.LOOM_FLAG_THRESHOLD + 2,
-                                          J_FIXED: 14, J_OLD: 14})
+                                          J_FIXED: 21, J_OLD: 21})
         self.assertEqual(result.status, "completed", result.error)
         self.assertEqual(result.metrics["provider"], "mcp")
         self.assertEqual(result.metrics["claimed"], 3)
@@ -321,7 +321,7 @@ class TestScanMcpProvider(McpScanCase):
         from modules.upwork.feeds import mcp_client
         with mock.patch.object(mcp_client, "MCPSession", return_value=s), \
              mock.patch.object(scoring, "score_job",
-                               side_effect=lambda *a, **k: calls.append(1) or verdict(20)):
+                               side_effect=lambda *a, **k: calls.append(1) or verdict(25)):
             with mock.patch.object(config, "MCP_MIN_HEALTHY_SURFACED", 1):
                 result = runner.run_task(
                     sp.TASK_NAME, lambda ctx: sp.scan(ctx, _sleep=lambda s: None),

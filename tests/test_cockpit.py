@@ -440,18 +440,18 @@ def seed_today(db_path):
         # hot leads: recent, not tasked
         conn.execute("INSERT INTO scored_jobs (id, title, score, status,"
                      " job_url, first_scored_at) VALUES"
-                     " ('2065400000000000111','Make build',24,'Drafted',"
+                     " ('2065400000000000111','Make build',26,'Drafted',"
                      " 'https://www.upwork.com/jobs/~022065400000000000111/',"
                      " '2026-06-15T03:00:00+00:00')")
         conn.execute("INSERT INTO scored_jobs (id, title, score, status,"
                      " clickup_task_id, first_scored_at) VALUES"
-                     " ('2065400000000000112','Tasked',20,'ClickUp Created',"
+                     " ('2065400000000000112','Tasked',24,'ClickUp Created',"
                      " 'abc','2026-06-15T03:00:00+00:00')")  # tasked → excluded
         # OLD untasked hot lead: excluded from Today (recent), counted in
         # Pipeline to-triage backlog
         conn.execute("INSERT INTO scored_jobs (id, title, score, status,"
                      " first_scored_at) VALUES"
-                     " ('2065400000000000113','Old hot',18,'Scored',"
+                     " ('2065400000000000113','Old hot',25,'Scored',"
                      " '2026-05-01T03:00:00+00:00')")
         # proposals for applied counts (created_dt windows) + active
         for pid, status, dt in [

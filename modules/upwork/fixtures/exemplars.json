@@ -1,28 +1,44 @@
 {
  "skill_fit": [
   {
-   "grade": 3,
-   "title": "AI Automation Consultation",
-   "snippet": "Seeking expert in AI automation for consultation on integrating AI solutions into business processes. Assessing current systems, recommending AI tools, guiding implementation.",
-   "why": "",
+   "grade": 5,
+   "title": "Expert Airtable Solution Architect",
+   "snippet": "Build and own the Airtable base that runs our operations: schema design, automations, interfaces, and Make.com syncs to the rest of the stack. Ongoing.",
+   "why": "A named platform he sells, and the job IS the platform work. Airtable in the title converts at 14.1% -- his highest of anything measured. Grade 5 is 'this is literally the service Etherwise offers'.",
    "budget": null,
-   "client_spent": null
+   "client_spent": 35000.0
   },
   {
    "grade": 4,
-   "title": "Urgent: Voice AI System for Healthcare Client",
-   "snippet": "Looking for experienced voice AI developer for healthcare client. Urgent project.",
-   "why": "",
-   "budget": 50.0,
-   "client_spent": 60.0
+   "title": "Automation Specialist - Workflow Automation Make.com/N8N/AI",
+   "snippet": "Design and build business workflows across Make.com, n8n and our CRM. Integrations, error handling, documentation. Long-term.",
+   "why": "His tools, his kind of build, but spread across several rather than deep in one. Grade 4 is 'squarely his lane'. He bid on this one.",
+   "budget": null,
+   "client_spent": 8000.0
   },
   {
-   "grade": 5,
-   "title": "Make.com Developer for Marketing Agency Automations",
-   "snippet": "Digital marketing agency needs Make.com expert to build and maintain automations across client portfolio. 20-30 hours/week. Client reporting, Meta/Google Ads data pulls, CRM syncs,",
-   "why": "",
-   "budget": 40.0,
-   "client_spent": 35000.0
+   "grade": 3,
+   "title": "AI Automation Specialist for Business Solutions",
+   "snippet": "Identify automation opportunities across our operations and implement them. Email, CRM intake, document processing, reporting.",
+   "why": "His CATEGORY with no platform named -- the work is probably his but the post does not say which tools. Grade 3 is 'plausibly his, decide on the body'. He bid on this one too, so 3 is not a rejection.",
+   "budget": null,
+   "client_spent": 5000.0
+  },
+  {
+   "grade": 2,
+   "title": "Senior AI Engineer - Build Autonomous AI Agents & Business Automation",
+   "snippet": "Build agentic systems in Python. LLM orchestration, RAG, vector stores, AWS deployment. Strong backend and API design required.",
+   "why": "Says automation, means software engineering. He has never bid on one: 'engineer' in the title is 264 cards and 5 applications, 'agent(ic)' 245 and 2. Grade 2 is 'adjacent, and he does not take these'.",
+   "budget": null,
+   "client_spent": 20000.0
+  },
+  {
+   "grade": 1,
+   "title": "AI Voice Agent for Home Services (Retell / VAPI)",
+   "snippet": "Build an inbound voice agent to book appointments for a home-services company. Call flows, transfers, CRM logging.",
+   "why": "A different trade. 'voice' in the title is 90 cards and zero applications; marketing, funnel and content the same. Grade 1 is 'not his work at all' -- and note the old exemplar file graded THIS SHAPE a 4, which is a large part of why skill fit was scoring loose.",
+   "budget": 3000.0,
+   "client_spent": 60.0
   }
  ],
  "budget": [

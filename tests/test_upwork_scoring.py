@@ -159,13 +159,14 @@ class TestScoreJob(unittest.TestCase):
                 usage={}, cost_usd=0.001, stop_reason="end_turn",
                 duration_ms=5)
             out = scoring.score_job(job(), task_name="t", db_path=None)
-        # skill_fit 4 on the wire is a raw grade of 2: 2*4 + budget 4 +
-        # client 2 = 14, + core_stack 3 = 17. The model claimed 99.
-        self.assertEqual(out["score"], 17)
+        # skill_fit 4 IS the grade (v3.0.1, 2026-09-09 — it used to be halved
+        # on the assumption the model pre-doubled it, and did not): 4*4 +
+        # budget 4 + client 2 = 22, + core_stack 3 = 25. The model claimed 99.
+        self.assertEqual(out["score"], 25)
         self.assertFalse(out["gated"])
         self.assertEqual(out["breakdown"]["skill_fit"], 4)
         self.assertEqual(out["breakdown"]["scorer_version"], "3.0")
-        self.assertEqual(out["loom_flag"], 0)
+        self.assertEqual(out["loom_flag"], 0)      # 25 < LOOM_FLAG_THRESHOLD 28
 
     def test_loom_flag_at_22_effective(self):
         with mock.patch.object(scoring.runner, "claude_call") as cc:
@@ -184,12 +185,12 @@ class TestScoreJob(unittest.TestCase):
                 cost_usd=0.001, stop_reason="end_turn", duration_ms=5)
             return scoring.score_job(j, task_name="t", db_path=None)
 
-    def test_gated_verdict_never_exceeds_15(self):
+    def test_a_gated_verdict_never_reaches_the_hot_bar(self):
         bad = self.verdict(fit=10, budget=5, client=3, gated=True)  # raw 31
         # a job with NO exemption (sub-$45 hourly, tiny spend) stays capped
         out = self._score(bad, job(hourly_max=40.0, fixed_budget=None,
                                    client_total_spent=100.0))
-        self.assertEqual(out["score"], 15)   # cap enforced in CODE
+        self.assertEqual(out["score"], scoring._GATE_CAP)   # cap enforced in CODE
         self.assertIn("capped", out["breakdown"]["gate"])
 
     # ── whale-gate EXEMPTION code-enforced (2026-06-22 lead-loss fix) ──
@@ -222,7 +223,7 @@ class TestScoreJob(unittest.TestCase):
         out = self._score(v, job(hourly_max=40.0, fixed_budget=None,
                                  client_total_spent=100.0))
         self.assertTrue(out["gated"])
-        self.assertEqual(out["score"], 15)           # legitimately capped
+        self.assertEqual(out["score"], scoring._GATE_CAP)   # legitimately capped
 
     def test_gate_exempt_helper(self):
         self.assertTrue(scoring._gate_exempt({"hourly_max": 45}))
@@ -356,6 +357,60 @@ class TestPlatformGateAndWeights(unittest.TestCase):
              "base_total": 999, "raw_total": 999,
              "bonuses": {"core_stack": 3, "invite": 0}}
         self.assertEqual(scoring.compute_total(v), (23, 26))   # 4*4+4+3, +3
+
+    def test_skill_fit_is_the_grade_and_is_not_halved(self):
+        """The bug Abhijeet caught on two of his own jobs, 2026-09-09. The
+        scorer graded an Airtable build 5 of 5 and wrote "Hot — bid this one";
+        it came out at 17. It graded an automation audit 4 and called it
+        "squarely Abhijeet's lane"; that came out at 18. Both had been halved
+        by code written for the v2.3 prompt, which asked for a doubled grade
+        the model returned plain about half the time anyway."""
+        travel = {"skill_fit": 5, "budget": 2, "client_quality": 2,
+                  "bonuses": {"core_stack": 3}}
+        audit = {"skill_fit": 4, "budget": 2, "client_quality": 2,
+                 "bonuses": {"core_stack": 3, "long_term": 3}}
+        self.assertEqual(scoring.compute_total(travel)[1], 27)
+        self.assertEqual(scoring.compute_total(audit)[1], 26)
+
+    def test_a_legacy_doubled_grade_is_still_read_correctly(self):
+        """Rows scored before 2026-09-09 may carry the doubled shape. A stored
+        value above 5 can only be doubled, so both readings survive; a stored
+        2 or 4 is ambiguous and is read as the grade, which errs toward showing
+        him a job rather than hiding one."""
+        self.assertEqual(scoring._raw_fit(10), 5.0)     # doubled 5
+        self.assertEqual(scoring._raw_fit(8), 4.0)      # doubled 4
+        self.assertEqual(scoring._raw_fit(5), 5)        # cannot be doubled
+        self.assertEqual(scoring._raw_fit(4), 4)        # ambiguous -> the grade
+        self.assertEqual(scoring._raw_fit(None), 0.0)
+
+    def test_his_platform_in_the_title_outranks_the_off_domain_rule(self):
+        """Abhijeet, 2026-09-09, on "Airtable + Make.com Expert - Ecommerce
+        Operations, Production Dashboard, and Marketing Hub": "I don't know why
+        this is not even showing up". The word `marketing` matched inside the
+        NAME OF A THING THEY WANT BUILT. When his own tools are in the title,
+        the model reads the body and decides."""
+        body = "Ecommerce ops build. " * 30
+        ok = self._job("Airtable + Make.com Expert - Ecommerce Operations, "
+                       "Production Dashboard, and Marketing Hub", body)
+        self.assertIsNone(scoring.hard_rule_skip(ok))
+        # no platform in the title and it is still the trade next door
+        for title in ("Marketing Automation Specialist",
+                      "AI Voice Agent for Home Services",
+                      "Funnel Builder and Manager"):
+            self.assertEqual(scoring.hard_rule_skip(self._job(title, body)),
+                             "off_domain_title", title)
+
+    def test_the_exemplars_anchor_every_grade_and_say_why(self):
+        """The old file had three skill-fit examples, nothing below grade 3,
+        every `why` empty — and it graded a VOICE AI job 4 of 5, a trade he has
+        bid on zero times out of 90 cards. A scale anchored that loosely is
+        most of why skill fit drifted."""
+        ex = json.loads(scoring.EXEMPLARS_PATH.read_text())["skill_fit"]
+        self.assertEqual(sorted(e["grade"] for e in ex), [1, 2, 3, 4, 5])
+        for e in ex:
+            self.assertTrue((e.get("why") or "").strip(), e["title"])
+        top = next(e for e in ex if e["grade"] == 5)
+        self.assertIn("airtable", top["title"].lower())
 
     def test_claude_and_fresh_are_gone_from_the_schema(self):
         """Deleted, not zero-weighted: a field the model is asked to fill is a

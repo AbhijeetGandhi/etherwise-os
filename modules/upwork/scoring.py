@@ -32,7 +32,12 @@ _OTHER_TOOLS_RE = re.compile(
     r"python|openai|gpt|hubspot|salesforce|notion|monday\.com)\b", re.I)
 _NO_ASIA_RE = re.compile(r"no\s+asia", re.I)
 _ONSITE_RE = re.compile(r"\bon[- ]?site\b", re.I)
-_GATE_CAP = 15
+# The Category Priority Gate caps a GHL/Vapi/Retell-centric job so it can never
+# be Hot while staying VISIBLE. It was 15 against a hot bar of 20; after the
+# 2026-09-09 re-cut the bar is 23, so 15 would have put every gated job under
+# the card floor entirely — silently deleting the category rather than demoting
+# it. 22 keeps the original meaning: below Hot, above the floor.
+_GATE_CAP = 22
 
 # ── v3.0, 2026-09-08: the platform gate + the off-domain titles ───────────────
 # Abhijeet: "there is lot of noise we definitely need to improve our socring.
@@ -176,7 +181,19 @@ def hard_rule_skip(job: dict) -> Optional[str]:
         return "no_asia_timezone"
     if _ONSITE_RE.search(text):
         return "onsite_required"
-    if _OFF_DOMAIN_TITLE_RE.search(title):
+    # A PLATFORM IN THE TITLE OUTRANKS THIS. Abhijeet, 2026-09-09, on
+    # "Airtable + Make.com Expert - Ecommerce Operations, Production Dashboard,
+    # and Marketing Hub": "I don't know why this is not even showing up". It was
+    # never scored — the word `marketing` matched, inside the NAME OF A THING
+    # THEY WANT BUILT. A Marketing Hub is the object of the work, not the trade.
+    # The rule killed the single best-converting shape he has (Airtable and
+    # Make.com, both in the title) on a substring in a proper noun.
+    # When his own tools are named in the title the job goes to the model, which
+    # reads the body and grades skill fit; a GHL marketing-ops post then dies at
+    # the score, which is where a borderline call belongs. 14 of the 38 titles
+    # this rule has killed name a platform, and most of those really are
+    # marketing work — they will now cost one model call each and score low.
+    if _OFF_DOMAIN_TITLE_RE.search(title) and not _PLATFORMS_RE.search(title):
         return "off_domain_title"       # voice / marketing / funnel / content
     if (len(desc) >= _MIN_DESC_FOR_GATE
             and not _CATEGORY_TITLE_RE.search(title)      # his trade: let it score
@@ -195,8 +212,11 @@ GoHighLevel, Python, AI/LLM). v2.3 scoring matrix — score each dimension, then
 bonuses, then the gate:
 
 Dimensions (base, max 28):
-- Skill Fit 1-5, WEIGHTED x4 — this is the score. Everything else is a
-  tie-breaker. Measured over 2,006 scored jobs against the 50 he actually bid
+- Skill Fit: RETURN THE PLAIN 1-5 GRADE. Do not pre-multiply it — code applies
+  the x4. (Until 2026-09-09 this prompt asked for it doubled, the model returned
+  it plain about half the time, and the code halved whatever arrived. Both
+  readings are now handled, but return 1-5.)
+  Weighted x4, so this IS the score and everything else is a tie-breaker. Measured over 2,006 scored jobs against the 50 he actually bid
   on: skill fit averaged 7.1 (of 10) on the ones he took and 4.6 on the ones he
   ignored, while budget, client quality, competition and description quality
   were flat to within a point. Grade it as "is this the work he sells", not "is
@@ -283,18 +303,40 @@ COUNTED_BONUSES = ("core_stack", "invite", "long_term", "whale_client")
 _SKILL_FIT_WEIGHT = 4          # of a 1-5 grade; see _MATRIX for the evidence
 
 
+def _raw_fit(value) -> float:
+    """The 1-5 skill-fit grade, whatever shape the row stores it in."""
+    v = value or 0
+    if v > 5:                       # only a doubled grade can land here
+        v = v / 2.0
+    return max(0.0, min(5.0, v))
+
+
 def compute_total(v: dict) -> tuple:
     """(base_total, raw_total) from the graded dimensions. ARITHMETIC IN CODE,
     never the model's — the score has to be re-derivable from the stored
     breakdown, which is also what lets a re-weighting be back-tested over
     history without spending a single model call.
 
-    `skill_fit` comes off the wire already weighted x2 (the v2.3 shape, and
-    every stored row carries it that way), so the raw 1-5 grade is half of it.
+    `skill_fit` IS THE RAW 1-5 GRADE. It was not, for one day: the v2.3 prompt
+    said "WEIGHTED x2" and this function divided by two to recover the grade —
+    but the model returned the plain 1-5 number about half the time even then,
+    and under the v3.0 prompt it returns 1-5 always. Dividing anyway halved the
+    single component the score now rests on. Abhijeet caught it on two of his
+    own jobs the same morning: an Airtable build the scorer graded 5 of 5 and
+    called "Hot — bid this one" came out at 17, and an automation audit it
+    called "squarely Abhijeet's lane" came out at 18. Their real scores are 27
+    and 26.
+
+    `_raw_fit` recovers both shapes, because a stored value ABOVE 5 can only be
+    a doubled one. A stored 2 or 4 under the old prompt is genuinely ambiguous
+    and is read as the raw grade — the reading that matches what the model
+    returns today, and the one that errs toward showing him a job rather than
+    hiding it.
+
     Competition and description quality are graded and recorded but do not
     enter: measured over 2,006 jobs they carried no signal, and one of them
     carried it backwards."""
-    fit = (v.get("skill_fit") or 0) / 2.0
+    fit = _raw_fit(v.get("skill_fit"))
     base = int(round(fit * _SKILL_FIT_WEIGHT
                      + (v.get("budget") or 0) + (v.get("client_quality") or 0)))
     bon = v.get("bonuses") or {}

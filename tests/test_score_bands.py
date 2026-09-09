@@ -57,72 +57,76 @@ class TestConfigBands(unittest.TestCase):
         evidence. Re-cut 2026-09-08 for scorer v3.0 — the score is on a new
         scale (skill_fit x4 + budget + client_quality + two bonuses), so these
         four numbers moved together with the formula, re-derived by re-scoring
-        4,343 rows of history arithmetically. Changing them again is a
-        decision, and it must edit this test on purpose."""
-        self.assertEqual(config.SCORE_BANDS, (12, 14, 16, 22))
+        4,343 rows of history arithmetically. RE-CUT AGAIN 2026-09-09 after the
+        skill-fit halving bug: every score rose 4-8 points, so 16 stopped
+        meaning what it was chosen to mean. 23 is the same operating point on
+        the corrected scale (~87 hot cards a week, 89% of his proposals), not a
+        new decision. Changing them again is a decision, and it must edit this
+        test on purpose."""
+        self.assertEqual(config.SCORE_BANDS, (19, 21, 23, 28))
 
     def test_band_arithmetic_and_labels(self):
-        expect = {None: "unscored", 0: "below", 11: "below", 12: "low",
-                  13: "low", 14: "standard", 15: "standard", 16: "hot",
-                  21: "hot", 22: "loom", 28: "loom"}
+        expect = {None: "unscored", 0: "below", 18: "below", 19: "low",
+                  20: "low", 21: "standard", 22: "standard", 23: "hot",
+                  27: "hot", 28: "loom", 35: "loom"}
         for score, band in expect.items():
             self.assertEqual(config.score_band(score), band, score)
-        self.assertEqual(config.score_band_label("below"), "<12")
-        self.assertEqual(config.score_band_label("low"), "12-13")
-        self.assertEqual(config.score_band_label("standard"), "14-15")
-        self.assertEqual(config.score_band_label("hot"), "16-21")
-        self.assertEqual(config.score_band_label("loom"), "22+")
+        self.assertEqual(config.score_band_label("below"), "<19")
+        self.assertEqual(config.score_band_label("low"), "19-20")
+        self.assertEqual(config.score_band_label("standard"), "21-22")
+        self.assertEqual(config.score_band_label("hot"), "23-27")
+        self.assertEqual(config.score_band_label("loom"), "28+")
 
     def test_band_helpers_follow_a_patched_cut(self):
-        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 18):
-            self.assertEqual(config.score_band(17), "standard")
-            self.assertEqual(config.score_band(18), "hot")
-            self.assertEqual(config.score_band_label("hot"), "18-21")
-            self.assertEqual(config.score_band_label("standard"), "14-17")
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 25):
+            self.assertEqual(config.score_band(24), "standard")
+            self.assertEqual(config.score_band(25), "hot")
+            self.assertEqual(config.score_band_label("hot"), "25-27")
+            self.assertEqual(config.score_band_label("standard"), "21-24")
 
 
 class TestReadersFollowConfig(unittest.TestCase):
     def test_clickup_routing_reads_config_at_call_time(self):
-        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 18):
-            self.assertEqual(clickup_push.list_for_score(17, invite=False),
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 25):
+            self.assertEqual(clickup_push.list_for_score(24, invite=False),
                              clickup_push.LIST_STANDARD)
-            self.assertEqual(clickup_push.list_for_score(18, invite=False),
+            self.assertEqual(clickup_push.list_for_score(25, invite=False),
                              clickup_push.LIST_HOT)
-        with mock.patch.object(config, "SCORE_FLOOR", 10):
-            self.assertIsNone(clickup_push.list_for_score(9, invite=False))
-            self.assertEqual(clickup_push.list_for_score(10, invite=False),
+        with mock.patch.object(config, "SCORE_FLOOR", 17):
+            self.assertIsNone(clickup_push.list_for_score(16, invite=False))
+            self.assertEqual(clickup_push.list_for_score(17, invite=False),
                              clickup_push.LIST_LOW)
-            self.assertIn("<10", clickup_push._guard(
-                {"id": "2064484440376044477", "status": "Scored", "score": 9}))
-        # live behaviour at today's values (v3.0 scale): 16 is the hot bar
-        self.assertEqual(clickup_push.list_for_score(16, invite=False),
+            self.assertIn("<17", clickup_push._guard(
+                {"id": "2064484440376044477", "status": "Scored", "score": 16}))
+        # live behaviour at today's values (v3.0.1 scale): 23 is the hot bar
+        self.assertEqual(clickup_push.list_for_score(23, invite=False),
                          clickup_push.LIST_HOT)
-        self.assertEqual(clickup_push.list_for_score(20, invite=False),
+        self.assertEqual(clickup_push.list_for_score(30, invite=False),
                          clickup_push.LIST_HOT)
-        self.assertEqual(clickup_push.list_for_score(14, invite=False),
+        self.assertEqual(clickup_push.list_for_score(21, invite=False),
                          clickup_push.LIST_STANDARD)
-        self.assertEqual(clickup_push.list_for_score(12, invite=False),
+        self.assertEqual(clickup_push.list_for_score(19, invite=False),
                          clickup_push.LIST_LOW)
-        self.assertIsNone(clickup_push.list_for_score(11, invite=False))
+        self.assertIsNone(clickup_push.list_for_score(18, invite=False))
 
     def test_clickup_priority_reads_config_at_call_time(self):
-        row = {"score": 22, "score_breakdown_json": "{}"}
+        row = {"score": 28, "score_breakdown_json": "{}"}
         self.assertEqual(clickup_push.priority_for(row), 1)
-        self.assertEqual(clickup_push.priority_for({"score": 20}), 2)
-        self.assertEqual(clickup_push.priority_for({"score": 15}), 3)
-        with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 24):
+        self.assertEqual(clickup_push.priority_for({"score": 24}), 2)
+        self.assertEqual(clickup_push.priority_for({"score": 20}), 3)
+        with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 30):
             self.assertEqual(clickup_push.priority_for(row), 2)
         invite = {"score": 9,
                   "score_breakdown_json": '{"bonuses": {"invite": 4}}'}
         self.assertEqual(clickup_push.priority_for(invite), 1)
 
     def test_eval_band_labels_derive_from_config(self):
-        self.assertEqual(scoring_eval.band(20), "16-21")
-        self.assertEqual(scoring_eval.band(15), "14-15")
+        self.assertEqual(scoring_eval.band(25), "23-27")
+        self.assertEqual(scoring_eval.band(22), "21-22")
         self.assertEqual(scoring_eval.band(None), "?")
-        with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 24):
-            self.assertEqual(scoring_eval.band(23), "16-23")
-            self.assertEqual(scoring_eval.band(24), "24+")
+        with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 32):
+            self.assertEqual(scoring_eval.band(31), "23-31")
+            self.assertEqual(scoring_eval.band(32), "32+")
 
 
 class TestCockpitBands(unittest.TestCase):
@@ -132,10 +136,10 @@ class TestCockpitBands(unittest.TestCase):
         db.migrate(self.db_path)
         self.today = "2026-08-25"
         with db.connect(self.db_path) as conn:
-            # v3.0 cuts (12/14/16/22): below · low · standard · hot · loom
-            for jid, score in (("2064484440376044471", 11), ("2064484440376044472", 12),
-                               ("2064484440376044473", 14), ("2064484440376044474", 16),
-                               ("2064484440376044475", 22)):
+            # v3.0.1 cuts (19/21/23/28): below · low · standard · hot · loom
+            for jid, score in (("2064484440376044471", 18), ("2064484440376044472", 19),
+                               ("2064484440376044473", 21), ("2064484440376044474", 23),
+                               ("2064484440376044475", 28)):
                 conn.execute(
                     "INSERT INTO scored_jobs (id, title, score, status,"
                     " fetched_at, first_scored_at, job_url) VALUES"
@@ -154,30 +158,30 @@ class TestCockpitBands(unittest.TestCase):
         bands = data.pipeline(self.db_path, self.today)["bands"]
         self.assertEqual((bands["hot"], bands["standard"], bands["low"]),
                          (2, 1, 1))
-        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 21), \
-                mock.patch.object(config, "SCORE_FLOOR", 10):
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 27), \
+                mock.patch.object(config, "SCORE_FLOOR", 17):
             bands = data.pipeline(self.db_path, self.today)["bands"]
             self.assertEqual((bands["hot"], bands["standard"], bands["low"]),
                              (1, 2, 2))
             self.assertEqual(
-                data.pipeline_facts(self.db_path, self.today)["score_floor"], 10)
+                data.pipeline_facts(self.db_path, self.today)["score_floor"], 17)
 
     def test_scored_and_triage_drills_use_the_config_cuts(self):
         wk = "2026-08-24"                                     # a Monday
         scored = data.pipeline_rows(self.db_path, stage="scored", week=wk,
                                     _today=self.today)
-        self.assertEqual(scored["total"], 4)                  # >= SCORE_FLOOR 12
+        self.assertEqual(scored["total"], 4)                  # >= SCORE_FLOOR 19
         triage = data.pipeline_rows(self.db_path, stage="triage",
                                     _today=self.today)
-        self.assertEqual({r["score"] for r in triage["rows"]}, {16, 22})
-        with mock.patch.object(config, "SCORE_FLOOR", 14), \
-                mock.patch.object(config, "HOT_LEAD_THRESHOLD", 22):
+        self.assertEqual({r["score"] for r in triage["rows"]}, {23, 28})
+        with mock.patch.object(config, "SCORE_FLOOR", 21), \
+                mock.patch.object(config, "HOT_LEAD_THRESHOLD", 28):
             scored = data.pipeline_rows(self.db_path, stage="scored", week=wk,
                                         _today=self.today)
             self.assertEqual(scored["total"], 3)
             triage = data.pipeline_rows(self.db_path, stage="triage",
                                         _today=self.today)
-            self.assertEqual({r["score"] for r in triage["rows"]}, {22})
+            self.assertEqual({r["score"] for r in triage["rows"]}, {28})
 
 
 class TestClickUpListIds(unittest.TestCase):
@@ -201,9 +205,9 @@ class TestClickUpListIds(unittest.TestCase):
 
     def test_routing_vocabulary_is_complete(self):
         # every list the router can return has a name for the intent ledger
-        for total, invite, icp in ((20, False, None), (14, False, None),
-                                   (12, False, None), (9, True, None),
-                                   (20, False, "icp")):
+        for total, invite, icp in ((25, False, None), (21, False, None),
+                                   (19, False, None), (9, True, None),
+                                   (25, False, "icp")):
             list_id = clickup_push.list_for_score(total, invite=invite, icp_tier=icp)
             self.assertIn(list_id, clickup_push.LIST_NAMES)
 

@@ -105,7 +105,7 @@ class ScanPipelineCase(unittest.TestCase):
         score_map = score_map or {}
 
         def fake_score(row, task_name, db_path=None):
-            return verdict(score_map.get(row["id"], 14))
+            return verdict(score_map.get(row["id"], 21))
 
         ssr_iter = iter(ssr or [])
         dom_iter = iter(chrome_payloads)
@@ -144,7 +144,7 @@ class TestScan(ScanPipelineCase):
     def test_full_run_claims_scores_and_records_intents(self):
         result = self.run_scan(
             [payload(tile(JID_A)), payload(), payload(tile(JID_B))],
-            score_map={JID_A: 24, JID_B: 14})
+            score_map={JID_A: 25, JID_B: 21})
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.metrics["claimed"], 2)
         self.assertEqual(result.metrics["scored"], 2)
@@ -154,7 +154,7 @@ class TestScan(ScanPipelineCase):
 
         rows = {r["id"]: r for r in self.rows("SELECT * FROM scored_jobs")}
         self.assertEqual(rows[JID_A]["status"], "Drafted")
-        self.assertEqual(rows[JID_A]["score"], 24)
+        self.assertEqual(rows[JID_A]["score"], 25)
         self.assertEqual(rows[JID_A]["loom_flag"], 1)
         self.assertEqual(rows[JID_B]["status"], "Scored")
         self.assertIsNone(rows[JID_B]["draft_proposal"])
@@ -174,7 +174,7 @@ class TestScan(ScanPipelineCase):
 
     def test_second_run_dedups_and_skips_empty(self):
         self.run_scan([payload(tile(JID_A)), payload(), payload()],
-                      score_map={JID_A: 14})
+                      score_map={JID_A: 21})
         result = self.run_scan([payload(tile(JID_A)), payload(), payload()])
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.metrics["claimed"], 0)
@@ -212,7 +212,7 @@ class TestScan(ScanPipelineCase):
                 (JID_B, "Leftover", f"https://www.upwork.com/jobs/X_~02{JID_B}/",
                  "my_feed", "New"))
         result = self.run_scan([payload(), payload(), payload()],
-                               score_map={JID_B: 13})
+                               score_map={JID_B: 20})
         self.assertEqual(result.metrics["scored"], 1)
         self.assertEqual(self.rows("SELECT status FROM scored_jobs")[0]
                          ["status"], "Scored")
@@ -239,7 +239,7 @@ class TestScan(ScanPipelineCase):
         result = self.run_scan([payload(tile(JID_A)),
                                 payload(tile(JID_B), url=search),
                                 payload(url=search)],
-                               score_map={JID_A: 14})
+                               score_map={JID_A: 21})
         self.assertEqual(result.status, "completed")
         rows = self.rows("SELECT id FROM scored_jobs")
         self.assertEqual([r["id"] for r in rows], [JID_A])   # only the feed tile
@@ -376,7 +376,7 @@ class TestScanLive(ScanPipelineCase):
 
     def test_live_non_hot_pushes_without_email(self):
         send = mock.MagicMock()
-        result = self.run_live(send, score=12)             # standard, not hot
+        result = self.run_live(send, score=21)             # standard, not hot
         self.assertEqual(result.status, "completed")
         self.assertIsNone(result.metrics["digest"])
         send.assert_not_called()
@@ -410,7 +410,7 @@ class TestPushRetry(ScanPipelineCase):
     def test_uncarded_leftover_is_carded_by_the_next_run(self):
         self.seed_uncarded(days_ago=1)
         result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
-                               score_map={JID_A: 14})
+                               score_map={JID_A: 21})
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.metrics["clickup_retried"], 1)
         self.assertEqual(result.metrics["clickup_intents"], 2)   # new + leftover
@@ -421,7 +421,7 @@ class TestPushRetry(ScanPipelineCase):
     def test_leftover_outside_the_window_stays_where_it_is(self):
         self.seed_uncarded(days_ago=config.CLICKUP_PUSH_RETRY_DAYS + 3)
         result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
-                               score_map={JID_A: 14})
+                               score_map={JID_A: 21})
         self.assertEqual(result.metrics["clickup_retried"], 0)
         self.assertEqual(result.metrics["clickup_intents"], 1)
 
@@ -429,7 +429,7 @@ class TestPushRetry(ScanPipelineCase):
         self.seed_uncarded(days_ago=1, score=config.SCORE_FLOOR - 1,
                            status="Scored")
         result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
-                               score_map={JID_A: 14})
+                               score_map={JID_A: 21})
         self.assertEqual(result.metrics["clickup_retried"], 0)
 
     def test_live_retry_cards_the_row_and_carries_it_in_the_digest(self):
@@ -446,7 +446,7 @@ class TestPushRetry(ScanPipelineCase):
              mock.patch.object(sp.clickup_push, "req", side_effect=fake_req), \
              mock.patch.object(sp.notify, "send_gmail", send):
             result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
-                                   score_map={JID_A: 14})
+                                   score_map={JID_A: 21})
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.metrics["clickup_retried"], 1)
         self.assertEqual(result.metrics["hot"], 0)          # this run's own
