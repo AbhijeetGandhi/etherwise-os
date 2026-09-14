@@ -2679,6 +2679,53 @@ class TestMoneyDrill(unittest.TestCase):
         self.assertEqual(row["m"], "2026-08")     # attributed (billed) month
         self.assertEqual(row["cm"], "2026-09")    # the month cash arrived
 
+    def test_a_payer_whose_name_is_not_in_the_row_still_drills(self):
+        """Abhijeet, 2026-09-14, clicking Beglaubigt on "Where it came from" —
+        one payment, 06 Sept, listed right there: "No transactions behind this
+        figure."
+
+        The list groups by the canonical client; the drill re-queried with
+        `q=<name>`, a substring search over the description. An Upwork hourly
+        line names the FREELANCER — "(43406906) Ioannis P/Abhijeet Gandhi" —
+        and a Wise line names the legal entity, so a payer's own name is often
+        nowhere in their own row. Four of his ten September payers were like
+        that. The drill now filters on `who`, the same key it grouped by."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type, source,"
+                " description, assignment_company, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt) VALUES"
+                " ('ioannis','kioannis','Hourly Earning','Upwork-MCP',"
+                " '(43406906) Ioannis P/Abhijeet Gandhi - 20:00 hrs @ $35.00/hr',"
+                " 'Beglaubigt', 70000, 70000, 'USD','revenue',"
+                " '2026-06-06T00:00:00+0000')")
+        full = data.money_transactions(self.db_path, bucket="revenue", month="2026-06")
+        row = next(r for r in full["rows"] if r["dt"] == "2026-06-06")
+        self.assertEqual(row["w"], "Beglaubigt")        # what the list groups by
+        self.assertNotIn("beglaubigt", row["d"].lower())  # and it is not in the row
+
+        by_who = data.money_transactions(self.db_path, bucket="revenue",
+                                         month="2026-06", who="Beglaubigt")
+        self.assertEqual(by_who["count"], 1)
+        self.assertEqual(by_who["sum_usd"], 700.0)
+        # the old behaviour, for the record: a text search finds nothing
+        by_text = data.money_transactions(self.db_path, bucket="revenue",
+                                          month="2026-06", q="Beglaubigt")
+        self.assertEqual(by_text["count"], 0)
+
+    def test_the_who_filter_sums_only_its_own_rows(self):
+        """A filtered drill's stated total must be the total of what it shows —
+        the running sum is taken after the filter, not before."""
+        d = data.money_transactions(self.db_path, bucket="revenue", who="nobody at all")
+        self.assertEqual(d["count"], 0)
+        self.assertEqual(d["sum_usd"], 0.0)
+        everyone = data.money_transactions(self.db_path, bucket="revenue")
+        seen = {r.get("w") for r in everyone["rows"] if r.get("w")}
+        for w in seen:
+            one = data.money_transactions(self.db_path, bucket="revenue", who=w)
+            self.assertEqual(one["sum_usd"],
+                             round(sum(r["u"] for r in one["rows"]), 2), w)
+
     def test_every_card_agrees_with_the_rows_behind_it(self):
         """The check that would have caught it. For every bucket and every
         month the page can show, the figure money() prints and the rows

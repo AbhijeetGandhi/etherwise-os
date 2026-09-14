@@ -123,6 +123,14 @@ QUERY_PARAMS: dict = {
     # /api/money/transactions (and the Upwork funnel's month cohort)
     "bucket": "pnl bucket, comma-list",
     "month": "YYYY-MM",
+    # /api/money/transactions — the canonical client the Money page's "Where it
+    # came from" list GROUPS by, so the drill filters on the same key it
+    # grouped by. Not `q`: a payer's own name is often nowhere in their own row
+    # (an Upwork hourly line names the freelancer, a Wise line the legal
+    # entity), which is how four of September's ten payers drilled to nothing.
+    # Matched in Python against the row's derived client, never interpolated
+    # into SQL.
+    "who": "canonical client name, exact",
     # /api/upwork/rows — the connects drill's kind (open vocabulary, SQL-bound:
     # the rail's kinds grow with the page; a whitelist would go stale)
     "kind": "connects_history.kind",

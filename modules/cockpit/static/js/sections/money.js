@@ -317,6 +317,7 @@ export async function render(root, ctx) {
     const filters = {};
     if (spec.buckets) filters.bucket = spec.buckets.join(",");
     if (spec.source) filters.source = spec.source;
+    if (spec.who) filters.who = spec.who;
     if (spec.q) filters.q = spec.q;
     const fixedMonth = spec.month || (spec.ranged ? oneMonth() : null);
     if (fixedMonth) filters.month = fixedMonth;
@@ -608,8 +609,15 @@ export async function render(root, ctx) {
     const fromList = el("div", "list");
     whoRows.slice(0, 8).forEach((g) => fromList.appendChild(el("button", {
       class: "li", type: "button",
+      // `who`, not `q`. This passed the payer's name to a SUBSTRING SEARCH over
+      // the description until 2026-09-14, and a name this list shows is often
+      // nowhere in the row it came from — an Upwork hourly line names the
+      // freelancer, a Wise line names the legal entity. Abhijeet clicked
+      // Beglaubigt, whose one September payment reads "(43406906) Ioannis
+      // P/Abhijeet Gandhi", and got an empty drawer. The server now filters on
+      // the same canonical client it grouped by.
       on: { click: () => drillTx({ title: `${g.who} — ${rl}`, buckets: ["revenue", "refund"],
-        ranged: true, q: g.who, subtitle: "matched on the description" }) },
+        ranged: true, who: g.who, subtitle: "every payment from this client" }) },
     }, [el("div", null, [g.who, el("span", "sub",
       `${[...g.src].map(srcWords).join(", ")} · ${g.n === 1 ? "1 payment" : g.n + " payments"}`
       + ` · last ${fmt.dateShort(g.last)}`)]),

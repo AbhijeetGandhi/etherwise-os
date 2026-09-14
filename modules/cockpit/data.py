@@ -4206,6 +4206,7 @@ def money_transactions(db_path: Optional[Path] = None, *,
                        bucket: Optional[str] = None,
                        month: Optional[str] = None,
                        source: Optional[str] = None,
+                       who: Optional[str] = None,
                        q: Optional[str] = None) -> dict:
     """Drill-down: the EXACT transactions behind a Money figure (traceability
     contract — every number is explainable). Same query set as money():
@@ -4214,8 +4215,20 @@ def money_transactions(db_path: Optional[Path] = None, *,
     minor units, never floats). Doctor-GATED like money(): no rows on RED.
 
     Filters (all optional, AND-ed): bucket (comma-list — 'revenue,refund' is the
-    Net-revenue KPI), month (YYYY-MM), source, q (case-insensitive substring over
+    Net-revenue KPI), month (YYYY-MM), source, who (the canonical client, the
+    SAME key the rows below are tagged with), q (case-insensitive substring over
     description+type). No filters = the full reconciled ledger (the explorer).
+
+    `who` EXISTS BECAUSE `q` COULD NOT DO THIS JOB. Abhijeet, 2026-09-14, on the
+    "Where it came from" list: he clicked Beglaubigt — one payment, 06 Sept,
+    right there in the list — and got "No transactions behind this figure."
+    The list groups by the canonical client below; the drill behind it re-queried
+    with `q=<that name>`, a substring search over the DESCRIPTION. An Upwork
+    hourly line reads "(43406906) Ioannis P/Abhijeet Gandhi - 20:00 hrs" and
+    never contains the word Beglaubigt; a Wise line for Hermon says "Consulting
+    Systems B.V.". Four of the ten payers on his September list — Hermon twice,
+    Dhanya S, Beglaubigt — had a name that appears nowhere in their own row.
+    Grouping by identity and filtering by text is two different questions again.
 
     Each revenue/refund row carries `w`: the canonical client, from the SAME
     `_client_key` ladder the Clients tab aggregates with. Before this the Money
@@ -4252,6 +4265,7 @@ def money_transactions(db_path: Optional[Path] = None, *,
     want_buckets = ({b.strip() for b in bucket.split(",") if b.strip()}
                     if bucket else None)
     needle = (q or "").strip().lower()
+    want_who = (who or "").strip()
     out, total_minor = [], 0
     for r in rows:
         b = r.get("pnl_bucket") or "uncategorized"
@@ -4284,7 +4298,6 @@ def money_transactions(db_path: Optional[Path] = None, *,
                                      + (r.get("type") or "")).lower():
             continue
         minor = r.get("amount_base_minor") or 0
-        total_minor += minor
         row = {"dt": (r.get("creation_dt") or "")[:10], "m": m, "cm": cash_m, "b": b,
                "u": usd(minor), "s": r.get("source") or "",
                "t": r.get("type") or "", "d": r.get("description") or ""}
@@ -4292,6 +4305,17 @@ def money_transactions(db_path: Optional[Path] = None, *,
             w = _client_key(r, title_map, id_map)  # concept; spends keep their
             if w:                                  # vendor heuristics in JS
                 row["w"] = w
+        if want_who:
+            # a row THIS function named is matched on that name; a row it could
+            # not name is left to the same text match the screen falls back to,
+            # so a vendor the JS derives is no worse off than before.
+            if row.get("w"):
+                if row["w"] != want_who:
+                    continue
+            elif want_who.lower() not in ((r.get("description") or "") + " "
+                                          + (r.get("type") or "")).lower():
+                continue
+        total_minor += minor
         out.append(row)
     out.sort(key=lambda x: x["dt"], reverse=True)
     return {"doctor": "GREEN", "blocked": False, "rows": out,
