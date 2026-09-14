@@ -2644,6 +2644,55 @@ class TestMoneyDrill(unittest.TestCase):
         self.assertFalse(any(r["dt"] == "2026-07-02" for r in july["rows"]))
         self.assertEqual(june["rows"][0]["m"], "2026-06")   # attributed month
 
+    def test_a_row_billed_one_month_and_paid_the_next_is_in_both_halves(self):
+        """Abhijeet, 2026-09-14: "if I click on ... two transactions that came
+        in, it shows no transactions to show, but on the main [KPI] card, it
+        shows there are two."
+
+        money() attributes by pnl_month -> billed_dt -> creation_dt; the drill
+        behind it attributed by pnl_month -> creation_dt and never read
+        billed_dt. Upwork bills hourly work on a Monday and pays it out about
+        ten days later, so the two months differ on most agency rows — $825.83
+        of his agency earnings, billed 23 Aug and paid 2 Sep, were counted in
+        August's card and listed in September's drill and appeared in neither's
+        other half. The fixture had no billed_dt on any row, which is why every
+        existing drill test passed while the live screen contradicted itself."""
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " source, description, amount_minor, amount_base_minor,"
+                " currency, pnl_bucket, creation_dt, billed_dt) VALUES"
+                " ('straddle','kstraddle','Hourly Earning','Upwork-MCP',"
+                " 'Agency earnings for Aug 17-Aug 23', 82583, 82583, 'USD',"
+                " 'revenue','2026-09-02T00:00:00+0000','2026-08-23T00:00:00+0000')")
+        m = data.money(self.db_path, today="2026-09-15")
+        bar = {x["month"]: x["usd"] for x in m["revenue"]["by_month"]}
+        for month in ("2026-08", "2026-09"):
+            d = data.money_transactions(self.db_path, bucket="revenue", month=month)
+            self.assertEqual(d["sum_usd"], bar.get(month, 0.0), month)
+        aug = data.money_transactions(self.db_path, bucket="revenue", month="2026-08")
+        sep = data.money_transactions(self.db_path, bucket="revenue", month="2026-09")
+        # billed in August: it belongs to August's card AND August's drill
+        self.assertTrue(any(r["dt"] == "2026-09-02" for r in aug["rows"]))
+        self.assertFalse(any(r["dt"] == "2026-09-02" for r in sep["rows"]))
+        row = next(r for r in aug["rows"] if r["dt"] == "2026-09-02")
+        self.assertEqual(row["m"], "2026-08")     # attributed (billed) month
+        self.assertEqual(row["cm"], "2026-09")    # the month cash arrived
+
+    def test_every_card_agrees_with_the_rows_behind_it(self):
+        """The check that would have caught it. For every bucket and every
+        month the page can show, the figure money() prints and the rows
+        money_transactions() returns for that same pair must agree to the cent
+        — which is only true while both read one definition of the month."""
+        m = data.money(self.db_path, today="2026-06-15")
+        for month in m["months"]:
+            for bucket in m["buckets"]:
+                d = data.money_transactions(self.db_path, bucket=bucket, month=month)
+                rows = round(sum(r["u"] for r in d["rows"]), 2)
+                self.assertEqual(d["sum_usd"], rows, f"{bucket} {month}")
+                self.assertTrue(all(r["m"] == month for r in d["rows"]),
+                                f"{bucket} {month}")
+
     def test_bucket_drills_sum_to_waterfall_lines(self):
         m = data.money(self.db_path, today="2026-06-15")
         for b, total in m["buckets"].items():

@@ -4055,23 +4055,7 @@ def money(db_path: Optional[Path] = None,
     def usd(minor):                           # int minor -> 2dp float for the UI
         return round(float(fmoney.from_minor(int(minor or 0))), 2)
 
-    def mo(r):
-        """The month we BILLED it — what the monthly P&L is split by.
-
-        Abhijeet, 2026-08-27: "I wanna see both — how much money we billed to
-        the clients in a month, and actual receivables to the account in that
-        month." Upwork's CSV carries only the PAYOUT date, so until migration
-        037 there was one date and "revenue this month" silently meant cash.
-        `billed_dt` is Upwork's own invoice instant; NULL falls back to the
-        payment date, so a row whose invoice date we do not know never invents
-        a gap. `pnl_month` is still the manual override and still wins.
-        Cash and all-time totals are unaffected — `cash_mo` answers those."""
-        return (r.get("pnl_month")
-                or (r.get("billed_dt") or r.get("creation_dt") or "")[:7])
-
-    def cash_mo(r):
-        """The month the money actually reached the account."""
-        return (r.get("creation_dt") or "")[:7]
+    mo, cash_mo = _pnl_month_of, _cash_month_of
 
     # revenue = the pnl 'revenue' bucket (base-USD), MTD-vs-same-day-last-month
     def rev_minor(pred):
@@ -4191,6 +4175,33 @@ def money(db_path: Optional[Path] = None,
     }
 
 
+def _pnl_month_of(r: dict) -> str:
+    """The month we BILLED a row — what the monthly P&L is split by.
+
+    Abhijeet, 2026-08-27: "I wanna see both — how much money we billed to the
+    clients in a month, and actual receivables to the account in that month."
+    Upwork's CSV carries only the PAYOUT date, so until migration 037 there was
+    one date and "revenue this month" silently meant cash. `billed_dt` is
+    Upwork's own invoice instant; NULL falls back to the payment date, so a row
+    whose invoice date we do not know never invents a gap. `pnl_month` is the
+    manual override and still wins.
+
+    MODULE-LEVEL ON PURPOSE. This lived as a closure inside money() while the
+    drill behind those same figures kept its own two-step ladder, and the two
+    disagreed for every row billed in one month and paid in the next — which on
+    Upwork hourly work is most of them. Abhijeet, 2026-09-14: "it shows no
+    transactions to show, but on the main [KPI] card, it shows there are two."
+    A number and the rows behind it must come from one definition or they are
+    answering different questions."""
+    return (r.get("pnl_month")
+            or (r.get("billed_dt") or r.get("creation_dt") or "")[:7])
+
+
+def _cash_month_of(r: dict) -> str:
+    """The month the money actually reached the account."""
+    return (r.get("creation_dt") or "")[:7]
+
+
 def money_transactions(db_path: Optional[Path] = None, *,
                        bucket: Optional[str] = None,
                        month: Optional[str] = None,
@@ -4229,7 +4240,7 @@ def money_transactions(db_path: Optional[Path] = None, *,
     try:
         rows = [dict(r) for r in conn.execute(
             "SELECT source, type, description, pnl_bucket, amount_base_minor,"
-            " creation_dt, pnl_month, assignment_company, canonical_key"
+            " creation_dt, billed_dt, pnl_month, assignment_company, canonical_key"
             " FROM transactions WHERE canonical_key IS NOT NULL")]
         title_map, id_map = _contract_maps(conn)
     finally:
@@ -4244,8 +4255,25 @@ def money_transactions(db_path: Optional[Path] = None, *,
     out, total_minor = [], 0
     for r in rows:
         b = r.get("pnl_bucket") or "uncategorized"
-        # pnl_month accrual override wins for the month a row is attributed to
-        m = r.get("pnl_month") or (r.get("creation_dt") or "")[:7]
+        # THE SAME LADDER money() USES. Abhijeet, 2026-09-14: "if I click on ...
+        # two transactions that came in, it shows no transactions to show, but
+        # on the main [KPI] card, it shows there are two."
+        #
+        # He was reading a real contradiction. money() attributes a row by
+        # pnl_month -> billed_dt -> creation_dt (migration 037, his "I wanna see
+        # both" — billed beside received). This drill attributed by pnl_month ->
+        # creation_dt and never looked at billed_dt, so every row whose INVOICE
+        # month differs from its PAYOUT month was counted by the card and hidden
+        # by the drill behind it. Upwork bills hourly work on a Monday and pays
+        # it out about ten days later, so those two months differ constantly —
+        # and it bit the AGENCY side hardest, which is exactly where he saw it:
+        # $825.83 of agency earnings billed 23 Aug and paid 2 Sep sat in
+        # August's card and in September's drill, in neither's other half.
+        #
+        # One ladder, defined once, or the card and the rows behind it are
+        # answering two different questions.
+        m = _pnl_month_of(r)
+        cash_m = (r.get("creation_dt") or "")[:7]
         if want_buckets is not None and b not in want_buckets:
             continue
         if month and m != month:
@@ -4257,7 +4285,7 @@ def money_transactions(db_path: Optional[Path] = None, *,
             continue
         minor = r.get("amount_base_minor") or 0
         total_minor += minor
-        row = {"dt": (r.get("creation_dt") or "")[:10], "m": m, "b": b,
+        row = {"dt": (r.get("creation_dt") or "")[:10], "m": m, "cm": cash_m, "b": b,
                "u": usd(minor), "s": r.get("source") or "",
                "t": r.get("type") or "", "d": r.get("description") or ""}
         if b in ("revenue", "refund"):        # client attribution is a revenue
