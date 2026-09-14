@@ -160,8 +160,22 @@ export function whoOf(x) {
   if (m) return m[1].replace(/\s+(CYBS|SI)\b.*/, "").trim().slice(0, 26);
   m = d.match(/^(?:NEFT|RTGS)\/[^/]+\/([^/]+)\//);
   if (m) return m[1].trim().slice(0, 26);
-  m = d.match(/^IMPS[^/]*\/[^/]*\/[^/]*\/([^/]+)/);
-  if (m) return m[1].trim().slice(0, 26);
+  // IMPS narrations come in two shapes and the counterparty sits in a
+  // different field in each:
+  //   IMPS-OPM/Fund Trf/<ref>/<NAME>/<acct+bank>/<note>     (older)
+  //   IMPS[-OPM]/<ref>/<NAME>/<IFSC>/<acct4>/<note>          (newer)
+  // A fixed field number read the second shape's IFSC, so "HDFC0000240" stood
+  // in as the payer on seven revenue rows — Wise's Indian rails, whose real
+  // name is one field earlier (VISAPAYMENTSLIM / WISEPAYMENTSLIM). 26 rows
+  // across revenue, payroll, opex and owner draws were labelled with a routing
+  // code. Take the first field that reads like a name instead.
+  m = (x.d || "").match(/^IMPS[^/]*\/(.+)$/i);
+  if (m) {
+    const part = m[1].split("/").map((s) => s.trim()).find(
+      (s) => s && !/^\d+$/.test(s) && !/^[A-Z]{4}0[A-Z0-9]{6}$/i.test(s)
+             && !/^fund\s*trf$/i.test(s));
+    if (part) return part.slice(0, 26);
+  }
   if (d.startsWith("UPI")) return "UPI payments";
   if (d.includes("EMI")) return "Loan EMI";
   m = (x.d || "").match(/^\(\d+\)\s*([^-]+?)\s*-/);            // Upwork hourly: client

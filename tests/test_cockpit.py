@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -2844,6 +2845,91 @@ def seed_chart_jobs(db_path):
                  f"{m}-10T04:00:00+00:00",
                  f"{m}-10T04:05:00+00:00" if score else None,
                  "Skipped" if skip else "Scored"))
+
+
+class TestPayerLabels(unittest.TestCase):
+    """money.js `whoOf` — the name the Money page prints for a row the server
+    could not attribute to a client.
+
+    Abhijeet's Money page listed "HDFC0000240" as a payer. That is an IFSC
+    routing code, not a person. IMPS narrations come in two shapes and the
+    counterparty sits in a different field in each, so a fixed field number was
+    right for the older shape and read the bank code in the newer one: 26 rows
+    across revenue, payroll, opex and owner draws carried a routing code where
+    a name belongs, 7 of them revenue (Wise's Indian rails — VISAPAYMENTSLIM,
+    WISEPAYMENTSLIM).
+
+    Driven under node against the shipped module, on real narrations from his
+    ledger. `whoOf` is pure, but money.js's import chain bootstraps the page at
+    load, so the function is lifted out of the source by its own house-style
+    end marker rather than imported."""
+
+    # (narration, the name that belongs on the screen)
+    CASES = (
+        # the newer shape: IMPS[-OPM]/<ref>/<NAME>/<IFSC>/<acct4>/<note>
+        ("IMPS/616221595127/VISAPAYMENTSLIM/HDFC0000240/6389/RDAVostroFIRINW",
+         "VISAPAYMENTSLIM"),
+        ("IMPS/612593432077/APIBankingEB/NESF0SLCUPI/6172/Payout", "APIBankingEB"),
+        ("IMPS-OPM/619014665543/ABHIJEET ASHOK GANDHI/PUNB0050300/6944/Stocks",
+         "ABHIJEET ASHOK GANDHI"),
+        ("IMPS-OPM/618018376218/TRUPTI ASHOK GANDHI/SBIN0007484/8398/",
+         "TRUPTI ASHOK GANDHI"),
+        # the older shape: IMPS-OPM/Fund Trf/<ref>/<NAME>/<acct+bank>/<note>
+        ("IMPS-OPM/Fund Trf/427413070140/Abhijeet Ashok Gandhi/0503001500016944PUNB/",
+         "Abhijeet Ashok Gandhi"),
+        ("IMPS-OPM/Fund Trf/424411118289/Ms SHRUTI DEEPAK DHUMNE/33393764496SBIN/",
+         "Ms SHRUTI DEEPAK DHUMNE"),
+        ("IMPS-OPM/Fund Trf/425015696175/Techeshta/919020077606805UTIB/Bridely",
+         "Techeshta"),
+        # the branches either side of it, unchanged
+        ("NEFT/IDFB6246M6253929/RANJANA ASHOK GANDHI/BARB0KOTHRU/Salary august",
+         "RANJANA ASHOK GANDHI"),
+    )
+
+    DRIVER = r"""
+const fs = require("fs");
+const src = fs.readFileSync(process.argv[2], "utf8");
+const start = src.indexOf("export function whoOf(");
+if (start < 0) { console.error("whoOf not found"); process.exit(2); }
+const end = src.indexOf("\n}\n", start);          // house style: closing brace at column 0
+const body = src.slice(start + "export ".length, end + 3);
+const whoOf = new Function(body + "; return whoOf;")();
+console.log(JSON.stringify(JSON.parse(process.argv[3]).map((r) => whoOf(r))));
+"""
+
+    def _run(self, rows):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        js = (Path(__file__).resolve().parents[1] / "modules" / "cockpit" / "static"
+              / "js" / "sections" / "money.js")
+        with tempfile.TemporaryDirectory() as td:
+            drv = Path(td) / "who.cjs"
+            drv.write_text(self.DRIVER)
+            r = subprocess.run([node, str(drv), str(js), json.dumps(rows)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr[:600])
+            return json.loads(r.stdout)
+
+    def test_a_bank_routing_code_is_never_printed_as_a_payer(self):
+        got = self._run([{"d": d} for d, _ in self.CASES])
+        for (narration, want), name in zip(self.CASES, got):
+            self.assertEqual(name, want, narration)
+            self.assertNotRegex(name, r"^[A-Z]{4}0[A-Z0-9]{6}$")
+
+    def test_the_label_is_findable_in_the_row_it_came_from(self):
+        """The drill's fallback for a row the server could not name is a text
+        match over the description, so a derived label that is not IN the
+        description drills to nothing — the same failure as the `who` bug, one
+        layer down."""
+        got = self._run([{"d": d} for d, _ in self.CASES])
+        for (narration, _), name in zip(self.CASES, got):
+            self.assertIn(name.lower(), narration.lower(), narration)
+
+    def test_the_server_name_still_wins_over_any_derivation(self):
+        got = self._run([{"w": "Beglaubigt",
+                          "d": "(43406906) Ioannis P/Abhijeet Gandhi - 20:00 hrs"}])
+        self.assertEqual(got, ["Beglaubigt"])
 
 
 class TestPipelineFacts(unittest.TestCase):
