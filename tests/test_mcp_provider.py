@@ -29,7 +29,12 @@ J_OLD = "2085134559026318204"            # a post from the scraper's era
 
 
 def old_search_row():
-    return {**SEARCH_HOURLY, "id": J_OLD, "title": "Old airtable job",
+    # NOTE the neutral title: since 2026-09-23 a platform in the title exempts
+    # a job from the rate floors, and this fixture's whole job is to be the row
+    # that `rate_unstated_low_client` stops before the model. "Old airtable
+    # job" would now sail through and there would be nothing left to skip.
+    # The exemption itself is proven in test_mcp_feed and test_upwork_scoring.
+    return {**SEARCH_HOURLY, "id": J_OLD, "title": "Old backend job",
             "created_date": "2026-08-10T09:00:00+0000",
             "published_date": "2026-08-10T09:05:00+0000"}
 
@@ -281,8 +286,12 @@ class TestScanMcpProvider(McpScanCase):
         # as they would on the Chrome path (rate_unstated_low_client)
         self.assertEqual(result.metrics["scored"], 2)
         self.assertEqual(result.metrics["skipped"], 1)
-        self.assertEqual(result.metrics["drafts"], 1)              # the hot one
-        self.assertEqual(result.metrics["hot"], 1)
+        # BOTH scored rows are hot since 2026-09-23: the hot bar sits on the
+        # card floor, so "carded but not hot" is a shape that no longer exists
+        # and a scan drafts for everything it cards. J_FIXED at 21 used to be a
+        # Standard card with no draft; there is no Standard list any more.
+        self.assertEqual(result.metrics["drafts"], 2)
+        self.assertEqual(result.metrics["hot"], 2)
         rows = {r["id"]: r for r in self.rows("SELECT * FROM scored_jobs")}
         self.assertEqual(rows[J_HOURLY]["feed_source"], "mcp:smart_search")
         self.assertEqual(rows[J_FIXED]["feed_source"], "mcp:airtable")

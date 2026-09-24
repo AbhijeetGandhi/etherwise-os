@@ -29,12 +29,17 @@ class TestHardRules(unittest.TestCase):
     def test_clean_job_passes(self):
         self.assertIsNone(scoring.hard_rule_skip(job()))
 
+    # NOTE on `title=`: since 2026-09-23 a platform in the TITLE exempts a job
+    # from the rate floors, and the shared fixture's title is "Make.com
+    # Automation Build". Every rate test therefore states a neutral title —
+    # otherwise it would be asserting the exemption, not the floor.
     def test_hourly_floor(self):
-        self.assertEqual(scoring.hard_rule_skip(job(hourly_max=25.0)),
-                         "hourly_below_30")
+        self.assertEqual(
+            scoring.hard_rule_skip(job(title="Backend Developer", hourly_max=25.0)),
+            "hourly_below_30")
 
     def test_fixed_floor(self):
-        j = job(contract_type="Fixed", hourly_max=None, fixed_budget=300.0)
+        j = job(title="Backend Developer", contract_type="Fixed", hourly_max=None, fixed_budget=300.0)
         self.assertEqual(scoring.hard_rule_skip(j), "fixed_below_500")
 
     # ── rate-unstated hourly → option B (2026-07-16) ─────────────────────────
@@ -47,7 +52,8 @@ class TestHardRules(unittest.TestCase):
         self.assertIsNone(scoring.hard_rule_skip(j))
 
     def test_rate_unstated_unproven_client_is_skipped(self):
-        j = job(hourly_min=None, hourly_max=None, client_total_spent=200.0,
+        j = job(title="Backend Developer", hourly_min=None, hourly_max=None,
+                client_total_spent=200.0,
                 client_payment_verified=False, client_hires=0)
         self.assertEqual(scoring.hard_rule_skip(j), "rate_unstated_low_client")
 
@@ -58,20 +64,31 @@ class TestHardRules(unittest.TestCase):
         self.assertIsNone(scoring.hard_rule_skip(j))
 
     def test_rate_unstated_verified_but_never_hired_is_skipped(self):
-        j = job(hourly_min=None, hourly_max=None, client_total_spent=0.0,
+        j = job(title="Backend Developer", hourly_min=None, hourly_max=None,
+                client_total_spent=0.0,
                 client_payment_verified=True, client_hires=0)
         self.assertEqual(scoring.hard_rule_skip(j), "rate_unstated_low_client")
 
     def test_stated_low_rate_still_skips_as_below_30(self):
         # a rate WAS given and it's genuinely low — unchanged, and NOT the
         # rate-unstated path even for a proven spender
-        j = job(hourly_min=15.0, hourly_max=20.0, client_total_spent=200_000.0)
+        j = job(title="Backend Developer", hourly_min=15.0, hourly_max=20.0,
+                client_total_spent=200_000.0)
         self.assertEqual(scoring.hard_rule_skip(j), "hourly_below_30")
 
     def test_no_placeholder_escape_even_for_whales(self):
-        j = job(contract_type="Fixed", hourly_max=None, fixed_budget=50.0,
-                client_total_spent=200_000.0)
+        j = job(title="Backend Developer", contract_type="Fixed", hourly_max=None,
+                fixed_budget=50.0, client_total_spent=200_000.0)
         self.assertEqual(scoring.hard_rule_skip(j), "fixed_below_500")
+
+    def test_the_same_placeholder_budget_passes_when_he_sells_the_tool(self):
+        """The other half of the rule above, and the reason it moved: a $50
+        "Airtable Expert" post is a client who has not thought about price yet,
+        not a client offering $50 for the work. He has bid on four of these."""
+        j = job(title="Airtable Expert", contract_type="Fixed", hourly_max=None,
+                fixed_budget=50.0, client_total_spent=0.0,
+                client_payment_verified=False, client_hires=0)
+        self.assertIsNone(scoring.hard_rule_skip(j))
 
     # n8n rule REFINED 2026-06-12 (Abhijeet): primary-subject-only.
     def test_n8n_title_start_skips(self):
@@ -251,58 +268,80 @@ class TestPlatformGateAndWeights(unittest.TestCase):
         return {"title": title, "description": desc, "contract_type": "Hourly",
                 "hourly_min": 40.0, "hourly_max": 80.0}
 
-    def test_his_own_category_in_the_title_beats_the_gate(self):
-        """Abhijeet, 2026-09-08: "make sure that if something says AI automation
-        develoepr it is not skipped and then you make decision based on the
-        actual descipriton for." The first cut proved him right — "AI Automation
-        Specialist for Business Solutions" scored 30, he bid on it, and it named
-        no platform anywhere. The title buys it a reading, not a pass."""
-        body = ("Build autonomous agents in Python with Claude and GPT-4 on "
-                "AWS. Strong backend and API design required. " * 4)
-        for title in ("AI Automation Developer", "Systems Integration Lead",
-                      "Workflow Engineer for Operations"):
-            self.assertIsNone(scoring.hard_rule_skip(self._job(title, body)), title)
-        # ...and the exemption is a door, not a hole: the trades next door are
-        # still skipped even when they say automation.
-        self.assertEqual(
-            scoring.hard_rule_skip(self._job("Marketing Automation Specialist", body)),
-            "off_domain_title")
+    def test_the_two_rules_of_08_sep_are_gone(self):
+        """Abhijeet, 2026-09-23: "can you roll back the recent changes ... with
+        current filter seems like lot of important jobs are also not getting
+        scored."
 
-    def test_a_job_naming_no_platform_he_works_in_never_reaches_the_model(self):
-        """"claude" appeared in 182 hot cards and produced zero applications;
-        so did "full stack", "api" and "voice". They are AI-engineering posts,
-        and he is a no-code systems consultant."""
-        j = self._job("Senior AI Engineer - Build Autonomous AI Agents",
-                      "We need a senior engineer to build agentic systems in "
-                      "Python with Claude and GPT-4, deploying to AWS. Strong "
-                      "backend and API design skills required. " * 4)
-        self.assertEqual(scoring.hard_rule_skip(j), "no_platform_named")
-
-    def test_the_same_job_passes_the_moment_it_names_one(self):
-        j = self._job("Senior AI Engineer - Build Autonomous AI Agents",
-                      "We need a senior engineer to build agentic systems on "
-                      "top of our Airtable base and Make.com scenarios. " * 4)
-        self.assertIsNone(scoring.hard_rule_skip(j))
-
-    def test_an_ai_vendor_name_is_not_a_platform(self):
-        """Adding openai/gpt/claude to the vocabulary passes 218 more cards and
-        keeps exactly the same 47 of his 50 applications. A model vendor says
-        nothing about whether a client is buying configuration work."""
-        j = self._job("LLM Application Developer",
-                      "Looking for someone to wire OpenAI and Claude into our "
-                      "own product. TypeScript, Next.js, Postgres. " * 4)
-        self.assertEqual(scoring.hard_rule_skip(j), "no_platform_named")
-
-    def test_the_trades_next_door_are_skipped_on_the_title_alone(self):
-        """212 cards since June across voice / marketing / funnel / content,
-        zero applications between them. Title only: the words appear harmlessly
-        inside a body ("...for our marketing team") and would over-fire."""
-        for title in ("AI Voice Agent for Home Services",
+        He was right to want them gone and wrong about why, and the measurement
+        is worth keeping: across the 90 proposals he has sent since 1 June,
+        `off_domain_title` and `no_platform_named` hid EXACTLY ZERO jobs he went
+        on to bid on, while withholding 47 a day from the model. A filter that
+        costs reach and has never once saved him from a job he wanted is not
+        paying for itself. The jobs they used to kill now reach the scorer,
+        which grades them 1-2 on skill fit and writes down why."""
+        body = ("We need a senior engineer to build agentic systems in Python "
+                "with Claude and GPT-4, deploying to AWS. Strong backend and "
+                "API design skills required. " * 4)
+        for title in ("Senior AI Engineer - Build Autonomous AI Agents",
+                      "LLM Application Developer",
+                      "AI Voice Agent for Home Services",
                       "Marketing Automation Specialist",
                       "Funnel Builder and Manager",
-                      "Content Production System"):
-            j = self._job(title, "Airtable and Make.com throughout. " * 20)
-            self.assertEqual(scoring.hard_rule_skip(j), "off_domain_title", title)
+                      "Content Production System",
+                      "SEO / AEO Implementation Specialist"):
+            self.assertIsNone(scoring.hard_rule_skip(self._job(title, body)), title)
+
+    def test_the_rules_a_number_can_settle_are_still_rules(self):
+        """What came out was judgment the model does better. What stays is
+        arithmetic: rate, budget, timezone, onsite, n8n. Removing a judgment
+        rule is not an argument for removing these."""
+        cheap = dict(self._job("Backend Developer", "Build an API. " * 40),
+                     hourly_min=10.0, hourly_max=15.0)
+        self.assertEqual(scoring.hard_rule_skip(cheap), "hourly_below_30")
+        blank = dict(self._job("Backend Developer", "Build an API. " * 40),
+                     hourly_min=None, hourly_max=None)
+        self.assertEqual(scoring.hard_rule_skip(blank), "rate_unstated_low_client")
+        small = dict(self._job("Backend Developer", "Build an API. " * 40),
+                     contract_type="Fixed", hourly_min=None, hourly_max=None,
+                     fixed_budget=150.0)
+        self.assertEqual(scoring.hard_rule_skip(small), "fixed_below_500")
+
+    def test_his_own_tools_in_the_title_outrank_the_rate_floors(self):
+        """THE RULES THAT WERE ACTUALLY HIDING HIS WORK. Ten of the 90 jobs he
+        bid on since 1 June were hard-gated, and not one of them by the 08 Sep
+        rules — six by `hourly_below_30`, three by `rate_unstated_low_client`,
+        one by n8n. Four had "Airtable" in the title: "Airtable Expert",
+        "Airtable Developer & Interface Expert", "Airtable Setup Specialist".
+        He bid on them anyway and negotiated up, so the posted rate is the
+        client's opening position, not a fact about the work."""
+        body = "Set up our base and the interfaces on top of it. " * 10
+        for title in ("Airtable Setup Specialist",
+                      "GoHighLevel Pipeline Setup for Cleaning Business",
+                      "HubSpot Marketing Operations Specialist"):
+            cheap = dict(self._job(title, body), hourly_min=10.0, hourly_max=15.0)
+            self.assertIsNone(scoring.hard_rule_skip(cheap), title)
+            blank = dict(self._job(title, body), hourly_min=None, hourly_max=None)
+            self.assertIsNone(scoring.hard_rule_skip(blank), title)
+            small = dict(self._job(title, body), contract_type="Fixed",
+                         hourly_min=None, hourly_max=None, fixed_budget=150.0)
+            self.assertIsNone(scoring.hard_rule_skip(small), title)
+
+    def test_the_exemption_reads_the_title_only(self):
+        """A platform mentioned in passing in the body is not a client buying
+        configuration of it. The exemption is a door, not a hole — the same
+        shape as every other title rule here."""
+        j = dict(self._job("Backend Developer",
+                           "You will occasionally touch our Airtable base. " * 10),
+                 hourly_min=10.0, hourly_max=15.0)
+        self.assertEqual(scoring.hard_rule_skip(j), "hourly_below_30")
+
+    def test_n8n_still_wins_over_the_exemption(self):
+        """His exclusion, 2026-06-10, and it is not a rate rule. A title that
+        starts with n8n is out whatever else it names."""
+        j = self._job("n8n Automation Expert for Airtable Sync",
+                      "Build it in n8n. " * 30)
+        self.assertEqual(scoring.hard_rule_skip(j), "n8n_exclusion")
 
     def test_a_body_too_thin_to_read_is_never_gated_on_absence(self):
         """Silence is not evidence. ~200 scored rows have almost no body; they
@@ -383,22 +422,20 @@ class TestPlatformGateAndWeights(unittest.TestCase):
         self.assertEqual(scoring._raw_fit(4), 4)        # ambiguous -> the grade
         self.assertEqual(scoring._raw_fit(None), 0.0)
 
-    def test_his_platform_in_the_title_outranks_the_off_domain_rule(self):
+    def test_the_job_that_started_all_of_this_still_reaches_the_model(self):
         """Abhijeet, 2026-09-09, on "Airtable + Make.com Expert - Ecommerce
         Operations, Production Dashboard, and Marketing Hub": "I don't know why
-        this is not even showing up". The word `marketing` matched inside the
-        NAME OF A THING THEY WANT BUILT. When his own tools are in the title,
-        the model reads the body and decides."""
+        this is not even showing up". It was hard-skipped because `marketing`
+        matched inside the NAME OF A THING THEY WANT BUILT.
+
+        That rule is gone now (2026-09-23) and this job would pass on the
+        platform alone, so the assertion is deliberately kept: it is the one
+        case that has cost him a real job, and a future gate that re-breaks it
+        should fail here first. It scored 28."""
         body = "Ecommerce ops build. " * 30
         ok = self._job("Airtable + Make.com Expert - Ecommerce Operations, "
                        "Production Dashboard, and Marketing Hub", body)
         self.assertIsNone(scoring.hard_rule_skip(ok))
-        # no platform in the title and it is still the trade next door
-        for title in ("Marketing Automation Specialist",
-                      "AI Voice Agent for Home Services",
-                      "Funnel Builder and Manager"):
-            self.assertEqual(scoring.hard_rule_skip(self._job(title, body)),
-                             "off_domain_title", title)
 
     def test_the_exemplars_anchor_every_grade_and_say_why(self):
         """The old file had three skill-fit examples, nothing below grade 3,

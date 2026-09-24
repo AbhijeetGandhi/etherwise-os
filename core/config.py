@@ -189,7 +189,16 @@ INTERRUPT_POLICY = ("hot_lead", "system_failure") # ONLY these email immediately
 #   bar 23: 87/wk, 89% · bar 24: 73/wk, 81% · bar 25: 60/wk, 71%
 # The knee is right here; tightening past 24 costs an application for every
 # three cards it saves.
-HOT_LEAD_THRESHOLD = 23
+# 2026-09-23 — HIS CALL, AFTER READING A WEEK OF IT: 19. The note above ended
+# "23 is a translation of a number calibrated on bad data; it deserves
+# confirmation from real reading." It did not survive the reading. At 23 the
+# Hot list ran 6.1 cards a day and 110 jobs in ten days sat in Low/Standard
+# unread, among them "Softr Airtable Make.com Platform Build" (22),
+# "GoHighLevel Automation & Integration Architect Expert" (22) and a $125,000
+# fixed "Claude / AI Integration Specialist" (22). Against his own 80 scored
+# proposals: bar 23 hides 9, bar 19 hides 2.
+#   bar 19: 12.9/day, 98% · bar 20: 10.6/day, 96% · bar 23: 6.1/day, 89%
+HOT_LEAD_THRESHOLD = 19
 # Loom was hot+6 and stays hot+5: ~31 cards a week, the ones worth a video.
 LOOM_FLAG_THRESHOLD = 28
 
@@ -212,11 +221,21 @@ LOOM_FLAG_THRESHOLD = 28
 # Re-cut for v3.0 (see HOT_LEAD_THRESHOLD). The floor rose most: 54% of the
 # cards he was being shown sat BELOW the old hot bar and produced 1 application
 # in 1,475 — the Low and Standard lists were the noise he was complaining about.
+# 2026-09-23 — THE LADDER IS COLLAPSED, and that is the point. With the hot bar
+# at the card floor there is no gap left for a Low or Standard card to land in:
+# everything worth carding is worth him reading, and the two lists that used to
+# absorb the difference stop receiving new cards. That is the decision, not a
+# side effect — those lists produced ONE application in 1,475 cards, and a queue
+# he does not read is worse than no queue, because it looks like coverage.
+# `score_band` tests loom -> hot -> standard -> floor in that order, so 'low'
+# and 'standard' simply become unreachable rather than needing special cases.
+# The guard below is now NON-decreasing: equal cuts are a legitimate shape
+# (a collapsed band), out-of-order cuts are still a bug.
 SCORE_FLOOR = 19
-SCORE_STANDARD = 21
+SCORE_STANDARD = 19
 SCORE_BANDS = (SCORE_FLOOR, SCORE_STANDARD, HOT_LEAD_THRESHOLD, LOOM_FLAG_THRESHOLD)
-if list(SCORE_BANDS) != sorted(set(SCORE_BANDS)):
-    raise ValueError(f"SCORE_BANDS must be strictly increasing: {SCORE_BANDS}")
+if list(SCORE_BANDS) != sorted(SCORE_BANDS):
+    raise ValueError(f"SCORE_BANDS must be non-decreasing: {SCORE_BANDS}")
 
 
 def score_band(score) -> str:
@@ -238,11 +257,15 @@ def score_band(score) -> str:
 def score_band_label(name: str) -> str:
     """Human label for a band name, derived from the live cuts ('16-21',
     '22+', '<8'...) so no report or chart hardcodes a number."""
+    def span(lo, hi):
+        # a collapsed band has no scores in it and must not print a backwards
+        # range like "19-18" — it says so instead.
+        return f"{lo}-{hi - 1}" if hi > lo else "(retired)"
     labels = {
         "loom": f"{LOOM_FLAG_THRESHOLD}+",
-        "hot": f"{HOT_LEAD_THRESHOLD}-{LOOM_FLAG_THRESHOLD - 1}",
-        "standard": f"{SCORE_STANDARD}-{HOT_LEAD_THRESHOLD - 1}",
-        "low": f"{SCORE_FLOOR}-{SCORE_STANDARD - 1}",
+        "hot": span(HOT_LEAD_THRESHOLD, LOOM_FLAG_THRESHOLD),
+        "standard": span(SCORE_STANDARD, HOT_LEAD_THRESHOLD),
+        "low": span(SCORE_FLOOR, SCORE_STANDARD),
         "below": f"<{SCORE_FLOOR}",
         "unscored": "?",
     }

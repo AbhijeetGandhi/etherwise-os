@@ -71,36 +71,6 @@ _PLATFORMS_RE = re.compile(
     r"|freshdesk|intercom|mailchimp|instantly|apollo\.io|clay\.com|slack|asana"
     r"|trello|wordpress|bubble\.io|supabase|\bwix\b|close\.com|copper crm", re.I)
 
-# Trades that are next door to his and are not his. Every one of these is a
-# TITLE test — the words appear harmlessly inside descriptions ("...for our
-# marketing team") and would over-fire on the body. 212 cards since June, zero
-# applications between them.
-_OFF_DOMAIN_TITLE_RE = re.compile(
-    r"\bvoice\b|marketing|funnel|\bads\b|\bseo\b|copywrit|\bcontent\b", re.I)
-
-# HIS OWN CATEGORY OVERRIDES THE PLATFORM GATE. Abhijeet, 2026-09-08: "make sure
-# that if something says AI automation develoepr it is not skipped and then you
-# make decision based on the actual descipriton for."
-#
-# He is right, and the first cut of the gate proved it: "AI Automation
-# Specialist for Business Solutions" scored 30 and he bid on it, and it named
-# no platform in either field. A post that calls itself automation, integration
-# or workflow work is his trade by its own description; whether it is REALLY
-# his is a judgment about the body, and judgment is what the scorer is for. So
-# the title exempts it from the gate and it goes to the model, which grades
-# skill fit on what the description actually says — and a bad one then dies at
-# the score, which is the right place for a close call to die.
-#
-# Deliberately these three words and no more. Adding systems / ops / no-code /
-# crm lets 99 further cards through and recovers not one additional
-# application; the exemption is a door, not a hole.
-_CATEGORY_TITLE_RE = re.compile(r"automation|integrat|workflow", re.I)
-
-# A description too thin to read cannot be used as evidence of ABSENCE. ~200 of
-# 4,451 scored rows have almost no body; they fall through to the model rather
-# than being dropped on a technicality (quarantine over silent drop).
-_MIN_DESC_FOR_GATE = 200
-
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -156,10 +126,28 @@ def _proven_spender(job: dict) -> bool:
 
 def hard_rule_skip(job: dict) -> Optional[str]:
     """Skip reason or None. Title/description only for n8n — tags do NOT
-    trigger (2026-06-10 decision). No placeholder escape (v4.9)."""
+    trigger (2026-06-10 decision). No placeholder escape (v4.9).
+
+    2026-09-23: the two rules added on 08 Sep (`off_domain_title`,
+    `no_platform_named`) are GONE at his instruction, and the rate floors now
+    yield to a platform in the title. See the block below for what the numbers
+    said; the short version is that the gate had stopped being a filter and
+    started being the reason his queue was empty."""
     title = job.get("title") or ""
-    desc = job.get("description") or ""
-    text = f"{title}\n{desc}"
+    text = title + "\n" + (job.get("description") or "")
+    # HIS OWN TOOLS IN THE TITLE OUTRANK THE RATE FLOORS. Abhijeet, 2026-09-23:
+    # "with current filter seems like lot of important jobs are also not getting
+    # scored." Measured against the only ground truth there is — the 90 proposals
+    # he has actually sent since 1 June — the RATE rules hid ten jobs he went on
+    # to bid on: "Airtable Expert", "Airtable Developer & Interface Expert",
+    # "Airtable Setup Specialist", "Process Optimization & Automation Expert",
+    # "AI Automation Specialist" among them, every one killed for a posted rate
+    # under $30 or for no rate at all. He bid anyway and negotiated up, which
+    # says a posted rate is a client's opening position, not a fact about the
+    # work. So when the title names a platform he sells, the number stops being
+    # a veto: the job goes to the model, budget is graded there, and a genuinely
+    # cheap job dies at the score — which is where a close call belongs.
+    core_stack_in_title = bool(_PLATFORMS_RE.search(title))
     if _N8N_TITLE_START_RE.search(title):
         return "n8n_exclusion"
     if _N8N_RE.search(text) and not _OTHER_TOOLS_RE.search(text):
@@ -169,36 +157,32 @@ def hard_rule_skip(job: dict) -> Optional[str]:
             # no rate stated: the $30 floor read a blank as $0 and killed ~370
             # jobs, 2/3 of that bucket, many of them real. Option B: let the
             # client's proven spend stand in for the absent rate.
-            if not _proven_spender(job):
+            if not (_proven_spender(job) or core_stack_in_title):
                 return "rate_unstated_low_client"
-            # proven spender + blank rate -> fall through and SCORE it
-        elif (job.get("hourly_max") or 0) < config.HARD_FLOOR_HOURLY:
+            # proven spender, or his own tools named -> fall through and SCORE it
+        elif ((job.get("hourly_max") or 0) < config.HARD_FLOOR_HOURLY
+                and not core_stack_in_title):
             return "hourly_below_30"    # a rate WAS stated, and it's too low
     elif job.get("contract_type") == "Fixed":
-        if (job.get("fixed_budget") or 0) < config.HARD_FLOOR_FIXED:
+        if ((job.get("fixed_budget") or 0) < config.HARD_FLOOR_FIXED
+                and not core_stack_in_title):
             return "fixed_below_500"
     if _NO_ASIA_RE.search(text):
         return "no_asia_timezone"
     if _ONSITE_RE.search(text):
         return "onsite_required"
-    # A PLATFORM IN THE TITLE OUTRANKS THIS. Abhijeet, 2026-09-09, on
-    # "Airtable + Make.com Expert - Ecommerce Operations, Production Dashboard,
-    # and Marketing Hub": "I don't know why this is not even showing up". It was
-    # never scored — the word `marketing` matched, inside the NAME OF A THING
-    # THEY WANT BUILT. A Marketing Hub is the object of the work, not the trade.
-    # The rule killed the single best-converting shape he has (Airtable and
-    # Make.com, both in the title) on a substring in a proper noun.
-    # When his own tools are named in the title the job goes to the model, which
-    # reads the body and grades skill fit; a GHL marketing-ops post then dies at
-    # the score, which is where a borderline call belongs. 14 of the 38 titles
-    # this rule has killed name a platform, and most of those really are
-    # marketing work — they will now cost one model call each and score low.
-    if _OFF_DOMAIN_TITLE_RE.search(title) and not _PLATFORMS_RE.search(title):
-        return "off_domain_title"       # voice / marketing / funnel / content
-    if (len(desc) >= _MIN_DESC_FOR_GATE
-            and not _CATEGORY_TITLE_RE.search(title)      # his trade: let it score
-            and not _PLATFORMS_RE.search(text)):
-        return "no_platform_named"      # an AI-engineering post, not his work
+    # THE GATE ENDS HERE. Until 2026-09-23 two more rules ran at this point:
+    # `off_domain_title` (voice / marketing / funnel / content in the title) and
+    # `no_platform_named` (a readable body naming none of his tools). Abhijeet
+    # asked for both back out, and the measurement agrees with him: across the
+    # 90 proposals he has sent since 1 June, those two rules hid exactly ZERO
+    # jobs he went on to bid on, while withholding 47 a day from the model. A
+    # filter that costs real reach and has never once saved him from a job he
+    # wanted is not paying for itself. What they were trying to do — keep
+    # AI-engineering posts out of his queue — the scorer already does: those
+    # jobs grade 1-2 on skill fit and die under the bar, with a reason written
+    # down. Judgment belongs to the model; the code keeps the rules a number can
+    # settle (rate, budget, timezone, onsite, n8n).
     return None
 
 

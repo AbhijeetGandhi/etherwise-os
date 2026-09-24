@@ -207,9 +207,12 @@ class TestSummary(ShadowScoreCase):
         with db.connect(self.db_path) as conn:
             hot, loom = config.HOT_LEAD_THRESHOLD, config.LOOM_FLAG_THRESHOLD
             # seeded RELATIVE to the live cuts: one loom, one hot-not-loom, one
-            # low; the shared trio drifts -2 with hot agreement on two
+            # under the card floor; the shared trio drifts -2 with hot agreement
+            # on two. `floor - 1` rather than `floor + 1` since 2026-09-23: the
+            # hot bar now sits ON the floor, so floor+1 is hot and there is no
+            # band between them to seed.
             for jid, score, scr in (("a1", loom + 1, None), ("a2", hot, None),
-                                    ("a3", config.SCORE_FLOOR + 1, None),
+                                    ("a3", config.SCORE_FLOOR - 1, None),
                                     ("b1", hot, hot + 2), ("b2", 12, 11),
                                     ("b3", loom - 2, loom)):
                 conn.execute("INSERT INTO mcp_shadow_scores (id, score, scraper_score,"

@@ -148,16 +148,23 @@ class TestScan(ScanPipelineCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.metrics["claimed"], 2)
         self.assertEqual(result.metrics["scored"], 2)
-        self.assertEqual(result.metrics["drafts"], 1)       # only the 24
+        # Since 2026-09-23 the hot bar sits on the card floor, so a scan drafts
+        # for everything it cards: JID_B at 21 used to be a Standard card with
+        # no draft, and there is no Standard list any more. "Carded but not hot"
+        # is still a reachable code path and is still tested — in
+        # TestScanLive.test_live_non_hot_pushes_without_email, which patches the
+        # ladder back apart to reach it.
+        self.assertEqual(result.metrics["drafts"], 2)
         self.assertEqual(result.metrics["clickup_intents"], 2)
-        self.assertEqual(result.metrics["hot"], 1)
+        self.assertEqual(result.metrics["hot"], 2)
 
         rows = {r["id"]: r for r in self.rows("SELECT * FROM scored_jobs")}
         self.assertEqual(rows[JID_A]["status"], "Drafted")
         self.assertEqual(rows[JID_A]["score"], 25)
         self.assertEqual(rows[JID_A]["loom_flag"], 1)
-        self.assertEqual(rows[JID_B]["status"], "Scored")
-        self.assertIsNone(rows[JID_B]["draft_proposal"])
+        self.assertEqual(rows[JID_B]["status"], "Drafted")
+        self.assertEqual(rows[JID_B]["loom_flag"], 0)       # hot, not loom
+        self.assertIsNotNone(rows[JID_B]["draft_proposal"])
 
         ledger = self.rows("SELECT * FROM shadow_ledger ORDER BY id")
         clickup = [r for r in ledger if r["target"] == "clickup"]
@@ -211,8 +218,12 @@ class TestScan(ScanPipelineCase):
                 " VALUES (?,?,?,?,?,datetime('now'),'Hourly',40)",
                 (JID_B, "Leftover", f"https://www.upwork.com/jobs/X_~02{JID_B}/",
                  "my_feed", "New"))
+        # below the card floor on purpose: this test is about the leftover row
+        # being PICKED UP and scored, and a score that also cards it would hide
+        # that behind a push. Relative to config so the next re-cut cannot
+        # silently turn it into a drafted row again.
         result = self.run_scan([payload(), payload(), payload()],
-                               score_map={JID_B: 20})
+                               score_map={JID_B: config.SCORE_FLOOR - 1})
         self.assertEqual(result.metrics["scored"], 1)
         self.assertEqual(self.rows("SELECT status FROM scored_jobs")[0]
                          ["status"], "Scored")
@@ -375,8 +386,16 @@ class TestScanLive(ScanPipelineCase):
         self.assertEqual(row["status"], "ClickUp Created")  # card still pushed
 
     def test_live_non_hot_pushes_without_email(self):
+        """A card below the hot bar gets pushed and sends no digest.
+
+        At the live cuts (2026-09-23) the hot bar sits ON the card floor, so no
+        score can land in that gap — the branch is unreachable from live config
+        but is NOT dead code: the collapse is a setting, and the day the ladder
+        comes back apart this path runs again. Patched apart here so it stays
+        tested either way."""
         send = mock.MagicMock()
-        result = self.run_live(send, score=21)             # standard, not hot
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 23):
+            result = self.run_live(send, score=21)         # carded, not hot
         self.assertEqual(result.status, "completed")
         self.assertIsNone(result.metrics["digest"])
         send.assert_not_called()
@@ -433,7 +452,10 @@ class TestPushRetry(ScanPipelineCase):
         self.assertEqual(result.metrics["clickup_retried"], 0)
 
     def test_live_retry_cards_the_row_and_carries_it_in_the_digest(self):
-        self.seed_uncarded(days_ago=1)                      # hot, drafted, no card
+        # seeded ABOVE the patched bar below (25 > 23), not at the live
+        # HOT_LEAD_THRESHOLD: the leftover has to stay hot inside the patch or
+        # the digest it is supposed to carry never gets built.
+        self.seed_uncarded(days_ago=1, score=25)            # hot, drafted, no card
         send = mock.MagicMock()
         calls = []
 
@@ -445,8 +467,13 @@ class TestPushRetry(ScanPipelineCase):
              mock.patch.object(sp.clickup_push, "token", return_value="tok"), \
              mock.patch.object(sp.clickup_push, "req", side_effect=fake_req), \
              mock.patch.object(sp.notify, "send_gmail", send):
-            result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
-                                   score_map={JID_A: 21})
+            # the ladder patched apart so THIS run's own row is carded but not
+            # hot — the point of the test is that the digest is carried by the
+            # RETRIED row alone. At the live collapsed cuts a carded row is
+            # always hot and the distinction could not be drawn.
+            with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 23):
+                result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                                       score_map={JID_A: 21})
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.metrics["clickup_retried"], 1)
         self.assertEqual(result.metrics["hot"], 0)          # this run's own

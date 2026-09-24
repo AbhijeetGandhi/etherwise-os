@@ -226,28 +226,45 @@ class HardRulesBehaveIdentically(unittest.TestCase):
                                                            "hourlyBudgetMax": hmax}}}}}
         return mcp_feed.normalize({"id": "x", "client": {}}, g)
 
+    # NOTE on titles: since 2026-09-23 a platform in the TITLE exempts a job
+    # from the rate floors, so these boundary cases state a neutral one. The
+    # fixture's default ("Make.com work") is kept for every rule that is not a
+    # rate rule, and exercised as the exemption in its own test below.
+    NEUTRAL = "Backend Developer"
+
     def test_hourly_floor(self):
-        self.assertEqual(scoring.hard_rule_skip(self._hourly(10, 29)),
-                         "hourly_below_30")
-        self.assertIsNone(scoring.hard_rule_skip(self._hourly(10, 30)))
-        self.assertIsNone(scoring.hard_rule_skip(self._hourly(20, 50)))
+        self.assertEqual(
+            scoring.hard_rule_skip(self._hourly(10, 29, title=self.NEUTRAL)),
+            "hourly_below_30")
+        self.assertIsNone(scoring.hard_rule_skip(self._hourly(10, 30, title=self.NEUTRAL)))
+        self.assertIsNone(scoring.hard_rule_skip(self._hourly(20, 50, title=self.NEUTRAL)))
+
+    def test_the_rate_floors_yield_to_a_platform_in_the_title(self):
+        """Through the MCP mapping as well as the scraper's — the rules must
+        agree 100%, and this one is new enough to be worth proving on both
+        sides of the bridge."""
+        self.assertIsNone(scoring.hard_rule_skip(
+            self._hourly(10, 15, title="Airtable Setup Specialist")))
+        self.assertEqual(scoring.hard_rule_skip(
+            self._hourly(10, 15, title="Backend Developer")), "hourly_below_30")
 
     def test_fixed_floor(self):
-        def fx(amount):
+        def fx(amount, title="Backend Developer"):
             g = {"data": {"marketplaceJobPosting": {
-                "id": "x", "content": {"title": "Make.com", "description": "Make.com"},
+                "id": "x", "content": {"title": title, "description": "build"},
                 "contractTerms": {"contractType": "FIXED",
                                   "fixedPriceContractTerms": {
                                       "amount": {"rawValue": str(amount)}}}}}}
             return mcp_feed.normalize({"id": "x", "client": {}}, g)
         self.assertEqual(scoring.hard_rule_skip(fx(499)), "fixed_below_500")
         self.assertIsNone(scoring.hard_rule_skip(fx(500)))
+        self.assertIsNone(scoring.hard_rule_skip(fx(499, title="Airtable Expert")))
 
     def test_rate_unstated_needs_a_proven_spender(self):
         """The blank-rate escape: unproven client skips, proven one scores."""
-        bare = self._hourly(None, None)
+        bare = self._hourly(None, None, title=self.NEUTRAL)
         self.assertEqual(scoring.hard_rule_skip(bare), "rate_unstated_low_client")
-        rich = self._hourly(None, None,
+        rich = self._hourly(None, None, title=self.NEUTRAL,
                             client_record={"spend_total": "375023.53"})
         self.assertIsNone(scoring.hard_rule_skip(rich))
 

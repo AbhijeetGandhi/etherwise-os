@@ -19,14 +19,24 @@ changed). It scores; it does not draft. The scan's own push-retry path cards
 anything scored and uncarded within CLICKUP_PUSH_RETRY_DAYS, so the card
 follows on its own.
 
+--limit/--sample, 2026-09-23: the rollback of the two 08-09 rules plus the
+core-stack exemption on the rate floors unblocks ~1,400 rows at once, and
+scoring all of them to find out what fraction are any good is the expensive way
+to learn a number a random 60 will tell you. `--sample N` draws a uniform
+sample (seeded, so the same draw is reproducible); `--limit N` takes the newest
+N. Sample to MEASURE, then run the whole thing once the number is known.
+
 Usage: PYTHONPATH=. python3 scripts/score_unblocked.py [--live] [--days 14]
                         [--reasons off_domain_title,no_platform_named]
+                        [--sample 60 | --limit 200]
 """
 from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -56,9 +66,20 @@ def main() -> int:
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--reasons", default="off_domain_title")
+    ap.add_argument("--sample", type=int, default=0,
+                    help="uniform random sample of this many (seeded)")
+    ap.add_argument("--limit", type=int, default=0, help="newest N only")
+    ap.add_argument("--seed", type=int, default=20260923)
     a = ap.parse_args()
     reasons = {x.strip() for x in a.reasons.split(",") if x.strip()}
     rows = candidates(a.days, reasons)
+    population = len(rows)
+    if a.sample and a.sample < len(rows):
+        random.Random(a.seed).shuffle(rows)
+        rows = rows[:a.sample]
+    elif a.limit:
+        rows = sorted(rows, key=lambda r: r.get("fetched_at") or "",
+                      reverse=True)[:a.limit]
     done, hot, failed = [], 0, []
     if a.live:
         for r in rows:
@@ -78,10 +99,16 @@ def main() -> int:
             hot += 1 if v["score"] >= config.HOT_LEAD_THRESHOLD else 0
             done.append({"id": r["id"], "score": v["score"],
                          "was": r["hard_rule_skip"], "title": (r["title"] or "")[:70]})
+    bands = Counter(config.score_band(d["score"]) for d in done)
+    carded = sum(1 for d in done if d["score"] >= config.SCORE_FLOOR)
     print(json.dumps({
         "mode": "LIVE" if a.live else "DRY-RUN",
-        "candidates": len(rows), "scored": len(done),
+        "population": population, "candidates": len(rows), "scored": len(done),
         "hot": hot, "hot_bar": config.HOT_LEAD_THRESHOLD, "failed": failed,
+        "bands": dict(bands),
+        "card_rate": round(carded / len(done), 3) if done else None,
+        "projected_cards_from_population":
+            round(population * carded / len(done)) if done else None,
         "rows": sorted(done, key=lambda x: -x["score"]) or
                 [{"title": (r["title"] or "")[:70], "was": r["hard_rule_skip"]}
                  for r in rows],

@@ -46,11 +46,23 @@ _LITERAL_BAND = re.compile(
 
 
 class TestConfigBands(unittest.TestCase):
-    def test_one_tuple_named_and_strictly_increasing(self):
+    def test_one_tuple_named_and_non_decreasing(self):
+        """NON-decreasing since 2026-09-23, not strictly increasing. With the
+        hot bar sitting on the card floor, two of the four cuts are equal by
+        design — the Low and Standard bands are collapsed, not misconfigured.
+        Out of ORDER is still a bug and still caught."""
         self.assertEqual(config.SCORE_BANDS,
                          (config.SCORE_FLOOR, config.SCORE_STANDARD,
                           config.HOT_LEAD_THRESHOLD, config.LOOM_FLAG_THRESHOLD))
-        self.assertEqual(list(config.SCORE_BANDS), sorted(set(config.SCORE_BANDS)))
+        self.assertEqual(list(config.SCORE_BANDS), sorted(config.SCORE_BANDS))
+
+    def test_a_collapsed_band_is_unreachable_and_says_so(self):
+        """The failure this replaces: a backwards label like "19-18" rendered
+        on a chart legend for a band no score can land in."""
+        for s in range(0, 40):
+            self.assertNotIn(config.score_band(s), ("low", "standard"), s)
+        self.assertEqual(config.score_band_label("low"), "(retired)")
+        self.assertEqual(config.score_band_label("standard"), "(retired)")
 
     def test_values_are_the_decided_ones(self):
         """Decision 1 (2026-08-25): single-source FIRST, values only after the
@@ -62,27 +74,38 @@ class TestConfigBands(unittest.TestCase):
         meaning what it was chosen to mean. 23 is the same operating point on
         the corrected scale (~87 hot cards a week, 89% of his proposals), not a
         new decision. Changing them again is a decision, and it must edit this
-        test on purpose."""
-        self.assertEqual(config.SCORE_BANDS, (19, 21, 23, 28))
+        test on purpose.
+
+        RE-CUT 2026-09-23, and this one IS a new decision — his, after reading
+        a week of the output: the hot bar drops to the card floor. At 23 the
+        list ran 6.1 cards a day while 110 jobs sat unread in Low/Standard,
+        including a "Softr Airtable Make.com Platform Build" at 22. Measured
+        against his own 80 scored proposals, bar 23 hides 9 and bar 19 hides 2.
+        Low and Standard are collapsed: everything carded is now hot."""
+        self.assertEqual(config.SCORE_BANDS, (19, 19, 19, 28))
 
     def test_band_arithmetic_and_labels(self):
-        expect = {None: "unscored", 0: "below", 18: "below", 19: "low",
-                  20: "low", 21: "standard", 22: "standard", 23: "hot",
+        expect = {None: "unscored", 0: "below", 18: "below", 19: "hot",
+                  20: "hot", 21: "hot", 22: "hot", 23: "hot",
                   27: "hot", 28: "loom", 35: "loom"}
         for score, band in expect.items():
             self.assertEqual(config.score_band(score), band, score)
         self.assertEqual(config.score_band_label("below"), "<19")
-        self.assertEqual(config.score_band_label("low"), "19-20")
-        self.assertEqual(config.score_band_label("standard"), "21-22")
-        self.assertEqual(config.score_band_label("hot"), "23-27")
+        self.assertEqual(config.score_band_label("hot"), "19-27")
         self.assertEqual(config.score_band_label("loom"), "28+")
 
     def test_band_helpers_follow_a_patched_cut(self):
-        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 25):
+        """The ladder still works when it is a ladder — patch the cuts apart and
+        the collapsed bands come back, which is what makes the collapse a
+        setting rather than a rewrite."""
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 25), \
+                mock.patch.object(config, "SCORE_STANDARD", 21):
             self.assertEqual(config.score_band(24), "standard")
             self.assertEqual(config.score_band(25), "hot")
+            self.assertEqual(config.score_band(19), "low")
             self.assertEqual(config.score_band_label("hot"), "25-27")
             self.assertEqual(config.score_band_label("standard"), "21-24")
+            self.assertEqual(config.score_band_label("low"), "19-20")
 
 
 class TestReadersFollowConfig(unittest.TestCase):
@@ -98,22 +121,22 @@ class TestReadersFollowConfig(unittest.TestCase):
                              clickup_push.LIST_LOW)
             self.assertIn("<17", clickup_push._guard(
                 {"id": "2064484440376044477", "status": "Scored", "score": 16}))
-        # live behaviour at today's values (v3.0.1 scale): 23 is the hot bar
-        self.assertEqual(clickup_push.list_for_score(23, invite=False),
-                         clickup_push.LIST_HOT)
-        self.assertEqual(clickup_push.list_for_score(30, invite=False),
-                         clickup_push.LIST_HOT)
-        self.assertEqual(clickup_push.list_for_score(21, invite=False),
-                         clickup_push.LIST_STANDARD)
-        self.assertEqual(clickup_push.list_for_score(19, invite=False),
-                         clickup_push.LIST_LOW)
+        # live behaviour at today's values (2026-09-23): the hot bar sits ON the
+        # card floor, so the Low and Standard lists receive nothing. Every card
+        # is hot or there is no card — the routing IS the collapse.
+        for score in (19, 21, 23, 30):
+            self.assertEqual(clickup_push.list_for_score(score, invite=False),
+                             clickup_push.LIST_HOT, score)
         self.assertIsNone(clickup_push.list_for_score(18, invite=False))
 
     def test_clickup_priority_reads_config_at_call_time(self):
         row = {"score": 28, "score_breakdown_json": "{}"}
         self.assertEqual(clickup_push.priority_for(row), 1)
         self.assertEqual(clickup_push.priority_for({"score": 24}), 2)
-        self.assertEqual(clickup_push.priority_for({"score": 20}), 3)
+        # 20 is hot now, so it is priority 2 as well; 3 needs the ladder back
+        self.assertEqual(clickup_push.priority_for({"score": 20}), 2)
+        with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 23):
+            self.assertEqual(clickup_push.priority_for({"score": 20}), 3)
         with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 30):
             self.assertEqual(clickup_push.priority_for(row), 2)
         invite = {"score": 9,
@@ -121,11 +144,11 @@ class TestReadersFollowConfig(unittest.TestCase):
         self.assertEqual(clickup_push.priority_for(invite), 1)
 
     def test_eval_band_labels_derive_from_config(self):
-        self.assertEqual(scoring_eval.band(25), "23-27")
-        self.assertEqual(scoring_eval.band(22), "21-22")
+        self.assertEqual(scoring_eval.band(25), "19-27")
+        self.assertEqual(scoring_eval.band(22), "19-27")
         self.assertEqual(scoring_eval.band(None), "?")
         with mock.patch.object(config, "LOOM_FLAG_THRESHOLD", 32):
-            self.assertEqual(scoring_eval.band(31), "23-31")
+            self.assertEqual(scoring_eval.band(31), "19-31")
             self.assertEqual(scoring_eval.band(32), "32+")
 
 
@@ -136,7 +159,9 @@ class TestCockpitBands(unittest.TestCase):
         db.migrate(self.db_path)
         self.today = "2026-08-25"
         with db.connect(self.db_path) as conn:
-            # v3.0.1 cuts (19/21/23/28): below · low · standard · hot · loom
+            # scores either side of every cut. Since 2026-09-23 the live cuts
+            # are 19/19/19/28, so 19, 21 and 23 all land in `hot` — the patched
+            # blocks below put the ladder back and prove the readers follow it.
             for jid, score in (("2064484440376044471", 18), ("2064484440376044472", 19),
                                ("2064484440376044473", 21), ("2064484440376044474", 23),
                                ("2064484440376044475", 28)):
@@ -157,8 +182,9 @@ class TestCockpitBands(unittest.TestCase):
         self.assertEqual(facts["hot_threshold"], config.HOT_LEAD_THRESHOLD)
         bands = data.pipeline(self.db_path, self.today)["bands"]
         self.assertEqual((bands["hot"], bands["standard"], bands["low"]),
-                         (2, 1, 1))
+                         (4, 0, 0))            # collapsed: 19, 21, 23 and 28
         with mock.patch.object(config, "HOT_LEAD_THRESHOLD", 27), \
+                mock.patch.object(config, "SCORE_STANDARD", 21), \
                 mock.patch.object(config, "SCORE_FLOOR", 17):
             bands = data.pipeline(self.db_path, self.today)["bands"]
             self.assertEqual((bands["hot"], bands["standard"], bands["low"]),
@@ -173,7 +199,7 @@ class TestCockpitBands(unittest.TestCase):
         self.assertEqual(scored["total"], 4)                  # >= SCORE_FLOOR 19
         triage = data.pipeline_rows(self.db_path, stage="triage",
                                     _today=self.today)
-        self.assertEqual({r["score"] for r in triage["rows"]}, {23, 28})
+        self.assertEqual({r["score"] for r in triage["rows"]}, {19, 21, 23, 28})
         with mock.patch.object(config, "SCORE_FLOOR", 21), \
                 mock.patch.object(config, "HOT_LEAD_THRESHOLD", 28):
             scored = data.pipeline_rows(self.db_path, stage="scored", week=wk,
