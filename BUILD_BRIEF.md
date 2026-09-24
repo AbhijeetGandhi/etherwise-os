@@ -1,5 +1,35 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-09-14 IST (the Money page's cards and the drills behind them were computed by different keys — the month ladder, the payer key, and a bank routing code printed as a payer. No money was missing. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-09-23 IST (the job-scoring gate: he asked for the 08-Sep rules back out, and the measurement said the rules hiding his work were the OLD rate floors and the hot bar. All three changed. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## ✅ THE GATE WAS THE REASON THE QUEUE WENT QUIET — AND IT WAS NOT THE RULE HE THOUGHT (2026-09-23) · commit `c2f9d5e`
+Abhijeet: *"for the job scoring can you roll back the recent chagnes when I mentioned that too many of nonesense jobs are there. but with current filter seems like lot of important jobs are also not getting scroed."*
+
+**THE MEASUREMENT CONTRADICTED THE INSTINCT, AND THAT IS THE ENTRY WORTH KEEPING.** Checked against the only ground truth available — the 90 proposals he has actually sent since 1 June — the two rules he wanted rolled back had hidden **zero** jobs he went on to bid on. The rules that had were the OLD rate floors, which nobody was questioning.
+
+| rule | killed in 16 days | jobs he BID ON that it hid |
+|---|---|---|
+| `no_platform_named` *(08 Sep)* | 517 | **0** |
+| `off_domain_title` *(08 Sep)* | 241 | **0** |
+| `hourly_below_30` *(old)* | 911 | **6** |
+| `rate_unstated_low_client` *(old)* | 404 | **3** |
+| `n8n_exclusion` *(old)* | 108 | **1** |
+
+Four of the ten had **"Airtable" in the title** — "Airtable Expert", "Airtable Developer & Interface Expert", "Airtable Setup Specialist" — killed for a posted rate under $30 or no rate at all. He bid anyway and negotiated up. **A posted rate is a client's opening position, not a fact about the work**, and the gate had been treating it as a fact for months.
+
+**AND THE BAR WAS DOING MORE DAMAGE THAN EITHER.** At 23 the Hot list ran 6.1 cards a day while **110 jobs in ten days sat scored-but-unread in Low/Standard** — "Softr Airtable Make.com Platform Build" (22), "GoHighLevel Automation & Integration Architect Expert" (22), "Hubspot automatin expert and chatgpt integration" (22), a **$125,000 fixed** "Claude / AI Integration Specialist" (22). The 09-09 note ended *"23 is a translation of a number calibrated on bad data; it deserves confirmation from real reading."* It did not survive the reading. Against his 80 scored proposals: **bar 23 hides 9, bar 19 hides 2.**
+
+**HIS THREE ANSWERS, ALL APPLIED:**
+- **Both 08-Sep rules deleted.** What they were for — keeping AI-engineering posts out — the scorer already does: they grade 1-2 on skill fit and die under the bar with a reason written down. Judgment goes to the model; the code keeps only the rules a number can settle (rate, budget, timezone, onsite, n8n).
+- **The rate floors yield to a platform in the TITLE.** Title only, the same shape as every other title rule — a platform mentioned in passing in a body is not a client buying configuration of it.
+- **Hot bar 23 → 19, onto the card floor, and the ladder collapses with it.** No gap is left for a Low or Standard card, so **those two lists stop receiving cards** — deliberately: they produced ONE application in 1,475, and a queue he does not read is worse than no queue because it looks like coverage. `SCORE_BANDS` is now **non-decreasing** rather than strictly increasing; equal cuts are a legitimate shape, out-of-order ones are still a bug. Side effect he was told about: **every carded job now gets a draft at scan** (was hot-only).
+
+**MEASURED AFTER, BEFORE IT RAN LIVE.** The changes unblock **1,413 rows over 16 days (88/day)**. A seeded random sample of 60, scored for real: **7 hot, 53 below — an 11.7% card rate**, so ~10 extra cards/day on top of the 12.9 the new bar gives. **Projected ~23 cards/day**, against ~12 before and ~170 before the 08-Sep rebuild. Top of the sample: "Duplicate Make Scenarios and Endpoints" (23), "AI automation specialist (n8n, Claude) for a lead intake workflow" (23). Bottom: Meta & Google Ads, a GoHighLevel website-fulfilment post, a PIM/DAM consultancy. **The door lets his work through and the scorer rejects the rest** — which is the argument for putting borderline calls in front of the model rather than a regex, now with a number behind it. `score_unblocked` gained `--sample/--limit` for exactly this: scoring 1,413 rows to learn what 60 will tell you is the expensive way to find out.
+
+Backfilled the **7-day slice** of the unblocked backlog (589 rows) and no further — 7 days is `CLICKUP_PUSH_RETRY_DAYS`, the window in which the scan's own retry path will actually card a scored row; older than that is paying to score listings that could never become cards.
+
+Suite **2,011 → 2,013 GREEN** on the Mac; the two calendar-drift failures still stand. Every fixture that encoded "carded but not hot" was re-pointed below the floor or patches the ladder apart on purpose — that branch is unreachable from live config but is not dead code.
+
+- **◆ FOR ABHIJEET:** (1) **Read a week again before moving anything.** 19 is measured against 80 proposals, which is a better footing than 23 ever had, but it is still his reading that decides. (2) If the three-tier board is worth keeping, the ladder goes back with the bar at 20 — say the word. (3) The 08-Sep rules are in git (`fe08076`, `415e4bd`) if the noise returns; the measurement to re-run is the one in this section, not an impression.
 
 ## ⚠️ THE MONEY PAGE'S FIGURES AND THE ROWS BEHIND THEM WERE ANSWERING DIFFERENT QUESTIONS (2026-09-14) · commits `399db33` `66b9b9b` `d9a80bf`
 Abhijeet: *"the upward money for the agency account is not coming in… Even if I click on, like, the big debit, like, two transactions that came in, it shows no transactions to show, but on the main [KPI] card, it shows there are two."* Then a screenshot: **"Beglaubigt — 2026-09 · 0 rows · these rows sum to $0.00"**, under a "Where it came from" list reading **"Beglaubigt · Upwork-MCP · 1 payment · last 06 Sept"**.
