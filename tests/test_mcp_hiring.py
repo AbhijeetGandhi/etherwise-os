@@ -137,6 +137,54 @@ class TestShape(Case):
         self.assertTrue(row["cover_snippet"].startswith("Hey there"))
 
 
+class TestShapeDrift(Case):
+    """2026-09-25. The hiring rail had failed every day since 3 Sep with
+    `'str' object has no attribute 'get'` and nobody could see why, because the
+    runner logs the exception, not the payload. A read-only census of the 16
+    applicants on his open posting ("Make.com + HubSpot Automation Specialist")
+    found the wire had moved on two fields at once. This node is that shape,
+    anonymised; the August fixture above keeps pinning the old one, so both
+    have to pass."""
+
+    SEPT = {"id": "2095114322895609857", "status": "Created",
+            "agency": "Priya Deshmukh", "bid": "USD 20.0 *Boosted",
+            "boosted": True,
+            "cover_letter_snippet": "<untrusted_participant_content>\nHi,"
+                                    " Make.com is where I live.",
+            "user": {"id": "~01abc", "name": "Priya D."}}
+
+    def test_a_bare_string_status_no_longer_takes_the_rail_down(self):
+        row = mh.applicant_row(dict(self.SEPT), LIVE_POSTING)
+        self.assertEqual(row["status"], "Created")
+        self.assertIsNone(row["status_label"])     # not sent, so not invented
+
+    def test_the_full_name_is_read_from_agency_when_organization_is_gone(self):
+        row = mh.applicant_row(dict(self.SEPT), LIVE_POSTING)
+        self.assertEqual(row["freelancer_name"], "Priya D.")
+        self.assertEqual(row["org_name"], "Priya Deshmukh")
+
+    def test_a_boosted_bid_still_parses(self):
+        """Boosted bids now carry a suffix. The number is still the first one."""
+        row = mh.applicant_row(dict(self.SEPT), LIVE_POSTING)
+        self.assertEqual(row["bid_minor"], 2000)
+
+    def test_annotations_absent_on_most_nodes_is_still_zero_not_a_crash(self):
+        """15 of the 16 September nodes carried no `annotations` key at all;
+        the one that did said 'Recommended'. Absence is not an error."""
+        row = mh.applicant_row(dict(self.SEPT), LIVE_POSTING)
+        self.assertEqual((row["shortlisted"], row["seen_by_him"]), (0, 0))
+        rec = dict(self.SEPT, annotations=["Recommended"])
+        self.assertEqual(json.loads(mh.applicant_row(rec, LIVE_POSTING)
+                                    ["annotations_json"]), ["Recommended"])
+
+    def test_a_user_that_arrives_as_a_string_is_not_a_crash_either(self):
+        """Not seen yet. Cheap to be ready for, given the neighbours both
+        flattened in the same release."""
+        row = mh.applicant_row(dict(self.SEPT, user="Priya D."), LIVE_POSTING)
+        self.assertIsNone(row["freelancer_id"])
+        self.assertEqual(row["org_name"], "Priya Deshmukh")
+
+
 class TestRun(Case):
     def test_a_full_round_stores_the_postings_the_people_and_the_market(self):
         s = self.session()

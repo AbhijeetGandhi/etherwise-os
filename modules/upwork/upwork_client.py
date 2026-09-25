@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -46,6 +47,43 @@ _BROWSER_HEADERS = {
 
 class UpworkAPIError(Exception):
     pass
+
+
+class UpworkAuthError(UpworkAPIError):
+    """The token endpoint refused the refresh. Not transient: retrying on the
+    next tick will get the same answer until a human re-authorizes."""
+
+
+REAUTH_COMMAND = "PYTHONPATH=. python3 bin/upwork-api-auth"
+
+
+def _token_refusal(exc) -> str:
+    """Turn a token-endpoint HTTPError into a sentence that says what to do.
+
+    2026-09-25: this used to escape as the bare `<HTTPError 400: 'Bad
+    Request'>` — the runs table, the log and the cockpit all said exactly that,
+    fifteen times over, while Upwork's own body said "Refresh token is expired
+    or revoked" and was thrown away with the exception. The MCP client in the
+    same morning failed with an error that named its fix command, and that rail
+    was back within the hour; this one stayed down all day. Same failure, same
+    account — the only difference was whether the message said what to run."""
+    try:
+        body = exc.read().decode("utf-8", "replace")
+    except Exception:                                       # noqa: BLE001
+        body = ""
+    detail = body.strip()[:300] or f"HTTP {exc.code}"
+    try:
+        parsed = json.loads(body)
+        detail = (f"{parsed.get('error', '')}: "
+                  f"{parsed.get('error_description', '')}").strip(": ") or detail
+    except (ValueError, AttributeError):
+        pass
+    if exc.code in (400, 401) and ("invalid_grant" in body or "revoked" in body
+                                   or "expired" in body):
+        return (f"Upwork API refresh refused ({detail}) — the grant is gone;"
+                f" re-authorize with `{REAUTH_COMMAND}`. upwork_sync and"
+                f" upwork_inbox stay down until then.")
+    return f"Upwork token endpoint HTTP {exc.code}: {detail}"
 
 
 def token_owner() -> str:
@@ -156,8 +194,11 @@ class UpworkClient:
             "https://www.upwork.com/api/v3/oauth2/token", data=form,
             method="POST",
             headers={"Content-Type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            raise UpworkAuthError(_token_refusal(exc)) from exc
         creds["tokens"]["access_token"] = data["access_token"]
         if "refresh_token" in data:
             creds["tokens"]["refresh_token"] = data["refresh_token"]

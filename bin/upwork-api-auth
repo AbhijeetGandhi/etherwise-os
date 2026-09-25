@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Re-authorize the Upwork GraphQL API grant — the one `upwork_sync` and
+`upwork_inbox` run on — and write it WHERE V3 READS IT.
+
+    PYTHONPATH=. python3 bin/upwork-api-auth
+
+WHY THIS EXISTS (2026-09-25). Upwork revoked both of Abhijeet's OAuth grants
+between 05:15 and 06:15 IST. `bin/upwork-mcp-auth` re-minted the MCP one and
+the job feed came straight back; sync and inbox stayed down, because they run on
+a DIFFERENT grant — the classic API app whose tokens live in `upwork-api.json`.
+
+The only tool that could re-mint that grant was `scripts/upwork_api.py auth`, a
+v2-era script hard-coded to write ~/Desktop/Etherwise/.credentials/upwork-api.json.
+v3 reads config.CREDENTIALS_DIR (under etherwise-os/) — a different file, last
+touched in May. Running it would have looked exactly like a fix and changed
+nothing. This wraps the same, already-proven OAuth dance, points it at the file
+v3 actually reads, and then proves the result the way the MCP script does: a
+live read through the exact client sync and inbox use.
+
+Opens the Upwork consent page; his only job is to click Allow. The callback is
+localhost:8080/callback (the URI registered with the app); five-minute ceiling.
+Keeps client_id / client_secret and every other key in the file — only `tokens`
+is replaced.
+"""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from core import config  # noqa: E402
+
+TARGET = config.CREDENTIALS_DIR / "upwork-api.json"
+
+
+def _v2_oauth():
+    """The v2 script, loaded by path: `scripts/` is not a package, and this
+    must use its OAuth code as-is rather than a second copy of it."""
+    spec = importlib.util.spec_from_file_location(
+        "upwork_api_v2", ROOT / "scripts" / "upwork_api.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def main() -> int:
+    from modules.upwork import upwork_client as uc
+    if uc.CREDS_PATH != TARGET:
+        # the whole point of this script is that these two agree
+        print(f"refusing: v3 reads {uc.CREDS_PATH} but this would write {TARGET}")
+        return 1
+    if not TARGET.exists():
+        print(f"{TARGET} not found — it must already hold client_id/client_secret")
+        return 1
+
+    ua = _v2_oauth()
+    ua.CREDS_PATH = TARGET                    # the one line this file exists for
+    print(f"re-authorizing the Upwork API grant into {TARGET}")
+    ua.do_oauth()                             # opens the browser; exits on failure
+
+    user = uc.UpworkClient().graphql("query Whoami { user { id } }").get("user") or {}
+    if not user.get("id"):
+        print("live check FAILED: tokens written but the API returned no user")
+        return 1
+    print(f"live check: the client sync and inbox use reads user {user['id']} — OK")
+    print("upwork_sync and upwork_inbox recover on their next scheduled run.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

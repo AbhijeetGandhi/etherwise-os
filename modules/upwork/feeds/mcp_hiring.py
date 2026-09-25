@@ -192,20 +192,51 @@ def fetch_applicants(session, org: str, posting_id: str, log: Callable[[str], No
     return out
 
 
+def _status_of(node: dict) -> tuple:
+    """(status, status_label) from either wire shape.
+
+    THE SHAPE MOVED UNDER US. The 2026-08-27 capture sent
+    `status: {status: "Created", status_label: "Invitation accepted"}`; by
+    2026-09-25 every one of the 16 applicants on his open posting came back
+    with `status: "Created"` — a bare string — and `status.get(...)` raised
+    `'str' object has no attribute 'get'` on the first applicant. That took the
+    whole hiring rail down from 3 Sep: 23 days of nobody seeing who applied to
+    his own postings. Both shapes are accepted now; a label the wire no longer
+    sends is None, not invented."""
+    st = node.get("status")
+    if isinstance(st, dict):
+        return st.get("status"), st.get("status_label")
+    if isinstance(st, str):
+        return st, None
+    return None, None
+
+
+def _org_name_of(node: dict) -> Optional[str]:
+    """The applicant's full name. Same drift: `organization: {name}` in the
+    August capture, a bare `agency: "<name>"` string by late September. Upwork
+    abbreviates the person ("Mark Y.") and the full name only ever lived here,
+    so losing it silently would leave every applicant half-named."""
+    org = node.get("organization")
+    if isinstance(org, dict) and org.get("name"):
+        return unwrap(org.get("name"))
+    agency = node.get("agency")
+    return unwrap(agency) if isinstance(agency, str) else None
+
+
 def applicant_row(node: dict, posting_id: str) -> Optional[dict]:
     aid = node.get("id")
     if not aid:
         return None
     ann = [a for a in (node.get("annotations") or []) if isinstance(a, str)]
-    status = node.get("status") or {}
-    user = node.get("user") or {}
+    status, status_label = _status_of(node)
+    user = node.get("user") if isinstance(node.get("user"), dict) else {}
     return {"id": str(aid), "job_posting_id": posting_id,
             "freelancer_id": user.get("id") or None,
             "freelancer_name": unwrap(user.get("name")),
-            "org_name": unwrap((node.get("organization") or {}).get("name")),
+            "org_name": _org_name_of(node),
             "bid_display": node.get("bid"),
             "bid_minor": bid_minor(node.get("bid")),
-            "status": status.get("status"), "status_label": status.get("status_label"),
+            "status": status, "status_label": status_label,
             "annotations_json": json.dumps(ann),
             # annotations, NOT status: a shortlisted applicant is still 'Created'
             "shortlisted": 1 if "Shortlisted" in ann else 0,
