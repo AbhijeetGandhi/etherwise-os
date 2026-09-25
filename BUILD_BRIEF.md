@@ -1,5 +1,20 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-09-23 IST (the job-scoring gate: he asked for the 08-Sep rules back out, and the measurement said the rules hiding his work were the OLD rate floors and the hot bar. All three changed. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-09-25 IST (Upwork revoked both OAuth grants; there are TWO, and the old re-auth script wrote the wrong file. Hiring was a separate wire-shape bug down since 3 Sep. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## ⚠️ UPWORK REVOKED BOTH GRANTS — AND THEY ARE TWO GRANTS, NOT ONE (2026-09-25) · commit below
+Between 05:15 and 06:15 IST Upwork revoked **both** of his OAuth grants. Every Upwork rail went red. He re-ran `bin/upwork-mcp-auth`, the job feed came straight back, and five rows stayed red on Activity › Health. Three different reasons:
+
+- **THERE ARE TWO GRANTS.** The MCP client (`upwork-mcp.json` → scan, financials, hiring, pulse) and the classic API app (`upwork-api.json` → **sync, inbox**). Re-authing one does nothing for the other. **The old re-auth tool was a trap:** `scripts/upwork_api.py auth` writes `~/Desktop/Etherwise/.credentials/upwork-api.json`, but v3 reads `etherwise-os/.credentials/upwork-api.json` (last touched in May vs. yesterday). Running it would have looked like a fix and changed nothing. **Use `bin/upwork-api-auth`** — same OAuth dance, right file, refuses if the paths ever drift, proves itself with a live read through the client sync uses.
+- **THE API ERROR THREW AWAY ITS REASON.** Fifteen runs logged `<HTTPError 400: 'Bad Request'>` while Upwork's body said *"Refresh token is expired or revoked"*. The MCP rail's error named its fix command and was back within the hour; this one stayed down all day. `refresh()` now raises `UpworkAuthError` with Upwork's reason and `bin/upwork-api-auth` in the message.
+- **HIRING WAS NEVER AUTH.** Down since **3 Sep** with `'str' object has no attribute 'get'`. A read-only census of the 16 applicants on his open posting: Upwork flattened `status` to a bare string (`'Created'`) and moved the full name from `organization.name` to a bare `agency` string. Both shapes accepted now. **Verified live: 26 postings, 16 applicants, first success in 23 days.**
+
+**Health after the fixes: 5 red → 2.** Ledger and Connects both watch `upwork_financials`, which completed on the re-minted MCP grant two minutes after his screenshot. Sync and inbox wait on him running `bin/upwork-api-auth`.
+
+**Two lessons worth keeping.** (1) An auth failure must name the command that fixes it — the difference between an hour down and a day down this morning was one sentence in an exception. (2) A test fixture captured from the live wire pins the shape **as it was**; it cannot tell you when the wire moves. The August hiring fixture passed for 23 days while production failed daily on the same function.
+
+Mac suite 2,013 → 2,025. **Four** calendar-drift failures now: `test_m1b.TestPollRefreshesStaleDrafts` hard-codes 25 Aug dates that aged past a 30-day window today. They mock the Upwork client and never reach this change — but the count grows by itself, which erodes "only the known failures" as a signal. Worth making those fixtures relative to now.
+
+- **◆ FOR ABHIJEET:** (1) `PYTHONPATH=. python3 bin/upwork-api-auth`, click Allow. (2) Still open from 25 Sep: an Upwork auth failure on any rail should be an immediate interrupt, not an anomaly — his AM brief led with a commitment reminder five hours into a dead lead-gen.
 
 ## ✅ THE GATE WAS THE REASON THE QUEUE WENT QUIET — AND IT WAS NOT THE RULE HE THOUGHT (2026-09-23) · commit `c2f9d5e`
 Abhijeet: *"for the job scoring can you roll back the recent chagnes when I mentioned that too many of nonesense jobs are there. but with current filter seems like lot of important jobs are also not getting scroed."*
