@@ -1,5 +1,24 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-10-04 IST (why Upwork kept cancelling the login: two processes refreshed one rotating token on the same launchd tick, and a dead token was replayed ~100x/day. Lock + circuit breaker + one email per death. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-10-05 IST (scorer v3.1: it had never been told HubSpot is his work — 179 of 199 HubSpot jobs graded 1-2. HubSpot and Monday.com added, by his answers. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## ⚠️ THE SCORER WAS NEVER TOLD HUBSPOT IS HIS WORK (2026-10-05) · commit `2cc6ef0`
+Abhijeet, on *"HubSpot Account Audit and Re-Architecting"* ($150–250/hr, client with 46 hires): *"why was this job not considered as hot lead"*. It scored **10 against a bar of 19**. It passed every hard rule; the scorer graded skill fit **1 of 5** and wrote *"HubSpot architecture and administration is not Etherwise's trade … a specialist vertical he does not occupy. Do not bid."*
+
+**THE SCORER WAS FOLLOWING ITS INSTRUCTIONS, AND THE INSTRUCTIONS WERE MINE.** The prompt described him as *"core stack Make.com, Airtable, Vapi, GoHighLevel, Python, AI/LLM"* and the five grading examples written on 9 Sep were Airtable and Make jobs. Meanwhile the scanner searched Upwork for `hubspot` every hour, the gate's platform list treated HubSpot as his tool, and his knowledge base held **535 HubSpot facts across 17 clients** with CONFIRMED proof points (*"has built CRM setups in HubSpot for multiple businesses"*, *"hiring an additional HubSpot expert due to multiple clients now requiring HubSpot work"*). **Three parts of the system knew. The one that decides did not.** On 9 Sep I read `hubspot: 54 claimed → 0 hot` as the FEED being weak and proposed moving budget away from it; it was the scorer's blind spot.
+
+Share of jobs graded 1–2 on skill fit since 9 Sep, by platform in the title: make.com 6% · airtable 12% · zapier 35% · **hubspot 90% (179 of 199)** · monday.com 71% · gohighlevel 76% · salesforce 88% · clickup 92% · notion 86% · zoho 97%.
+
+**HIS ANSWERS, asked the same day:** HubSpot **yes** · Monday.com **yes** · Salesforce, Zoho, Pipedrive, ClickUp, Notion **no** · GoHighLevel and voice **stay low**.
+
+- **The prompt names the platforms he sells** (Make.com, Airtable, HubSpot, Monday.com) and says the test is the **kind of work, not the name**: architecture, setup, pipelines, workflows, integrations, cleanup, dashboards, RevOps → 4–5; marketing content, website/CMS design, SEO, ads, SDR and VA work on the same platform → 1–2. The platforms he turned down are named as not his, so nobody generalises HubSpot to every CRM later.
+- **Three grading examples added, all real jobs from his feed** — the job he asked about (5), a Monday.com build (4), a HubSpot website/UX post (1). **The same platform on both sides of the line**, because naming HubSpot alone would have swung every HubSpot marketing-VA post to a 5.
+- `scripts/rescore_titles.py` goes back for rows graded under the old prompt that can still become cards.
+
+**VERIFIED on the 36 HubSpot / Monday.com jobs of the last 7 days, re-scored for real.** His job went 10 → 30, but it IS the example, so that proves little. The other 35 are the test: **18 rose over the bar** (Sales Hub implementation 16 → 31, RevOps consultant 9 → 31, CRM architect for a multi-location company 12 → 28, QuickBooks integration 12 → 24, Monday.com construction scheduling 17 → 31) and **the marketing ones stayed down or fell** (website/UX 6 → 6, SDR coordinator 7 → 7, cleanup + email marketing 14 → 7, prospect research 13 → 9).
+
+**THE LESSON:** the 9 Sep examples were derived from what he had BID ON, and that history under-represents work his business has since grown into. A scorer calibrated on past bids will keep hiding the direction he is moving in. `SCORER_VERSION` 3.0 → 3.1. Suite 2,048 → 2,051.
+
+- **◆ FOR ABHIJEET:** (1) The platform list in the prompt is now the single place that says what he sells — when the business adds a platform, it goes there, with one high and one low example. (2) Jobs that went up are carded without drafts (drafts are written only for jobs scored during a scan).
 
 ## ⚠️ WHY UPWORK KEPT CANCELLING THE LOGIN — IT WAS US (2026-10-04) · commit `e06109a`
 Abhijeet: *"All systems of upwork are down can you spin it up"*. Both grants were dead again: the MCP one cancelled **30 Sep 13:35–13:50 IST** (four and a half days of no lead-gen), the API one never re-authorized after 25 Sep. He clicked Allow twice (`bin/upwork-mcp-auth`, `bin/upwork-api-auth`, launched for him) and every rail came back in one burst — first scan: **85 claimed, 32 scored, 10 hot, 10 drafted**; inbox found 9 new messages; the ledger took 8 new rows.
