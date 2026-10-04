@@ -1,5 +1,28 @@
 # BUILD BRIEF — read this first, every session
-**Updated:** 2026-09-25 IST (Upwork revoked both OAuth grants; there are TWO, and the old re-auth script wrote the wrong file. Hiring was a separate wire-shape bug down since 3 Sep. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+**Updated:** 2026-10-04 IST (why Upwork kept cancelling the login: two processes refreshed one rotating token on the same launchd tick, and a dead token was replayed ~100x/day. Lock + circuit breaker + one email per death. Section below) · **Owner of this file:** updated at every checkpoint, never stale.
+
+## ⚠️ WHY UPWORK KEPT CANCELLING THE LOGIN — IT WAS US (2026-10-04) · commit `e06109a`
+Abhijeet: *"All systems of upwork are down can you spin it up"*. Both grants were dead again: the MCP one cancelled **30 Sep 13:35–13:50 IST** (four and a half days of no lead-gen), the API one never re-authorized after 25 Sep. He clicked Allow twice (`bin/upwork-mcp-auth`, `bin/upwork-api-auth`, launched for him) and every rail came back in one burst — first scan: **85 claimed, 32 scored, 10 hot, 10 drafted**; inbox found 9 new messages; the ledger took 8 new rows.
+
+**THE CAUSE OF 25 SEP IS IN THE LOG, two lines sharing a second:**
+```
+[06:05:04 IST] upwork_pulse      | run 14321 started
+[06:05:04 IST] upwork_financials | run 14322 started
+[06:05:05 IST] upwork_financials | FAILED ... invalid_grant
+[06:05:06 IST] upwork_pulse      | FAILED ... invalid_grant
+```
+launchd starts the :05 pulse and the 06:05 ledger read on one tick. Both read one refresh token from the file and both presented it. **Upwork rotates refresh tokens — each is good once — and a second presentation is a replay: the whole grant is revoked.** Neither client had a lock. Catch-up kicks five rails inside six seconds whenever it re-arms (it did so the moment he re-authorized tonight).
+
+- **ONE REFRESH AT A TIME** (`modules/upwork/grant_guard.py`, used by both clients). An exclusive cross-process `flock` held across read → POST → write; under it the file is **re-read**, and a caller that finds a different, unexpired access token uses it and calls nobody. Both roads into `refresh()` are covered: the proactive one and the 401/403 retry, which now says *which* token was refused. Token files are replaced, never truncated-then-written (the API file also holds the client secret).
+- **A DEAD GRANT IS NEVER REPLAYED.** After 25 Sep sync presented the revoked API token **223 times**, the scanner 96, the pulse every 15 min. On 30 Sep the MCP grant died with **no refresh of its own in flight** (last one 29 Sep 14:50, good until 14:50 next day) — five minutes after sync's 117th replay. Not proven causal; it is exactly what abuse detection looks for and it buys nothing. A circuit breaker now stands after the first `invalid_grant`, keyed to a **fingerprint of the refused refresh token** — so a new grant by *any* route reopens it without anyone remembering to. A 503 is not a death; a lock timeout is a network-kind failure, never "go re-authorize".
+- **ONE EMAIL PER DEATH** (his answer: *"Yes, one email per outage"*). Sent at the moment a grant dies, naming the command. An unsent alert is retried by the next failing run, which calls nobody. Only the real credentials directory can ever send.
+- **FORENSICS.** Every refresh / refusal / wait / re-use is written to `var/upwork-grant-events.jsonl` with the process that did it. Both deaths had to be reconstructed from run start times because a refresh left no trace.
+
+**THE THING THAT WAS NEVER SWITCHED ON.** `core/notify.py`'s interrupt drainer ("critical anomalies → ONE email", decision #9) **has never run**: no launchd job, no cursor, **2,432 critical anomalies undrained**. Every `task_failure` and `catch_up_gave_up` since the cutover went into a queue nobody empties. Not turned on here — its first run would mail the whole backlog and then one email per drain during any outage — but that is why two outages went unnoticed, and it needs a decision (start the cursor at now, rate-limit, then schedule).
+
+Suite **2,025 → 2,048**; 23 new tests, with a control that removes the lock and reproduces 25 Sep. The new tests' own first full run leaked a mocked `urlopen` and failed nine unrelated cockpit HTTP tests — teardown is LIFO now, and pinned. **Five** calendar-drift failures (a commitment fixture dated 27 Aug aged out).
+
+- **◆ FOR ABHIJEET:** (1) **The 30 Sep death is not fully explained** — if it happens again, `var/upwork-grant-events.jsonl` will show who touched the token last. (2) The Mac ran nothing **12:35 → 23:10 on 4 Oct** (asleep or off); a sleeping Mac is a dead scanner whatever the login state. (3) Decide on the interrupt drainer. (4) Jobs posted 30 Sep – 3 Oct that have rolled off Upwork's search cannot be recovered.
 
 ## ⚠️ UPWORK REVOKED BOTH GRANTS — AND THEY ARE TWO GRANTS, NOT ONE (2026-09-25) · commit below
 Between 05:15 and 06:15 IST Upwork revoked **both** of his OAuth grants. Every Upwork rail went red. He re-ran `bin/upwork-mcp-auth`, the job feed came straight back, and five rows stayed red on Activity › Health. Three different reasons:
