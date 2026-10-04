@@ -65,6 +65,12 @@ def main() -> int:
         print("live check FAILED: tokens written but the API returned no user")
         return 1
     print(f"live check: the client sync and inbox use reads user {user['id']} — OK")
+    # a fresh grant reopens the circuit breaker (it would clear itself on the
+    # next read anyway — the marker is keyed to the old refresh token — but a
+    # re-auth should leave nothing behind that says "dead")
+    from modules.upwork import grant_guard as guard
+    guard.clear(TARGET)
+    guard.note(TARGET, "authorized")
     print("upwork_sync and upwork_inbox recover on their next scheduled run.")
     return 0
 

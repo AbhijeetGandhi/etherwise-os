@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Optional
 
 from core import config
+from modules.upwork import grant_guard as guard
 
 MCP_URL = "https://mcp.upwork.com/mcp"
 AUTHORIZE_URL = "https://www.upwork.com/ab/account-security/oauth2/authorize"
@@ -68,6 +69,9 @@ REG_PATH = config.CREDENTIALS_DIR / "upwork-mcp-registration.json"
 TOKENS_PATH = config.CREDENTIALS_DIR / "upwork-mcp.json"
 
 _REFRESH_MARGIN_S = 120
+REAUTH_COMMAND = "PYTHONPATH=. python3 bin/upwork-mcp-auth"
+# what stops while this grant is dead, in the words the alert email uses
+RAILS_ON_THIS_GRANT = "The job scanner, the Upwork ledger, the heartbeat and the hiring side"
 _UA_HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
                    " AppleWebKit/537.36 (KHTML, like Gecko)"
@@ -153,8 +157,35 @@ def _read_tokens() -> dict:
 
 
 def _write_tokens(doc: dict) -> None:
-    TOKENS_PATH.write_text(json.dumps(doc, indent=2) + "\n")
-    os.chmod(TOKENS_PATH, 0o600)
+    # replaced, never truncated: a reader could catch the old write_text empty
+    guard.write_atomic(TOKENS_PATH, json.dumps(doc, indent=2) + "\n")
+
+
+def _expired(tok: dict) -> bool:
+    exp = tok.get("expires_at")
+    return exp is not None and time.time() >= float(exp) - _REFRESH_MARGIN_S
+
+
+def _refuse_if_dead(tok: dict) -> None:
+    """The circuit breaker. Once Upwork has refused THIS refresh token, no rail
+    presents it again — see grant_guard for why replaying it is worse than
+    useless. An alert that could not be sent at the time is retried here, by a
+    run that makes no call to Upwork."""
+    doc = guard.dead(TOKENS_PATH, tok.get("refresh_token"))
+    if doc:
+        guard.alert_once(TOKENS_PATH, tok.get("refresh_token"))
+        raise MCPAuthError(guard.refusal_message(doc))
+
+
+def _upwork_reason(exc: BaseException) -> str:
+    """Upwork's own sentence out of 'token endpoint 400: {json}'."""
+    text = str(exc)
+    try:
+        body = json.loads(text[text.index("{"):])
+        return (f"{body.get('error', '')}: {body.get('error_description', '')}"
+                .strip(": ") or text)[:300]
+    except ValueError:
+        return text[:300]
 
 
 # ── OAuth 2.1 (PKCE, public client) ──────────────────────────────────────────
@@ -173,7 +204,7 @@ def authorize_url(challenge: str, state: str) -> str:
         "code_challenge_method": "S256", "state": state})
 
 
-def _token_request(form: dict) -> dict:
+def _token_request(form: dict, keep_refresh: Optional[str] = None) -> dict:
     req = urllib.request.Request(
         TOKEN_URL, data=urllib.parse.urlencode(form).encode(), method="POST",
         headers={**_UA_HEADERS,
@@ -187,33 +218,66 @@ def _token_request(form: dict) -> dict:
         raise MCPAuthError(f"token endpoint {e.code}:"
                            f" {e.read().decode()[:300]}") from e
     doc["expires_at"] = time.time() + float(doc.get("expires_in") or 0)
+    if keep_refresh and not doc.get("refresh_token"):
+        # a server that did not rotate must not cost us the token we have
+        doc["refresh_token"] = keep_refresh
     _write_tokens(doc)
     return doc
 
 
 def exchange_code(code: str, verifier: str) -> dict:
-    return _token_request({
-        "grant_type": "authorization_code", "code": code,
-        "redirect_uri": REDIRECT_URI, "client_id": client_id(),
-        "code_verifier": verifier})
+    with guard.locked(TOKENS_PATH):
+        doc = _token_request({
+            "grant_type": "authorization_code", "code": code,
+            "redirect_uri": REDIRECT_URI, "client_id": client_id(),
+            "code_verifier": verifier})
+        guard.clear(TOKENS_PATH)             # a fresh grant reopens the circuit
+        guard.note(TOKENS_PATH, "authorized")
+        return doc
 
 
-def refresh() -> dict:
-    tok = _read_tokens()
-    if not tok.get("refresh_token"):
-        raise MCPAuthError("no refresh_token — run bin/upwork-mcp-auth once")
-    return _token_request({
-        "grant_type": "refresh_token", "refresh_token": tok["refresh_token"],
-        "client_id": client_id()})
+def refresh(stale_access: Optional[str] = None) -> dict:
+    """Re-mint the token set — ONE PROCESS AT A TIME.
+
+    `stale_access` is the access token the caller already holds and found
+    wanting (expired, or refused by the server). Under the lock the file is
+    read again: if it now holds a DIFFERENT, unexpired access token, another
+    process refreshed while this one waited, and that token is returned with no
+    call to Upwork at all. Presenting the refresh token a second time is the
+    replay that cancelled the grant on 25 Sep (see grant_guard)."""
+    with guard.locked(TOKENS_PATH):
+        tok = _read_tokens()
+        if not tok.get("refresh_token"):
+            raise MCPAuthError("no refresh_token — run bin/upwork-mcp-auth once")
+        _refuse_if_dead(tok)
+        if (stale_access is not None and tok.get("access_token")
+                and tok["access_token"] != stale_access and not _expired(tok)):
+            guard.note(TOKENS_PATH, "reused_fresh_token")
+            return tok
+        try:
+            doc = _token_request({
+                "grant_type": "refresh_token",
+                "refresh_token": tok["refresh_token"],
+                "client_id": client_id()}, keep_refresh=tok["refresh_token"])
+        except MCPAuthError as exc:
+            guard.note(TOKENS_PATH, "refresh_refused", error=str(exc)[:160])
+            if "invalid_grant" in str(exc):
+                guard.mark_dead(TOKENS_PATH, tok["refresh_token"], grant="MCP",
+                                reason=_upwork_reason(exc), command=REAUTH_COMMAND,
+                                down=RAILS_ON_THIS_GRANT)
+                guard.alert_once(TOKENS_PATH, tok["refresh_token"])
+            raise
+        guard.note(TOKENS_PATH, "refreshed")
+        return doc
 
 
 def access_token() -> str:
     tok = _read_tokens()
     if not tok.get("access_token"):
         raise MCPAuthError("no MCP tokens yet — run bin/upwork-mcp-auth once")
-    exp = tok.get("expires_at")
-    if exp is not None and time.time() >= float(exp) - _REFRESH_MARGIN_S:
-        tok = refresh()
+    _refuse_if_dead(tok)                     # no network at all while it is dead
+    if _expired(tok):
+        tok = refresh(stale_access=tok["access_token"])
     return tok["access_token"]
 
 
@@ -252,11 +316,12 @@ class MCPSession:
         self._next_id = 0
 
     def _post(self, payload: dict, *, retried: bool = False):
+        token = access_token()
         headers = {**_UA_HEADERS,
                    "Content-Type": "application/json",
                    "Accept": "application/json, text/event-stream",
                    "MCP-Protocol-Version": PROTOCOL_VERSION,
-                   "Authorization": f"Bearer {access_token()}"}
+                   "Authorization": f"Bearer {token}"}
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
         req = urllib.request.Request(MCP_URL, data=json.dumps(payload).encode(),
@@ -272,7 +337,10 @@ class MCPSession:
             # included because that is what the live server returns for a token
             # it does not accept (measured — the GraphQL token got 403, not 401).
             if e.code in (401, 403) and not retried:
-                refresh()
+                # says WHICH token was refused, so that if another process has
+                # already replaced it this one reuses theirs instead of
+                # presenting the refresh token a second time
+                refresh(stale_access=token)
                 return self._post(payload, retried=True)
             raise MCPCallError(f"mcp {e.code}: {e.read().decode()[:200]}") from e
 

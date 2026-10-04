@@ -28,6 +28,7 @@ _REFRESH_MARGIN_S = 120
 
 from core import config
 from core import claude_gateway as gw
+from modules.upwork import grant_guard as guard
 
 GRAPHQL_URL = "https://api.upwork.com/graphql"
 CREDS_PATH = config.CREDENTIALS_DIR / "upwork-api.json"
@@ -55,6 +56,23 @@ class UpworkAuthError(UpworkAPIError):
 
 
 REAUTH_COMMAND = "PYTHONPATH=. python3 bin/upwork-api-auth"
+# what stops while this grant is dead, in the words the alert email uses
+RAILS_ON_THIS_GRANT = "Upwork sync and the Upwork inbox"
+
+
+def _grant_is_gone(exc_code: int, body: str) -> bool:
+    return exc_code in (400, 401) and ("invalid_grant" in body or "revoked" in body
+                                       or "expired" in body)
+
+
+def _refuse_if_dead(refresh_token) -> None:
+    """The circuit breaker (see grant_guard). After Upwork refused this refresh
+    token the first time, sync presented it another 222 times over nine days.
+    Now the second run says the same sentence without calling anyone."""
+    doc = guard.dead(CREDS_PATH, refresh_token)
+    if doc:
+        guard.alert_once(CREDS_PATH, refresh_token)       # retries an unsent alert
+        raise UpworkAuthError(guard.refusal_message(doc))
 
 
 def _token_refusal(exc) -> str:
@@ -78,8 +96,9 @@ def _token_refusal(exc) -> str:
                   f"{parsed.get('error_description', '')}").strip(": ") or detail
     except (ValueError, AttributeError):
         pass
-    if exc.code in (400, 401) and ("invalid_grant" in body or "revoked" in body
-                                   or "expired" in body):
+    exc.upwork_reason = detail                # for the breaker's marker
+    exc.grant_gone = _grant_is_gone(exc.code, body)
+    if exc.grant_gone:
         return (f"Upwork API refresh refused ({detail}) — the grant is gone;"
                 f" re-authorize with `{REAUTH_COMMAND}`. upwork_sync and"
                 f" upwork_inbox stay down until then.")
@@ -117,9 +136,15 @@ class UpworkClient:
             creds = json.loads(CREDS_PATH.read_text())
         except OSError:
             return
-        exp = (creds.get("tokens") or {}).get("expires_at")
+        tokens = creds.get("tokens") or {}
+        _refuse_if_dead(tokens.get("refresh_token"))   # no network while dead
+        exp = tokens.get("expires_at")
         if exp is not None and time.time() >= float(exp) - _REFRESH_MARGIN_S:
             self.refresh()                       # owner-gated; updates self._token
+        elif tokens.get("access_token") and tokens["access_token"] != self._token:
+            # another process re-minted since this client was built: use theirs
+            # rather than take a 401 on a token that has been rotated away
+            self._token = tokens["access_token"]
 
     def graphql(self, query: str, variables: Optional[dict] = None,
                 tolerate_errors: bool = False) -> dict:
@@ -180,31 +205,54 @@ class UpworkClient:
             raise UpworkAPIError(
                 "refresh refused: token owner is v2 (§9). Ownership flips"
                 " only via bin/upwork-token-cutover at M1b cutover.")
-        creds = json.loads(CREDS_PATH.read_text())
-        rtoken = (creds.get("tokens") or {}).get("refresh_token")
-        if not rtoken:
-            raise UpworkAPIError("no refresh_token in credentials")
-        form = urllib.parse.urlencode({
-            "grant_type": "refresh_token",
-            "client_id": creds["client_id"],
-            "client_secret": creds["client_secret"],
-            "refresh_token": rtoken,
-        }).encode()
-        req = urllib.request.Request(
-            "https://www.upwork.com/api/v3/oauth2/token", data=form,
-            method="POST",
-            headers={"Content-Type": "application/x-www-form-urlencoded"})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            raise UpworkAuthError(_token_refusal(exc)) from exc
-        creds["tokens"]["access_token"] = data["access_token"]
-        if "refresh_token" in data:
-            creds["tokens"]["refresh_token"] = data["refresh_token"]
-        if "expires_in" in data:
-            import time as _time
-            creds["tokens"]["expires_at"] = _time.time() + data["expires_in"]
-        CREDS_PATH.write_text(json.dumps(creds, indent=2))
-        self._token = creds["tokens"]["access_token"]
-        return {"refreshed": True}
+        # ONE PROCESS AT A TIME, and the file is read again under the lock: if
+        # another process re-minted while this one waited, its token is adopted
+        # and Upwork is not called. Upwork rotates refresh tokens, so presenting
+        # one twice is the replay that cancelled the MCP grant on 25 Sep.
+        with guard.locked(CREDS_PATH):
+            creds = json.loads(CREDS_PATH.read_text())
+            tokens = creds.get("tokens") or {}
+            rtoken = tokens.get("refresh_token")
+            if not rtoken:
+                raise UpworkAPIError("no refresh_token in credentials")
+            _refuse_if_dead(rtoken)
+            exp = tokens.get("expires_at")
+            fresh = exp is None or time.time() < float(exp) - _REFRESH_MARGIN_S
+            if (tokens.get("access_token") and tokens["access_token"] != self._token
+                    and fresh):
+                self._token = tokens["access_token"]
+                guard.note(CREDS_PATH, "reused_fresh_token")
+                return {"refreshed": False, "reused": True}
+            form = urllib.parse.urlencode({
+                "grant_type": "refresh_token",
+                "client_id": creds["client_id"],
+                "client_secret": creds["client_secret"],
+                "refresh_token": rtoken,
+            }).encode()
+            req = urllib.request.Request(
+                "https://www.upwork.com/api/v3/oauth2/token", data=form,
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode())
+            except urllib.error.HTTPError as exc:
+                message = _token_refusal(exc)
+                guard.note(CREDS_PATH, "refresh_refused", error=message[:160])
+                if getattr(exc, "grant_gone", False):
+                    guard.mark_dead(CREDS_PATH, rtoken, grant="API",
+                                    reason=getattr(exc, "upwork_reason", "refused"),
+                                    command=REAUTH_COMMAND, down=RAILS_ON_THIS_GRANT)
+                    guard.alert_once(CREDS_PATH, rtoken)
+                raise UpworkAuthError(message) from exc
+            creds.setdefault("tokens", {})
+            creds["tokens"]["access_token"] = data["access_token"]
+            if "refresh_token" in data:
+                creds["tokens"]["refresh_token"] = data["refresh_token"]
+            if "expires_in" in data:
+                creds["tokens"]["expires_at"] = time.time() + data["expires_in"]
+            # replaced, never truncated: this file also holds the client secret
+            guard.write_atomic(CREDS_PATH, json.dumps(creds, indent=2))
+            self._token = creds["tokens"]["access_token"]
+            guard.note(CREDS_PATH, "refreshed")
+            return {"refreshed": True}
