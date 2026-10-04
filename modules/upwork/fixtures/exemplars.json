@@ -1,188 +1,212 @@
 {
- "skill_fit": [
-  {
-   "grade": 5,
-   "title": "Expert Airtable Solution Architect",
-   "snippet": "Build and own the Airtable base that runs our operations: schema design, automations, interfaces, and Make.com syncs to the rest of the stack. Ongoing.",
-   "why": "A named platform he sells, and the job IS the platform work. Airtable in the title converts at 14.1% -- his highest of anything measured. Grade 5 is 'this is literally the service Etherwise offers'.",
-   "budget": null,
-   "client_spent": 35000.0
-  },
-  {
-   "grade": 4,
-   "title": "Automation Specialist - Workflow Automation Make.com/N8N/AI",
-   "snippet": "Design and build business workflows across Make.com, n8n and our CRM. Integrations, error handling, documentation. Long-term.",
-   "why": "His tools, his kind of build, but spread across several rather than deep in one. Grade 4 is 'squarely his lane'. He bid on this one.",
-   "budget": null,
-   "client_spent": 8000.0
-  },
-  {
-   "grade": 3,
-   "title": "AI Automation Specialist for Business Solutions",
-   "snippet": "Identify automation opportunities across our operations and implement them. Email, CRM intake, document processing, reporting.",
-   "why": "His CATEGORY with no platform named -- the work is probably his but the post does not say which tools. Grade 3 is 'plausibly his, decide on the body'. He bid on this one too, so 3 is not a rejection.",
-   "budget": null,
-   "client_spent": 5000.0
-  },
-  {
-   "grade": 2,
-   "title": "Senior AI Engineer - Build Autonomous AI Agents & Business Automation",
-   "snippet": "Build agentic systems in Python. LLM orchestration, RAG, vector stores, AWS deployment. Strong backend and API design required.",
-   "why": "Says automation, means software engineering. He has never bid on one: 'engineer' in the title is 264 cards and 5 applications, 'agent(ic)' 245 and 2. Grade 2 is 'adjacent, and he does not take these'.",
-   "budget": null,
-   "client_spent": 20000.0
-  },
-  {
-   "grade": 1,
-   "title": "AI Voice Agent for Home Services (Retell / VAPI)",
-   "snippet": "Build an inbound voice agent to book appointments for a home-services company. Call flows, transfers, CRM logging.",
-   "why": "A different trade. 'voice' in the title is 90 cards and zero applications; marketing, funnel and content the same. Grade 1 is 'not his work at all' -- and note the old exemplar file graded THIS SHAPE a 4, which is a large part of why skill fit was scoring loose.",
-   "budget": 3000.0,
-   "client_spent": 60.0
-  }
- ],
- "budget": [
-  {
-   "grade": 1,
-   "title": "Python Script \u2014 PDF Data Extraction + Excel Report",
-   "snippet": "Need Python script to extract data from PDF invoices using pdfplumber, clean data, output formatted Excel report. 200 PDFs initially, then monthly batches. Budget $600.",
-   "why": "",
-   "budget": 600.0,
-   "client_spent": 5000.0
-  },
-  {
-   "grade": 2,
-   "title": "Retell AI Voice Agent for Real Estate Lead Qualification",
-   "snippet": "Need Retell AI voice agent to qualify inbound leads for real estate business. Agent asks qualification questions, scores leads, routes hot leads to sales team via CRM. Budget $1,20",
-   "why": "",
-   "budget": 1200.0,
-   "client_spent": 8000.0
-  },
-  {
-   "grade": 3,
-   "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
-   "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
-   "why": "",
-   "budget": 1200.0,
-   "client_spent": 30000.0
-  },
-  {
-   "grade": 4,
-   "title": "Urgent: Voice AI System for Healthcare Client",
-   "snippet": "Looking for experienced voice AI developer for healthcare client. Urgent project.",
-   "why": "",
-   "budget": 50.0,
-   "client_spent": 60.0
-  },
-  {
-   "grade": 5,
-   "title": "Vapi AI Voice Agent \u2014 Outbound Sales Calls (Real Estate)",
-   "snippet": "Real estate wholesaling company needs outbound AI voice agent using Vapi. Calls motivated seller leads, asks qualification questions, schedules appointments with acquisition team. ",
-   "why": "",
-   "budget": 5000.0,
-   "client_spent": 65000.0
-  }
- ],
- "client_quality": [
-  {
-   "grade": 1,
-   "title": "Urgent: Voice AI System for Healthcare Client",
-   "snippet": "Looking for experienced voice AI developer for healthcare client. Urgent project.",
-   "why": "",
-   "budget": 50.0,
-   "client_spent": 60.0
-  },
-  {
-   "grade": 2,
-   "title": "GoHighLevel Automation Specialist \u2014 Agency White-Label Setup",
-   "snippet": "Building GHL white-label agency. Need someone to set up automations, pipelines, snapshots, workflows for clients. Ongoing, 20+ hrs/week. $30-$50/hr.",
-   "why": "",
-   "budget": 50.0,
-   "client_spent": 10000.0
-  },
-  {
-   "grade": 3,
-   "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
-   "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
-   "why": "",
-   "budget": 1200.0,
-   "client_spent": 30000.0
-  }
- ],
- "competition": [
-  {
-   "grade": 1,
-   "title": "Cold Calling Automation Setup with AI Outbound Calling",
-   "snippet": "Need experienced freelancer to set up complete cold calling automation system with AI outbound calling. Lead tracking, follow-up logic, campaign control. $50-$80/hr, 50+ proposals ",
-   "why": "",
-   "budget": 80.0,
-   "client_spent": 0.0
-  },
-  {
-   "grade": 2,
-   "title": "Urgent: Voice AI System for Healthcare Client",
-   "snippet": "Looking for experienced voice AI developer for healthcare client. Urgent project.",
-   "why": "",
-   "budget": 50.0,
-   "client_spent": 60.0
-  },
-  {
-   "grade": 3,
-   "title": "GoHighLevel Automation Specialist \u2014 Agency White-Label Setup",
-   "snippet": "Building GHL white-label agency. Need someone to set up automations, pipelines, snapshots, workflows for clients. Ongoing, 20+ hrs/week. $30-$50/hr.",
-   "why": "",
-   "budget": 50.0,
-   "client_spent": 10000.0
-  },
-  {
-   "grade": 4,
-   "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
-   "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
-   "why": "",
-   "budget": 1200.0,
-   "client_spent": 30000.0
-  },
-  {
-   "grade": 5,
-   "title": "Airtable CRM Build \u2014 B2B SaaS Sales Pipeline",
-   "snippet": "B2B SaaS startup needs complete CRM in Airtable. Multi-stage pipeline with automations, lead scoring, email outreach tracking, LinkedIn Sales Navigator integration, reporting dashb",
-   "why": "",
-   "budget": 2500.0,
-   "client_spent": 0.0
-  }
- ],
- "description_quality": [
-  {
-   "grade": 2,
-   "title": "Retell AI Voice Agent \u2014 Healthcare Appointment Booking",
-   "snippet": "Retell AI voice agent for dental clinic: appointment booking, reminders, FAQ. Integrate with booking system. Fixed $1,000-$2,500.",
-   "why": "",
-   "budget": 1500.0,
-   "client_spent": 5000.0
-  },
-  {
-   "grade": 3,
-   "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
-   "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
-   "why": "",
-   "budget": 1200.0,
-   "client_spent": 30000.0
-  },
-  {
-   "grade": 4,
-   "title": "GoHighLevel Telehealth Setup | Omnichannel Inbox & GA4",
-   "snippet": "We need an experienced GoHighLevel specialist to turn our existing GHL account into the central communication hub for an online telehealth platform. WHAT WE NEED: Set up GHL Conver",
-   "why": "",
-   "budget": null,
-   "client_spent": 0.0
-  },
-  {
-   "grade": 5,
-   "title": "Implement full commercial operation system, including pipeline, AI-powered sales agent, da",
-   "snippet": "We are Cepillos Industriales Regios (CIR) - a 30+ year Mexican manufacturer of industrial brushes based in Monterrey, NL, Mexico. We sell B2B to automotive, metalworking, sheet met",
-   "why": "",
-   "budget": null,
-   "client_spent": 4000.0
-  }
- ]
+  "skill_fit": [
+    {
+      "grade": 5,
+      "title": "Expert Airtable Solution Architect",
+      "snippet": "Build and own the Airtable base that runs our operations: schema design, automations, interfaces, and Make.com syncs to the rest of the stack. Ongoing.",
+      "why": "A named platform he sells, and the job IS the platform work. Airtable in the title converts at 14.1% -- his highest of anything measured. Grade 5 is 'this is literally the service Etherwise offers'.",
+      "budget": null,
+      "client_spent": 35000.0
+    },
+    {
+      "grade": 5,
+      "title": "HubSpot Account Audit and Re-Architecting",
+      "snippet": "HubSpot is our system of record and has been through several iterations. Audit the portal (objects, properties, pipelines, lifecycle stages, workflows, integrations), design an architecture that holds up as the team grows, lead the data cleanup, and document everything.",
+      "why": "CRM architecture on a platform he sells: audit, data model, pipelines, workflows, integrations, cleanup, handover. It is the Airtable grade-5 job on a different platform. He flagged THIS job on 2026-10-05 -- 'why was this job not considered as hot lead' -- after it was graded 1 because HubSpot was missing from the prompt. '5+ years of HubSpot administration' in the post describes the work; it is not a reason to grade down.",
+      "budget": null,
+      "client_spent": null
+    },
+    {
+      "grade": 4,
+      "title": "Automation Specialist - Workflow Automation Make.com/N8N/AI",
+      "snippet": "Design and build business workflows across Make.com, n8n and our CRM. Integrations, error handling, documentation. Long-term.",
+      "why": "His tools, his kind of build, but spread across several rather than deep in one. Grade 4 is 'squarely his lane'. He bid on this one.",
+      "budget": null,
+      "client_spent": 8000.0
+    },
+    {
+      "grade": 4,
+      "title": "Monday.com Builder Needed - Forms, Automations, Tasks & Workflows",
+      "snippet": "Finish setting up our Monday workspace: build about 15 internal and customer-facing forms, connect each to the right board, and build, automate, organize and test the tasks and workflows. Not a consulting project -- we know what we want built.",
+      "why": "A build on a platform he sells: forms, boards, automations, workflows. Monday.com went on his list on 2026-10-05; before that this was graded 2. Grade 4 rather than 5 because it is execution to someone else's spec, not architecture.",
+      "budget": 700.0,
+      "client_spent": 355934.18
+    },
+    {
+      "grade": 3,
+      "title": "AI Automation Specialist for Business Solutions",
+      "snippet": "Identify automation opportunities across our operations and implement them. Email, CRM intake, document processing, reporting.",
+      "why": "His CATEGORY with no platform named -- the work is probably his but the post does not say which tools. Grade 3 is 'plausibly his, decide on the body'. He bid on this one too, so 3 is not a rejection.",
+      "budget": null,
+      "client_spent": 5000.0
+    },
+    {
+      "grade": 2,
+      "title": "Senior AI Engineer - Build Autonomous AI Agents & Business Automation",
+      "snippet": "Build agentic systems in Python. LLM orchestration, RAG, vector stores, AWS deployment. Strong backend and API design required.",
+      "why": "Says automation, means software engineering. He has never bid on one: 'engineer' in the title is 264 cards and 5 applications, 'agent(ic)' 245 and 2. Grade 2 is 'adjacent, and he does not take these'.",
+      "budget": null,
+      "client_spent": 20000.0
+    },
+    {
+      "grade": 1,
+      "title": "AI Voice Agent for Home Services (Retell / VAPI)",
+      "snippet": "Build an inbound voice agent to book appointments for a home-services company. Call flows, transfers, CRM logging.",
+      "why": "A different trade. 'voice' in the title is 90 cards and zero applications; marketing, funnel and content the same. Grade 1 is 'not his work at all' -- and note the old exemplar file graded THIS SHAPE a 4, which is a large part of why skill fit was scoring loose.",
+      "budget": 3000.0,
+      "client_spent": 60.0
+    },
+    {
+      "grade": 1,
+      "title": "HubSpot Website & UX Specialist Needed for One-Time Website Review and Optimization",
+      "snippet": "Experienced HubSpot website developer / UX specialist to review our existing HubSpot website, identify areas to improve, and implement the improvements.",
+      "why": "HubSpot in the title, website and UX design in the body. The platform is his; the trade is not. The same goes for HubSpot Marketing Hub campaign work, sequences, SDR and VA roles -- grade 1-2 whatever the platform. This is the other side of the HubSpot line and it matters as much as the grade-5 above.",
+      "budget": null,
+      "client_spent": null
+    }
+  ],
+  "budget": [
+    {
+      "grade": 1,
+      "title": "Python Script — PDF Data Extraction + Excel Report",
+      "snippet": "Need Python script to extract data from PDF invoices using pdfplumber, clean data, output formatted Excel report. 200 PDFs initially, then monthly batches. Budget $600.",
+      "why": "",
+      "budget": 600.0,
+      "client_spent": 5000.0
+    },
+    {
+      "grade": 2,
+      "title": "Retell AI Voice Agent for Real Estate Lead Qualification",
+      "snippet": "Need Retell AI voice agent to qualify inbound leads for real estate business. Agent asks qualification questions, scores leads, routes hot leads to sales team via CRM. Budget $1,20",
+      "why": "",
+      "budget": 1200.0,
+      "client_spent": 8000.0
+    },
+    {
+      "grade": 3,
+      "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
+      "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
+      "why": "",
+      "budget": 1200.0,
+      "client_spent": 30000.0
+    },
+    {
+      "grade": 4,
+      "title": "Urgent: Voice AI System for Healthcare Client",
+      "snippet": "Looking for experienced voice AI developer for healthcare client. Urgent project.",
+      "why": "",
+      "budget": 50.0,
+      "client_spent": 60.0
+    },
+    {
+      "grade": 5,
+      "title": "Vapi AI Voice Agent — Outbound Sales Calls (Real Estate)",
+      "snippet": "Real estate wholesaling company needs outbound AI voice agent using Vapi. Calls motivated seller leads, asks qualification questions, schedules appointments with acquisition team. ",
+      "why": "",
+      "budget": 5000.0,
+      "client_spent": 65000.0
+    }
+  ],
+  "client_quality": [
+    {
+      "grade": 1,
+      "title": "Urgent: Voice AI System for Healthcare Client",
+      "snippet": "Looking for experienced voice AI developer for healthcare client. Urgent project.",
+      "why": "",
+      "budget": 50.0,
+      "client_spent": 60.0
+    },
+    {
+      "grade": 2,
+      "title": "GoHighLevel Automation Specialist — Agency White-Label Setup",
+      "snippet": "Building GHL white-label agency. Need someone to set up automations, pipelines, snapshots, workflows for clients. Ongoing, 20+ hrs/week. $30-$50/hr.",
+      "why": "",
+      "budget": 50.0,
+      "client_spent": 10000.0
+    },
+    {
+      "grade": 3,
+      "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
+      "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
+      "why": "",
+      "budget": 1200.0,
+      "client_spent": 30000.0
+    }
+  ],
+  "competition": [
+    {
+      "grade": 1,
+      "title": "Cold Calling Automation Setup with AI Outbound Calling",
+      "snippet": "Need experienced freelancer to set up complete cold calling automation system with AI outbound calling. Lead tracking, follow-up logic, campaign control. $50-$80/hr, 50+ proposals ",
+      "why": "",
+      "budget": 80.0,
+      "client_spent": 0.0
+    },
+    {
+      "grade": 2,
+      "title": "Urgent: Voice AI System for Healthcare Client",
+      "snippet": "Looking for experienced voice AI developer for healthcare client. Urgent project.",
+      "why": "",
+      "budget": 50.0,
+      "client_spent": 60.0
+    },
+    {
+      "grade": 3,
+      "title": "GoHighLevel Automation Specialist — Agency White-Label Setup",
+      "snippet": "Building GHL white-label agency. Need someone to set up automations, pipelines, snapshots, workflows for clients. Ongoing, 20+ hrs/week. $30-$50/hr.",
+      "why": "",
+      "budget": 50.0,
+      "client_spent": 10000.0
+    },
+    {
+      "grade": 4,
+      "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
+      "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
+      "why": "",
+      "budget": 1200.0,
+      "client_spent": 30000.0
+    },
+    {
+      "grade": 5,
+      "title": "Airtable CRM Build — B2B SaaS Sales Pipeline",
+      "snippet": "B2B SaaS startup needs complete CRM in Airtable. Multi-stage pipeline with automations, lead scoring, email outreach tracking, LinkedIn Sales Navigator integration, reporting dashb",
+      "why": "",
+      "budget": 2500.0,
+      "client_spent": 0.0
+    }
+  ],
+  "description_quality": [
+    {
+      "grade": 2,
+      "title": "Retell AI Voice Agent — Healthcare Appointment Booking",
+      "snippet": "Retell AI voice agent for dental clinic: appointment booking, reminders, FAQ. Integrate with booking system. Fixed $1,000-$2,500.",
+      "why": "",
+      "budget": 1500.0,
+      "client_spent": 5000.0
+    },
+    {
+      "grade": 3,
+      "title": "Data Pipeline Automation: PostgreSQL + Python + Airtable Sync",
+      "snippet": "Python developer to build automated data pipeline: sync PostgreSQL to Airtable on schedule. Transformation logic and error alerting. Fixed $800-$1,500.",
+      "why": "",
+      "budget": 1200.0,
+      "client_spent": 30000.0
+    },
+    {
+      "grade": 4,
+      "title": "GoHighLevel Telehealth Setup | Omnichannel Inbox & GA4",
+      "snippet": "We need an experienced GoHighLevel specialist to turn our existing GHL account into the central communication hub for an online telehealth platform. WHAT WE NEED: Set up GHL Conver",
+      "why": "",
+      "budget": null,
+      "client_spent": 0.0
+    },
+    {
+      "grade": 5,
+      "title": "Implement full commercial operation system, including pipeline, AI-powered sales agent, da",
+      "snippet": "We are Cepillos Industriales Regios (CIR) - a 30+ year Mexican manufacturer of industrial brushes based in Monterrey, NL, Mexico. We sell B2B to automotive, metalworking, sheet met",
+      "why": "",
+      "budget": null,
+      "client_spent": 4000.0
+    }
+  ]
 }

@@ -182,7 +182,8 @@ class TestScoreJob(unittest.TestCase):
         self.assertEqual(out["score"], 25)
         self.assertFalse(out["gated"])
         self.assertEqual(out["breakdown"]["skill_fit"], 4)
-        self.assertEqual(out["breakdown"]["scorer_version"], "3.0")
+        self.assertEqual(out["breakdown"]["scorer_version"], scoring.SCORER_VERSION)
+        self.assertEqual(scoring.SCORER_VERSION, "3.1")     # 3.1: HubSpot + Monday.com
         self.assertEqual(out["loom_flag"], 0)      # 25 < LOOM_FLAG_THRESHOLD 28
 
     def test_loom_flag_at_22_effective(self):
@@ -443,11 +444,57 @@ class TestPlatformGateAndWeights(unittest.TestCase):
         bid on zero times out of 90 cards. A scale anchored that loosely is
         most of why skill fit drifted."""
         ex = json.loads(scoring.EXEMPLARS_PATH.read_text())["skill_fit"]
-        self.assertEqual(sorted(e["grade"] for e in ex), [1, 2, 3, 4, 5])
+        # every grade anchored at least once (it was "exactly once" until
+        # 2026-10-05, when one example per grade turned out to teach the model
+        # that Airtable and Make were the whole of his trade)
+        self.assertEqual({e["grade"] for e in ex}, {1, 2, 3, 4, 5})
         for e in ex:
             self.assertTrue((e.get("why") or "").strip(), e["title"])
-        top = next(e for e in ex if e["grade"] == 5)
-        self.assertIn("airtable", top["title"].lower())
+        self.assertTrue(any(e["grade"] == 5 and "airtable" in e["title"].lower()
+                            for e in ex))
+
+    def test_hubspot_is_his_and_the_line_runs_through_the_work_not_the_name(self):
+        """Abhijeet, 2026-10-05, on "HubSpot Account Audit and Re-Architecting"
+        ($150-250/hr, client with 46 hires): "why was this job not considered
+        as hot lead". It scored 10 against a bar of 19. The scorer had graded
+        skill fit 1 of 5 and written "HubSpot architecture and administration
+        is not Etherwise's trade ... a specialist vertical he does not occupy"
+        — because the prompt's description of him never said HubSpot, and all
+        five grading examples were Airtable and Make jobs. 179 of 199
+        HubSpot-titled jobs had been graded 1-2 since 9 Sep, while the scanner
+        searched Upwork for "hubspot" every hour and his own knowledge base
+        held 535 HubSpot facts across 17 clients.
+
+        What is pinned: the prompt NAMES the platforms he sells; the same
+        platform is anchored on BOTH sides of the line (architecture high,
+        website/marketing low), because naming HubSpot alone would have swung
+        every HubSpot marketing-VA post to a 5; and the exact job he asked
+        about is the grade-5 example."""
+        prompt = scoring.system_prompt()
+        for platform in ("HubSpot", "Monday.com", "Airtable", "Make.com"):
+            self.assertIn(platform, prompt, platform)
+        self.assertIn("KIND OF", prompt)                  # the work, not the name
+        ex = json.loads(scoring.EXEMPLARS_PATH.read_text())["skill_fit"]
+        hub = {e["grade"] for e in ex if "hubspot" in e["title"].lower()}
+        self.assertTrue(any(g >= 4 for g in hub), hub)    # CRM architecture
+        self.assertTrue(any(g <= 2 for g in hub), hub)    # website / marketing
+        self.assertTrue(any(e["grade"] == 5
+                            and e["title"] == "HubSpot Account Audit and Re-Architecting"
+                            for e in ex))
+        self.assertTrue(any(e["grade"] >= 4 and "monday.com" in e["title"].lower()
+                            for e in ex))
+
+    def test_the_platforms_he_turned_down_are_named_as_not_his(self):
+        """His answers the same day: no to Salesforce, Zoho, Pipedrive, ClickUp
+        and Notion; GoHighLevel and voice stay low. Written into the prompt so
+        the next reader does not 'helpfully' generalise HubSpot to every CRM."""
+        prompt = scoring.system_prompt()
+        i = prompt.index("NOT on his list")
+        for name in ("Salesforce", "Zoho", "Pipedrive", "ClickUp", "Notion"):
+            self.assertIn(name, prompt[i:i + 400], name)
+
+    def test_an_example_without_money_fields_renders_without_empty_brackets(self):
+        self.assertNotIn(" ()", scoring.system_prompt())
 
     def test_claude_and_fresh_are_gone_from_the_schema(self):
         """Deleted, not zero-weighted: a field the model is asked to fill is a

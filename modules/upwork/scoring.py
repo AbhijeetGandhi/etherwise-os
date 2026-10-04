@@ -191,9 +191,9 @@ def hard_rule_skip(job: dict) -> Optional[str]:
 _MATRIX = """\
 You score Upwork jobs for Etherwise (Abhijeet Gandhi — Top Rated Plus, $100K+
 earned; Upwork profile rate $51.50/hr, he bids $50/hr as standard and $45/hr is
-the practical compromise floor; core stack Make.com, Airtable, Vapi,
-GoHighLevel, Python, AI/LLM). v2.3 scoring matrix — score each dimension, then
-bonuses, then the gate:
+the practical compromise floor; core stack Make.com, Airtable, HubSpot,
+Monday.com, Vapi, GoHighLevel, Python, AI/LLM). v2.3 scoring matrix — score
+each dimension, then bonuses, then the gate:
 
 Dimensions (base, max 28):
 - Skill Fit: RETURN THE PLAIN 1-5 GRADE. Do not pre-multiply it — code applies
@@ -205,6 +205,29 @@ Dimensions (base, max 28):
   ignored, while budget, client quality, competition and description quality
   were flat to within a point. Grade it as "is this the work he sells", not "is
   this a good job".
+  THE PLATFORMS HE SELLS WORK ON — his own list, 2026-10-05: Make.com,
+  Airtable, HubSpot, Monday.com. On every one of them the test is the KIND OF
+  WORK, not the name in the title:
+    - architecture and data model; CRM / board / base setup; pipelines,
+      lifecycle stages, workflows and automation; integrations; migration,
+      deduplication and data cleanup; dashboards and reporting; RevOps;
+      documentation and handover                          -> grade 4-5
+    - marketing content and email campaigns, landing pages, website / CMS
+      design, SEO, ads, sales outreach or SDR work, virtual-assistant admin,
+      done ON that platform                               -> grade 1-2
+  The platform being his does not make marketing his trade, and the platform
+  being HubSpot does not make CRM architecture someone else's. A post asking
+  for "N years of <platform> administration" or a certification is describing
+  the work — it is not a reason to grade down.
+  WHY THIS PARAGRAPH EXISTS: until 2026-10-05 HubSpot was absent from this
+  prompt. 179 of 199 HubSpot-titled jobs were graded 1-2 — among them a
+  $150-250/hr portal audit and re-architecture, graded 1 with the note "a
+  specialist vertical he does not occupy", while his own records hold 535
+  HubSpot facts across 17 clients. He asked why it was not a hot lead.
+  NOT on his list, by his own answer the same day: Salesforce, Zoho, Pipedrive,
+  ClickUp, Notion. Grade those on their automation / integration content
+  alone; the platform earns nothing. GoHighLevel and voice stay as the gate
+  below has them.
 - Budget 1-5
 - Client Quality 1-3 (capped; NEVER penalize a new client — $0 spent with no
   red flags = 2)
@@ -249,8 +272,8 @@ def _exemplar_block() -> str:
             if e.get("client_spent") is not None:
                 extras.append(f"client ${e['client_spent']:g} spent")
             why = f" — {e['why']}" if e.get("why") else ""
-            lines.append(f"  grade {e['grade']}: \"{e['title']}\""
-                         f" ({'; '.join(extras)}){why}")
+            shown = f" ({'; '.join(extras)})" if extras else ""   # no empty "()"
+            lines.append(f"  grade {e['grade']}: \"{e['title']}\"{shown}{why}")
     return "\n".join(lines)
 
 
@@ -270,7 +293,7 @@ def job_input(job: dict) -> str:
 
 # ── the judgment call ─────────────────────────────────────────────────────────
 
-SCORER_VERSION = "3.0"
+SCORER_VERSION = "3.1"
 
 # All four of long_term, whale_client, fresh and claude fired MORE often on the
 # jobs he skipped than on the ones he bid on. HIS CALL, 2026-09-08, on what to
