@@ -52,11 +52,19 @@ def sync(ctx) -> dict:
     if inserted:
         _bin("finance-bucketize", "--apply")     # set pnl_bucket for the new rows
     dr = fdoc.run(config.DB_PATH)
+    # `reds` is a METHOD. This read `dr.reds` — the bound method — in both
+    # places: the anomaly stored its repr instead of the failing invariants, and
+    # the log line did ','.join(<method>) and raised TypeError. So on the one
+    # morning this job had something to say, a RED doctor, it crashed instead of
+    # saying it. Never seen because the doctor had not been RED at 06:20; found
+    # on 2026-10-06, when September's bank statement went in ahead of the Stripe
+    # export and #11 was going to be RED at the next run.
+    reds = [c.invariant for c in dr.reds()]
     if not dr.green:
-        ctx.anomaly("finance_stripe_doctor_red", "critical", {"reds": dr.reds})
+        ctx.anomaly("finance_stripe_doctor_red", "critical", {"reds": reds})
     ctx.log(f"stripe sync: inserted {inserted}, reclassified"
             f" {imp.get('payout_idfc_reclassified', 0)}, doctor"
-            f" {'GREEN' if dr.green else 'RED ' + ','.join(dr.reds)}")
+            f" {'GREEN' if dr.green else 'RED ' + ', '.join(reds)}")
     return {"inserted": inserted,
             "reconcile_ok": (imp.get("reconcile") or {}).get("ok"),
             "payout_idfc_reclassified": imp.get("payout_idfc_reclassified", 0),
