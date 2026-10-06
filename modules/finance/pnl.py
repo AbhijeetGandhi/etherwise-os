@@ -44,7 +44,13 @@ BUSINESS_POS_VENDORS = (
     "LEMLIST", "FRAMER", "VERCEL", "LINKEDIN", "WHOP.COM", "CALENDLY", "VAPI",
     "PERPLEXITY", "RENDER.COM", "TERABOX", "PAYPROGLOBA", "CLEVERBRIDG",
 )
-_RENT_PAYEES = ("RAKHI MUKESH BOHRA",)                 # office rent
+# MYHQ (2026-10-06): the coworking desk, Rs 26,622.64 by UPI on 22 Sep. Asked
+# which of September's unlisted bank spends were the company's, he ticked it. A
+# vendor rule and not a single payment, unlike the list further down: a
+# coworking membership is an office by definition and it recurs, so asking him
+# again every month would only be a way to get it wrong one month.
+_RENT_PAYEES = ("RAKHI MUKESH BOHRA",                  # office rent
+                "MYHQ")                                # coworking
 _CONTRACTOR_PAYEES = ("HARSHIT SINGHAL", "ATHARVA AJAY BARAWKA")
 _EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
 # personal (non-business) counterparties: bank money EITHER direction is
@@ -61,14 +67,30 @@ _EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
 # records is where the money went and that it came back.
 # AVANTIKA DNYANESHWAR BHAMBURE (2026-09-05, "avantika is also a draw"): the
 # same arrangement, Rs 14,800 on 2 Sep.
+# HANUMAN SOMEENATH MORE (2026-10-06): Rs 1,50,000 in four lines on 22-23 Sep
+# (Rs 100, Rs 100, Rs 99,800, Rs 50,000), a payee with no history and no
+# narration. Abhijeet: "this is the employee we paid for but it for tax
+# purposes. so we actualy received cash for that". The same arrangement as the
+# two above -- the money came back -- so it is a draw. Unnarrated, it would
+# have fallen to a draw anyway; he is NAMED so that a later line which does say
+# "Salary" cannot turn Rs 1,50,000 of it into payroll.
 _PERSONAL_COUNTERPARTIES = ("DYNATECH", "PRASHANT JAWAHARLAL BHANDARI",
-                            "AVANTIKA DNYANESHWAR BHAMBURE")
+                            "AVANTIKA DNYANESHWAR BHAMBURE",
+                            "HANUMAN SOMEENATH MORE")
 # bank CREDITS that are NOT client revenue (Abhijeet, 2026-07-30): quarterly FD
 # interest (bank interest income) and refunds/reversals of expenses (cancelled
 # subscriptions, POS refunds, UPI reversals). Excluded from revenue -> owner_draw
 # (personal / non-operating), so they never inflate the top line.
+# 2026-10-06, two more of the same kind, each by the bank's own wording:
+#   "ONUS refund/EN413562/2716/11.09.2026" (+Rs 10,000, 12 Sep) is the bank
+#   handing back what its ATM debited and never dispensed -- withdrawal 2716 of
+#   11 Sep. It reverses a draw, so it is one; unmatched, it read as income and
+#   would have put Rs 10,000 of his own cash into September's revenue.
+#   "Mandate Refund Test" is Apple returning the Rs 399 it takes to test a UPI
+#   mandate. The July one (3 Jul) had been sitting in revenue since.
 _NONREVENUE_BANK_RE = _re.compile(
-    r"FD INTEREST|/REV/|REF/POS|REF/VISAPOS|-CANCELLED", _re.I)
+    r"FD INTEREST|/REV/|REF/POS|REF/VISAPOS|-CANCELLED|ONUS REFUND|MANDATE REFUND",
+    _re.I)
 _SALARY_MIN_BASE_MINOR = 100_000                       # $1,000 — salary-shaped floor
 # an Upwork 'Payment' row whose text names the instrument is the card/PayPal
 # settlement of a connects or membership invoice — the ARPayment leg as the
@@ -88,7 +110,31 @@ _CARD_SETTLEMENT_RE = _re.compile(r"\b(visa|mastercard|master card|amex|paypal|c
 # wrong one costs presentation, not profit -- but a list of facts he confirmed
 # beats a pattern he never stated. The real fix is reading the CLIENT org's own
 # ledger through the MCP, which would say which it was without asking.
-_UPWORK_HIRE_REFS = ("948419050",)                     # 2 Sep 2026, Rs 16,661.39
+# 2026-10-06, the 27th of them, Rs 38,124 on 14 Sep: "A freelancer I hired".
+_UPWORK_HIRE_REFS = ("948419050",                      # 2 Sep 2026, Rs 16,661.39
+                     "951702482")                      # 14 Sep 2026, Rs 38,124.00
+
+# Bank spends he has confirmed as BUSINESS, one payment at a time. The default
+# for an unlisted bank spend is a draw and it is the right default, so each of
+# these is here because he said so about THAT payment -- keyed on the bank's own
+# reference for it, matched as a whole slash-field of the narration so a short
+# number cannot match inside a longer one.
+#
+# NOT vendor rules, on purpose. The identical Rs 4,718.82 Jio bill of 20 Aug is
+# still a draw until he says the same of it; MakeMyTrip is where a holiday gets
+# booked too; and the CA's NEXT quarterly filing fee is his to call, not a
+# pattern's. (A split payment -- part cost, part cash back -- is not here at
+# all: see `bank_splits`.)
+#
+#   2026-10-06, asked which of September's unlisted spends were the company's,
+#   he ticked all four: "myHQ" (a vendor rule, above), "The trip", "Jio", and
+#   "CA's Rs 4,000 filing fee" (the 4 Aug one, a draw until that answer).
+_CONFIRMED_BUSINESS_REFS = (
+    "IDFB6259M0398252",    # 16 Sep 2026, Rs 12,000.00  Tamalisto, the trip's stay
+    "6272125289",          # 29 Sep 2026, Rs  5,857.00  MakeMyTrip, the same trip
+    "662601147108",        # 17 Sep 2026, Rs  4,718.82  Jio
+    "14039720",            #  4 Aug 2026, Rs  4,000.00  CA, "TDS return filing Q1"
+)
 
 # TDS remitted to the CA is PAYROLL (Abhijeet, 2026-09-07: "even if I am sending
 # less salary you need to include tds that we share as well?"). It is wage that
@@ -98,9 +144,10 @@ _UPWORK_HIRE_REFS = ("948419050",)                     # 2 Sep 2026, Rs 16,661.3
 #
 # NARROW ON PURPOSE: his CA's name AND the word TDS. Two other payments go to
 # the same CA and are NOT payroll — the quarterly return-filing fee (Rs 4,000,
-# 4 Aug: a professional fee, still a draw pending his word) and "Tax 2026"
-# (Rs 4,72,710, 31 Aug: his own FY25-26 liability, which never says TDS). Both
-# are excluded by name, not by an amount or a date.
+# 4 Aug: a professional fee; his word came on 2026-10-06 and it is business, so
+# that one payment is opex by its own reference in _CONFIRMED_BUSINESS_REFS) and
+# "Tax 2026" (Rs 4,72,710, 31 Aug: his own FY25-26 liability, which never says
+# TDS). Both are kept out of PAYROLL by name, not by an amount or a date.
 #
 # The wide end of this lives in `payroll_tax.uncovered` + doctor #14, which
 # looks at EVERY bank debit naming TDS and goes RED on one this rule books
@@ -120,6 +167,15 @@ def is_tds_remittance(description: Optional[str]) -> bool:
                 and not _NOT_TDS_REMITTANCE_RE.search(d))
 
 
+def is_confirmed_business(description: Optional[str]) -> bool:
+    """Is this one of the payments he has confirmed as the company's, by its
+    own bank reference? A whole slash-field must equal the reference: IDFC
+    narrations are slash-separated, and '14039720' must not match inside some
+    other payment's longer number."""
+    fields = {f.strip() for f in (description or "").upper().split("/")}
+    return any(ref in fields for ref in _CONFIRMED_BUSINESS_REFS)
+
+
 def _bank_spend(row: dict) -> str:
     """Classify a bank-statement spend (a row that would previously have been
     lumped into opex). See the rule table above; default is owner_draw —
@@ -127,6 +183,8 @@ def _bank_spend(row: dict) -> str:
     d = (row.get("description") or "").upper()
     if "CREDITCARDBILL" in d.replace(" ", ""):
         return "cc_settlement"                          # bill payment, not a spend
+    if is_confirmed_business(d):
+        return "opex"                                   # he said so, of this payment
     if d.startswith("POS") or "POS-VISA/" in d:
         if "UPWORK" in d or "UPWRKESCROW" in d:
             if any(ref in d for ref in _UPWORK_HIRE_REFS):

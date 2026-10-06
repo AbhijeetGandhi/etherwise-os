@@ -17,8 +17,20 @@ are canonical-key-guarded (idempotent). --apply does the network FX pinning;
 dry-run is network-free.
 
 Usage: PYTHONPATH=. python3 bin/finance-import-idfc [--apply]   (default dry-run)
+       ... --apply --fd-balance-inr 7765875.55 --fd-as-of 2026-09-30
+                   [--fd-source idfc-consolidated-statement]
+           sets a new authoritative deposit total; --fd-source says where the
+           figure came from (default: idfc-app-fd, his IDFC-app FD list).
+
+XLSX ONLY. The bank's CONSOLIDATED STATEMENT is a PDF and is not read here. On
+2026-10-06 he sent one for September; it was converted in the chat into this
+export's layout (the file says so in its own header rows and the PDF sits
+beside it in the inbox) and then came through this importer like any other —
+see BUILD_BRIEF for how the wrapped descriptions were proven against the ledger
+before a single key was trusted.
 """
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -33,7 +45,18 @@ REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-import-idfc.
 ACCOUNT = "idfc"
 
 
-def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
+# Where an authoritative deposit figure came from, written into
+# account_balances.source_file. It was always "idfc-app-fd" because it always WAS
+# his app's FD list, typed in. On 2026-10-06 it came from the bank's consolidated
+# statement instead, which prints every deposit's current principal (44 of them,
+# summing to the figure on its own summary page) — a different and better source,
+# and a row that says "app" about a number nobody read off the app is a small lie
+# that would be believed later.
+FD_SOURCE_DEFAULT = "idfc-app-fd"
+_FD_SOURCE_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,39}")
+
+
+def run(apply: bool, fd_override=None, fd_as_of=None, fd_source=None) -> dict:
     files = sorted(INBOX.glob("*.xlsx"), key=lambda p: p.stat().st_mtime)
     if not files:
         return {"abort": "no .xlsx in finance-inbox/bank/"}
@@ -155,7 +178,8 @@ def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
                     "INSERT OR REPLACE INTO account_balances (account, currency,"
                     " opening_minor, closing_minor, statement_date, source_file)"
                     " VALUES ('idfc-fd','INR',0,?,?,?)",
-                    (fd_override, fd_as_of, f"authoritative:idfc-app-fd:{fd_as_of}"))
+                    (fd_override, fd_as_of,
+                     f"authoritative:{fd_source or FD_SOURCE_DEFAULT}:{fd_as_of}"))
             roll = deposits.rolled(conn, as_of=fd_as_of)
             if roll and roll["as_of"] > roll["anchor_date"]:
                 conn.execute(
@@ -185,6 +209,8 @@ def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
            "fd_sweep_legs": roll["legs"] if roll else None,
            "fd_authoritative_inr": (str(money.from_minor(fd_override))
                                     if fd_override is not None else None),
+           "fd_authoritative_source": ((fd_source or FD_SOURCE_DEFAULT)
+                                       if fd_override is not None else None),
            "opening_inr": str(money.from_minor(meta.get("opening_balance_minor", 0))),
            "closing_inr": str(money.from_minor(meta.get("closing_balance_minor", 0)))}
     if apply:
@@ -194,12 +220,19 @@ def run(apply: bool, fd_override=None, fd_as_of=None) -> dict:
 
 
 def main() -> int:
-    fd_override = fd_as_of = None
+    fd_override = fd_as_of = fd_source = None
+    if "--fd-source" in sys.argv:                # provenance of the figure below
+        fd_source = sys.argv[sys.argv.index("--fd-source") + 1]
+        if not _FD_SOURCE_RE.fullmatch(fd_source):
+            print(json.dumps({"abort": "--fd-source must be a short lowercase slug"
+                                       " (letters, digits, hyphens)"}))
+            return 1
     if "--fd-balance-inr" in sys.argv:           # authoritative FD principal (INR)
         fd_override = money.to_minor(sys.argv[sys.argv.index("--fd-balance-inr") + 1])
     if "--fd-as-of" in sys.argv:
         fd_as_of = sys.argv[sys.argv.index("--fd-as-of") + 1]
-    res = run("--apply" in sys.argv, fd_override=fd_override, fd_as_of=fd_as_of)
+    res = run("--apply" in sys.argv, fd_override=fd_override, fd_as_of=fd_as_of,
+              fd_source=fd_source)
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("# IDFC import (Phase 2)\n\n```\n" + json.dumps(res, indent=1) + "\n```\n")
     print(json.dumps(res, indent=1))

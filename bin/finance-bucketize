@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
-from modules.finance import pnl, accrual, payroll_tax, salary_lines  # noqa: E402
+from modules.finance import pnl, accrual, bank_splits, payroll_tax, salary_lines  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
 
@@ -49,6 +49,17 @@ def run(apply: bool) -> dict:
                else {"written": len(payroll_tax.rows_to_write(conn)), "keys": []})
         tds_bad = len(payroll_tax.mismatches(conn)) + len(payroll_tax.uncovered(conn))
 
+    # AND a bank payment that was two things. Abhijeet, 2026-10-06, on
+    # Rs 1,15,000 to his CA reading "Professional fees": "55000 were fees. rest
+    # we got cash". The bank row stays whole and untouched; the pair of derived
+    # rows that carries the fee across to opex is written here, for the same
+    # reason as the two passes above — this is the step that runs after every
+    # import, so a split never waits on someone remembering it exists.
+    with db.connect(config.DB_PATH) as conn:
+        splits = (bank_splits.apply(conn) if apply
+                  else {"written": len(bank_splits.rows_to_write(conn)), "keys": []})
+        splits_bad = len(bank_splits.problems(conn))
+
     changed = 0
     counts = Counter()
     with db.connect(config.DB_PATH) as conn:
@@ -81,7 +92,9 @@ def run(apply: bool) -> dict:
             "unnarrated_salary_fixed": named["changed"],
             "unnarrated_salary_payees": named.get("payees", []),
             "tds_split_rows": tds["written"],
-            "tds_unreconciled": tds_bad}
+            "tds_unreconciled": tds_bad,
+            "bank_split_rows": splits["written"],
+            "bank_split_problems": splits_bad}
 
 
 def main() -> int:

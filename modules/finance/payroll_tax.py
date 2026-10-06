@@ -19,6 +19,12 @@ the ledger say so instead of guessing.
   and pt payments") is not payroll. August is withheld but not yet remitted:
   "august you will see in the next statement".
 
+  2026-10-06: it did -- Rs 43,000 on 7 Sep, "TDS august", Rs 12,445 more than
+  July's Rs 30,555, so the figure was put to him rather than read off the line.
+  Asked whether all of it was TDS on August's salaries: "Yes, all of it". #14
+  had the loop ready: the moment that row landed without a month behind it the
+  check would have gone RED and named it.
+
 PROFESSIONAL TAX IS DELIBERATELY ABSENT. The roster says Rs 200 a head a month
 and no such payment leaves the bank monthly. His call: "Not monthly — leave it
 out for now". Each month is therefore understated by roughly Rs 1,200-1,600, and
@@ -57,6 +63,7 @@ MONTHLY_TDS = {
     "2026-05": 2808000,        # his split of the 7 Jul payment
     "2026-06": 3290500,        # his split of the 7 Jul payment
     "2026-07": 3055500,        # remitted 6 Aug, Rs 30,555, "TDS July"
+    "2026-08": 4300000,        # remitted 7 Sep, Rs 43,000, "TDS august"
 }
 
 # The remittances that carry those months, so #14 can prove the table against the
@@ -66,6 +73,7 @@ REMITTANCES = {
     "bank:553f3afc6c497e3e": ("2026-04",),              # 6 May,  Rs 28,080
     "bank:04607cb1178e7003": ("2026-05", "2026-06"),    # 7 Jul,  Rs 60,985
     "bank:1b70a0304700d50b": ("2026-07",),              # 6 Aug,  Rs 30,555
+    "bank:6435ebd60cc8b361": ("2026-08",),              # 7 Sep,  Rs 43,000
 }
 
 

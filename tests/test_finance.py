@@ -301,6 +301,8 @@ class DoctorCase(unittest.TestCase):
                   "IFT/10171724864/PRITI BORA & CO /26482502/TDS may and june")
         self._tds(conn, "bank:1b70a0304700d50b", -3055500, "2026-08-06",
                   "IFT/10171724864/PRITI BORA & CO /27883768/TDS July")
+        self._tds(conn, "bank:6435ebd60cc8b361", -4300000, "2026-09-07",
+                  "IFT/10171724864/PRITI BORA & CO /23388539/TDS august")
         pt.apply(conn)
 
     def test_payroll_tds_14_green_when_his_months_tie_to_the_bank(self):
@@ -321,15 +323,19 @@ class DoctorCase(unittest.TestCase):
     def test_payroll_tds_14_asks_for_the_month_of_a_remittance_it_has_not_got(self):
         """"august you will see in the next statement". When it does, the ledger
         must ask him for the figure — not book a month's payroll on the day it
-        cleared, which is exactly how the #12 drift survived five months."""
+        cleared, which is exactly how the #12 drift survived five months.
+
+        August's did land (7 Sep, Rs 43,000) and he gave the month on
+        2026-10-06, so the row that has no month behind it is now September's,
+        due in October's statement. Same loop, one month on."""
         with db.connect(self.db_path) as conn:
             self._all_tds(conn)
-            self._tds(conn, "bank:aug-tds", -3100000, "2026-09-06",
-                      "IFT/10171724864/PRITI BORA & CO /99999999/TDS August")
+            self._tds(conn, "bank:sep-tds", -3100000, "2026-10-07",
+                      "IFT/10171724864/PRITI BORA & CO /99999999/TDS September")
         res = doctor.run(self.db_path)
         c = [x for x in res.checks if x.invariant == "#14 payroll TDS"][0]
         self.assertEqual(c.status, "RED")
-        self.assertEqual(c.deltas[0]["key"], "bank:aug-tds")
+        self.assertEqual(c.deltas[0]["key"], "bank:sep-tds")
         self.assertFalse(res.green)
 
     def test_payroll_tds_14_red_when_the_months_do_not_add_up_to_the_payment(self):
@@ -351,6 +357,8 @@ class DoctorCase(unittest.TestCase):
                       "IFT/10171724864/PRITI BORA & CO /13337732/TDS for april")
             self._tds(conn, "bank:1b70a0304700d50b", -3055500, "2026-08-06",
                       "IFT/10171724864/PRITI BORA & CO /27883768/TDS July")
+            self._tds(conn, "bank:6435ebd60cc8b361", -4300000, "2026-09-07",
+                      "IFT/10171724864/PRITI BORA & CO /23388539/TDS august")
         c = [x for x in doctor.run(self.db_path).checks
              if x.invariant == "#14 payroll TDS"][0]
         self.assertEqual(c.status, "RED")
@@ -1113,10 +1121,11 @@ class TestPayrollTax(unittest.TestCase):
     transfer; the withheld tax sat in owner draws, so a month of employing
     people looked cheaper than it was by the whole of the TDS."""
 
-    # the three real lines, verbatim from the IDFC statement
+    # the real lines, verbatim from the IDFC statements
     APRIL = "IFT/10171724864/PRITI BORA & CO /13337732/TDS for april"
     MAYJUN = "IFT/10171724864/PRITI BORA & CO /26482502/TDS may and june"
     JULY = "IFT/10171724864/PRITI BORA & CO /27883768/TDS July"
+    AUGUST = "IFT/10171724864/PRITI BORA & CO /23388539/TDS august"
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -1142,21 +1151,31 @@ class TestPayrollTax(unittest.TestCase):
                     self.MAYJUN, "0.01053")
         self._remit(conn, "bank:1b70a0304700d50b", -3055500, "2026-08-06",
                     self.JULY, "0.0105")
+        self._remit(conn, "bank:6435ebd60cc8b361", -4300000, "2026-09-07",
+                    self.AUGUST, "0.01127")
 
     # ── the booking rule ─────────────────────────────────────────────────────
 
     def test_tds_to_the_ca_is_payroll_and_the_ca_s_other_bills_are_not(self):
-        """Narrow on purpose: his CA's name AND the word TDS. Two other payments
-        go to the same CA and are not payroll — the quarterly return-filing fee
-        and 'Tax 2026', his own FY25-26 liability."""
+        """Narrow on purpose: his CA's name AND the word TDS. Other payments go
+        to the same CA and are not payroll — the quarterly return-filing fee,
+        'Tax 2026' (his own FY25-26 liability) and advance tax."""
         from modules.finance import pnl
-        for line in (self.APRIL, self.MAYJUN, self.JULY):
+        for line in (self.APRIL, self.MAYJUN, self.JULY, self.AUGUST):
             self.assertEqual(pnl._bank_spend({"description": line}), "payroll", line)
-        for line in ("IFT/10171724864/PRITI BORA & CO /14039720/TDS return filing Q1",
+        for line in ("IFT/10171724864/PRITI BORA & CO /15151515/TDS return filing Q2",
                      "IFT/10171724864/PRITI BORA & CO /35546417/Tax 2026",
+                     "IFT/10171724864/PRITI BORA & CO /26822883/Advance tax",
                      "IFT/10171724864/PRITI BORA & CO /19225121/Advance tax and pt"
                      " payments"):
+            self.assertFalse(pnl.is_tds_remittance(line), line)
             self.assertEqual(pnl._bank_spend({"description": line}), "owner_draw", line)
+        # The Q1 filing fee itself: still never payroll, and a business cost
+        # since he said so of that one payment (2026-10-06). The Q2 line above
+        # is the proof it is the PAYMENT that was confirmed and not the wording.
+        q1 = "IFT/10171724864/PRITI BORA & CO /14039720/TDS return filing Q1"
+        self.assertFalse(pnl.is_tds_remittance(q1))
+        self.assertEqual(pnl._bank_spend({"description": q1}), "opex")
 
     def test_a_sweep_line_that_mentions_tds_is_not_a_remittance(self):
         """Every FD sweep-in carries 'Gross Interest:14/TDS:1' in its text, and
@@ -1176,7 +1195,7 @@ class TestPayrollTax(unittest.TestCase):
     def test_his_months_add_up_to_what_left_the_account(self):
         """His design: "Ask me tds amount each month I will give you. then you
         can match it against the deduct from bank account." April Rs 28,080,
-        May+June Rs 60,985, July Rs 30,555."""
+        May+June Rs 60,985, July Rs 30,555, August Rs 43,000."""
         from modules.finance import payroll_tax as pt
         with db.connect(self.db_path) as conn:
             self._remit_all(conn)
@@ -1200,21 +1219,43 @@ class TestPayrollTax(unittest.TestCase):
         from modules.finance import payroll_tax as pt
         with db.connect(self.db_path) as conn:
             bad = pt.mismatches(conn)
-        self.assertEqual(len(bad), 3)
+        self.assertEqual(len(bad), len(pt.REMITTANCES))
+        self.assertEqual(len(bad), 4)                # Apr, May+Jun, Jul, Aug
         self.assertTrue(all("not in the ledger" in b["error"] for b in bad))
 
     def test_a_remittance_he_has_not_given_a_month_for_is_named(self):
         """The half that makes it self-running. "august you will see in the next
         statement" — when that statement lands, the ledger must ask him for the
-        figure, not book a month's payroll on the day it cleared."""
+        figure, not book a month's payroll on the day it cleared. It landed on
+        7 Sep and he gave the month; the next one it has to ask about is
+        September's, in October's statement."""
         from modules.finance import payroll_tax as pt
         with db.connect(self.db_path) as conn:
             self._remit_all(conn)
             self.assertEqual(pt.uncovered(conn), [])
-            self._remit(conn, "bank:september-tds", -3100000, "2026-09-06",
-                        "IFT/10171724864/PRITI BORA & CO /99999999/TDS August", "0.0105")
+            self._remit(conn, "bank:october-statement-tds", -3100000, "2026-10-07",
+                        "IFT/10171724864/PRITI BORA & CO /99999999/TDS September",
+                        "0.0105")
             loose = pt.uncovered(conn)
-        self.assertEqual([r["canonical_key"] for r in loose], ["bank:september-tds"])
+        self.assertEqual([r["canonical_key"] for r in loose],
+                         ["bank:october-statement-tds"])
+
+    def test_august_is_one_month_and_needs_neither_a_pin_nor_a_split(self):
+        """Rs 43,000 on 7 Sep reads "TDS august". One month, named on the line:
+        `accrual` reads it, so there is no pin (an override that agrees with the
+        reading later looks like a decision nobody made) and nothing to split."""
+        from modules.finance import payroll_tax as pt, accrual
+        self.assertEqual(pt.declared_minor("2026-08"), 4300000)
+        self.assertEqual(pt.REMITTANCES["bank:6435ebd60cc8b361"], ("2026-08",))
+        self.assertNotIn("bank:6435ebd60cc8b361", pt.accrual_pins())
+        self.assertEqual(accrual.month_named(self.AUGUST, "2026-09-07"), "2026-08")
+        with db.connect(self.db_path) as conn:
+            self._remit_all(conn)
+            pt.apply(conn)
+            keys = [r[0] for r in conn.execute(
+                "SELECT canonical_key FROM transactions WHERE source='Direct'")]
+        self.assertTrue(all("04607cb1178e7003" in k for k in keys), keys)
+        self.assertEqual(len(keys), 2)               # only May/June's pair
 
     def test_the_march_advance_tax_is_before_the_regime_and_is_not_scanned(self):
         """"we started giving tds from apr that is this year" — January to March
@@ -1566,6 +1607,107 @@ class TestPnl(unittest.TestCase):
         row["description"] = "NEFT/IDFB6243M5276361/YOGITA SUDHIR SOMA/BKID/Salary august"
         self.assertEqual(pnl.bucket(row), "payroll")
 
+    def test_the_second_upwork_hire_is_named_by_its_own_reference(self):
+        """Rs 38,124 on 14 Sep, the 27th Upwork line on this card. Abhijeet,
+        2026-10-06: "A freelancer I hired". Named by its reference like the
+        first; the line a day either side of it would still be Connects."""
+        from modules.finance import pnl
+        idfc = lambda d: {"category": "expense", "source": "IDFC", "description": d}
+        self.assertEqual(pnl.bucket(idfc(
+            "POS-VISA/Upwork -951702482REF/625716351633/Dublin/16:18:05")), "opex")
+        self.assertEqual(pnl.bucket(idfc(
+            "POS-VISA/Upwork -951702483REF/625716351634/Dublin/16:18:06")),
+            "platform_fee")
+
+    def test_hanuman_is_a_draw_and_a_salary_narration_cannot_change_that(self):
+        """Rs 1,50,000 on 22-23 Sep, no narration. Abhijeet, 2026-10-06: "this is
+        the employee we paid for but it for tax purposes. so we actualy received
+        cash for that". The money came back, so no wage was borne. Unnarrated it
+        would be a draw by default; he is NAMED so a later line that says
+        "Salary" (or the unnarrated-salary pass setting category='salary')
+        cannot turn it into payroll."""
+        from modules.finance import pnl
+        for desc in ("IMPS-OPM/626513990250/HANUMAN SOMEENATH MORE/CNRB0000205/9761/",
+                     "NEFT/IDFB6265M1906076/HANUMAN SOMEENATH MORE/CNRB0000205",
+                     "NEFT/IDFB6266M2201464/HANUMAN SOMEENATH MORE/CNRB0000205"):
+            self.assertEqual(pnl.bucket({"category": "expense", "source": "IDFC",
+                                         "amount_base_minor": -112500,
+                                         "description": desc}), "owner_draw", desc)
+        self.assertEqual(pnl.bucket(
+            {"category": "salary", "source": "IDFC", "amount_base_minor": -112500,
+             "description": "NEFT/IDFB6299M0000001/HANUMAN SOMEENATH MORE/CNRB0000205"
+                            "/Salary october"}), "owner_draw")
+
+    def test_the_coworking_desk_is_office_space(self):
+        """myHQ, Rs 26,622.64 by UPI on 22 Sep — ticked as the company's on
+        2026-10-06. A vendor rule beside the office rent: a coworking membership
+        is an office by definition, and it recurs."""
+        from modules.finance import pnl
+        self.assertEqual(pnl.bucket(
+            {"category": "expense", "source": "IDFC",
+             "description": "UPI/DR/663131352681/MYHQ ANA/NSPB/cf.myhq/6553598130"}),
+            "opex")
+
+    def test_a_payment_he_confirmed_is_business_and_its_neighbours_are_not(self):
+        """The default for an unlisted bank spend is a draw, and it is the right
+        default. Four payments are business because he said so about each
+        (2026-10-06) — by the bank's own reference, NOT by vendor: the identical
+        Jio bill a month earlier, another MakeMyTrip booking and the CA's next
+        filing fee all stay draws until he says the same of them."""
+        from modules.finance import pnl
+        idfc = lambda d: {"category": "expense", "source": "IDFC", "description": d}
+        for desc in (
+                "NEFT/IDFB6259M0398252/TAMALISTO/ICIC0002587/Tamalisto advance 2R 3N",
+                "POS-VISA/PYU*Makemytrip India PGURGAON /6272125289/GURGAON/12:38:02",
+                "UPI/DR/662601147108/MYJIO/HDFC/myjio4./Pay",
+                "IFT/10171724864/PRITI BORA & CO /14039720/TDS return filing Q1"):
+            self.assertTrue(pnl.is_confirmed_business(desc), desc)
+            self.assertEqual(pnl.bucket(idfc(desc)), "opex", desc)
+        for desc in (
+                "UPI/DR/659808386668/JIO/KKBK/relianc/Pay",              # 20 Aug, same bill
+                "UPI/DR/317863592263/MYJIO/HDFC/myjio.e/Pay",            # Jan, Rs 49
+                "POS-VISA/PYU*Makemytrip India PGURGAON /6300000001/GURGAON/09:00:00",
+                "NEFT/IDFB6300M0000001/TAMALISTO/ICIC0002587/Tamalisto balance",
+                "IFT/10171724864/PRITI BORA & CO /15151515/TDS return filing Q2"):
+            self.assertFalse(pnl.is_confirmed_business(desc), desc)
+            self.assertEqual(pnl.bucket(idfc(desc)), "owner_draw", desc)
+
+    def test_a_confirmed_reference_must_be_a_whole_field(self):
+        """'14039720' is eight digits. Matched as a substring it would also
+        claim any payment whose longer reference happens to contain it."""
+        from modules.finance import pnl
+        for desc in ("UPI/DR/914039720555/SOMEONE/HDFC/x/UPI",
+                     "NEFT/IDFB14039720M01/SOMEONE ELSE/HDFC0000001",
+                     "POS-VISA/SHOP 6272125289X/100000000001/PUNE/10:00:00"):
+            self.assertFalse(pnl.is_confirmed_business(desc), desc)
+            self.assertEqual(pnl.bucket({"category": "expense", "source": "IDFC",
+                                         "description": desc}), "owner_draw", desc)
+        self.assertFalse(pnl.is_confirmed_business(None))
+        self.assertFalse(pnl.is_confirmed_business(""))
+
+    def test_an_atm_that_kept_the_money_is_not_revenue(self):
+        """"ONUS refund/EN413562/2716/11.09.2026", +Rs 10,000 on 12 Sep: the bank
+        handing back what its ATM debited and never dispensed (withdrawal 2716
+        the day before). It arrives as a bank CREDIT with no other marker, so
+        the classifier calls it income — and Rs 10,000 of his own cash would
+        have been September revenue. It reverses a draw, so it is one. Same for
+        Apple's "Mandate Refund Test", which had put Rs 399 into July."""
+        from modules.finance import pnl
+        for desc in ("ONUS refund/EN413562/2716/11.09.2026",
+                     "UPI/CR/103600150354/APPLE ME/HDFC/applese/Mandate Refund Test"):
+            self.assertEqual(pnl.bucket({"category": "income", "source": "IDFC",
+                                         "amount_base_minor": 11270,
+                                         "description": desc}), "owner_draw", desc)
+        # the withdrawals it reverses, and a real client credit, are untouched
+        self.assertEqual(pnl.bucket(
+            {"category": "owner_draw", "source": "IDFC",
+             "description": "ATM/CASH WITHDRAWAL/2716/IMAGE HEIGHTS CHINCHWAPUNE MH"
+                            " IN/SELF"}), "owner_draw")
+        self.assertEqual(pnl.bucket(
+            {"category": "income", "source": "IDFC",
+             "description": "IMPS/616221595127/VISAPAYMENTSLIM/HDFC0000240/6389/"
+                            "RDAVostroFIRINWEnsureKYCAMLFEMAcompliance"}), "revenue")
+
     def test_bank_spend_rules_2026_07(self):
         # Abhijeet's reclassification: opex = credit-card statement; bank spends
         # are personal (owner_draw) except the explicit business rules.
@@ -1907,6 +2049,95 @@ class TestIdfcImporterPicksNewest(unittest.TestCase):
             with self.assertRaises(Stop):
                 mod.run(False)
         self.assertEqual(seen["file"], "IDFCFIRSTBankstatement.xlsx")
+
+
+class TestIdfcImporterDepositSource(unittest.TestCase):
+    """Where an authoritative deposit figure CAME from is written down.
+
+    It was always "idfc-app-fd" because it always was his app's FD list, typed
+    in. On 2026-10-06 September's figure came from the bank's consolidated
+    statement instead, which prints every deposit's principal (44 of them,
+    summing to the Rs 77,65,875.55 on its own summary page). A row saying "app"
+    about a number nobody read off the app is a small lie that gets believed."""
+
+    GRID = ([["ACCOUNT NUMBER", "60606200234"], ["CUSTOMER NAME", "ETHERWISE"],
+             ["STATEMENT PERIOD", "29-Sep-2026 TO 30-Sep-2026"]] + [[]] * 10
+            + [TestBankXlsx.HDR,
+               ["29-Sep-2026", "29-Sep-2026", "Sweepout FD 10306819768 booked", "",
+                "78000.00", "", "500643.55"],
+               ["30-Sep-2026", "30-Sep-2026", "NEFT/INDBH30097541206/PAYMENT ESCROW"
+                " INC/INDB0000006/PAYMENT ESCROW INC", "", "", "69676.08",
+                "570319.63"]])
+
+    def setUp(self):
+        import importlib.machinery
+        import importlib.util
+        self.tmp = Path(tempfile.mkdtemp(prefix="idfc-fd-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        (self.tmp / "inbox").mkdir()
+        (self.tmp / "inbox" / "sep.xlsx").write_bytes(_make_idfc_xlsx(self.GRID))
+        path = Path(__file__).resolve().parents[1] / "bin" / "finance-import-idfc"
+        loader = importlib.machinery.SourceFileLoader("fin_imp_idfc_fd", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(self.mod)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, **kw):
+        def pin(rows, **_):
+            for r in rows:
+                r.update({"amount_base_minor": money.apply_rate(r["amount_minor"],
+                                                                "0.01127"),
+                          "fx_rate": "0.01127", "fx_date": r["date"]})
+            return {"pinned": len(rows), "fetched_dates": []}
+        with mock.patch.object(self.mod, "INBOX", self.tmp / "inbox"), \
+                mock.patch.object(self.mod.config, "DB_PATH", self.db_path), \
+                mock.patch.object(self.mod.fx, "pin_base", side_effect=pin):
+            return self.mod.run(True, **kw)
+
+    def _fd_rows(self):
+        with db.connect(self.db_path) as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT closing_minor, statement_date, source_file FROM"
+                " account_balances WHERE account='idfc-fd' ORDER BY id")]
+
+    def test_the_default_still_says_his_app(self):
+        res = self._run(fd_override=776587555, fd_as_of="2026-09-30")
+        self.assertEqual(res["v3_inserted"], 2)
+        self.assertEqual(res["fd_authoritative_source"], "idfc-app-fd")
+        self.assertEqual(self._fd_rows(), [
+            {"closing_minor": 776587555, "statement_date": "2026-09-30",
+             "source_file": "authoritative:idfc-app-fd:2026-09-30"}])
+
+    def test_a_named_source_is_recorded_and_still_anchors(self):
+        """`deposits.anchor` takes any 'authoritative:' row, so the roll forward
+        starts from this figure exactly as it would from his app's."""
+        from modules.finance import deposits
+        res = self._run(fd_override=776587555, fd_as_of="2026-09-30",
+                        fd_source="idfc-consolidated-statement")
+        self.assertEqual(res["fd_authoritative_source"], "idfc-consolidated-statement")
+        self.assertEqual(res["fd_principal_inr"], "7765875.55")
+        self.assertEqual(self._fd_rows(), [
+            {"closing_minor": 776587555, "statement_date": "2026-09-30",
+             "source_file": "authoritative:idfc-consolidated-statement:2026-09-30"}])
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(deposits.anchor(conn), (776587555, "2026-09-30"))
+
+    def test_no_figure_from_him_means_no_source_and_no_anchor(self):
+        res = self._run()
+        self.assertIsNone(res["fd_authoritative_source"])
+        self.assertEqual(self._fd_rows(), [])
+
+    def test_the_source_must_be_a_plain_slug(self):
+        """It becomes part of a stored label and of a LIKE-matched prefix."""
+        ok = self.mod._FD_SOURCE_RE.fullmatch
+        self.assertTrue(ok("idfc-consolidated-statement"))
+        self.assertTrue(ok("idfc-app-fd"))
+        for bad in ("", "x", "Has Space", "UPPER", "semi;colon", "a%b", "-lead"):
+            self.assertIsNone(ok(bad), bad)
 
 
 # ── Phase 5: payroll compute + reconcile (prep-only) ─────────────────────────

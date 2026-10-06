@@ -556,6 +556,52 @@ def _check_payroll_tax(conn) -> Check:
                  f" ({total} paise) tie to {len(payroll_tax.REMITTANCES)} bank remittance(s)")
 
 
+def _check_bank_splits(conn) -> Check:
+    """#15 bank splits (added 2026-10-06). One bank payment that was two things
+    is re-filed by a pair of derived rows (`bank_splits`), and this holds that
+    pair to the ledger.
+
+    Abhijeet, 2026-10-06, on Rs 1,15,000 to his CA reading "Professional fees":
+    "55000 were fees. rest we got cash". The bank row stays whole in owner draws
+    and two `Direct` rows carry Rs 55,000 across to opex, net zero.
+
+    THE FAILURE THIS EXISTS FOR IS SILENT AND DOUBLE. The pair is only right
+    while the bank row is still in the bucket it is being carried out of. Let a
+    later rule file the CA's payments under opex wholesale and the same rows
+    would then book the fee TWICE -- with every total still reconciling, because
+    the pair nets to zero. Nothing else in this doctor would see it. So: the
+    payment must be where the split says it is, the share must sit strictly
+    inside it, both legs must exist and still equal the share, and a leg whose
+    entry was deleted from the list must not go on moving money.
+
+    Self-healing where it can be: an unwritten leg is `bin/finance-bucketize`'s
+    to write, and the cockpit runs that after every import. Everything else is
+    RED until someone looks, which is the point."""
+    from modules.finance import bank_splits
+    try:
+        bad = bank_splits.problems(conn)
+        unwritten = bank_splits.rows_to_write(conn)
+        live = bank_splits.in_ledger(conn)
+    except Exception:                            # noqa: BLE001 — pre-016 DB
+        return Check("#15 bank splits", "N/A", "pnl_month not available")
+    if bad:
+        return Check("#15 bank splits", "RED",
+                     f"{len(bad)} split payment(s) no longer hold — see"
+                     " modules/finance/bank_splits.py", bad[:20])
+    if unwritten:
+        return Check("#15 bank splits", "RED",
+                     f"{len(unwritten)} split row(s) missing — a payment that was"
+                     " two things is sitting whole in one bucket; run"
+                     " bin/finance-bucketize",
+                     [{"key": r["canonical_key"], "bucket": r["bucket"],
+                       "amount_minor": r["amount_minor"]} for r in unwritten])
+    if not live:
+        return Check("#15 bank splits", "N/A", "no split payments in the ledger")
+    return Check("#15 bank splits", "GREEN",
+                 f"{live} split payment(s): both legs written, each pair nets to"
+                 " zero, each payment still where its split takes it from")
+
+
 def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
     downstream publication for `period`."""
@@ -566,5 +612,5 @@ def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
                   _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
                   _check_payroll(conn), _check_stripe_arrival(conn),
                   _check_effective_month(conn), _check_salary_lines(conn),
-                  _check_payroll_tax(conn)]
+                  _check_payroll_tax(conn), _check_bank_splits(conn)]
     return DoctorResult(checks)
