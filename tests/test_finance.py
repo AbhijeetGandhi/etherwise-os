@@ -1650,27 +1650,59 @@ class TestPnl(unittest.TestCase):
 
     def test_a_payment_he_confirmed_is_business_and_its_neighbours_are_not(self):
         """The default for an unlisted bank spend is a draw, and it is the right
-        default. Four payments are business because he said so about each
-        (2026-10-06) — by the bank's own reference, NOT by vendor: the identical
-        Jio bill a month earlier, another MakeMyTrip booking and the CA's next
+        default. Three payments are business because he said so about each
+        (2026-10-06) — by the bank's own reference, NOT by vendor: another
+        MakeMyTrip booking, the rest of the Tamalisto stay and the CA's next
         filing fee all stay draws until he says the same of them."""
         from modules.finance import pnl
         idfc = lambda d: {"category": "expense", "source": "IDFC", "description": d}
         for desc in (
                 "NEFT/IDFB6259M0398252/TAMALISTO/ICIC0002587/Tamalisto advance 2R 3N",
                 "POS-VISA/PYU*Makemytrip India PGURGAON /6272125289/GURGAON/12:38:02",
-                "UPI/DR/662601147108/MYJIO/HDFC/myjio4./Pay",
                 "IFT/10171724864/PRITI BORA & CO /14039720/TDS return filing Q1"):
             self.assertTrue(pnl.is_confirmed_business(desc), desc)
             self.assertEqual(pnl.bucket(idfc(desc)), "opex", desc)
         for desc in (
-                "UPI/DR/659808386668/JIO/KKBK/relianc/Pay",              # 20 Aug, same bill
-                "UPI/DR/317863592263/MYJIO/HDFC/myjio.e/Pay",            # Jan, Rs 49
                 "POS-VISA/PYU*Makemytrip India PGURGAON /6300000001/GURGAON/09:00:00",
                 "NEFT/IDFB6300M0000001/TAMALISTO/ICIC0002587/Tamalisto balance",
                 "IFT/10171724864/PRITI BORA & CO /15151515/TDS return filing Q2"):
             self.assertFalse(pnl.is_confirmed_business(desc), desc)
             self.assertEqual(pnl.bucket(idfc(desc)), "owner_draw", desc)
+
+    def test_jio_is_his_internet_bill(self):
+        """Abhijeet, 2026-10-07: "jio is my internet bill" — his whole answer to
+        whether the Rs 4,718.82 of 20 Aug was the same bill as September's,
+        which he had ticked as the company's the day before. A statement about
+        the vendor, so a vendor rule; September's reference left the
+        per-payment list so the decision lives in one place.
+
+        On the UPI PAYEE FIELD, exactly — the bill has arrived as "JIO" and as
+        "MYJIO". "JIO Post" is a postpaid mobile line from 2025 and stays where
+        it was; a shop whose name contains the letters is not his internet."""
+        from modules.finance import pnl
+        idfc = lambda d: {"category": "expense", "source": "IDFC", "description": d}
+        for desc in ("UPI/DR/659808386668/JIO/KKBK/relianc/Pay",          # 20 Aug
+                     "UPI/DR/662601147108/MYJIO/HDFC/myjio4./Pay",        # 17 Sep
+                     "UPI/DR/317863592263/MYJIO/HDFC/myjio.e/Pay",        # Jan, Rs 49
+                     "UPI/DR/670000000001/Jio/KKBK/relianc/Pay"):         # next month's
+            self.assertEqual(pnl.bucket(idfc(desc)), "opex", desc)
+            self.assertFalse(pnl.is_confirmed_business(desc), desc)      # one place only
+        for desc in ("UPI/DR/527989730522/JIO Post/YESB/paytm-5/UPI",     # postpaid, Oct 2025
+                     "UPI/DR/600000000001/JIOMART/HDFC/jiomart/UPI",
+                     "UPI/DR/600000000002/RAJIO S/SBIN/rajio/UPI",
+                     "UPI/DR/600000000003/SOMEONE/HDFC/x/JIO",            # a note is not a payee
+                     "NEFT/IDFB6300M0000002/JIO/HDFC0000001",             # not a UPI debit
+                     "POS-VISA/JIO/600000000004/MUMBAI/10:00:00"):
+            self.assertEqual(pnl.bucket(idfc(desc)), "owner_draw", desc)
+        # the FD leg of the same payment quotes the narration and is still a sweep
+        self.assertEqual(pnl.bucket(
+            {"category": "internal_sweep", "source": "IDFC",
+             "description": "Auto sweep in from 10299758399/Principal:4719/"
+                            " UPI/DR/659808386668/JIO/KKBK/relianc/Pay"}), "sweep")
+        self.assertEqual(pnl._upi_payee("UPI/DR/1/MYJIO/HDFC/X/PAY"), "MYJIO")
+        self.assertEqual(pnl._upi_payee("UPI/CR/1/MYJIO/HDFC/X/PAY"), "")
+        self.assertEqual(pnl._upi_payee("NEFT/1/JIO/HDFC"), "")
+        self.assertEqual(pnl._upi_payee(""), "")
 
     def test_a_confirmed_reference_must_be_a_whole_field(self):
         """'14039720' is eight digits. Matched as a substring it would also

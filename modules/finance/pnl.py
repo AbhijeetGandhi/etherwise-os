@@ -51,6 +51,18 @@ BUSINESS_POS_VENDORS = (
 # again every month would only be a way to get it wrong one month.
 _RENT_PAYEES = ("RAKHI MUKESH BOHRA",                  # office rent
                 "MYHQ")                                # coworking
+# JIO (2026-10-07): "jio is my internet bill". He had ticked September's
+# Rs 4,718.82 as the company's the day before; asked whether the identical
+# payment of 20 Aug was the same bill, that sentence was the whole answer -- a
+# statement about the VENDOR, not about one payment. So this is a vendor rule,
+# and September's reference has left _CONFIRMED_BUSINESS_REFS: one decision,
+# one place.
+#
+# Matched on the UPI PAYEE FIELD being exactly one of these -- the two
+# spellings the same bill has arrived under (20 Aug "JIO", 17 Sep "MYJIO").
+# Not a substring: "JIO Post" is a postpaid mobile line from Oct 2025, a
+# different thing in a closed year, and "JIOMART" is a shop.
+_INTERNET_PAYEES = ("JIO", "MYJIO")
 _CONTRACTOR_PAYEES = ("HARSHIT SINGHAL", "ATHARVA AJAY BARAWKA")
 _EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
 # personal (non-business) counterparties: bank money EITHER direction is
@@ -120,19 +132,20 @@ _UPWORK_HIRE_REFS = ("948419050",                      # 2 Sep 2026, Rs 16,661.3
 # reference for it, matched as a whole slash-field of the narration so a short
 # number cannot match inside a longer one.
 #
-# NOT vendor rules, on purpose. The identical Rs 4,718.82 Jio bill of 20 Aug is
-# still a draw until he says the same of it; MakeMyTrip is where a holiday gets
-# booked too; and the CA's NEXT quarterly filing fee is his to call, not a
-# pattern's. (A split payment -- part cost, part cash back -- is not here at
-# all: see `bank_splits`.)
+# NOT vendor rules, on purpose: MakeMyTrip is where a holiday gets booked too,
+# and the CA's NEXT quarterly filing fee is his to call, not a pattern's. A
+# payment leaves this list the day he says something about the VENDOR instead
+# -- Jio did, on 2026-10-07 ("jio is my internet bill"), and is now
+# _INTERNET_PAYEES above. (A split payment -- part cost, part cash back -- is
+# not here at all: see `bank_splits`.)
 #
 #   2026-10-06, asked which of September's unlisted spends were the company's,
-#   he ticked all four: "myHQ" (a vendor rule, above), "The trip", "Jio", and
-#   "CA's Rs 4,000 filing fee" (the 4 Aug one, a draw until that answer).
+#   he ticked all four: "myHQ" (a vendor rule, above), "The trip", "Jio" (a
+#   vendor rule since the next day), and "CA's Rs 4,000 filing fee" (the 4 Aug
+#   one, a draw until that answer).
 _CONFIRMED_BUSINESS_REFS = (
     "IDFB6259M0398252",    # 16 Sep 2026, Rs 12,000.00  Tamalisto, the trip's stay
     "6272125289",          # 29 Sep 2026, Rs  5,857.00  MakeMyTrip, the same trip
-    "662601147108",        # 17 Sep 2026, Rs  4,718.82  Jio
     "14039720",            #  4 Aug 2026, Rs  4,000.00  CA, "TDS return filing Q1"
 )
 
@@ -176,6 +189,16 @@ def is_confirmed_business(description: Optional[str]) -> bool:
     return any(ref in fields for ref in _CONFIRMED_BUSINESS_REFS)
 
 
+def _upi_payee(d: str) -> str:
+    """'UPI/DR/662601147108/MYJIO/HDFC/myjio4./Pay' -> 'MYJIO': the fourth
+    slash-field of a UPI debit, as IDFC writes it. '' for any other shape, which
+    is a refusal and not a match on everything."""
+    parts = [p.strip() for p in d.split("/")]
+    if len(parts) >= 4 and parts[0] == "UPI" and parts[1] == "DR":
+        return parts[3]
+    return ""
+
+
 def _bank_spend(row: dict) -> str:
     """Classify a bank-statement spend (a row that would previously have been
     lumped into opex). See the rule table above; default is owner_draw —
@@ -197,6 +220,8 @@ def _bank_spend(row: dict) -> str:
         return "platform_fee"
     if is_tds_remittance(d):
         return "payroll"                                # wage withheld, then remitted
+    if _upi_payee(d) in _INTERNET_PAYEES:
+        return "opex"                                   # his internet bill
     if any(p in d for p in _RENT_PAYEES):
         return "opex"                                   # office rent
     if any(p in d for p in _CONTRACTOR_PAYEES):
