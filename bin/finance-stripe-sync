@@ -62,10 +62,17 @@ def sync(ctx) -> dict:
     reds = [c.invariant for c in dr.reds()]
     if not dr.green:
         ctx.anomaly("finance_stripe_doctor_red", "critical", {"reds": reds})
+    # A GREEN the doctor is holding open on a deadline (2026-10-07: a bank credit
+    # waiting for the Stripe export that proves it) is still GREEN — but this is
+    # the job that imports that export, so its own log line says one is owed.
+    waiting = dr.pending()
+    verdict = "GREEN" if dr.green else "RED " + ", ".join(reds)
+    if waiting:
+        verdict += (f" ({len(waiting)} waiting on an upload, first due"
+                    f" {min(str(w.get('due')) for w in waiting)})")
     ctx.log(f"stripe sync: inserted {inserted}, reclassified"
-            f" {imp.get('payout_idfc_reclassified', 0)}, doctor"
-            f" {'GREEN' if dr.green else 'RED ' + ', '.join(reds)}")
-    return {"inserted": inserted,
+            f" {imp.get('payout_idfc_reclassified', 0)}, doctor {verdict}")
+    return {"inserted": inserted, "doctor_waiting": len(waiting),
             "reconcile_ok": (imp.get("reconcile") or {}).get("ok"),
             "payout_idfc_reclassified": imp.get("payout_idfc_reclassified", 0),
             "payout_idfc_unmatched": len(imp.get("payout_idfc_unmatched", []) or []),

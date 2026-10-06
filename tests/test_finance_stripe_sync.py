@@ -78,9 +78,24 @@ class TestStripeSync(unittest.TestCase):
                      ("#7 transfer-integrity", "N/A", "pending"))
         out, calls = self._sync({"inserted": 0}, dr)
         self.assertTrue(out["doctor_green"])
+        self.assertEqual(out["doctor_waiting"], 0)
         self.assertEqual(self.ctx.anomalies, [])
-        self.assertIn("doctor GREEN", self.ctx.lines[0])
+        self.assertTrue(self.ctx.lines[0].endswith("doctor GREEN"))
         self.assertEqual([c[0] for c in calls], ["finance-import-stripe"])   # nothing new: no bucketize
+
+    def test_a_green_that_is_waiting_on_an_export_says_so(self):
+        """#11 may let a landing wait 14 days for the Stripe export that proves
+        it (his answer, 2026-10-07). That is GREEN — no anomaly — but this is
+        the job that imports the export, so its log line says one is owed."""
+        check = doctor.Check("#11 Stripe arrival", "GREEN", "6 tie; 1 waiting",
+                             fix="Upload a Stripe balance export.",
+                             pending=[{"record_id": "bank:x", "due": "2026-10-20"}])
+        out, _ = self._sync({"inserted": 0}, doctor.DoctorResult([check]))
+        self.assertTrue(out["doctor_green"])
+        self.assertEqual(out["doctor_waiting"], 1)
+        self.assertEqual(self.ctx.anomalies, [])
+        self.assertIn("doctor GREEN (1 waiting on an upload, first due 2026-10-20)",
+                      self.ctx.lines[0])
 
     def test_new_rows_are_bucketized_before_the_doctor_is_asked(self):
         """A payout that arrives in a fresh export is what turns #11 back to

@@ -55,7 +55,11 @@ class Case(unittest.TestCase):
     def money(self, today="2026-08-27"):
         # money() is hard-gated on finance-doctor GREEN (no finance number in
         # the cockpit on RED). A synthetic ledger is not the thing under test.
-        green = mock.Mock(green=True, reds=[], ambers=[])
+        # A REAL (empty, therefore GREEN) result, not a Mock: money() now also
+        # asks the doctor what it is letting through on a deadline
+        # (`pending()`, 2026-10-07), and a Mock answers every question with
+        # another Mock. A stand-in that cannot drift from the class is the class.
+        green = _doctor.DoctorResult([])
         with mock.patch.object(_doctor, "run", return_value=green):
             return data.money(self.db_path, today=today)["revenue"]
 

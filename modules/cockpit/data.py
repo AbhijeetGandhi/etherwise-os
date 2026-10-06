@@ -4010,12 +4010,19 @@ def money(db_path: Optional[Path] = None,
     month, dom, last_month = day[:7], day[8:10], _prev_month(day[:7])
     dbp = db_path or config.DB_PATH
 
-    dr = doctor.run(dbp)
+    dr = doctor.run(dbp, today=day)
     if not dr.green:                          # hard gate — show nothing on RED
         reds = [c.invariant for c in dr.reds()]
         out = {"doctor": "RED", "blocked": True, "reds": reds,
                "note": "Finance blocked — finance-doctor is RED; no figures "
                        "are shown until every invariant is GREEN."}
+        # WHAT CLEARS IT, where the doctor has written that down — in words, with
+        # no figure in it (the rule on this page is absolute). 2026-10-07: he
+        # read "#11 Stripe arrival" here and had to ask a chat what it wanted
+        # from him. A gate that will not say how to open it is just a wall.
+        fixes = [{"invariant": c.invariant, "fix": c.fix} for c in dr.reds() if c.fix]
+        if fixes:
+            out["fixes"] = fixes
         # #10 is the one invariant a STALE SERVER can fail on its own (see
         # _stale_rules_hint) — say so rather than let the ledger take the blame.
         if any(r.startswith("#10") for r in reds):
@@ -4168,11 +4175,34 @@ def money(db_path: Optional[Path] = None,
         # yet imported (most recent: <client>, <date>)'. A GREEN doctor means the
         # ledger is internally consistent; this says whether it is also CURRENT.
         "provisional": _money_provisional(db_path),
+        # what a GREEN doctor is letting through ON A DEADLINE (2026-10-07: a bank
+        # credit waiting for the Stripe export that proves it). Shown, with the
+        # date it runs out, so the page never goes dark as a surprise.
+        "waiting": _doctor_waiting(dr, day),
         # corrected feed: pnl_bucket + base-USD (kept keys type/profile/amount for the UI)
         "transactions": [{"creation_dt": r["creation_dt"], "type": r["pnl_bucket"],
                           "amount": usd(r["amount_base_minor"]), "currency": r["currency"],
                           "profile": r["source"]} for r in feed],
     }
+
+
+def _doctor_waiting(dr, today: str) -> list:
+    """The doctor's running allowances, shaped for the Money page: what is being
+    let through, until when, how many days are left, and what clears it."""
+    import datetime as _dt
+    from modules.finance import money as fmoney
+    out = []
+    for item in dr.pending():
+        due, left = item.get("due"), None
+        try:
+            left = (_dt.date.fromisoformat(due) - _dt.date.fromisoformat(today)).days
+        except (TypeError, ValueError):
+            pass
+        amount = item.get("amount_minor")
+        out.append({"invariant": item.get("invariant"), "date": item.get("date"),
+                    "due": due, "days_left": left, "fix": item.get("fix") or "",
+                    "inr": str(fmoney.from_minor(amount)) if amount is not None else None})
+    return out
 
 
 def _pnl_month_of(r: dict) -> str:

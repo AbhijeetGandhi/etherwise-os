@@ -2477,6 +2477,76 @@ class TestMoneyReader(unittest.TestCase):
               / "js" / "sections" / "money.js").read_text()
         self.assertIn("d.stale_rules", js)
 
+    # ── a RED says how to clear it; a GREEN says what it is waiting on ───────
+    # 2026-10-06/07. #11 went RED for want of a Stripe export one day too old;
+    # the page said "#11 Stripe arrival" and nothing else, and its import card
+    # sat behind the gate. He asked a chat what the page wanted from him.
+
+    def _landing(self, conn, rid, minor, day, seen):
+        conn.execute(
+            "INSERT INTO transactions (record_id, canonical_key, type, category,"
+            " amount_minor, amount_base_minor, currency, creation_dt, source,"
+            " pnl_bucket, description, first_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (rid, "bank:" + rid, "transfer_in", "transfer_in", minor, minor // 95, "INR",
+             day, "IDFC", "transfer",
+             "NEFT/CITIN1/GLOBAL REMITTANCE-OTHERS/CITI0100000/388 GREENWICH ST",
+             seen + " 08:35:00"))
+
+    def _stripe_payment(self, conn, rid, minor, day):
+        conn.execute(
+            "INSERT INTO transactions (record_id, canonical_key, type, category,"
+            " amount_minor, amount_base_minor, currency, creation_dt, source, pnl_bucket)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (rid, "stripe:" + rid, "income", "income", minor, minor // 95, "INR", day,
+             "Stripe", "revenue"))
+
+    def test_a_red_says_what_clears_it_and_shows_no_figure(self):
+        with db.connect(self.db_path) as conn:
+            self._landing(conn, "g1", 7846485, "2026-09-28", "2026-10-06")
+        out = data.money(self.db_path, today="2026-10-06")
+        self.assertTrue(out["blocked"])
+        self.assertEqual(out["reds"], ["#11 Stripe arrival"])
+        self.assertEqual([f["invariant"] for f in out["fixes"]], ["#11 Stripe arrival"])
+        self.assertIn("Stripe balance export", out["fixes"][0]["fix"])
+        self.assertIn("28 Sep 2026", out["fixes"][0]["fix"])
+        blob = json.dumps(out)
+        for figure in ("78464", "78,464", "7846485"):          # no number on RED, ever
+            self.assertNotIn(figure, blob)
+        for key in ("waiting", "revenue", "cash", "pnl"):
+            self.assertNotIn(key, out)
+
+    def test_a_red_nobody_has_written_a_remedy_for_carries_no_fixes(self):
+        with db.connect(self.db_path) as conn:               # NULL amount -> #8
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, type,"
+                         " amount_minor, currency) VALUES ('bad','kbad','Other',NULL,'USD')")
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertTrue(out["blocked"])
+        self.assertNotIn("fixes", out)
+
+    def test_a_green_says_what_it_is_waiting_on_and_until_when(self):
+        """His answer, 2026-10-07: "yeah wait upto 14 days for stripe export"."""
+        with db.connect(self.db_path) as conn:
+            self._stripe_payment(conn, "pay", 7846485, "2026-09-24")
+            self._landing(conn, "g1", 7846485, "2026-09-28", "2026-10-06")
+        out = data.money(self.db_path, today="2026-10-07")
+        self.assertFalse(out["blocked"])
+        self.assertEqual(len(out["waiting"]), 1)
+        w = out["waiting"][0]
+        self.assertEqual({k: w[k] for k in ("invariant", "date", "due", "days_left", "inr")},
+                         {"invariant": "#11 Stripe arrival", "date": "2026-09-28",
+                          "due": "2026-10-20", "days_left": 13, "inr": "78464.85"})
+        self.assertIn("Stripe balance export", w["fix"])
+        self.assertEqual(data.money(self.db_path, today="2026-10-20")["waiting"][0]["days_left"], 0)
+        # the day after it runs out the page blocks — and says how to open it
+        late = data.money(self.db_path, today="2026-10-21")
+        self.assertTrue(late["blocked"])
+        self.assertEqual([f["invariant"] for f in late["fixes"]], ["#11 Stripe arrival"])
+
+    def test_nothing_waiting_is_an_empty_list_not_a_missing_key(self):
+        out = data.money(self.db_path, today="2026-06-15")
+        self.assertFalse(out["blocked"])
+        self.assertEqual(out["waiting"], [])
+
     def test_doctor_gate_blocks_on_red(self):
         # a NULL-amount_minor row -> doctor #8 RED -> money() shows nothing
         with db.connect(self.db_path) as conn:
@@ -2930,6 +3000,129 @@ console.log(JSON.stringify(JSON.parse(process.argv[3]).map((r) => whoOf(r))));
         got = self._run([{"w": "Beglaubigt",
                           "d": "(43406906) Ioannis P/Abhijeet Gandhi - 20:00 hrs"}])
         self.assertEqual(got, ["Beglaubigt"])
+
+
+class TestMoneyBlockedPage(unittest.TestCase):
+    """The blocked Money page keeps the one tool that can unblock it.
+
+    6 Oct 2026: #11 RED for want of a Stripe export. He was told to "drop it in
+    Money › import" — and on RED `money.js` drew the red panel and returned, the
+    import card being in the part it never reached. Eleven and a half hours
+    dark. His call the next day: "show upload on blocked page".
+
+    The rule that page lives under did not move: no finance number on RED. An
+    importer's report mixes row counts with balances, so on that page it is cut
+    to what is plainly not money. Pure functions are lifted out of the shipped
+    source and driven under node, like `whoOf`."""
+
+    JS = Path(__file__).resolve().parents[1] / "modules" / "cockpit" / "static" / "js"
+
+    DRIVER = r"""
+const fs = require("fs");
+const src = fs.readFileSync(process.argv[2], "utf8");
+const name = process.argv[3];
+const start = src.indexOf("export function " + name + "(");
+if (start < 0) { console.error(name + " not found"); process.exit(2); }
+const end = src.indexOf("\n}\n", start);          // house style: closing brace at column 0
+const fn = new Function(src.slice(start + "export ".length, end + 3) + "; return " + name + ";")();
+console.log(JSON.stringify(JSON.parse(process.argv[4]).map((args) => fn(...args))));
+"""
+
+    # the bank importer's real dry-run report of 6 Oct 2026
+    BANK = {
+        "mode": "DRY-RUN", "file": "IDFC-60606200234-2026-09-from-consolidated-pdf.xlsx",
+        "inbox_files": 7, "window": "2026-09-01..2026-09-30", "statement_rows": 104,
+        "reconcile_ok": True, "parse_quarantine": 0,
+        "category_breakdown": {"internal_sweep": 49, "transfer_in": 14},
+        "v2_superseded_quarantined": 0, "v3_inserted": 80, "reclassified": 0,
+        "fd_principal_inr": "7347880.53", "fd_anchor_inr": "5868783.53",
+        "fd_anchor_date": "2026-06-26", "fd_rolled_inr": "1479097.00", "fd_sweep_legs": 64,
+        "fd_authoritative_inr": "7765875.55",
+        "fd_authoritative_source": "idfc-consolidated-statement",
+        "opening_inr": "594642.44", "closing_inr": "569676.08"}
+
+    def _run(self, name, calls):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        with tempfile.TemporaryDirectory() as td:
+            drv = Path(td) / "lift.cjs"
+            drv.write_text(self.DRIVER)
+            r = subprocess.run([node, str(drv), str(self.JS / "sections" / "money.js"),
+                                name, json.dumps(calls)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr[:600])
+            return json.loads(r.stdout)
+
+    def test_on_a_blocked_page_the_importers_report_is_counts_only(self):
+        (got,) = self._run("reportEntries", [[self.BANK, True]])
+        self.assertEqual(dict(got), {
+            "mode": "DRY-RUN", "file": self.BANK["file"], "inbox_files": 7,
+            "window": "2026-09-01..2026-09-30", "statement_rows": 104, "reconcile_ok": True,
+            "parse_quarantine": 0, "v2_superseded_quarantined": 0, "v3_inserted": 80,
+            "reclassified": 0, "fd_sweep_legs": 64})
+        blob = json.dumps(got)
+        for figure in ("7765875", "7347880", "5868783", "1479097", "594642", "569676"):
+            self.assertNotIn(figure, blob)
+
+    def test_off_the_blocked_page_the_report_is_what_it_always_was(self):
+        (full,) = self._run("reportEntries", [[self.BANK, False]])
+        scalars = [[k, v] for k, v in self.BANK.items() if not isinstance(v, dict)]
+        self.assertEqual(full, scalars[:12])
+        self.assertIn(["fd_principal_inr", "7347880.53"], full)
+
+    def test_an_amount_under_an_unknown_name_is_dropped_not_shown(self):
+        """The safe direction. A string is kept only if its key is named; an
+        integer only if its key does not read like money; nothing else at all."""
+        report = {"surprise": "1,23,456.78", "paid_minor": 12345, "grand_total": 9,
+                  "fx_rate_used": 3, "ratio": 3.5, "note": None, "inserted": 1,
+                  "fx_dates_fetched": 1, "payout_idfc_reclassified": 32, "mode": "APPLY",
+                  "new_rows": 22, "ok": False}
+        (got,) = self._run("reportEntries", [[report, True]])
+        self.assertEqual(dict(got), {"inserted": 1, "fx_dates_fetched": 1,
+                                     "payout_idfc_reclassified": 32, "mode": "APPLY",
+                                     "new_rows": 22, "ok": False})
+        (empty,) = self._run("reportEntries", [[None, True]])
+        self.assertEqual(empty, [])
+
+    def test_a_wait_reads_as_a_sentence_with_its_deadline(self):
+        w = {"invariant": "#11 Stripe arrival", "date": "2026-09-28", "due": "2026-10-20",
+             "days_left": 13, "inr": "78464.85",
+             "fix": "Upload a Stripe balance export that covers up to 28 Sep 2026."}
+        got = self._run("waitingLine", [[w], [dict(w, days_left=1)], [dict(w, days_left=0)],
+                                         [dict(w, days_left=None, inr=None)], [None]])
+        self.assertEqual(got[0], "Waiting on an upload — 13 days left. Upload a Stripe balance"
+                                 " export that covers up to 28 Sep 2026. Taken on trust until"
+                                 " 2026-10-20 (₹78,464.85); after that this page blocks.")
+        self.assertTrue(got[1].startswith("Waiting on an upload — 1 day left. "))
+        self.assertTrue(got[2].startswith("Waiting on an upload — due today. "))
+        self.assertTrue(got[3].startswith("Waiting on an upload. Upload a Stripe"))
+        self.assertIn("Taken on trust until 2026-10-20; after that", got[3])
+        self.assertEqual(got[4], "Waiting on an upload. The finance doctor is letting"
+                                 " something through on a deadline.")
+
+    def test_the_blocked_branch_draws_the_import_card_and_still_no_figure(self):
+        src = (self.JS / "sections" / "money.js").read_text()
+        start = src.index("if (d.blocked) {")
+        branch = src[start:src.index("    return;\n  }\n", start)]
+        self.assertIn("importCard(ctx, { open: true, countsOnly: true })", branch)
+        self.assertIn("d.fixes", branch)
+        for leak in ("d.revenue", "d.cash", "d.pnl", "d.buckets", "fmt.usd", "kpi("):
+            self.assertNotIn(leak, branch)
+        # the Statements view keeps the FULL report (no countsOnly) and arrives
+        # open only when the doctor is waiting on an upload
+        self.assertIn("importCard(ctx, { open: (d.waiting || []).length > 0 })]", src)
+        self.assertEqual(src.count("countsOnly: true"), 1)
+        # the wait is drawn on the GREEN page, with a way to act on it
+        self.assertIn("(d.waiting || []).forEach", src)
+        self.assertGreater(src.index("(d.waiting || []).forEach"), start)
+
+    def test_an_expander_can_arrive_open_through_its_own_click_path(self):
+        ui = (self.JS / "ui.js").read_text()
+        body = ui[ui.index("export function expander("):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn("if (opts.open) b.click();", body)
+        money = (self.JS / "sections" / "money.js").read_text()
+        self.assertIn('{ class: "importcard", open: !!opts.open }', money)
 
 
 class TestPipelineFacts(unittest.TestCase):

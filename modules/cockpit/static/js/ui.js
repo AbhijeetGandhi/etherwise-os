@@ -558,7 +558,13 @@ export function expander(label, loader, opts = {}) {
       catch (e) { clear(body).appendChild(el("div", "errstate", "Could not load: " + String(e && e.message || e))); }
     }
   });
-  return el("div", "expander" + (opts.class ? " " + opts.class : ""), [b, body]);
+  const node = el("div", "expander" + (opts.class ? " " + opts.class : ""), [b, body]);
+  // `open: true` arrives already expanded — for the one place a collapsed
+  // expander would hide the only thing the page is for (the import card on a
+  // blocked Money page). It goes through the same click path, so the lazy
+  // loader and aria-expanded cannot drift from a hand-rolled copy.
+  if (opts.open) b.click();
+  return node;
 }
 
 /* ── toast ────────────────────────────────────────────────────────────────── */

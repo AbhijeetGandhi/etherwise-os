@@ -23,6 +23,10 @@ def main() -> int:
         print(f"  {mark} {c.invariant}: {c.status} — {c.detail}")
         for d in c.deltas[:10]:
             print(f"      {d}")
+        for p in c.pending[:10]:                     # let through on a deadline
+            print(f"      waiting until {p.get('due')}: {p}")
+        if c.fix and (c.status == "RED" or c.pending):
+            print(f"      to clear it: {c.fix}")
     print(json.dumps({"green": res.green,
                       "reds": [c.invariant for c in res.reds()]}))
     return 0 if res.green else 1

@@ -26,6 +26,17 @@ class Check:
     status: str               # GREEN | RED | N/A
     detail: str = ""
     deltas: List[dict] = field(default_factory=list)  # offending rows, minor units
+    # WHAT A PERSON DOES ABOUT IT, in plain words and WITHOUT A FIGURE: the
+    # blocked Money page prints this, and no finance number may appear there.
+    # Added 2026-10-07, after he read "#11 Stripe arrival" on a blocked page and
+    # had to ask a chat what it wanted from him. Empty means nobody has written
+    # the remedy down yet, not that there is none.
+    fix: str = ""
+    # THINGS THIS CHECK IS LETTING THROUGH ON A DEADLINE: GREEN today, RED once
+    # `due` passes. Each item carries its own `due` ('YYYY-MM-DD'). Reported, so
+    # a deadline is never a surprise — a quiet allowance nobody can see is how a
+    # safety check stops being one.
+    pending: List[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -39,10 +50,17 @@ class DoctorResult:
     def reds(self) -> List[Check]:
         return [c for c in self.checks if c.status == "RED"]
 
+    def pending(self) -> List[dict]:
+        """Every allowance still running, each labelled with the invariant that
+        is waiting on it and what clears it."""
+        return [dict(item, invariant=c.invariant, fix=c.fix)
+                for c in self.checks for item in c.pending]
+
     def summary(self) -> dict:
         return {"green": self.green,
                 "checks": [{"invariant": c.invariant, "status": c.status,
-                            "detail": c.detail, "deltas": c.deltas[:20]}
+                            "detail": c.detail, "deltas": c.deltas[:20],
+                            "fix": c.fix, "pending": c.pending[:20]}
                            for c in self.checks]}
 
 
@@ -390,9 +408,40 @@ def _check_bucket_reproducibility(conn) -> Check:
 # A Stripe settlement leaves Stripe and lands at IDFC 1-3 days later; 7 days is slack
 # for a weekend plus a bank holiday, not a licence to pair unrelated amounts.
 _STRIPE_ARRIVAL_DAYS = 7
+# The PAYMENT behind a landing is older than its settlement: Stripe holds it a day
+# or two first. Seven of seven so far landed 4-6 days after the payment was made.
+_STRIPE_PAYMENT_DAYS = 10
+# How long a landing may wait for the export that proves it. Abhijeet, 2026-10-07:
+# "yeah wait upto 14 days for stripe export". Counted from the day the bank row
+# ENTERED THE LEDGER, not the day it landed: a statement is imported weeks after
+# its first row, and a clock that had already run out on arrival is no wait at all.
+_STRIPE_EXPORT_GRACE_DAYS = 14
 
 
-def _check_stripe_arrival(conn) -> Check:
+def _day_words(iso: str) -> str:
+    """'2026-09-28' -> '28 Sep 2026'; anything unparseable passes through."""
+    try:
+        d = _dt.date.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return str(iso)
+    return f"{d.day} {d.strftime('%b %Y')}"
+
+
+def _stripe_fix(rows: List[dict]) -> str:
+    """What clears a landing that has no settlement row. No amount in it — this
+    is printed on the blocked Money page."""
+    days = sorted({r["date"] for r in rows if r.get("date")})
+    if not days:
+        return ""
+    shown = ", ".join(_day_words(d) for d in days[:3]) + (" …" if len(days) > 3 else "")
+    need = ("the bank credit of " + shown + " needs the Stripe settlement that sent it"
+            if len(days) == 1 else
+            "the bank credits of " + shown + " each need the Stripe settlement that sent them")
+    return ("Upload a Stripe balance export (Stripe › Balances › Export) that covers up to "
+            f"{_day_words(days[-1])} — {need}.")
+
+
+def _check_stripe_arrival(conn, today: Optional[str] = None) -> Check:
     """#11 Stripe arrival (added 2026-09-05). A 'GLOBAL REMITTANCE' credit on the
     bank is kept OUT of revenue because it is the INR landing of a Stripe
     settlement whose revenue the Stripe rail has already booked. Citi's wire carries no
@@ -400,9 +449,34 @@ def _check_stripe_arrival(conn) -> Check:
     failure it would cause is the expensive one: a genuine client wire labelled
     the same way would disappear from the top line rather than merely double.
     So every one of them must tie, to the paisa, to a Stripe transfer-out inside
-    _STRIPE_ARRIVAL_DAYS. An unpaired landing is RED and names itself."""
+    _STRIPE_ARRIVAL_DAYS. An unpaired landing is RED and names itself.
+
+    WAITING FOR THE EXPORT (added 2026-10-07). The rule above assumes the Stripe
+    export is at least as fresh as the bank statement, and on 6 Oct it was not:
+    Rs 78,464.85 landed on 28 Sep, his last export was from the 26th, and Stripe
+    had sent the settlement on the 27th. The ledger held the PAYMENT of exactly
+    that amount and no settlement row, #11 went RED, and the Money page was dark
+    for eleven and a half hours over a file that was one day too old.
+
+    A landing with no settlement row may now WAIT when Stripe's own books
+    explain it: a Stripe payment of the same amount, to the paisa, made in the
+    _STRIPE_PAYMENT_DAYS before it, that no settlement row has consumed. That is
+    money Stripe still shows as not sent, arriving at the bank — which is what a
+    stale export looks like and nothing else does. It waits
+    _STRIPE_EXPORT_GRACE_DAYS from the day the bank row entered the ledger. The
+    check stays GREEN and the wait is REPORTED (`pending`, each with its `due`)
+    so the Money page can say an export is owed and by when; past `due` it is
+    RED like any other orphan.
+
+    WHAT THIS DOES NOT RELAX. A landing that matches no waiting payment is RED
+    at once, exactly as before — that is the genuine-client-wire case this check
+    exists for. A payment whose settlement IS in the ledger excuses nothing: it
+    has been sent, and a second credit of that amount is an orphan. And one
+    payment excuses one landing."""
+    today = today or _dt.datetime.now(config.TZ).date().isoformat()
     arrivals = [dict(r) for r in conn.execute(
-        "SELECT record_id, substr(creation_dt,1,10) d, amount_minor FROM transactions"
+        "SELECT record_id, substr(creation_dt,1,10) d, amount_minor,"
+        " substr(COALESCE(first_seen_at,''),1,10) seen FROM transactions"
         " WHERE source IN ('IDFC','Bank') AND amount_minor > 0"
         "   AND upper(COALESCE(description,'')) LIKE '%GLOBAL REMITTANCE%'"
         " ORDER BY creation_dt")]
@@ -411,23 +485,73 @@ def _check_stripe_arrival(conn) -> Check:
     settlements = [dict(r) for r in conn.execute(
         "SELECT record_id, substr(creation_dt,1,10) d, amount_minor FROM transactions"
         " WHERE source='Stripe' AND amount_minor < 0")]
-    used, orphans = set(), []
+    used, unpaired = set(), []
     for a in arrivals:
         hit = next((p for p in settlements
                     if p["record_id"] not in used
                     and -p["amount_minor"] == a["amount_minor"]
                     and p["d"] <= a["d"] <= _plus_days(p["d"], _STRIPE_ARRIVAL_DAYS)), None)
         if hit is None:
-            orphans.append({"record_id": a["record_id"], "date": a["d"],
-                            "amount_minor": a["amount_minor"],
-                            "error": "no Stripe settlement of this amount in the window"})
+            unpaired.append(a)
         else:
             used.add(hit["record_id"])
+
+    # Which payments has Stripe already sent on? Each settlement row consumes the
+    # oldest unconsumed payment of its own amount made on or before it; what is
+    # left is money Stripe's books still show as waiting to go.
+    waiting = []
+    if unpaired:
+        waiting = [dict(r) for r in conn.execute(
+            "SELECT record_id, substr(creation_dt,1,10) d, amount_minor FROM transactions"
+            " WHERE source='Stripe' AND amount_minor > 0 AND COALESCE(category,'')='income'"
+            " ORDER BY creation_dt, record_id")]
+        for s in sorted(settlements, key=lambda p: p["d"]):
+            sent = next((p for p in waiting if p["amount_minor"] == -s["amount_minor"]
+                         and p["d"] <= s["d"]), None)
+            if sent is not None:
+                waiting.remove(sent)
+
+    orphans, pending = [], []
+    for a in unpaired:
+        base = {"record_id": a["record_id"], "date": a["d"], "amount_minor": a["amount_minor"]}
+        pay = next((p for p in waiting if p["amount_minor"] == a["amount_minor"]
+                    and p["d"] <= a["d"] <= _plus_days(p["d"], _STRIPE_PAYMENT_DAYS)), None)
+        if pay is None:
+            orphans.append(dict(base, error="no Stripe settlement of this amount in the window"))
+            continue
+        waiting.remove(pay)                          # one payment excuses one landing
+        # first_seen_at is a UTC stamp and the landing date is IST, so a row can
+        # read as "seen" the evening before it landed; never start the clock
+        # earlier than the landing itself.
+        seen = a["seen"] if len(a["seen"] or "") == 10 and a["seen"] >= a["d"] else a["d"]
+        item = dict(base, stripe_payment=pay["record_id"], paid=pay["d"], seen=seen,
+                    due=_plus_days(seen, _STRIPE_EXPORT_GRACE_DAYS))
+        if today <= item["due"]:
+            pending.append(item)
+        else:
+            orphans.append(dict(item, error="matches a Stripe payment, but no export has"
+                                            " shown its settlement — the wait ran out on"
+                                            f" {item['due']}"))
     if orphans:
-        return Check("#11 Stripe arrival", "RED",
-                     f"{len(orphans)} of {len(arrivals)} GLOBAL REMITTANCE credits tie to no"
-                     " Stripe settlement — they are excluded from revenue and may be real income",
-                     orphans[:20])
+        if all("due" in o for o in orphans):
+            detail = (f"{len(orphans)} GLOBAL REMITTANCE credit(s) match a Stripe payment, but"
+                      f" no Stripe export has shown the settlement within"
+                      f" {_STRIPE_EXPORT_GRACE_DAYS} days of the bank row arriving")
+        else:
+            detail = (f"{len(orphans)} of {len(arrivals)} GLOBAL REMITTANCE credits tie to no"
+                      " Stripe settlement — they are excluded from revenue and may be real income")
+        # one export clears both kinds, so the remedy names every day that is
+        # short of a settlement — the orphans and the ones still inside their wait
+        return Check("#11 Stripe arrival", "RED", detail, orphans[:20],
+                     fix=_stripe_fix(orphans + pending), pending=pending)
+    if pending:
+        return Check("#11 Stripe arrival", "GREEN",
+                     f"{len(arrivals) - len(pending)} GLOBAL REMITTANCE credits each tie to a"
+                     f" Stripe settlement; {len(pending)} more"
+                     f" {'matches' if len(pending) == 1 else 'match'} a Stripe payment whose"
+                     " settlement is not in an export yet — Stripe export due by"
+                     f" {min(p['due'] for p in pending)}",
+                     fix=_stripe_fix(pending), pending=pending)
     return Check("#11 Stripe arrival", "GREEN",
                  f"{len(arrivals)} GLOBAL REMITTANCE credits each tie to a Stripe settlement")
 
@@ -602,15 +726,18 @@ def _check_bank_splits(conn) -> Check:
                  " zero, each payment still where its split takes it from")
 
 
-def run(db_path=None, period: Optional[str] = None) -> DoctorResult:
+def run(db_path=None, period: Optional[str] = None,
+        today: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
-    downstream publication for `period`."""
+    downstream publication for `period`. `today` ('YYYY-MM-DD', IST) is only for
+    the one check with a deadline in it (#11's wait for a late Stripe export);
+    left None it is the real date."""
     with db.connect(db_path or config.DB_PATH) as conn:
         checks = [_check_dedup(conn), _check_sanity(conn), _check_type_sign(conn),
                   _check_statement_integrity(conn), _check_continuity(conn),
                   _check_ledger_tieout(conn), _check_cash(conn),
                   _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
-                  _check_payroll(conn), _check_stripe_arrival(conn),
+                  _check_payroll(conn), _check_stripe_arrival(conn, today),
                   _check_effective_month(conn), _check_salary_lines(conn),
                   _check_payroll_tax(conn), _check_bank_splits(conn)]
     return DoctorResult(checks)

@@ -224,6 +224,20 @@ class DoctorCase(unittest.TestCase):
             (rid, minor, minor, "INR", "stripe-" + rid, "Other", "Stripe",
              day + "T00:00:00+0000"))
 
+    def _stripe_in(self, conn, rid, minor, day):
+        """A Stripe PAYMENT (income), as finance-import-stripe writes it."""
+        conn.execute(
+            "INSERT INTO transactions (record_id, amount_minor, amount_base_minor,"
+            " currency, canonical_key, type, category, source, creation_dt)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (rid, minor, minor, "INR", "stripe-" + rid, "income", "income", "Stripe",
+             day + "T00:00:00+0000"))
+
+    def _seen(self, conn, rid, when):
+        """The day a bank row ENTERED the ledger — what the wait is counted from."""
+        conn.execute("UPDATE transactions SET first_seen_at=? WHERE record_id=?",
+                     (when + " 08:35:00", rid))
+
     def test_unnarrated_salary_13_catches_a_payroll_payment_filed_as_a_draw(self):
         """Yogita's 31 July lines stopped at the IFSC, so Rs 49,800 of payroll
         read as an owner draw and nothing anywhere could notice."""
@@ -407,6 +421,175 @@ class DoctorCase(unittest.TestCase):
         c = [x for x in doctor.run(self.db_path).checks
              if x.invariant == "#11 Stripe arrival"][0]
         self.assertEqual(c.status, "RED")
+
+    # ── #11 waits for a late Stripe export (2026-10-07) ──────────────────────
+
+    def _the_6_october_case(self, conn):
+        """Verbatim: Rs 78,464.85 paid on Stripe 24 Sep, landed at the bank 28
+        Sep, bank statement imported 6 Oct — and the newest Stripe export was
+        from 26 Sep, a day before Stripe sent the settlement."""
+        self._stripe_in(conn, "pay", 7846485, "2026-09-24")
+        self._gr(conn, "g1", 7846485, "2026-09-28")
+        self._seen(conn, "g1", "2026-10-06")
+
+    def test_stripe_arrival_11_waits_when_stripes_own_books_explain_the_landing(self):
+        """Abhijeet, 2026-10-07: "yeah wait upto 14 days for stripe export". The
+        Money page had been dark eleven and a half hours over a file one day
+        too old. A landing that equals, to the paisa, a Stripe payment no
+        settlement row has consumed is Stripe's own unsent money arriving — it
+        may wait, GREEN, and the wait is reported with the day it runs out."""
+        with db.connect(self.db_path) as conn:
+            self._the_6_october_case(conn)
+            c = doctor._check_stripe_arrival(conn, today="2026-10-07")
+        self.assertEqual(c.status, "GREEN")
+        self.assertEqual(len(c.pending), 1)
+        p = c.pending[0]
+        self.assertEqual((p["record_id"], p["date"], p["amount_minor"]),
+                         ("g1", "2026-09-28", 7846485))
+        self.assertEqual((p["stripe_payment"], p["paid"]), ("pay", "2026-09-24"))
+        self.assertEqual(p["due"], "2026-10-20")                 # 6 Oct + 14
+        self.assertIn("Stripe export due by 2026-10-20", c.detail)
+        self.assertEqual(c.deltas, [])
+
+    def test_stripe_arrival_11_the_wait_ends_on_its_day_and_then_it_is_red(self):
+        with db.connect(self.db_path) as conn:
+            self._the_6_october_case(conn)
+            last = doctor._check_stripe_arrival(conn, today="2026-10-20")
+            after = doctor._check_stripe_arrival(conn, today="2026-10-21")
+        self.assertEqual((last.status, len(last.pending)), ("GREEN", 1))   # inclusive
+        self.assertEqual((after.status, after.pending), ("RED", []))
+        self.assertEqual(after.deltas[0]["record_id"], "g1")
+        self.assertEqual(after.deltas[0]["due"], "2026-10-20")
+        self.assertIn("wait ran out", after.deltas[0]["error"])
+        self.assertIn("14 days", after.detail)
+
+    def test_stripe_arrival_11_the_clock_starts_when_the_bank_row_arrives(self):
+        """A statement is imported weeks after its first row. Counted from the
+        LANDING, a credit of the 2nd imported on the 6th of the next month would
+        have run out of time three weeks before anyone could see it."""
+        with db.connect(self.db_path) as conn:
+            self._stripe_in(conn, "pay", 5078606, "2026-08-29")
+            self._gr(conn, "g1", 5078606, "2026-09-02")
+            self._seen(conn, "g1", "2026-10-06")
+            c = doctor._check_stripe_arrival(conn, today="2026-10-07")
+            self.assertEqual((c.status, c.pending[0]["due"]), ("GREEN", "2026-10-20"))
+            # a stamp that cannot be right — earlier than the day it landed, as
+            # a UTC stamp can be for an IST date — never starts the clock early
+            self._seen(conn, "g1", "2026-09-01")
+            c = doctor._check_stripe_arrival(conn, today="2026-09-10")
+            self.assertEqual((c.status, c.pending[0]["due"]), ("GREEN", "2026-09-16"))
+            self.assertEqual(doctor._check_stripe_arrival(conn, today="2026-09-17").status,
+                             "RED")
+
+    def test_stripe_arrival_11_the_export_arriving_ends_the_wait(self):
+        """The settlement row lands (27 Sep, the real one) and the check is the
+        plain GREEN it always was — nothing pending, the old sentence."""
+        with db.connect(self.db_path) as conn:
+            self._the_6_october_case(conn)
+            self._stripe_out(conn, "po", -7846485, "2026-09-27")
+            c = doctor._check_stripe_arrival(conn, today="2026-10-07")
+        self.assertEqual((c.status, c.pending, c.fix), ("GREEN", [], ""))
+        self.assertEqual(c.detail, "1 GLOBAL REMITTANCE credits each tie to a Stripe settlement")
+
+    def test_stripe_arrival_11_still_red_at_once_when_nothing_explains_it(self):
+        """WHAT THE WAIT DOES NOT RELAX: a landing no waiting payment matches is
+        the genuine-client-wire case this check exists for. No grace, no clock."""
+        with db.connect(self.db_path) as conn:
+            self._stripe_in(conn, "pay", 7846485, "2026-09-24")
+            self._gr(conn, "g1", 7846400, "2026-09-28")          # 85 paise off
+            self._seen(conn, "g1", "2026-10-06")
+            c = doctor._check_stripe_arrival(conn, today="2026-10-06")
+        self.assertEqual((c.status, c.pending), ("RED", []))
+        self.assertNotIn("due", c.deltas[0])
+        self.assertIn("may be real income", c.detail)
+
+    def test_stripe_arrival_11_a_payment_already_sent_excuses_nothing(self):
+        """Payment, its settlement, the landing that settlement explains — and
+        then a SECOND credit of the same amount. The payment has been sent; it
+        cannot also be 'still waiting to go'."""
+        with db.connect(self.db_path) as conn:
+            self._stripe_in(conn, "pay", 7846485, "2026-09-24")
+            self._stripe_out(conn, "po", -7846485, "2026-09-27")
+            self._gr(conn, "g1", 7846485, "2026-09-28")
+            self._gr(conn, "g2", 7846485, "2026-09-30")
+            c = doctor._check_stripe_arrival(conn, today="2026-10-01")
+        self.assertEqual((c.status, c.pending), ("RED", []))
+        self.assertEqual([d["record_id"] for d in c.deltas], ["g2"])
+
+    def test_stripe_arrival_11_one_payment_excuses_one_landing(self):
+        with db.connect(self.db_path) as conn:
+            self._stripe_in(conn, "pay", 7846485, "2026-09-24")
+            self._gr(conn, "g1", 7846485, "2026-09-28")
+            self._gr(conn, "g2", 7846485, "2026-09-29")
+            c = doctor._check_stripe_arrival(conn, today="2026-10-01")
+        self.assertEqual(c.status, "RED")
+        self.assertEqual([d["record_id"] for d in c.deltas], ["g2"])
+        self.assertEqual([p["record_id"] for p in c.pending], ["g1"])
+        # two payments of one amount, one sent and one not: the unsent one waits
+        with db.connect(self.db_path) as conn:
+            self._stripe_in(conn, "pay0", 7846485, "2026-09-10")
+            self._stripe_out(conn, "po0", -7846485, "2026-09-12")
+            conn.execute("DELETE FROM transactions WHERE record_id='g2'")
+            self._gr(conn, "g0", 7846485, "2026-09-14")
+            c = doctor._check_stripe_arrival(conn, today="2026-10-01")
+        self.assertEqual((c.status, [p["record_id"] for p in c.pending]), ("GREEN", ["g1"]))
+        self.assertEqual(c.pending[0]["stripe_payment"], "pay")
+
+    def test_stripe_arrival_11_the_payment_must_come_first_and_recently(self):
+        with db.connect(self.db_path) as conn:
+            self._stripe_in(conn, "old", 400000, "2026-09-01")
+            self._gr(conn, "g1", 400000, "2026-09-28")           # 27 days after it
+            self._stripe_in(conn, "late", 500000, "2026-09-29")
+            self._gr(conn, "g2", 500000, "2026-09-28")           # before the payment
+            c = doctor._check_stripe_arrival(conn, today="2026-09-29")
+        self.assertEqual((c.status, c.pending), ("RED", []))
+        self.assertEqual(len(c.deltas), 2)
+
+    def test_stripe_arrival_11_only_a_payment_counts_as_a_payment(self):
+        """A positive Stripe row that is not income (a returned settlement, an
+        adjustment) is not money waiting to be sent on."""
+        with db.connect(self.db_path) as conn:
+            self._stripe_out(conn, "adj", 7846485, "2026-09-24")  # positive, no category
+            self._gr(conn, "g1", 7846485, "2026-09-28")
+            c = doctor._check_stripe_arrival(conn, today="2026-09-29")
+        self.assertEqual((c.status, c.pending), ("RED", []))
+
+    def test_stripe_arrival_11_says_what_clears_it_and_never_how_much(self):
+        """`fix` is printed on the blocked Money page, where no finance number
+        may appear. It names the file and the day; never the amount."""
+        with db.connect(self.db_path) as conn:
+            self._the_6_october_case(conn)
+            waiting = doctor._check_stripe_arrival(conn, today="2026-10-07")
+            red = doctor._check_stripe_arrival(conn, today="2026-11-01")
+            self._gr(conn, "g9", 1234500, "2026-09-30")          # nothing explains this
+            plain = doctor._check_stripe_arrival(conn, today="2026-10-07")
+        for c in (waiting, red, plain):
+            self.assertIn("Stripe balance export", c.fix)
+            self.assertIn("28 Sep 2026", c.fix)
+            for figure in ("78464", "78,464", "7846485", "12345", "12,345"):
+                self.assertNotIn(figure, c.fix)
+        self.assertIn("covers up to 28 Sep 2026 — the bank credit of 28 Sep 2026 needs",
+                      waiting.fix)
+        # one export clears an orphan and a wait alike, so a RED names both days
+        self.assertEqual((plain.status, len(plain.deltas), len(plain.pending)), ("RED", 1, 1))
+        self.assertIn("covers up to 30 Sep 2026 — the bank credits of 28 Sep 2026,"
+                      " 30 Sep 2026 each need", plain.fix)
+
+    def test_a_deadline_is_carried_through_run_and_reported(self):
+        with db.connect(self.db_path) as conn:
+            self._the_6_october_case(conn)
+        res = doctor.run(self.db_path, today="2026-10-07")
+        self.assertTrue(res.green)
+        self.assertEqual([(p["invariant"], p["due"]) for p in res.pending()],
+                         [("#11 Stripe arrival", "2026-10-20")])
+        self.assertIn("Stripe balance export", res.pending()[0]["fix"])
+        late = doctor.run(self.db_path, today="2026-10-21")
+        self.assertEqual([c.invariant for c in late.reds()], ["#11 Stripe arrival"])
+        self.assertEqual(late.pending(), [])
+        # every other check carries the new fields at their defaults
+        quiet = [c for c in res.checks if c.invariant != "#11 Stripe arrival"]
+        self.assertTrue(all(c.fix == "" and c.pending == [] for c in quiet))
+        self.assertIn("pending", res.summary()["checks"][0])
 
     def test_bucket_reproducibility_10(self):
         from modules.finance import pnl

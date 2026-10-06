@@ -4,8 +4,15 @@
 //
 // WHAT IS ON THIS PAGE, AND WHY (ported from v1 renderMoney + brief §4):
 //
-//   · doctor gate          finance-doctor RED renders the red panel and NOTHING
-//                          else. No finance number may appear on RED, ever.
+//   · doctor gate          finance-doctor RED renders the red panel, what
+//                          clears each RED, and the IMPORT CARD — nothing else.
+//                          No finance number may appear on RED, ever, and that
+//                          includes the importer's report (counts only there).
+//                          The import card is on it since 2026-10-07: importing
+//                          the missing statement is how a RED clears, and the
+//                          page had been hiding the only tool that could.
+//   · waiting              what a GREEN doctor is letting through on a
+//                          deadline, and the date it runs out.
 //   · parity check         a LIVE client-side re-sum of the ledger rows against
 //                          the server's audited pnl. If they disagree the page
 //                          says so and names bin/finance-pnl as the truth.
@@ -195,8 +202,9 @@ export function whoOf(x) {
 export async function render(root, ctx) {
   const d = await ctx.api("/api/money");
 
-  // ── DOCTOR GATE: on RED this panel is the entire page ──────────────────────
+  // ── DOCTOR GATE: on RED there are no figures — only how to get them back ────
   if (d.blocked) {
+    const fixes = d.fixes || [];
     root.append(
       heading("Money", "— gated"),
       el("div", "blocked", [
@@ -206,6 +214,17 @@ export async function render(root, ctx) {
           ? el("ul", { style: { margin: "10px 0 0", paddingLeft: "18px" } },
               (d.reds || []).map((x) => el("li", "small", x)))
           : el("div", "small muted", "The doctor did not name the failing invariant."),
+        // WHAT CLEARS IT, in the doctor's own words and with no figure in it.
+        // 2026-10-07: he read "#11 Stripe arrival" here and had to go and ask
+        // what it wanted from him. The page now says.
+        fixes.length
+          ? el("div", { style: { marginTop: "12px" } }, [
+              el("b", null, "What clears it"),
+              el("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } },
+                fixes.map((f) => el("li", "small",
+                  [el("b", null, f.invariant + " — "), f.fix]))),
+            ])
+          : null,
         // A server running yesterday's P&L rules fails #10 by itself while
         // bin/finance-doctor — a fresh process — says GREEN. That contradiction
         // is not a ledger fault and must not be read as one (2026-09-05).
@@ -218,6 +237,16 @@ export async function render(root, ctx) {
           + " rendered from a partially-reconciled ledger — a plausible wrong"
           + " number is worse than no number."),
       ]),
+      // THE DOOR STAYS ON THE ROOM. A RED is cleared by importing whatever the
+      // ledger is missing, and the import card lived on the Statements view —
+      // which this branch returns before drawing. On 6 Oct 2026 #11 went RED
+      // for want of a Stripe export, he was told to "drop it in Money › import",
+      // and there was no such place: the one screen that takes the file was the
+      // screen the RED removes. Eleven and a half hours dark. His call the next
+      // day: "show upload on blocked page". Open on arrival, and its reports are
+      // cut to counts (`countsOnly`) because a bank importer's dry-run prints
+      // balances and no finance number appears on RED.
+      importCard(ctx, { open: true, countsOnly: true }),
     );
     return;
   }
@@ -432,6 +461,17 @@ export async function render(root, ctx) {
       + ` everything below as unverified until they agree.`));
   }
 
+  // A GREEN the doctor is holding open on a deadline (2026-10-07): a bank
+  // credit that matches a Stripe payment whose settlement is not in an export
+  // yet. The figures below are trustworthy today; this says what is owed and
+  // when the page blocks if it does not arrive.
+  (d.waiting || []).forEach((w) => {
+    root.appendChild(notice("warn", waitingLine(w), {
+      action: btn("Upload it", () => { location.hash = "#/money?view=statements"; },
+        { sm: true, icon: "upload" }),
+    }));
+  });
+
   const body = el("div", { class: "stack", style: { gap: "24px" } });
   const rangeUI = rangeBar();
 
@@ -458,7 +498,10 @@ export async function render(root, ctx) {
       ledger: () => el("div", "stack", [
         heading("Every transaction", "— reconciled, filtered on the server", "h3"),
         explorer(), provenanceFooter(rows)]),
-      statements: () => el("div", "stack", [provisionalPanel(d.provisional), importCard(ctx)]),
+      // when the doctor is waiting on an upload, "Upload it" lands here — on
+      // an import card that is already open, not on one more thing to click
+      statements: () => el("div", "stack", [provisionalPanel(d.provisional),
+        importCard(ctx, { open: (d.waiting || []).length > 0 })]),
     },
   });
 
@@ -1630,12 +1673,16 @@ function provisionalPanel(prov) {
  * (reconcile-or-abort, idempotent); and committing is always a second,
  * separate click on a report you have already read.
  */
-function importCard(ctx) {
+function importCard(ctx, opts = {}) {
   return expander("Import data — bank / card / Wise / Upwork / Stripe exports", (host) => {
     host.appendChild(el("div", "muted small",
       "Uploading only stages the file. Every import dry-runs first and prints"
       + " the importer's own report; committing is a second click, and the"
       + " finance-doctor verdict is shown after the write."));
+    if (opts.countsOnly) {
+      host.appendChild(el("div", "muted small",
+        "While this page is blocked the report shows counts only — no amounts."));
+    }
 
     const out = el("div", { class: "stack-2", style: { marginTop: "12px" } });
     const tiles = el("div", { class: "grid", style: { marginTop: "12px" } });
@@ -1654,7 +1701,7 @@ function importCard(ctx) {
           + ` written until you read the dry-run and click Commit.`,
       });
       input.addEventListener("change", () => {
-        if (input.files[0]) doUpload(kind, input.files[0], go, out, ctx);
+        if (input.files[0]) doUpload(kind, input.files[0], go, out, ctx, opts);
         input.value = "";
       });
       tiles.appendChild(el("div", {
@@ -1670,17 +1717,57 @@ function importCard(ctx) {
     });
 
     host.append(tiles, out);
-  }, { class: "importcard" });
+  }, { class: "importcard", open: !!opts.open });
 }
 
-function reportChips(report) {
-  return Object.entries(report || {})
-    .filter(([, v]) => v == null || typeof v !== "object")
-    .slice(0, 12)
-    .map(([k, v]) => chip(`${k}: ${v}`));
+/**
+ * The scalar fields of an importer's report, as [key, value] pairs — and, with
+ * `countsOnly`, only the ones that are plainly NOT money.
+ *
+ * An importer's report mixes the two: the bank's dry-run prints the statement's
+ * opening and closing balance and the deposit total beside its row counts. On
+ * the blocked page that would be a finance number on RED, so there a value is
+ * kept only if it is a boolean, an integer whose key does not read like money,
+ * or one of a handful of named text fields. A new report key that carries an
+ * amount as a string is dropped by default — the safe direction.
+ */
+export function reportEntries(report, countsOnly) {
+  const TEXT_OK = ["mode", "file", "window", "period", "card4"];
+  const MONEY_KEY = /inr|usd|minor|amount|balance|principal|spend|total|opening|closing|rate|rolled|anchor/i;
+  const flat = Object.entries(report || {})
+    .filter(([, v]) => v == null || typeof v !== "object");
+  if (!countsOnly) return flat.slice(0, 12);
+  return flat.filter(([k, v]) => typeof v === "boolean"
+    || (Number.isInteger(v) && !MONEY_KEY.test(k))
+    || (typeof v === "string" && TEXT_OK.includes(k))).slice(0, 12);
 }
 
-async function doUpload(kind, file, button, out, ctx) {
+/**
+ * Something a GREEN doctor is letting through on a deadline, in three beats:
+ * how long is left, what clears it (the doctor's own sentence), and what is
+ * being taken on trust until when. Check-agnostic on purpose — #11's wait for a
+ * late Stripe export is the first of these, not the definition of them.
+ */
+export function waitingLine(item) {
+  const w = item || {};
+  const n = Number(w.days_left);
+  const when = w.days_left == null || !Number.isFinite(n) ? ""
+    : n < 0 ? "overdue" : n === 0 ? "due today" : n === 1 ? "1 day left" : `${n} days left`;
+  const amount = w.inr != null && Number.isFinite(Number(w.inr))
+    ? ` (₹${Number(w.inr).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+    : "";
+  const head = `Waiting on an upload${when ? " — " + when : ""}.`;
+  const fix = w.fix || "The finance doctor is letting something through on a deadline.";
+  const tail = w.due
+    ? ` Taken on trust until ${w.due}${amount}; after that this page blocks.` : "";
+  return `${head} ${fix}${tail}`;
+}
+
+function reportChips(report, countsOnly) {
+  return reportEntries(report, countsOnly).map(([k, v]) => chip(`${k}: ${v}`));
+}
+
+async function doUpload(kind, file, button, out, ctx, opts = {}) {
   button.disabled = true;
   const label = button.textContent;
   button.textContent = "Uploading…";
@@ -1704,7 +1791,7 @@ async function doUpload(kind, file, button, out, ctx) {
       up.note ? " — " + up.note : "",
     ]));
     if (!up.importable) return;
-    await doImport(kind, false, out, ctx);       // auto dry-run once it is staged
+    await doImport(kind, false, out, ctx, opts); // auto dry-run once it is staged
   } catch (e) {
     out.appendChild(el("div", "errstate", "upload failed: " + String(e.message || e)));
   } finally {
@@ -1713,7 +1800,7 @@ async function doUpload(kind, file, button, out, ctx) {
   }
 }
 
-async function doImport(kind, commit, out, ctx) {
+async function doImport(kind, commit, out, ctx, opts = {}) {
   const pending = el("div", "muted small", commit ? "Committing…" : "Dry-run…");
   out.appendChild(pending);
   let res;
@@ -1739,14 +1826,14 @@ async function doImport(kind, commit, out, ctx) {
   box.appendChild(el("div", "hstack", [
     el("b", null, commit ? "COMMITTED" : "DRY-RUN"),
     el("span", "muted", kind),
-    ...reportChips(res.report),
+    ...reportChips(res.report, opts.countsOnly),
   ]));
 
   if (res.report && res.report.abort) {
     box.appendChild(el("div", "errstate", "importer refused: " + res.report.abort));
   } else if (!commit) {
     box.appendChild(el("div", "hstack", [
-      btn("Commit to ledger", () => doImport(kind, true, out, ctx),
+      btn("Commit to ledger", () => doImport(kind, true, out, ctx, opts),
         { variant: "primary", sm: true, icon: "check" }),
       el("span", "muted small",
         "this writes to the ledger and re-runs the bucketizer and the doctor"),
