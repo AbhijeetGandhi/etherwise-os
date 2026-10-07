@@ -30,6 +30,13 @@ Two facts the ledger has to live with:
     come positive; the ledger's rule (sync_state._signed_amount_minor: debit
     types/subtypes negative) reproduces the CSV's signs for every kind seen,
     and an explicitly negative MCP row stays negative whatever its label.
+    ON THE AP SIDE A POSITIVE ROW STAYS POSITIVE TOO (2026-10-07): a Service
+    Fee or WHT adjustment signed as money IN is that money coming BACK — a
+    reversed week returns its fee and its withholding. The label rule alone
+    charged both a second time on the first refund this rail read (6 Oct,
+    $430.00 taken back: booked as -473.43 where Upwork took 386.57); the
+    CSV-era ledger holds the same two rows as credits on all five refunds it
+    has. See signed_minor.
 
 WHAT run() DOES, network first, one write transaction after (the mcp_search
 rule — never an MCP call inside an open transaction):
@@ -250,12 +257,29 @@ def transaction_row(raw: dict) -> Optional[dict]:
     }
 
 
+# The AP side — invoices and adjustments on what Upwork owes him — arrives
+# signed from the balance's point of view: all seven APAdjustment rows in the
+# 26 Aug captures (Service Fee, WHT, Withdrawal Fee) are explicitly negative,
+# every APInvoice positive. On these two types the payload's own sign is the
+# ledger's. What arrives UNSIGNED is the other side — ARInvoice and APPayment
+# are positive in the payload and debits in the ledger — and the label rule
+# (sync_state._signed_amount_minor) still signs those.
+SELF_SIGNED_TYPES = frozenset({"APInvoice", "APAdjustment"})
+
+
 def signed_minor(row: dict) -> Optional[int]:
     """The ledger's signed integer minor units for an MCP row: the CSV
     convention (sync_state._signed_amount_minor — Service Fee / WHT /
     Membership Fee / withdrawals negative, earnings and card payments
     positive), and an explicitly negative MCP row stays negative whatever its
-    label. None when the MCP gave no amount (the upsert quarantines it)."""
+    label. None when the MCP gave no amount (the upsert quarantines it).
+
+    A POSITIVE row on the AP side stays positive whatever its label, for the
+    same reason: a fee or a withholding signed as money in is that money
+    coming back. A reversed week returns its 10% fee and its 0.1% withholding
+    ("Service Fee return", "Withholding Tax … return"), and the label rule
+    alone made each a second charge. The CSV-era ledger holds both as credits
+    on every refund it has (five, 2025-04-01 to 2025-09-16)."""
     raw = (row.get("amount") or {}).get("rawValue")
     if raw in (None, ""):
         return None
@@ -263,10 +287,14 @@ def signed_minor(row: dict) -> Optional[int]:
     if minor is None:
         return None
     try:
-        negative = Decimal(str(raw).replace(",", "").strip()) < 0
+        value = Decimal(str(raw).replace(",", "").strip())
     except InvalidOperation:
-        negative = False
-    return -abs(minor) if negative else minor
+        return minor
+    if value < 0:
+        return -abs(minor)
+    if value > 0 and (row.get("type") or "").strip() in SELF_SIGNED_TYPES:
+        return abs(minor)
+    return minor
 
 
 def ledger_type(row: dict) -> str:
@@ -595,7 +623,8 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
     the audited upsert + upwork_mcp_rows; the connects usage rows → shadow
     compare (or connects_history from config.MCP_CONNECTS_SINCE on).
     Metrics per org: fetched / inserted / updated / transfer_legs /
-    quarantined / no_id / total / truncated."""
+    quarantined / no_id / total / truncated / differs (rows whose stored
+    amount is not the one today's read derives — named, never rewritten)."""
     from modules.upwork.feeds import mcp_client
     lookback = lookback_days if lookback_days is not None else config.MCP_FINANCIALS_LOOKBACK_DAYS
     since = config.MCP_CONNECTS_SINCE if connects_since is _UNSET else connects_since
@@ -654,7 +683,7 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
             profile = PROFILE_LABEL.get(slot, slot)
             m = {"fetched": len(got["rows"]), "inserted": 0, "updated": 0, "transfer_legs": 0,
                  "quarantined": 0, "no_id": 0, "truncated": got["truncated"],
-                 "total": got["total"], "calls": got["calls"]}
+                 "total": got["total"], "calls": got["calls"], "differs": []}
             for raw in got["rows"]:
                 row = transaction_row(raw)
                 if row is None:
@@ -666,6 +695,21 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
                 r = sync_state.upsert_transaction(conn, row, profile, amount_minor=amt)
                 outcome = r if r in ("inserted", "updated") else "quarantined"
                 m[outcome] += 1
+                # WHAT THE LEDGER HOLDS AGAINST WHAT UPWORK SAYS TODAY. The
+                # upsert never rewrites an amount it already has (a corrected
+                # value must survive a re-read), so a row stored under an
+                # older sign rule stays as stored — and stayed invisible: the
+                # two returned-fee rows of 6 Oct sat wrong with nothing to
+                # say so. Named here, never changed here.
+                if r == "updated" and amt is not None:
+                    held = conn.execute(
+                        "SELECT amount_minor, source FROM transactions"
+                        " WHERE canonical_key=? OR record_id=?",
+                        (f"upwork:{row['recordId']}", row["recordId"])).fetchone()
+                    if held and held["amount_minor"] is not None and held["amount_minor"] != amt:
+                        m["differs"].append({
+                            "record_id": row["recordId"], "subtype": row.get("accountingSubtype"),
+                            "ledger": held["amount_minor"], "upwork": amt, "source": held["source"]})
                 if r == "inserted":
                     conn.execute(
                         "UPDATE transactions SET source=?, type=?, pnl_bucket=?, fx_rate='1',"
@@ -738,6 +782,11 @@ def run(ctx, session_factory=None, *, lookback_days: Optional[int] = None,
         ctx.log(f"{profile}: {m['fetched']} rows ({m['total']} exist) — inserted {m['inserted']},"
                 f" updated {m['updated']}, transfer legs {m['transfer_legs']},"
                 f" quarantined {m['quarantined']}, no id {m['no_id']}")
+        if m["differs"]:
+            ctx.log(f"{profile}: {len(m['differs'])} stored amounts are not what this read derives"
+                    " (ledger vs Upwork, minor units; nothing rewritten): "
+                    + ", ".join(f"{x['record_id']} {x['ledger']} vs {x['upwork']}"
+                                for x in m["differs"][:10]))
     return metrics
 
 

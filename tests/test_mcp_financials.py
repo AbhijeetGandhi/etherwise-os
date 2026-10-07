@@ -23,6 +23,7 @@ import tempfile
 import unittest
 import urllib.error
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 
@@ -81,6 +82,43 @@ def _complete(fx: dict) -> dict:
     over them is 'complete' when total_count says so — the truncation path has
     its own test."""
     return dict(fx, total_count=len(_rows(fx)))
+
+
+# A REVERSED WEEK (6 Oct 2026). A client's payment for the week to 27 Sep
+# failed, the hours were manual time, and Upwork took the $430.00 back and
+# RETURNED its fee and its withholding. Ids, kinds, days and amounts are the
+# live ledger's rows. The payload of that morning was not kept, so the + on
+# the two returns is the captures' convention (the AP side arrives signed from
+# the balance's point of view), not a capture of these two rows.
+REVERSED_WEEK = [  # (recordId, type, subtype, rawValue, invoice day, description)
+    ("954886811", "APInvoice", "Hourly", "430.00", "2026-09-27",
+     "(43475182) Tomas Eklund - 14:20 hrs @ $30.00/hr - 09/21/2026 - 09/27/2026"),
+    ("954886833", "APAdjustment", "Service Fee", "-43.00", "2026-09-27",
+     "Service Fee\nContract ID: 43475182\nAmount: \n$430.00 USD x 10% = $43.00 USD"),
+    ("954886821", "APAdjustment", "WHT", "-0.43", "2026-09-27",
+     "Withholding Tax (IN) - Ref ID 954886811\nCountry: IN\nAmount: $430.00 USD x 0.1% = $0.43 USD"),
+    ("957282197", "APAdjustment", "Refund", "-430.00", "2026-10-06",
+     "Freelancer Refund - Refund Given - Ref ID 954886811"),
+    ("957282198", "APAdjustment", "Service Fee", "43.00", "2026-10-06",
+     "Service Fee return, rate: 10%, amount: $43.00 USD\nContract ID: 43475182"),
+    ("957282200", "APAdjustment", "WHT", "0.43", "2026-10-06",
+     "Withholding Tax (IN) - Ref ID 954886811 return\nNotes: Refund from Upwork for T957282197"),
+]
+TAKEN_BACK = ("957282197", "957282198", "957282200")
+
+
+def _reversed_week() -> list:
+    return [{"recordId": rid, "type": typ, "accountingSubtype": sub, "description": desc,
+             "assignmentCompanyName": "Tomas Eklund", "assignmentDeveloperName": "Abhijeet Gandhi",
+             "transactionAmount": {"currency": "USD", "displayValue": raw, "rawValue": raw},
+             "transactionCreationDate": day + "T00:00:00+0000"}
+            for rid, typ, sub, raw, day, desc in REVERSED_WEEK]
+
+
+def _answer(rows: list) -> dict:
+    """A transactions answer in the captured envelope, holding exactly `rows`."""
+    return dict(_fixture("financials_transactions_personal"), total_count=len(rows),
+                data={"transactionHistory": {"transactionDetail": {"transactionHistoryRow": rows}}})
 
 
 def _live_session(over=None):
@@ -266,6 +304,51 @@ class TestRowMapping(unittest.TestCase):
         self.assertEqual((row["recordId"], row["accountingSubtype"], mf.signed_minor(row)),
                          ("556", "Service Fee", -4550))
         self.assertIsNone(mf.transaction_row({"amount": 1}))
+
+    def test_a_fee_and_a_withholding_that_come_back_are_credits(self):
+        """The label rule alone made the returned fee and the returned
+        withholding a second charge: -473.43 booked where Upwork took 386.57.
+        The CSV-era ledger holds both as credits on all five refunds it has."""
+        rows = {r["recordId"]: mf.transaction_row(r) for r in _reversed_week()}
+        got = {rid: mf.signed_minor(r) for rid, r in rows.items()}
+        self.assertEqual(got, {"954886811": 43000, "954886833": -4300, "954886821": -43,
+                               "957282197": -43000, "957282198": 4300, "957282200": 43})
+        self.assertEqual(sum(got[r] for r in TAKEN_BACK), -38657)      # what Upwork took, to the cent
+        self.assertEqual(sum(got.values()), 0)                          # a reversed week nets to nothing
+        # a return keeps the bucket of the charge it undoes, so the fee nets out of the P&L too
+        self.assertEqual([mf.bucket_for(rows[r]) for r in TAKEN_BACK], ["refund", "platform_fee", "tax"])
+        self.assertEqual([mf.ledger_type(rows[r]) for r in TAKEN_BACK], ["Refund", "Other", "Other"])
+
+    def test_the_ap_side_of_the_captures_carries_its_own_sign(self):
+        """What that rule rests on: every APAdjustment the captures hold is
+        explicitly negative and every APInvoice positive — so a positive
+        adjustment can only be money coming back."""
+        rows = list(self._by_id().values())
+        adj = [r for r in rows if r["type"] == "APAdjustment"]
+        inv = [r for r in rows if r["type"] == "APInvoice"]
+        self.assertEqual((len(adj), len(inv)), (7, 7))
+        self.assertEqual({r["accountingSubtype"] for r in adj}, {"Service Fee", "WHT", "Withdrawal Fee"})
+        self.assertTrue(all(Decimal(r["amount"]["rawValue"]) < 0 for r in adj))
+        self.assertTrue(all(Decimal(r["amount"]["rawValue"]) > 0 for r in inv))
+        for r in adj + inv:
+            self.assertEqual(mf.signed_minor(r) < 0, Decimal(r["amount"]["rawValue"]) < 0, r["recordId"])
+        self.assertEqual(mf.SELF_SIGNED_TYPES, {"APInvoice", "APAdjustment"})
+
+    def test_what_arrives_unsigned_is_still_signed_by_its_label(self):
+        """ARInvoice and APPayment are positive in the payload and debits in
+        the ledger: the AP-side rule must not reach them, nor a fee row whose
+        type the payload did not give."""
+        def minor(typ, subtype, raw):
+            raw_row = {"recordId": "1", "accountingSubtype": subtype,
+                       "transactionAmount": {"rawValue": raw, "currency": "USD"}}
+            if typ:
+                raw_row["type"] = typ
+            return mf.signed_minor(mf.transaction_row(raw_row))
+        self.assertEqual(minor("ARInvoice", "Membership Fee", "45.00"), -4500)
+        self.assertEqual(minor("APPayment", "Withdrawal", "2335.14"), -233514)
+        self.assertEqual(minor("ARPayment", "Payment", "45.00"), 4500)
+        self.assertEqual(minor(None, "Service Fee", "12.00"), -1200)     # no type: the label decides, as before
+        self.assertEqual(minor("APAdjustment", "Service Fee", "0.00"), 0)
 
 
 class TestConnectsEvents(unittest.TestCase):
@@ -462,6 +545,7 @@ class TestRun(NoSleep):
                          (12, 11, 1, 0, 12))
         self.assertEqual((a["fetched"], a["inserted"], a["updated"], a["transfer_legs"], a["total"]),
                          (9, 9, 0, 2, 9))
+        self.assertEqual((p["differs"], a["differs"]), ([], []))       # the CSV row and the read agree
         self.assertEqual([c[1]["org_uid"] for c in s.calls if c[1] and c[1].get("action") == "transactions"],
                          [PERSONAL, AGENCY])
         rows = {r["record_id"]: r for r in self._t("SELECT * FROM transactions")}
@@ -517,10 +601,39 @@ class TestRun(NoSleep):
         ctx2, _, m2 = self._run()
         self.assertEqual((m2["transactions"]["personal"]["inserted"], m2["transactions"]["personal"]["updated"]),
                          (0, 12))
+        self.assertEqual(m2["transactions"]["personal"]["differs"], [])   # a re-read that agrees names nothing
         self.assertEqual(m2["summaries"]["due"], 0)                    # nothing re-read
         self.assertEqual(self._t("SELECT seen_runs FROM upwork_mcp_rows WHERE record_id='944448040'")[0]["seen_runs"], 2)
         self.assertEqual(self._t("SELECT outcome FROM upwork_mcp_rows WHERE record_id='944448040'")[0]["outcome"], "inserted")
         self.assertEqual(len(self._t("SELECT 1 FROM transactions")), 21)
+
+    def test_a_reversed_week_lands_as_upwork_states_it_and_a_row_stored_the_old_way_is_named_not_rewritten(self):
+        self.today = date(2026, 10, 7)
+        with db.connect(self.db_path) as conn:      # the read of 7 Oct 06:05 stored the returned fee as a charge
+            conn.execute("INSERT INTO transactions (record_id, canonical_key, dedup_key, type, upwork_type,"
+                         " accounting_subtype, amount_minor, amount_credited_minor, amount_base_minor,"
+                         " currency, creation_dt, profile, source, pnl_bucket)"
+                         " VALUES ('957282198', 'upwork:957282198', 'Personal:957282198', 'Other',"
+                         " 'APAdjustment', 'Service Fee', -4300, -4300, -4300, 'USD',"
+                         " '2026-10-06T00:00:00+0000', 'Personal', 'Upwork-MCP', 'platform_fee')")
+        s = _live_session({(mf.TOOL, "transactions", PERSONAL): _answer(_reversed_week()),
+                           (mf.TOOL, "transactions", AGENCY): _answer([])})
+        ctx, _, m = self._run(s)
+        p = m["transactions"]["personal"]
+        self.assertEqual((p["fetched"], p["inserted"], p["updated"], p["quarantined"]), (6, 5, 1, 0))
+        rows = {r["record_id"]: r for r in self._t("SELECT * FROM transactions")}
+        self.assertEqual({rid: r["amount_minor"] for rid, r in rows.items()},
+                         {"954886811": 43000, "954886833": -4300, "954886821": -43,
+                          "957282197": -43000, "957282200": 43,
+                          "957282198": -4300})          # stored before the rule: the upsert does NOT rewrite it
+        self.assertEqual((rows["957282200"]["source"], rows["957282200"]["pnl_bucket"],
+                          rows["957282200"]["amount_base_minor"]), (mf.SOURCE, "tax", 43))
+        self.assertEqual((rows["957282197"]["type"], rows["957282197"]["pnl_bucket"]), ("Refund", "refund"))
+        # …but it is no longer invisible: the run names it, ledger against Upwork
+        self.assertEqual(p["differs"], [{"record_id": "957282198", "subtype": "Service Fee",
+                                         "ledger": -4300, "upwork": 4300, "source": mf.SOURCE}])
+        self.assertEqual(m["transactions"]["agency"]["differs"], [])
+        self.assertTrue(any("957282198 -4300 vs 4300" in line for line in ctx.logs), ctx.logs)
 
     def test_connects_go_live_from_the_cut_day_only(self):
         with db.connect(self.db_path) as conn:
