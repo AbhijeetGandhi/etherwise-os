@@ -521,6 +521,7 @@ function foundWords(c) {
   if (c.by === "arranged") return "a direct offer";
   if (c.by === "contract") return c.profile === "agency" ? "an agency contract, no proposal on record"
     : "a contract, no proposal on record";
+  if (c.by === "declared") return "Upwork, as you told it — before these records";
   return "Upwork payments, no proposal or contract on record";
 }
 
@@ -541,15 +542,20 @@ function incomeBlock(d, state, sel) {
     sec.append(emptyState("No payments from Upwork clients in this period.", { icon: "inbox" }));
     return sec;
   }
-  const share = inc.others > 0 && inc.share != null
-    ? ` That is ${pct(inc.share, inc.share > 0.99 ? 1 : 0)} of all revenue in the period.`
-    : " That is all of the revenue in the period.";
+  const say = el("div", null, `came in from ${plural(inc.clients.length, "client")} you first met on Upwork.`);
+  if (inc.others > 0 && inc.share != null) {
+    say.append(` That is ${pct(inc.share, inc.share > 0.99 ? 1 : 0)} of all revenue in the period; `,
+      el("button", { class: "linktext", type: "button", on: { click: () => otherDrill(inc, sel) } },
+        `the other ${fmt.usd(inc.others)} came from elsewhere`), ".");
+  } else {
+    say.append(" That is all of the revenue in the period.");
+  }
   sec.append(el("div", "fn-inc-top", [
     el("button", { class: "fn-inc-big", type: "button",
       attrs: { "aria-label": `every payment behind ${fmt.usd2(inc.total)}` },
       on: { click: () => incomeDrill(inc, sel, {}) } }, fmt.usd(inc.total)),
     el("div", "fn-inc-say", [
-      el("div", null, `came in from ${plural(inc.clients.length, "client")} you first met on Upwork.` + share),
+      say,
       inc.newer != null ? el("div", "muted small", `${fmt.usd(inc.newer)} from clients first met in this period`
         + ` · ${fmt.usd(inc.older)} from clients met before it, who are still paying`) : null,
     ]),
@@ -570,6 +576,37 @@ function incomeBlock(d, state, sel) {
   if (M.registry === false) sec.append(notice("warn", "The client list did not load, so names are not merged:"
     + " one client may show as several."));
   return sec;
+}
+
+// How a client outside the Upwork money reached you — the registry's
+// `found_via` / `referred_by`, as Abhijeet said it (2026-10-08: "hipp health is
+// also someone we found through alex"); "not known" when nobody has said.
+function originWords(o) {
+  if (!o) return "not known";
+  if (o.found_via === "referral") return o.referred_by ? `a referral from ${o.referred_by}` : "a referral";
+  if (o.found_via === "before") return "paid before you met them on Upwork";
+  if (o.found_via === "other") return "not through Upwork";
+  return "not known";
+}
+
+function otherDrill(inc, sel) {
+  const rows = inc.otherRows || [];
+  openDrill({
+    title: "Revenue from clients not found on Upwork",
+    subtitle: sel.bounds.lo ? `from ${fmt.date(sel.bounds.lo)}` : "every payment on record",
+    rows, total: rows.length, wide: true,
+    columns: [
+      { key: "d", label: "Date", render: (x) => el("span", "muted nowrap", fmt.date(x.d)) },
+      { key: "who", label: "Client", render: (x) => el("span", x.who || x.as ? null : "muted",
+        x.who || x.as || "no name on the payment") },
+      { key: "origin", label: "How they reached you", render: (x) => el("span", x.origin ? null : "muted",
+        originWords(x.origin)) },
+      { key: "desc", label: "What", cls: "muted" },
+      { key: "usd", label: "Amount", num: true, render: (x) => fmt.usd2(x.usd) },
+    ],
+    facets: [{ label: "How", allLabel: "All", of: (x) => originWords(x.origin) }],
+    amount: (x) => x.usd, time: (x) => x.d, defaultSort: "newest",
+  });
 }
 
 function incomeChart(host, inc, sel) {

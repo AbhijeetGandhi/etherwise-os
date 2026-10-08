@@ -242,6 +242,23 @@ class RegistryValidationTests(unittest.TestCase):
         self.assertTrue(reg.is_active("adelye"))                # default kind
         self.assertFalse(reg.is_active("nobody-at-all"))        # unknown != active
 
+    def test_found_via_is_read_checked_and_referred_by_resolves(self):
+        """Where a client came from, as Abhijeet said it (2026-10-08) — read by
+        the Upwork Funnel: "upwork" counts a client found there before our
+        records begin; "referral" keeps one out of the Upwork money."""
+        text = (SAMPLE
+                + "  -\n    id: simyon-pinsky\n    name: Simyon Pinsky\n    found_via: Upwork\n"
+                + "  -\n    id: mitosis\n    name: Mitosis\n    found_via: referral\n"
+                  "    referred_by: simyon-pinsky\n"
+                + "  -\n    id: hipp\n    name: Hipp Health\n    found_via: referral\n    referred_by: Alex\n")
+        reg = self._load(text)
+        self.assertEqual(reg.found_via("simyon-pinsky"), "upwork")      # case folded
+        self.assertEqual(reg.referred_by("mitosis"), "Simyon Pinsky")   # an id -> its name
+        self.assertEqual(reg.referred_by("hipp"), "Alex")               # a plain name, as written
+        self.assertIsNone(reg.found_via("adelye"))                      # nobody said: the records decide
+        with self.assertRaises(registry.RegistryError):
+            self._load(SAMPLE + "  -\n    id: x\n    name: X\n    found_via: linkedin\n")
+
     def test_unknown_kind_rejected(self):
         with self.assertRaises(registry.RegistryError):
             self._load(SAMPLE + "  -\n    id: x\n    name: X\n    kind: lead\n")

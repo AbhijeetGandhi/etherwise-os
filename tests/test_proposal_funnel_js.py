@@ -72,7 +72,8 @@ const out = {
         { d: "2026-10-02", m: "2026-10", usd: 300, ch: "direct" }] },
       b: { name: "B", first: "2025-01-10", by: "contract", rows: [
         { d: "2026-09-05", m: "2026-09", usd: 1000, ch: "direct" }] } },
-    not_upwork: [{ d: "2026-09-30", usd: 10 }, { d: "2025-01-01", usd: 99 }] }, { lo: "2026-09-01", hi: null }),
+    not_upwork: [{ d: "2026-09-30", usd: 10, who: "M", origin: { found_via: "referral", referred_by: "S" } },
+                 { d: "2025-01-01", usd: 99 }] }, { lo: "2026-09-01", hi: null }),
   incomeAll: F.income({ blocked: false, clients: { a: { name: "A", first: "2026-09-01", by: "cold", rows: [
       { d: "2026-08-20", m: "2026-08", usd: 100, ch: "freelancer" }] } }, not_upwork: [] }, { lo: null, hi: null }),
   incomeBlocked: F.income({ blocked: true }, { lo: null, hi: null }),
@@ -143,3 +144,5 @@ class TestPropFunnelJS(unittest.TestCase):
         self.assertIsNone(self.out["incomeAll"]["newer"])                   # "all time" has no "before"
         self.assertEqual(self.out["incomeAll"]["total"], 100)
         self.assertIsNone(self.out["incomeBlocked"])                        # RED doctor: no money at all
+        # the rest of the period's revenue is listed, with how it reached you
+        self.assertEqual([(r["who"], r["usd"]) for r in i["otherRows"]], [("M", 10)])

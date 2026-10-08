@@ -291,6 +291,17 @@ REG_TEXT = """clients:
       - "Ana Brook, Ana B"
     upwork_rooms:
       - room_zed_registry
+  -
+    id: sim-p
+    name: Sim P
+    aliases:
+      - SP Labs
+    found_via: upwork
+  -
+    id: hip-h
+    name: Hip H
+    found_via: referral
+    referred_by: sim-p
 """
 
 
@@ -391,6 +402,29 @@ class TestWhoseMoney(FunnelCase):
         self.assertEqual((w["client"], w["via"], w["usd"]), ("zed-quill", "the client in this conversation", 500.0))
         self.assertIsNone(w["contract_id"])
         self.assertEqual([r["as"] for r in m["not_upwork"]], ["Northwind Traders"])   # never met on Upwork
+
+    def test_what_he_said_beats_what_the_records_show(self):
+        """Abhijeet, 2026-10-08: "simyon pinsky is someone we found through
+        upwork then our engagement closed and we started again after few month
+        outside upwork" (no Upwork trace in these records) and "hipp health is
+        also someone we found through alex" (a referral)."""
+        with db.connect(self.db_path) as conn:
+            _tx(conn, "s1", source="Wise", minor=50000, kind="Wise",
+                desc="Received money from SP Labs with reference MercuryACH", when="2024-12-17T00:00:00+0000")
+            _tx(conn, "s2", source="Wise", minor=82475, kind="Wise",
+                desc="Received money from SP Labs with reference MercuryACH", when="2025-04-23T00:00:00+0000")
+            _tx(conn, "h1", source="Wise", minor=20000, kind="Wise",
+                desc="Received money from Hip H with reference INV1", when="2025-09-02T00:00:00+0000")
+            # even an Upwork payment does not make a referral Upwork money
+            _tx(conn, "h2", source="Upwork-MCP", minor=10000, company="Hip H",
+                desc="(9) Hip H - 2:00 hrs", when="2025-09-09T00:00:00+0000")
+        m = self.run_funnel()["money"]
+        c = m["clients"]["sim-p"]
+        self.assertEqual((c["by"], c["first"], len(c["rows"])), ("declared", "2024-12-17", 2))
+        self.assertNotIn("hip-h", m["clients"])
+        out = [(r["who"], r["usd"], r["origin"]) for r in m["not_upwork"]]
+        self.assertEqual(out, [("Hip H", 200.0, {"found_via": "referral", "referred_by": "Sim P"}),
+                               ("Hip H", 100.0, {"found_via": "referral", "referred_by": "Sim P"})])
 
     def test_the_registry_knows_a_room_the_threads_do_not(self):
         with db.connect(self.db_path) as conn:

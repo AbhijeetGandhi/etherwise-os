@@ -463,14 +463,42 @@ def _money(db_path: Optional[Path], facts: list) -> dict:
         if up:
             meet(k, min(up), {"by": "payments"})
 
+    # What he SAID beats what the records show (registry `found_via`,
+    # 2026-10-08). A client the records only ever saw paying off Upwork can
+    # still have been found there — Simyon Pinsky: "found through upwork then
+    # our engagement closed and we started again after few month outside
+    # upwork" — so he is met at his first payment on record. A referral is
+    # never Upwork money, whatever the records hold (Hipp Health, "found
+    # through alex"; Mitosis Consulting, referred by Simyon Pinsky) — unless a
+    # proposal of ours won them, which is on record and stays.
+    def said(k):
+        return reg.found_via(k) if reg is not None and k and not k.startswith("~") else None
+
+    for k, p in pays.items():
+        fv = said(k)
+        if fv == "upwork" and k not in met:
+            first = min((r["d"] for r in p["rows"] if r["d"]), default=None)
+            if first:
+                met[k] = {"first": first, "by": "declared"}
+        elif fv in ("referral", "other") and k not in claimed:
+            met.pop(k, None)
+
+    def why_not(k):
+        """How a client outside the Upwork money reached us, when he said."""
+        fv = said(k)
+        if not fv:
+            return None
+        return {"found_via": fv, "referred_by": reg.referred_by(k)}
+
     clients: dict = {}
     for k, p in pays.items():
         o = met.get(k)
         if not o:
-            loose.extend(p["rows"])
+            loose.extend(dict(r, who=who.name(k), origin=why_not(k)) for r in p["rows"])
             continue
         m0 = o["first"][:7]
-        loose.extend(r for r in p["rows"] if (r["m"] or "") < m0)
+        loose.extend(dict(r, who=who.name(k), origin={"found_via": "before"})
+                     for r in p["rows"] if (r["m"] or "") < m0)
         rows = sorted((r for r in p["rows"] if (r["m"] or "") >= m0), key=lambda r: r["d"])
         if not rows:
             continue
@@ -484,7 +512,8 @@ def _money(db_path: Optional[Path], facts: list) -> dict:
             "price_note": "median price per connect over purchases that name their count",
             "purchases": purchases, "won": won, "clients": clients,
             "not_upwork": sorted(({"d": r["d"], "m": r["m"], "usd": r["usd"], "src": r["src"],
-                                   "as": r["as"], "desc": r["desc"]} for r in loose),
+                                   "as": r["as"], "desc": r["desc"], "who": r.get("who"),
+                                   "origin": r.get("origin")} for r in loose),
                                  key=lambda r: r["d"]),
             "registry": reg is not None}
 

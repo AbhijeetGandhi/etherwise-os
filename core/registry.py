@@ -39,6 +39,16 @@ Per-client schema (all fields optional except id + name):
                   because a silent pick would put one client's money in two
                   dossiers.
     scope_notes   free text                              (str)
+    found_via     how the client first reached us: "upwork" | "referral" |
+                  "other" (str). Absent = nobody has said, and the records
+                  decide. Read by the Upwork tab's Funnel (2026-10-08): "upwork"
+                  counts a client as found on Upwork when the records start
+                  after that engagement did (Simyon Pinsky: "found through
+                  upwork then our engagement closed and we started again after
+                  few month outside upwork"); "referral" keeps a client out of
+                  the Upwork money whatever else the records hold.
+    referred_by   who referred them: a client id or a plain name (str), with
+                  found_via: referral.
     kind          "client" (default) | "prospect" | "former"  (str)
     no_match      truthy => product/internal, never mapped (str/bool)
 
@@ -282,8 +292,9 @@ def _domain(addr: str) -> str:
 
 # ── the loaded registry ──────────────────────────────────────────────────────
 _LIST_FIELDS = ("aliases", "emails", "upwork_rooms", "fathom_names")
-_STR_FIELDS = ("name", "teams", "clickup", "scope_notes")
+_STR_FIELDS = ("name", "teams", "clickup", "scope_notes", "found_via", "referred_by")
 _KINDS = ("client", "prospect", "former")
+_FOUND_VIA = ("upwork", "referral", "other")
 # kinds that are still an ACTIVE commercial relationship. 'former' is the only
 # one that is not; a prospect has not converted YET, which is not the same claim.
 _ACTIVE_KINDS = ("client", "prospect")
@@ -342,6 +353,16 @@ class Registry:
             if kind is not None and kind not in _KINDS:
                 raise RegistryError(
                     f"{cid}.kind must be one of {_KINDS}, got {kind!r}")
+            fv = c.get("found_via")
+            if fv is not None:
+                if not isinstance(fv, str) or fv.strip().lower() not in _FOUND_VIA:
+                    raise RegistryError(
+                        f"{cid}.found_via must be one of {_FOUND_VIA}, got {fv!r}")
+                c["found_via"] = fv.strip().lower()
+            rb = c.get("referred_by")
+            if rb is not None and not (isinstance(rb, str) and rb.strip()):
+                raise RegistryError(
+                    f"{cid}.referred_by must be a client id or a name, got {rb!r}")
             self.by_id[cid] = c
 
             # no_match entries (products/internal) stay in the registry + the
@@ -489,6 +510,21 @@ class Registry:
         """'client' (default), 'prospect' or 'former'; None if id is unknown."""
         c = self.by_id.get(client_id)
         return None if c is None else (c.get("kind") or "client")
+
+    def found_via(self, client_id: str) -> Optional[str]:
+        """'upwork' | 'referral' | 'other' — how the client first reached us,
+        as Abhijeet said it — or None when nobody has (the records decide)."""
+        c = self.by_id.get(client_id)
+        return (c or {}).get("found_via")
+
+    def referred_by(self, client_id: str) -> Optional[str]:
+        """Who referred the client, as a display name: a client id resolves to
+        that client's canonical name, anything else is returned as written."""
+        c = self.by_id.get(client_id) or {}
+        rb = (c.get("referred_by") or "").strip()
+        if not rb:
+            return None
+        return self.canonical(rb) or rb
 
     def is_active(self, client_id: str) -> bool:
         """Is this still a live commercial relationship? False for a `former`

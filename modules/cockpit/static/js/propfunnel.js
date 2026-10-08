@@ -169,7 +169,7 @@
     if (!M || M.blocked || !M.clients) return null;
     var lo = b && b.lo, hi = b && b.hi;
     function inB(d) { return !!d && (!lo || d >= lo) && (!hi || d <= hi); }
-    var out = { total: 0, freelancer: 0, agency: 0, direct: 0, others: 0,
+    var out = { total: 0, freelancer: 0, agency: 0, direct: 0, others: 0, otherRows: [],
                 newer: lo ? 0 : null, older: lo ? 0 : null, clients: [], months: [] };
     var months = {};
     Object.keys(M.clients).forEach(function (k) {
@@ -190,7 +190,9 @@
       if (lo) { if (g.isNew) out.newer += g.usd; else out.older += g.usd; }
       out.clients.push(roundAll(g, ["usd", "freelancer", "agency", "direct"]));
     });
-    (M.not_upwork || []).forEach(function (r) { if (inB(r.d)) out.others += r.usd; });
+    (M.not_upwork || []).forEach(function (r) {
+      if (inB(r.d)) { out.others += r.usd; out.otherRows.push(r); }
+    });
     out.clients.sort(function (a, c) { return c.usd - a.usd || (a.name < c.name ? -1 : 1); });
     out.months = Object.keys(months).sort().map(function (m) {
       return roundAll(months[m], ["freelancer", "agency", "direct", "total"]);
