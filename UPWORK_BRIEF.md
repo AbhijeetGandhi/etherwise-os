@@ -1215,6 +1215,10 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-08 (22:30 IST) · One client, one name everywhere: the client registry has the
+  last word on every ledger name (`abac85e`), on his "yes please merge them". Origin facts
+  from him: Remote Office Australia is Diat Khan (an Upwork client); Mitosis Consulting came
+  through a referral from Simyon Pinsky and is the only referral client — never Upwork money.
 - 2026-10-08 (21:35 IST) · Funnel money = everything a won client paid since, ON OR OFF
   Upwork (his Globaltize example: won on Upwork, paid through Wise — Upwork revenue), profile
   and agency alike, identity through the client registry. A client counts as "found on
