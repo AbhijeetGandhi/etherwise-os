@@ -153,6 +153,14 @@ Top-to-bottom, one screen by default:
   proposals, 589 page reads), `/api/upwork/funnel`, `static/js/propfunnel.js` (pure,
   node-tested), `sections/upwork_funnel.js`. The data stops at 8 Oct until the refresh exists;
   the view says so when newer proposals are in the `proposals` table.
+  **Money fixed the same night (`6423bc2`, his read: "globaltize hired us from upwork but …
+  pays us through wise … lot of agency transactions"):** a hire carries everything its client
+  paid since, on every rail (his profile, the agency, Wise/Stripe/bank), one client however the
+  ledger spells it (registry names/aliases); hires with no contract are found by their
+  conversation, a same-title contract or their earnings' title; a proposal whose
+  conversation's client first paid after it is a win Upwork does not mark ("became a client
+  later"). New block: "Money in from clients you found on Upwork" by period, plus a 6-month
+  period. Last 6 months: $134,878 from 18 clients, 99.9 % of revenue.
   **Next, in order, each on his go:** (a) `upwork_funnel_refresh` — daily, from what the
   syncs already store: new proposals into `proposal_outcomes` (kind from the room's birth,
   reply from the room, hire, letter facts via `proposal_letter`, job tags via `funnel_tags`);
@@ -1207,6 +1215,11 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-08 (21:35 IST) · Funnel money = everything a won client paid since, ON OR OFF
+  Upwork (his Globaltize example: won on Upwork, paid through Wise — Upwork revenue), profile
+  and agency alike, identity through the client registry. A client counts as "found on
+  Upwork" from the month of the first proposal, invitation, contract or Upwork payment.
+  Open: apply the same registry merge on the Clients tab (it still splits Globaltize in three).
 - 2026-10-08 (evening) · Phase 2 Loop 1 started as the Funnel sub-tab (`2bd5a71`). His
   answers: Funnel inside the Upwork tab; dollars allowed on the Funnel view (connects spend
   and revenue per won client, from the ledger, doctor-gated), amending "no revenue on the
