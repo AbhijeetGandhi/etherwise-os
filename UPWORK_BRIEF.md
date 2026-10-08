@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`) · Phase 1 BUILT, REDESIGNED, with Run-now buttons · the overnight list of 26 Aug DONE — his review of the tabs pending · **use case A live** (`upwork_financials` 06:05 daily, `861b642` `1ed25ea`: ledger, tie-out, twins) · **use case C live — Phase 0.2** (`f231295` `0569cb1`: every proposal with a verdict, win rate 11.0 %) · next: 0.3 contracts (call 6), 0.5 offers, the Chrome connects rail's day
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`) · Phase 1 BUILT, REDESIGNED, with Run-now buttons · the overnight list of 26 Aug DONE — his review of the tabs pending · **use case A live** (`upwork_financials` 06:05 daily, `861b642` `1ed25ea`: ledger, tie-out, twins) · **use case C live — Phase 0.2** (`f231295` `0569cb1`: every proposal with a verdict, win rate 11.0 %) · next: 0.3 contracts (call 6), 0.5 offers, the Chrome connects rail's day · **Phase 2 Loop 1 STARTED 2026-10-08: the Funnel sub-tab** (`2bd5a71`; refresh, views rail, weekly runner + email next)
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -138,6 +138,30 @@ Top-to-bottom, one screen by default:
   hook, INTERVIEW rate the substance. Monthly: a proposal-writing review with concrete
   edits to `skills/upwork-proposal-writer/` — versioned, so before/after is measurable.
   This is the finetuning: the skill is the model; its prompt is what trains.
+  **STARTED 2026-10-08 — the Funnel sub-tab (`2bd5a71`).** His ask: "applied to 100, 20
+  opened, three replies, closed one — the percentage in every stage, then the breakdown
+  (boosted, Loom, the first lines, the client) … proper funnel diagrams I can hover … AI
+  analysis on top … a weekly runner and an email at the end of the week". His four answers
+  the same evening: (1) a **Funnel** sub-tab in the Upwork tab, not a second page;
+  (2) **dollars allowed on it**, from the ledger (connects spend, revenue per won client,
+  doctor-gated) — this amends "no revenue on the tab" for this view only; (3) the **opened**
+  step kept current by a **daily Chrome read** on the Mac (the API's `viewedByClient` is
+  never filled for a freelancer; the proposal page carries `viewedByClientDate`); (4) tests
+  **detected after the fact** from the sent letters, not planned A/B per proposal.
+  Built: migration 038 (`proposal_outcomes`, `proposal_views`, `proposal_insights`,
+  `upwork_invites_monthly`), `scripts/proposal_funnel_backfill.py` (the 8 Oct research: 595
+  proposals, 589 page reads), `/api/upwork/funnel`, `static/js/propfunnel.js` (pure,
+  node-tested), `sections/upwork_funnel.js`. The data stops at 8 Oct until the refresh exists;
+  the view says so when newer proposals are in the `proposals` table.
+  **Next, in order, each on his go:** (a) `upwork_funnel_refresh` — daily, from what the
+  syncs already store: new proposals into `proposal_outcomes` (kind from the room's birth,
+  reply from the room, hire, letter facts via `proposal_letter`, job tags via `funnel_tags`);
+  (b) `upwork_views` — the Chrome rail reading open proposals' pages (marker tab, read-only)
+  into `proposal_views`; (c) the weekly runner — a dated reading into `proposal_insights`
+  through `claude_gateway`, outside the cockpit process, and the weekly email, proposed as
+  an extension of the Sunday outcome email (one email, not two); (d) Loop 2 feedback into
+  the scanner (the tool-in-title gate, client filters), proposed with numbers, decided by him.
+  Task names, schedules and the model go into config as proposed diffs.
 - **Loop 2 · Skip review (weekly, WITH Abhijeet).** Jobs scored ≥16 that he skipped, with
   his Outcome Reasons → short discussion → reasons coded into scoring (new hard rule /
   weight change / threshold move). Every change lands in a scoring changelog with the
@@ -1183,6 +1207,12 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-08 (evening) · Phase 2 Loop 1 started as the Funnel sub-tab (`2bd5a71`). His
+  answers: Funnel inside the Upwork tab; dollars allowed on the Funnel view (connects spend
+  and revenue per won client, from the ledger, doctor-gated), amending "no revenue on the
+  tab" for this view; "opened" kept current by a daily Chrome rail on the Mac; tests detected
+  after the fact from the letters. Open: the weekly email's day and time, and whether it
+  extends the Sunday outcome email; the runner's model and weekly spend ceiling.
 - 2026-08-25 · Tab in cockpit, NOT a separate platform. No revenue on the tab. Dedicated
   Upwork chat boots from this brief; ops chat keeps the overview. Learning loops 1–4 and
   laws 1–7 agreed in principle (this brief is their spec).
