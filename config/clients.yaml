@@ -349,7 +349,8 @@ clients:
     billing:
       canonical: Hipp Health
     found_via: referral
-    referred_by: Alex
+    referred_by: horizons-aba
+    scope_notes: "Referred by Alex (Alexander Apfel) of Horizons ABA (Abhijeet, 2026-10-08: hipp health is also someone we found through alex; yes alex from horizonsaba)."
     emails:
       - hipp.health
   -
