@@ -15,6 +15,8 @@
 //             that started called out by name, then the job lists as a table.
 //   Health    every rail in plain words: what it does, when it last ran, OK
 //             or "needs a look" with the reason, and Run now where allowed.
+//   Funnel    sent → opened → wrote back → hired, and what moves each step
+//             (./upwork_funnel.js; Phase 2, Loop 1 — 2026-10-08).
 //   Analysis  the former Pipeline charts (pipeline.renderAnalysis).
 //
 // COPY RULES (the whole point of the redesign): no statistics vocabulary on
@@ -37,10 +39,11 @@ import { openDrill } from "../drill.js";
 import { queueCard } from "./today.js";
 import { conversationRow } from "../conversation.js";
 import { renderAnalysis } from "./pipeline.js";
+import { renderFunnel } from "./upwork_funnel.js";
 
 export const meta = { title: "Upwork", hint: "the channel, end to end" };
 
-const TAB_KEY = "ew_cockpit_upwork_tab";            // inbox | jobs | health | analysis
+const TAB_KEY = "ew_cockpit_upwork_tab";            // inbox | jobs | funnel | health | analysis
 const VIEW_KEY = "ew_cockpit_upwork_view";          // week | month
 const LIST_KEY = "ew_cockpit_upwork_list";          // which job list is open
 const ROW_CAP = 300;
@@ -49,6 +52,7 @@ const TABLE_PEEK = 12;                              // rows shown inline before 
 const TABS = [
   { id: "inbox", label: "Inbox" },
   { id: "jobs", label: "Jobs" },
+  { id: "funnel", label: "Funnel" },
   { id: "health", label: "Health" },
   { id: "analysis", label: "Analysis" },
 ];
@@ -233,6 +237,7 @@ export async function render(root, ctx) {
   const views = {
     inbox: () => inboxView(d, ctx),
     jobs: () => jobsView(d, ctx),
+    funnel: async () => { const box = el("div"); await renderFunnel(box, ctx); return box; },
     health: () => healthView(d, ctx),
     analysis: async () => { const box = el("div"); await renderAnalysis(box, ctx); return box; },
   };

@@ -797,7 +797,8 @@ class TestUpworkSection(unittest.TestCase):
         src = (STATIC / "js" / "sections" / "upwork.js").read_text()
         imports = re.findall(r'from "([^"]+)"', src)
         self.assertEqual(set(imports), {"../ui.js", "../drill.js", "./today.js",
-                                        "./pipeline.js", "../conversation.js"})
+                                        "./pipeline.js", "../conversation.js",
+                                        "./upwork_funnel.js"})
         self.assertNotIn("/send", src)
         self.assertNotIn("fetch(", src)                        # ctx.api / ctx.post only
         self.assertIn('ctx.api("/api/upwork")', src)
@@ -814,12 +815,24 @@ class TestUpworkSection(unittest.TestCase):
         self.assertEqual(set(re.findall(r'from "([^"]+)"', conv)), {"./ui.js"})
         self.assertNotIn("/send", conv)
         self.assertNotIn("fetch(", conv)
+        # the Funnel view (Phase 2, Loop 1): house primitives + the charts
+        # wrapper only, one read, no send, no fetch, state in its own key
+        fn = (STATIC / "js" / "sections" / "upwork_funnel.js").read_text()
+        self.assertEqual(set(re.findall(r'from "([^"]+)"', fn)),
+                         {"../ui.js", "../drill.js", "../charts.js"})
+        self.assertIn('ctx.api("/api/upwork/funnel")', fn)
+        self.assertNotIn("/send", fn)
+        self.assertNotIn("fetch(", fn)
+        self.assertNotIn("innerHTML", fn)
+        self.assertIn("ew_cockpit_funnel_state", fn)
 
     def test_dependencies_export_what_the_section_imports(self):
         today = (STATIC / "js" / "sections" / "today.js").read_text()
         pipeline = (STATIC / "js" / "sections" / "pipeline.js").read_text()
         self.assertIn("export function queueCard(", today)
         self.assertIn("export async function renderAnalysis(", pipeline)
+        funnel = (STATIC / "js" / "sections" / "upwork_funnel.js").read_text()
+        self.assertIn("export async function renderFunnel(", funnel)
         conv = (STATIC / "js" / "conversation.js").read_text()
         for fn in ("export function conversationRow(", "export async function act(",
                    "export async function closure("):

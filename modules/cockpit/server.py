@@ -23,7 +23,7 @@ from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 from core import config
-from modules.cockpit import actions, data
+from modules.cockpit import actions, data, proposal_funnel
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _CT = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
@@ -52,6 +52,10 @@ GET_ROUTES: dict = {
     "/api/upwork/rows": data.upwork_rows,
     # the "Run now" buttons poll this (?task=) after their /api/rerun kick
     "/api/upwork/run": data.upwork_run_status,
+    # the Upwork tab's Funnel view (Phase 2, Loop 1): one row per proposal +
+    # the money that belongs to them; every figure is computed in the browser
+    # by propfunnel.js from these rows, so no drill route is needed
+    "/api/upwork/funnel": proposal_funnel.funnel,
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     # the capture box's poll target (?note_id=N): "is it a card yet, and if not
     # what did the classifier decide instead?" The classifying runs in a child
