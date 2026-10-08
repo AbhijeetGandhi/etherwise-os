@@ -1215,6 +1215,9 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-08 (23:30 IST) · Hipp Health was referred by Alex Apfel of Horizons ABA. The
+  seven nameless bank deposits ($721.37, Aug 2025 – Jun 2026) are Rasheed Khan's ("All 7
+  are Rasheed"): booked row by row, never as a rule on the processor's pooled account.
 - 2026-10-08 (23:00 IST) · Where a client came from is HIS word when the records cannot
   say it: registry `found_via` (upwork | referral | other) + `referred_by`. Simyon Pinsky
   (Conci) was found on Upwork, closed, restarted off Upwork — counts as Upwork money; Mitosis
