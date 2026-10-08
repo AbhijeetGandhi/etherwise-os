@@ -1215,6 +1215,16 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-09 · **The proposal game** — plan `docs/upwork/proposal-game-plan-2026-10-09.md`
+  (awaiting his go on the build order). His ask: test one change at a time ("make this a
+  game"), a tracker, a progress email, scanner feedback, and "is this all the data we can
+  get?". His answers: first test **volume + openings** (T1, from Fri 9 Oct); **$150 a week**
+  of connects (so T1 is 18–20 a week with boosts of 60 extra connects or less — small
+  boosts opened as often as big ones in Apr–Oct); email **Mon/Wed/Fri 8:30 IST + Sunday**
+  (inside the existing outcome email); a test is called at **~40 per side + 7 days**, max 6
+  weeks. Supersedes "tests detected after the fact only" (8 Oct): tests are planned and
+  tagged at drafting; detection stays as the check. Celsius Herbs is one client
+  (`5ee01ef`).
 - 2026-10-08 (23:30 IST) · Hipp Health was referred by Alex Apfel of Horizons ABA. The
   seven nameless bank deposits ($721.37, Aug 2025 – Jun 2026) are Rasheed Khan's ("All 7
   are Rasheed"): booked row by row, never as a rule on the processor's pooled account.
