@@ -12,7 +12,10 @@
 //              (a reply proves they saw it; 3 of 2026's 30 replies came straight
 //              from the list with no open on record)
 //   replied  → of the opened, the client wrote back (a room exists)
-//   hired    → of those, a contract followed
+//   hired    → of those, the client became a client: Upwork marks the
+//              proposal hired (hw "upwork"), or the client in its conversation
+//              first paid us after it — the contract ran on another job or off
+//              Upwork (hw "after"; the server decides that from the ledger)
 //
 // Loaded as a plain <script> in the browser (exposes EW_PROPFUNNEL) and
 // require()d by tests/test_proposal_funnel_js.py under node — same code.
@@ -28,11 +31,11 @@
     { k: "sent", label: "Sent", noun: "proposals sent" },
     { k: "opened", label: "Opened", noun: "opened by the client" },
     { k: "replied", label: "Wrote back", noun: "the client wrote back" },
-    { k: "hired", label: "Hired", noun: "a contract started" },
+    { k: "hired", label: "Hired", noun: "became a client" },
   ];
   var INVITE_STAGES = [
     { k: "sent", label: "Accepted", noun: "invitations you accepted" },
-    { k: "hired", label: "Hired", noun: "a contract started" },
+    { k: "hired", label: "Hired", noun: "became a client" },
   ];
   var REFUNDED = { "outbid, bid returned": 1, "job closed, bid returned": 1 };
   // below this many in the denominator a rate is shown but called too few
@@ -119,6 +122,7 @@
   var PERIODS = [
     { k: "4w", label: "Last 4 weeks", days: 28 },
     { k: "3m", label: "Last 3 months", days: 91 },
+    { k: "6m", label: "Last 6 months", days: 182 },
     { k: "ytd", label: "This year" },
     { k: "12m", label: "Last 12 months", days: 365 },
     { k: "all", label: "All time" },
@@ -126,7 +130,8 @@
 
   function periodBounds(k, today) {
     var t = new Date(String(today).slice(0, 10) + "T00:00:00Z");
-    var p = PERIODS.filter(function (x) { return x.k === k; })[0] || PERIODS[2];
+    var p = PERIODS.filter(function (x) { return x.k === k; })[0]
+      || PERIODS.filter(function (x) { return x.k === "ytd"; })[0];
     if (p.k === "all") return { lo: null, hi: null, k: p.k };
     if (p.k === "ytd") return { lo: String(today).slice(0, 4) + "-01-01", hi: null, k: p.k };
     var lo = new Date(t.getTime() - (p.days - 1) * 86400000);
@@ -138,6 +143,63 @@
       var d = String(r.sent || "").slice(0, 10);
       return (!b.lo || d >= b.lo) && (!b.hi || d <= b.hi);
     });
+  }
+
+  /* ── money from the clients we found on Upwork ──────────────────────── */
+  // Abhijeet, 2026-10-08: "globaltize hired us from upwork but ... pays us
+  // through wise ... lot of agency transactions ... we generate a lot more
+  // revenue in last six months from upwork". The server lists every client
+  // first met on Upwork with every payment since (money.clients); this sums
+  // what came IN during a period — by the day each payment arrived, every
+  // channel — whatever year we met them. money.not_upwork is the rest of the
+  // revenue, so the share is a sum, not a guess.
+  var CHANNELS = [
+    { k: "freelancer", label: "Through Upwork, your profile" },
+    { k: "agency", label: "Through Upwork, the agency" },
+    { k: "direct", label: "Paid directly" },
+  ];
+  var CH = { freelancer: 1, agency: 1, direct: 1 };
+  function r2(x) { return x == null ? x : Math.round(x * 100) / 100; }
+  function roundAll(o, keys) { keys.forEach(function (k) { o[k] = r2(o[k]); }); return o; }
+
+  /** what came in during the period from clients first met on Upwork: total,
+      by channel, by client, by month, met-in-this-period vs earlier, and the
+      share of all revenue. null while money is hidden. */
+  function income(M, b) {
+    if (!M || M.blocked || !M.clients) return null;
+    var lo = b && b.lo, hi = b && b.hi;
+    function inB(d) { return !!d && (!lo || d >= lo) && (!hi || d <= hi); }
+    var out = { total: 0, freelancer: 0, agency: 0, direct: 0, others: 0,
+                newer: lo ? 0 : null, older: lo ? 0 : null, clients: [], months: [] };
+    var months = {};
+    Object.keys(M.clients).forEach(function (k) {
+      var c = M.clients[k];
+      var rows = (c.rows || []).filter(function (r) { return inB(r.d); });
+      if (!rows.length) return;
+      var g = { key: k, name: c.name, aka: c.aka || [], first: c.first, by: c.by, pid: c.pid || null,
+                contract_id: c.contract_id || null, profile: c.profile || null, rows: rows,
+                usd: 0, freelancer: 0, agency: 0, direct: 0, isNew: !!(lo && c.first >= lo) };
+      rows.forEach(function (r) {
+        var ch = CH[r.ch] ? r.ch : "direct";
+        g.usd += r.usd; g[ch] += r.usd; out[ch] += r.usd;
+        var m = r.d.slice(0, 7);
+        var mm = months[m] || (months[m] = { month: m, freelancer: 0, agency: 0, direct: 0, total: 0 });
+        mm[ch] += r.usd; mm.total += r.usd;
+      });
+      out.total += g.usd;
+      if (lo) { if (g.isNew) out.newer += g.usd; else out.older += g.usd; }
+      out.clients.push(roundAll(g, ["usd", "freelancer", "agency", "direct"]));
+    });
+    (M.not_upwork || []).forEach(function (r) { if (inB(r.d)) out.others += r.usd; });
+    out.clients.sort(function (a, c) { return c.usd - a.usd || (a.name < c.name ? -1 : 1); });
+    out.months = Object.keys(months).sort().map(function (m) {
+      return roundAll(months[m], ["freelancer", "agency", "direct", "total"]);
+    });
+    roundAll(out, ["total", "freelancer", "agency", "direct", "others"]);
+    if (lo) roundAll(out, ["newer", "older"]);
+    out.all = r2(out.total + out.others);
+    out.share = out.all > 0 ? out.total / out.all : null;
+    return out;
   }
 
   /* ── the dimensions a selection can be split by ──────────────────────── */
@@ -317,7 +379,7 @@
     STAGES: STAGES, INVITE_STAGES: INVITE_STAGES, PERIODS: PERIODS, DIMS: DIMS, DIM_BY_KEY: DIM_BY_KEY,
     UNKNOWN: UNKNOWN, FEW: FEW,
     seen: seen, stages: stages, strays: strays, opensOnRecord: opensOnRecord,
-    connectsSpent: connectsSpent, money: money,
+    connectsSpent: connectsSpent, money: money, CHANNELS: CHANNELS, income: income,
     periodBounds: periodBounds, inPeriod: inPeriod,
     split: split, fisher: fisher, signal: signal, median: median, byMonth: byMonth,
   };

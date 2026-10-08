@@ -109,6 +109,14 @@ _FOREIGN = {
     ("scored_jobs", "client_hires"): "not an id",
     ("scored_jobs", "client_rating"): "not an id",
     ("scored_jobs", "client_payment_verified"): "not an id",
+    # migration 038 (the Upwork tab's Funnel): facts read off each job post
+    ("proposal_outcomes", "client_company"): "Upwork job-post label",
+    ("proposal_outcomes", "client_did"): "what the client did on the job"
+                                         " (hired_us / hired_other / …), not an id",
+    ("proposal_outcomes", "client_country"): "not an id",
+    ("proposal_outcomes", "client_spend"): "not an id",
+    ("proposal_outcomes", "client_hire_rate"): "not an id",
+    ("proposal_outcomes", "client_jobs"): "not an id",
     ("messages", "sender_org_name"): "Upwork's label on the message",
     ("upwork_invitations", "client_name"): "Upwork's label on the invitation",
     ("dossier_index", "client_name"): "display name, moved with the index row",

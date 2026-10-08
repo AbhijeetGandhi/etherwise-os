@@ -17,11 +17,16 @@ What each fact means (the stores are migration 038's):
                      proposal stays opened whatever a later read says.
 
 Money (Abhijeet, 2026-10-08: dollars are allowed on this view, "from the
-ledger"): connects are priced at what the ledger shows was paid per connect;
-revenue per hire is the won client's own earnings from the contract's month on,
-attributed by the SAME client ladder the Money and Clients pages use
-(data._client_key), so the figures here agree with theirs. Doctor-gated like
-Money: on a RED finance doctor the money block is withheld, the funnel is not.
+ledger"): connects are priced at what the ledger shows was paid per connect.
+Revenue per hire is everything the won client has paid us since we won them,
+on Upwork or off it (Wise, Stripe, the bank), through your profile or through
+the agency: each payment is named by the SAME ladder the Money and Clients
+pages use (data._client_key), then the client registry makes one client of
+its several names (see "WHOSE PAYMENT IS IT" below). The `clients` block is
+every client first met on Upwork with every payment since, so the page can say
+what Upwork brought in over any period. Doctor-gated like Money: on a RED
+finance doctor the money block is withheld, the funnel is not (and a win the
+ledger proves but Upwork does not mark is then not applied).
 
 No model calls, no writes (cockpit law). `today` is a positional test clock.
 """
@@ -188,6 +193,46 @@ def _invites(conn, facts: list) -> list:
 
 
 # ── money ────────────────────────────────────────────────────────────────────
+#
+# WHOSE PAYMENT IS IT (2026-10-08). Abhijeet, on the first version: "globaltize
+# hired us from upwork but then we decided to move off upwork and pays us
+# through wise ... lot of agency transactions, are you not able to see those?
+# ... we generate a lot more revenue in last six months from upwork". He was
+# right, for three reasons, each measured on the live ledger first
+# (var/prop/rev/audit*.py):
+#
+#   1. ONE CLIENT, SEVERAL NAMES. Each rail spells a client the way it saw it.
+#      Globaltize paid as "Ryan Stomberg" (the agency's hourly line),
+#      "Globaltize LLC" (the agency's weekly CSV, through the contract title)
+#      and "Globaltize" (Wise), so matching a hire to payments by NAME found
+#      none of its Wise money. Same split for Mustafa A / Mustafa Ahmed,
+#      Amanda T / Amanda Thomas, Dhanya S / Dhanya Sangolli. Every name now
+#      goes through the client registry (config/clients.yaml — exact,
+#      normalised match on a name, alias or billing name; the identity spine),
+#      so a client's payments on Upwork and off it, through your profile and
+#      through the agency, are one pile.
+#   2. A HIRE WITH NO CONTRACT ON ITS JOB (25 of 51). More bridges, each one
+#      deterministic and tried in this order: the contract on the job; the
+#      conversation's client (threads.client_id, else the registry's
+#      upwork_rooms); a contract with the job's exact title that started after
+#      the proposal; Upwork earnings that carry the job's title (one client
+#      only); the client named on the proposal.
+#   3. A WIN UPWORK DOES NOT MARK. Globaltize's contract runs on another job,
+#      through the agency; Optimize IS has paid by Stripe from day one. A
+#      proposal whose conversation belongs to a client who first paid us AFTER
+#      it — and whom no other proposal of ours won — is a win, how="after".
+#
+# A hire is credited with everything its client paid from the month we won
+# them (the contract's start, else the proposal's month), on every rail,
+# counted ONCE per client (a later hire of the same client points at the
+# first). Gross, before Upwork's fee: the Money page's own `revenue` bucket.
+#
+# The question the tiles could not answer — "how much did Upwork bring in over
+# the last six months?" — is the `clients` block: every client first met on
+# Upwork (a proposal, an invitation, a contract with no proposal on record, or
+# Upwork payments older than these records) with every payment from the month
+# we met them. The page sums it over the period picked; `not_upwork` is the
+# rest of the revenue, so the share can be said rather than guessed.
 
 def _price_per_connect(purchases: list) -> Optional[float]:
     """What one connect cost, from the purchases whose label says how many
@@ -205,6 +250,69 @@ def _price_per_connect(purchases: list) -> Optional[float]:
     return round(statistics.median(per), 4) if per else None
 
 
+def _registry():
+    """The client registry, or None: a registry that fails to load costs the
+    merges (and says so on the page), never the page."""
+    try:
+        from core import registry
+        return registry.load()
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+class _Who:
+    """One key per client, however the ledger spells it: the registry id when
+    the name is a registry name, alias or billing name (exact after
+    registry.norm — never a substring), else '~' + the name itself."""
+
+    def __init__(self, reg):
+        from core import registry
+        self.reg, self.norm = reg, registry.norm
+        self.names: dict = {}
+        self.billing: dict = {}
+        if reg is not None:
+            for cid in reg.matchable_ids():
+                n = reg.canonical(cid)
+                if n:
+                    self.billing.setdefault(registry.norm(n), cid)
+
+    def __call__(self, name: Optional[str]) -> Optional[str]:
+        if not name:
+            return None
+        cid = None
+        if self.reg is not None:
+            cid = self.reg.match_name(name) or self.billing.get(self.norm(name))
+        if cid:
+            self.names.setdefault(cid, self.reg.canonical(cid) or name)
+            return cid
+        key = "~" + _d._deaccent(name)
+        self.names.setdefault(key, name)
+        return key
+
+    def of_id(self, cid: Optional[str]) -> Optional[str]:
+        """A registry id that came from a conversation, not from a name."""
+        if cid and self.reg is not None:
+            self.names.setdefault(cid, self.reg.canonical(cid) or cid)
+        return cid
+
+    def name(self, key: Optional[str]) -> Optional[str]:
+        return self.names.get(key, key) if key else None
+
+
+def _rail(t: dict) -> tuple:
+    """(channel, source): 'freelancer' or 'agency' for money paid through
+    Upwork — by the profile the contract ran on — and 'direct' for money paid
+    to us straight (Wise, Stripe, the bank)."""
+    src = t.get("source") or ""
+    if src.startswith("Upwork") or _d._is_upwork_row(t):
+        return ("agency" if (t.get("profile") or "").lower() == "agency" else "freelancer"), "Upwork"
+    if src.startswith("Wise"):
+        return "direct", "Wise"
+    if src in _d._BANK_SOURCES:
+        return "direct", "bank"
+    return "direct", src or "—"
+
+
 def _money(db_path: Optional[Path], facts: list) -> dict:
     from modules.finance import doctor, money as fmoney
 
@@ -216,14 +324,20 @@ def _money(db_path: Optional[Path], facts: list) -> dict:
     conn = _d._ro(db_path)
     try:
         tx = [dict(r) for r in conn.execute(
-            "SELECT record_id, source, type, description, pnl_bucket, amount_base_minor, creation_dt,"
-            " billed_dt, pnl_month, assignment_company, canonical_key"
+            "SELECT record_id, source, profile, type, description, pnl_bucket, amount_base_minor,"
+            " creation_dt, billed_dt, pnl_month, assignment_company, canonical_key"
             " FROM transactions WHERE canonical_key IS NOT NULL")]
         title_map, id_map = _d._contract_maps(conn)
         contracts = [dict(r) for r in conn.execute(
-            "SELECT id, title, job_id, client_company, start_dt FROM contracts")]
+            "SELECT id, title, job_id, client_company, start_dt, profile FROM contracts")]
+        room_of = {str(r[0]): r[1] for r in conn.execute(
+            "SELECT proposal_id, room_id FROM proposal_outcomes WHERE room_id IS NOT NULL")}
+        room_client = {r[0]: r[1] for r in conn.execute(
+            "SELECT id, client_id FROM threads WHERE client_id IS NOT NULL")}
     finally:
         conn.close()
+    reg = _registry()
+    who = _Who(reg)
 
     def usd(minor):
         return round(float(fmoney.from_minor(int(minor or 0))), 2)
@@ -234,53 +348,164 @@ def _money(db_path: Optional[Path], facts: list) -> dict:
     purchases.sort(key=lambda p: p["d"])
     price = _price_per_connect(purchases)
 
-    # revenue rows by canonical client — the Money page's own ladder
-    by_client: dict = {}
+    # every payment, keyed by client — the Money page's ladder names it, the
+    # registry makes the names one client
+    pays: dict = {}
+    loose: list = []                 # revenue no client can be named for
+    by_label: dict = {}              # an Upwork earning's job title -> the clients it paid
     for t in tx:
         if (t.get("pnl_bucket") or "uncategorized") not in ("revenue", "refund"):
             continue
-        who = _d._client_key(t, title_map, id_map)
-        if not who:
+        name = _d._client_key(t, title_map, id_map)
+        key = who(name)
+        ch, src = _rail(t)
+        row = {"d": (t["creation_dt"] or "")[:10], "m": _d._pnl_month_of(t),
+               "usd": usd(t["amount_base_minor"]), "ch": ch, "src": src, "as": name,
+               "desc": (t["description"] or "")[:90]}
+        if not key:
+            loose.append(row)
             continue
-        by_client.setdefault(who, []).append(
-            {"d": (t["creation_dt"] or "")[:10], "m": _d._pnl_month_of(t),
-             "usd": usd(t["amount_base_minor"]), "desc": t["description"]})
+        p = pays.setdefault(key, {"rows": [], "aka": set()})
+        p["rows"].append(row)
+        p["aka"].add(name)
+        if ch != "direct":
+            label = _d._upwork_label(t.get("description"))
+            if label:
+                by_label.setdefault(_d._deaccent(label), set()).add(key)
+
+    def earliest(cs):
+        return sorted(cs, key=lambda c: c["start_dt"] or "")[0] if cs else None
 
     by_job: dict = {}
+    by_title: dict = {}
+    of_client: dict = {}
     for c in contracts:
+        c["key"] = who(_d._contract_client(c["client_company"]))
         if c["job_id"]:
             by_job.setdefault(str(c["job_id"]), []).append(c)
+        if c["title"]:
+            by_title.setdefault(_d._deaccent(c["title"]), []).append(c)
+        if c["key"]:
+            of_client.setdefault(c["key"], []).append(c)
+
+    def room_key(pid):
+        room = room_of.get(str(pid))
+        if not room:
+            return None
+        return who.of_id(room_client.get(room)
+                         or (reg.match_upwork_room(room) if reg is not None else None))
+
+    def after(key, day):
+        return earliest([c for c in of_client.get(key, []) if (c["start_dt"] or "")[:10] >= day])
+
+    def client_of(f):
+        """(key, contract, via) for a proposal Upwork marks hired."""
+        sent = (f.get("sent") or "")[:10]
+        c = earliest([x for x in by_job.get(str(f.get("job") or ""), []) if x["key"]])
+        if c:
+            return c["key"], c, "the contract on this job"
+        k = room_key(f["id"])
+        if k:
+            return k, after(k, sent), "the client in this conversation"
+        c = earliest([x for x in by_title.get(_d._deaccent(f.get("title") or ""), [])
+                      if x["key"] and (x["start_dt"] or "")[:10] >= sent])
+        if c:
+            return c["key"], c, "a contract with this job's title"
+        ks = by_label.get(_d._deaccent(f.get("title") or ""), set())
+        if len(ks) == 1:
+            return next(iter(ks)), None, "Upwork earnings with this job's title"
+        k = who(_d._contract_client(f.get("co")))
+        return (k, None, "the client named on the proposal") if k else (None, None, None)
+
+    wins = [(f, *client_of(f), "upwork") for f in facts if f.get("hired")]
+    taken = {w[1] for w in wins if w[1]}
+    first_paid = {k: min((r["d"] for r in p["rows"] if r["d"]), default=None)
+                  for k, p in pays.items()}
+    for f in sorted((f for f in facts if not f.get("hired")), key=lambda f: f.get("sent") or ""):
+        k, sent = room_key(f["id"]), (f.get("sent") or "")[:10]
+        if not k or k in taken or not first_paid.get(k) or first_paid[k] < sent:
+            continue
+        wins.append((f, k, after(k, sent), "the client in this conversation, who paid you after it",
+                     "after"))
+        taken.add(k)
 
     won: dict = {}
-    claimed: dict = {}                       # client -> the first hire that carries its revenue
-    for f in sorted((f for f in facts if f["hired"]), key=lambda f: f["sent"] or ""):
-        # the contract on the job we applied to, else the same client's first
-        # contract after our proposal (clients often hire on a fresh posting)
-        cands = list(by_job.get(str(f.get("job") or ""), []))
-        if not cands and f.get("co"):
-            cands = [c for c in contracts if c["client_company"] == f["co"]
-                     and (c["start_dt"] or "") >= (f["sent"] or "")[:10]]
-        contract = sorted(cands, key=lambda c: c["start_dt"] or "")[0] if cands else None
-        who = (_d._contract_client(contract["client_company"]) if contract else None) \
-            or _d._canon_client(f.get("co"))
-        start_m = ((contract or {}).get("start_dt") or f["sent"] or "")[:7]
-        entry = {"client": who, "contract_id": (contract or {}).get("id"),
-                 "contract_title": (contract or {}).get("title"),
-                 "start": ((contract or {}).get("start_dt") or "")[:10] or None,
-                 "usd": None, "rows": [], "shared_with": None}
-        if who and who in claimed:
-            entry["shared_with"] = claimed[who]       # counted once, on the first hire
-        elif who:
-            rows = [r for r in by_client.get(who, []) if (r["m"] or "") >= start_m]
+    claimed: dict = {}                       # client -> the first win, which carries its money
+    for f, k, c, via, how in sorted(wins, key=lambda w: w[0].get("sent") or ""):
+        start = ((c or {}).get("start_dt") or "")[:10] or None
+        frm = (start or (f.get("sent") or ""))[:7] or None
+        e = {"client": k, "name": who.name(k), "how": how, "via": via,
+             "contract_id": (c or {}).get("id"), "contract_title": (c or {}).get("title"),
+             "start": start, "from": frm, "usd": None, "n": 0, "shared_with": None}
+        if k and k in claimed:
+            e["shared_with"] = claimed[k]
+        elif k:
+            rows = [r for r in pays.get(k, {}).get("rows", []) if (r["m"] or "") >= (frm or "")]
             if rows:
-                entry["rows"] = sorted(rows, key=lambda r: r["d"])
-                entry["usd"] = round(sum(r["usd"] for r in rows), 2)
-            claimed[who] = f["id"]
-        won[f["id"]] = entry
+                e["usd"] = round(sum(r["usd"] for r in rows), 2)
+                e["n"] = len(rows)
+            claimed[k] = f["id"]
+        won[f["id"]] = e
+
+    # who we first met on Upwork, and when: a proposal or invitation of ours
+    # first (it is the most specific answer), then any Upwork contract, then
+    # Upwork payments older than the contract records
+    met: dict = {}
+
+    def meet(key, day, how):
+        if key and day and (key not in met or day < met[key]["first"]):
+            met[key] = {"first": day, **how}
+
+    by_id = {f["id"]: f for f in facts}
+    for pid, e in won.items():
+        f = by_id[pid]
+        meet(e["client"], (f.get("sent") or "")[:10], {"by": f.get("k"), "pid": pid})
+    for c in contracts:
+        meet(c["key"], (c["start_dt"] or "")[:10],
+             {"by": "contract", "contract_id": c["id"], "profile": c["profile"]})
+    for k, p in pays.items():
+        up = [r["d"] for r in p["rows"] if r["ch"] != "direct" and r["d"]]
+        if up:
+            meet(k, min(up), {"by": "payments"})
+
+    clients: dict = {}
+    for k, p in pays.items():
+        o = met.get(k)
+        if not o:
+            loose.extend(p["rows"])
+            continue
+        m0 = o["first"][:7]
+        loose.extend(r for r in p["rows"] if (r["m"] or "") < m0)
+        rows = sorted((r for r in p["rows"] if (r["m"] or "") >= m0), key=lambda r: r["d"])
+        if not rows:
+            continue
+        name = who.name(k)
+        clients[k] = {"name": name, "aka": sorted(a for a in p["aka"] if a and a != name),
+                      "first": o["first"], "by": o["by"], "pid": o.get("pid"),
+                      "contract_id": o.get("contract_id"), "profile": o.get("profile"),
+                      "rows": rows}
 
     return {"blocked": False, "price_per_connect": price,
             "price_note": "median price per connect over purchases that name their count",
-            "purchases": purchases, "won": won}
+            "purchases": purchases, "won": won, "clients": clients,
+            "not_upwork": sorted(({"d": r["d"], "m": r["m"], "usd": r["usd"], "src": r["src"],
+                                   "as": r["as"], "desc": r["desc"]} for r in loose),
+                                 key=lambda r: r["d"]),
+            "registry": reg is not None}
+
+
+def _mark_wins(facts: list, money: Optional[dict]) -> None:
+    """`hw` says how a hire is known: 'upwork' — Upwork marks the proposal
+    hired; 'after' — Upwork marks nothing, but the client in its conversation
+    first paid us after it (the contract ran on another job, or off Upwork).
+    The second needs the ledger, so on a RED finance doctor it is not applied
+    and the funnel shows only what Upwork marks."""
+    won = (money or {}).get("won") or {}
+    for f in facts:
+        f["hw"] = "upwork" if f.get("hired") else None
+        w = won.get(f["id"])
+        if w and w.get("how") == "after":
+            f["hired"], f["hw"] = 1, "after"
 
 
 def funnel(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
@@ -296,9 +521,14 @@ def funnel(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         facts = _facts(conn)
         fresh = _fresh(conn, facts)
         insights = _insights(conn)
-        invites = _invites(conn, facts)
     finally:
         conn.close()
     money = _money(db_path, facts)
+    _mark_wins(facts, money)
+    conn = _d._ro(db_path)
+    try:
+        invites = _invites(conn, facts)      # after the wins, so a client won later counts as hired
+    finally:
+        conn.close()
     return {"as_of": day, "built": True, "fresh": fresh, "facts": facts, "money": money,
             "insights": insights, "invites": invites}

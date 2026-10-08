@@ -5,8 +5,12 @@ the research's own (parity on real letters); the reader's facts — a first open
 is permanent, Upwork's all-zero counts are "not measured" not zeros, our own
 bid is taken out of the "messaged" average; the money block — doctor-gated,
 connects priced from the purchases that name their count, a hire's revenue is
-its client's earnings from the contract month on, counted once per client;
-the route answers with no forwardable params.
+everything its client paid from the month we won them, counted once per client,
+on every rail and under every spelling the registry knows (2026-10-08:
+"globaltize hired us from upwork ... pays us through wise ... lot of agency
+transactions"), a client won in a conversation Upwork does not mark hired is a
+win only if they first paid after it, and nothing of that is applied on a RED
+doctor; the route answers with no forwardable params.
 """
 from __future__ import annotations
 
@@ -265,8 +269,137 @@ class TestReader(FunnelCase):
         self.assertEqual(len(m["purchases"]), 3)
         w = m["won"][P1]
         self.assertEqual(w["contract_id"], "c1")
+        self.assertEqual((w["how"], w["via"]), ("upwork", "the contract on this job"))
         self.assertEqual(w["usd"], 750.0)                 # Sep + Oct; August predates the contract
-        self.assertEqual(len(w["rows"]), 2)
+        self.assertEqual(w["n"], 2)
+        c = m["clients"][w["client"]]
+        # Acme already paid through Upwork in August, before this proposal: we
+        # met them on Upwork then, so the client's money starts there while the
+        # hire's starts at its contract
+        self.assertEqual((c["by"], c["pid"], c["first"]), ("payments", None, "2026-08-20"))
+        self.assertEqual([r["usd"] for r in c["rows"]], [99.99, 500.0, 250.0])
+        self.assertEqual(m["not_upwork"], [])
+
+
+REG_TEXT = """clients:
+  -
+    id: zed-quill
+    name: Zed Quill LLC
+    aliases:
+      - Zed Quill
+      - Ana Brook
+      - "Ana Brook, Ana B"
+    upwork_rooms:
+      - room_zed_registry
+"""
+
+
+def _tx(conn, rid, *, source, desc, minor, when, company=None, profile=None, kind="Hourly"):
+    conn.execute(
+        "INSERT INTO transactions (record_id, type, description, amount_base_minor, creation_dt,"
+        " canonical_key, pnl_bucket, pnl_month, source, assignment_company, profile)"
+        " VALUES (?, ?, ?, ?, ?, ?, 'revenue', ?, ?, ?, ?)",
+        (rid, kind, desc, minor, when, f"{source.lower()}:{rid}", when[:7], source, company, profile))
+
+
+class TestWhoseMoney(FunnelCase):
+    """Abhijeet, 2026-10-08: "globaltize hired us from upwork but then we
+    decided to move off upwork and pays us through wise ... lot of agency
+    transactions, are you not able to see those?" One client, three spellings,
+    three rails, and a win Upwork never marked: all of it is the hire's."""
+
+    def setUp(self):
+        super().setUp()
+        self.load()
+        from core import registry
+        self.reg = registry.loads_registry(REG_TEXT)
+
+    def run_funnel(self, green=True):
+        with mock.patch.object(proposal_funnel, "_registry", return_value=self.reg):
+            return self.facts(green)
+
+    def globaltize_shape(self, conn):
+        """P2's conversation is with Zed Quill. No hire on P2's job: the
+        contract came later, on another job, through the agency — then they
+        moved to Wise."""
+        conn.execute("UPDATE proposal_outcomes SET room_id = 'room_zed' WHERE proposal_id = ?", (P2,))
+        conn.execute("INSERT INTO threads (id, room_name, client_id) VALUES ('room_zed', 'Ana Brook', 'zed-quill')")
+        conn.execute("INSERT INTO contracts (id, title, job_id, client_company, start_dt, profile)"
+                     " VALUES ('c2', 'Zed agency work', '2106900000000000099', 'Ana Brook, Ana B',"
+                     " '2026-09-10T00:00:00Z', 'agency')")
+        # the agency's hourly line names the person ...
+        _tx(conn, "a1", source="Upwork-MCP", profile="Agency", company="Ana Brook", minor=35000,
+            desc="(c2) Ana Brook/Abhijeet Gandhi - 10:00 hrs @ $35.00/hr", when="2026-09-14T00:00:00+0000")
+        # ... the agency's weekly CSV names only the job title ...
+        _tx(conn, "a2", source="Upwork-CSV", profile="Agency", minor=21000,
+            desc="Zed agency work · Earnings for Sep 14-Sep 20, 2026", when="2026-09-22T00:00:00+0000")
+        # ... and Wise names the company
+        _tx(conn, "w1", source="Wise-mail", minor=130000, kind="Wise",
+            desc="Received money from Zed Quill LLC with reference INV-1", when="2026-10-02T00:00:00+0000")
+
+    def test_one_client_on_every_rail_and_a_win_upwork_does_not_mark(self):
+        with db.connect(self.db_path) as conn:
+            self.globaltize_shape(conn)
+        out = self.run_funnel()
+        f = {x["id"]: x for x in out["facts"]}
+        self.assertEqual((f[P2]["hired"], f[P2]["hw"]), (1, "after"))
+        self.assertEqual((f[P1]["hired"], f[P1]["hw"]), (1, "upwork"))
+        self.assertEqual((f[P3]["hired"], f[P3]["hw"]), (0, None))
+        w = out["money"]["won"][P2]
+        self.assertEqual((w["client"], w["name"], w["how"]), ("zed-quill", "Zed Quill LLC", "after"))
+        self.assertEqual((w["contract_id"], w["from"]), ("c2", "2026-09"))
+        self.assertEqual((w["usd"], w["n"]), (1860.0, 3))         # agency hourly + agency CSV + Wise
+        c = out["money"]["clients"]["zed-quill"]
+        self.assertEqual((c["by"], c["pid"], c["first"]), ("cold", P2, "2026-09-03"))
+        self.assertEqual(sorted(r["ch"] for r in c["rows"]), ["agency", "agency", "direct"])
+        self.assertEqual(set(c["aka"]), {"Ana Brook", "Ana Brook, Ana B", "Zed Quill"})
+
+    def test_a_client_who_paid_before_the_proposal_is_not_its_win(self):
+        with db.connect(self.db_path) as conn:
+            self.globaltize_shape(conn)
+            _tx(conn, "w0", source="Wise-mail", minor=10000, kind="Wise",
+                desc="Received money from Zed Quill LLC with reference INV-0", when="2026-08-01T00:00:00+0000")
+        out = self.run_funnel()
+        f = {x["id"]: x for x in out["facts"]}
+        self.assertEqual((f[P2]["hired"], f[P2]["hw"]), (0, None))
+        self.assertNotIn(P2, out["money"]["won"])
+        # still a client found on Upwork — by its agency contract, from that month
+        c = out["money"]["clients"]["zed-quill"]
+        self.assertEqual((c["by"], c["contract_id"], c["first"]), ("contract", "c2", "2026-09-10"))
+        self.assertEqual(len(c["rows"]), 3)
+        self.assertEqual([r["usd"] for r in out["money"]["not_upwork"]], [100.0])
+
+    def test_on_a_red_doctor_only_what_upwork_marks_counts(self):
+        with db.connect(self.db_path) as conn:
+            self.globaltize_shape(conn)
+        out = self.run_funnel(green=False)
+        f = {x["id"]: x for x in out["facts"]}
+        self.assertTrue(out["money"]["blocked"])
+        self.assertEqual((f[P2]["hired"], f[P2]["hw"]), (0, None))
+        self.assertEqual(f[P1]["hw"], "upwork")
+
+    def test_a_hire_with_no_contract_is_found_by_its_conversation(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO threads (id, room_name, client_id)"
+                         " VALUES ('room_abc', 'Ana Brook', 'zed-quill')")
+            _tx(conn, "w2", source="Wise", minor=50000, kind="Wise",
+                desc="Received money from Ana Brook with reference X", when="2026-09-20T00:00:00+0000")
+            _tx(conn, "s1", source="Stripe", minor=999, company="Northwind Traders", kind="Stripe",
+                desc="Charge", when="2026-09-21T00:00:00+0000")
+        m = self.run_funnel()["money"]
+        w = m["won"][P1]
+        self.assertEqual((w["client"], w["via"], w["usd"]), ("zed-quill", "the client in this conversation", 500.0))
+        self.assertIsNone(w["contract_id"])
+        self.assertEqual([r["as"] for r in m["not_upwork"]], ["Northwind Traders"])   # never met on Upwork
+
+    def test_the_registry_knows_a_room_the_threads_do_not(self):
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE proposal_outcomes SET room_id = 'room_zed_registry' WHERE proposal_id = ?", (P2,))
+            _tx(conn, "w3", source="Wise-mail", minor=20000, kind="Wise",
+                desc="Received money from Zed Quill with reference INV-9", when="2026-09-30T00:00:00+0000")
+        out = self.run_funnel()
+        self.assertEqual(out["money"]["won"][P2]["usd"], 200.0)
+        self.assertEqual({x["id"]: x["hw"] for x in out["facts"]}[P2], "after")
 
 
 class TestRoute(CockpitServerCase):

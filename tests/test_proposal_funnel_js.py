@@ -65,6 +65,19 @@ const out = {
   ytd: F.periodBounds("ytd", "2026-10-08"),
   months: F.byMonth([row({ sent: "2026-08-02T00:00:00Z" }), row({ sent: "2026-09-02T00:00:00Z", op: 1 })])
     .map((m) => [m.month, m.sent, m.opened]),
+  income: F.income({ blocked: false, clients: {
+      a: { name: "A", first: "2026-09-01", by: "cold", pid: "p1", rows: [
+        { d: "2026-08-20", m: "2026-08", usd: 100, ch: "freelancer" },
+        { d: "2026-09-20", m: "2026-09", usd: 200, ch: "agency" },
+        { d: "2026-10-02", m: "2026-10", usd: 300, ch: "direct" }] },
+      b: { name: "B", first: "2025-01-10", by: "contract", rows: [
+        { d: "2026-09-05", m: "2026-09", usd: 1000, ch: "direct" }] } },
+    not_upwork: [{ d: "2026-09-30", usd: 10 }, { d: "2025-01-01", usd: 99 }] }, { lo: "2026-09-01", hi: null }),
+  incomeAll: F.income({ blocked: false, clients: { a: { name: "A", first: "2026-09-01", by: "cold", rows: [
+      { d: "2026-08-20", m: "2026-08", usd: 100, ch: "freelancer" }] } }, not_upwork: [] }, { lo: null, hi: null }),
+  incomeBlocked: F.income({ blocked: true }, { lo: null, hi: null }),
+  sixMonths: F.periodBounds("6m", "2026-10-08"),
+  unknownPeriod: F.periodBounds("zz", "2026-10-08"),
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -115,3 +128,18 @@ class TestPropFunnelJS(unittest.TestCase):
         self.assertEqual(self.out["period"]["lo"], "2026-09-11")
         self.assertEqual(self.out["ytd"]["lo"], "2026-01-01")
         self.assertEqual(self.out["months"], [["2026-08", 1, 0], ["2026-09", 1, 1]])
+        self.assertEqual(self.out["sixMonths"]["lo"], "2026-04-10")
+        self.assertEqual(self.out["unknownPeriod"]["k"], "ytd")
+
+    def test_money_in_from_upwork_clients(self):
+        i = self.out["income"]
+        # every channel, by the day it arrived, whatever year we met the client
+        self.assertEqual((i["total"], i["freelancer"], i["agency"], i["direct"]), (1500, 0, 200, 1300))
+        self.assertEqual((i["newer"], i["older"], i["others"], i["all"]), (500, 1000, 10, 1510))
+        self.assertAlmostEqual(i["share"], 1500 / 1510)
+        self.assertEqual([c["name"] for c in i["clients"]], ["B", "A"])
+        self.assertEqual([(m["month"], m["total"]) for m in i["months"]], [("2026-09", 1200), ("2026-10", 300)])
+        self.assertEqual(sum(c["usd"] for c in i["clients"]), i["total"])     # the table adds up
+        self.assertIsNone(self.out["incomeAll"]["newer"])                   # "all time" has no "before"
+        self.assertEqual(self.out["incomeAll"]["total"], 100)
+        self.assertIsNone(self.out["incomeBlocked"])                        # RED doctor: no money at all

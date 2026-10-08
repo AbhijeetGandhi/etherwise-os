@@ -13,6 +13,10 @@
 //   filters      period · cold proposals | invitations   (scope everything)
 //   the funnel   sent → opened → wrote back → hired, hover + drill, with the
 //                money beside it (connects in $, revenue the hires brought)
+//   money in     what came in during the period from every client first met
+//                on Upwork — through your profile, the agency, or directly
+//                after they moved to Wise / Stripe / the bank (2026-10-08:
+//                "globaltize hired us from upwork ... pays us through wise")
 //   what we know the latest written reading (proposal_insights), dated
 //   break it down   split by any dimension, then by a second one
 //   over time    sent / opened per month, and the two rates
@@ -26,7 +30,7 @@
 
 "use strict";
 
-import { el, append, clear, fmt, icon, pill, notice, emptyState, btn, extLink } from "../ui.js";
+import { el, append, clear, fmt, icon, pill, notice, emptyState, btn, extLink, table } from "../ui.js";
 import { openDrill } from "../drill.js";
 import { chart, axes } from "../charts.js";
 
@@ -155,7 +159,10 @@ const PROPOSAL_COLS = [
   { key: "op", label: "Opened", render: (r) => (r.op === 1 ? el("span", "nowrap", fmt.dateShort(r.od))
     : r.rep === 1 ? el("span", "muted", "from the list") : el("span", "muted", r.op === 0 ? "no" : "—")) },
   { key: "rep", label: "Wrote back", render: (r) => yesNo(r.rep, "yes") },
-  { key: "hired", label: "Hired", render: (r) => yesNo(r.hired, "hired") },
+  { key: "hired", label: "Hired", render: (r) => (r.hired !== 1 ? el("span", "muted", "—")
+    : r.hw === "after" ? el("span", { class: "pos nowrap", attrs: { title: "Upwork does not mark this proposal"
+      + " hired; the client in this conversation paid you after it (another job, or off Upwork)" } }, "client later")
+    : el("span", "pos", "hired")) },
   { key: "id", label: "", render: (r) => extLink("https://www.upwork.com/nx/proposals/" + r.id, "proposal",
     { title: "your proposal on Upwork" }) },
 ];
@@ -219,6 +226,7 @@ export async function renderFunnel(root, ctx) {
     }
     append(body,
       heroBlock(d, state, sel, tip),
+      incomeBlock(d, state, sel),
       insightsBlock(d, state, redraw),
       splitBlock(d, state, sel, tip, redraw),
       timeBlock(d, state, sel),
@@ -368,24 +376,23 @@ function moneyTiles(d, m, sel, state) {
       + (M && M.reds && M.reds.length ? ` (${M.reds.join(", ")})` : "") + ". The funnel itself is unaffected.")];
   }
   const hiredRows = sel.rows.filter((r) => r.hired === 1);
+  const later = hiredRows.filter((r) => r.hw === "after").length;
+  const hireSub = m.hires ? `${plural(m.hires, "hire")}` + (later ? ` (${later} became ${later === 1 ? "a client" : "clients"} later)` : "")
+    + (m.revenueUnknown ? ` · ${m.revenueUnknown} with no payment found` : "") : "no hires in this selection";
   if (state.kind === "invite") {
     // answering an invitation costs no connects, so there is no spend to divide
     return [el("div", "fn-tiles", [
-      tile("Revenue from these hires", m.hires && m.revenueHires ? fmt.usd(m.revenue) : "—",
-        m.hires ? `${plural(m.hires, "hire")}` + (m.revenueUnknown ? ` · ${m.revenueUnknown} with no payment found` : "")
-          : "no hires in this selection",
+      tile("Revenue from these hires", m.hires && m.revenueHires ? fmt.usd(m.revenue) : "—", hireSub,
         m.hires ? () => revenueDrill(d, hiredRows) : null),
       tile("Connects spent", "$0", "answering an invitation costs no connects", null),
-    ]), el("div", "small muted", "Older hires often have no contract on record any more, so their"
-      + " payments cannot be matched; they show as “no payment found”, never as $0.")];
+    ]), el("div", "small muted", "Revenue is everything each won client has paid since, on Upwork or off it."
+      + " A few older hires have no payment under any name; they show as “no payment found”, never as $0.")];
   }
   const price = M.price_per_connect != null ? "$" + Number(M.price_per_connect).toFixed(2) : "—";
   const tiles = el("div", "fn-tiles", [
     tile("Connects spent", m.usd == null ? "—" : fmt.usd(m.usd),
       `${fmt.num(m.connects)} connects at ${price}` + (m.connectsUnknown ? ` · ${m.connectsUnknown} unknown` : ""), null),
-    tile("Revenue from these hires", m.hires && m.revenueHires ? fmt.usd(m.revenue) : "—",
-      m.hires ? `${plural(m.hires, "hire")}` + (m.revenueUnknown ? ` · ${m.revenueUnknown} with no payment found` : "")
-        : "no hires in this selection",
+    tile("Revenue from these hires", m.hires && m.revenueHires ? fmt.usd(m.revenue) : "—", hireSub,
       m.hires ? () => revenueDrill(d, hiredRows) : null),
     tile("Connects per hire", m.perHire == null ? "—" : fmt.usd(m.perHire),
       m.hires ? "spent ÷ hires" : "no hires to divide by", null),
@@ -399,9 +406,12 @@ function moneyTiles(d, m, sel, state) {
     el("button", { class: "linktext small fn-purch", type: "button", on: { click: () => purchasesDrill(M, sel) } },
       months.n ? `Connects bought in this period: ${fmt.usd(months.usd)} (${plural(months.n, "purchase")}) →`
         : "No connects bought in this period"),
-    state.kind === "cold" ? el("div", "small muted", "Revenue is each hired client's own earnings from the month"
-      + " their contract started, matched the way the Money page matches it. Connects are what each proposal"
-      + " really cost: a boost that was outbid or refunded counts at its base.") : null,
+    state.kind === "cold" ? el("div", "small muted", "Revenue is everything each won client has paid since you"
+      + " won them: through Upwork on your profile or the agency, or directly (Wise, Stripe, the bank) after"
+      + " moving off. Connects are what each proposal really cost: a boost that was outbid or refunded counts"
+      + " at its base.") : null,
+    M.registry === false ? notice("warn", "The client list did not load, so the ledger's spellings of one client"
+      + " are not merged; some payments may be missing from a hire.") : null,
   ];
 }
 
@@ -438,40 +448,220 @@ function purchasesDrill(M, sel) {
 }
 
 function revenueDrill(d, hiredRows) {
-  const won = (d.money && d.money.won) || {};
+  const M = d.money || {};
+  const won = M.won || {};
   const rows = hiredRows.map((r) => {
     const w = won[r.id] || {};
-    return { ...r, client: w.client, start: w.start, usd: w.usd, shared: w.shared_with,
-             payments: (w.rows || []).length, w };
+    return { ...r, client: w.name, start: w.start, usd: w.usd, shared: w.shared_with, w };
   });
   openDrill({
     title: "What the hires brought in",
-    subtitle: "each won client's earnings from the contract's first month on",
-    rows, total: rows.length,
+    subtitle: "everything each won client has paid since — through Upwork or directly",
+    rows, total: rows.length, wide: true,
     columns: [
       { key: "sent", label: "Proposal", render: (r) => dateCell(r.sent) },
       { key: "title", label: "Job", render: (r) => (r.url ? extLink(r.url, r.title) : el("span", null, r.title)) },
-      { key: "client", label: "Client", render: (r) => el("span", null, r.client || "—") },
-      { key: "start", label: "Contract", render: (r) => dateCell(r.start) },
+      { key: "client", label: "Client", render: (r) => el("div", "stack-1", [
+        el("span", null, r.client || "—"),
+        r.w.via ? el("span", "small muted", "found by " + r.w.via) : null]) },
+      { key: "hw", label: "How", render: (r) => (r.hw === "after"
+        ? el("span", { class: "nowrap", attrs: { title: "Upwork does not mark this proposal hired" } }, "became a client later")
+        : el("span", "muted nowrap", "hired on Upwork")) },
+      { key: "start", label: "Counted from", render: (r) => dateCell(r.start || r.sent) },
       { key: "usd", label: "Revenue", num: true, render: (r) => (r.usd != null
         ? el("button", { class: "linknum", type: "button",
           attrs: { "aria-label": `the payments behind ${fmt.usd2(r.usd)}` },
-          on: { click: () => paymentsDrill(r) } }, fmt.usd2(r.usd))
+          on: { click: () => hirePaymentsDrill(M, r) } }, fmt.usd2(r.usd))
         : el("span", "muted", r.shared ? "counted on their first hire" : "no payment found")) },
     ],
     amount: (r) => r.usd || 0, time: (r) => r.sent, defaultSort: "biggest",
   });
 }
 
-function paymentsDrill(r) {
-  const rows = (r.w && r.w.rows) || [];
+const payWhere = (x) => (x.ch === "freelancer" ? "Upwork · your profile" : x.ch === "agency" ? "Upwork · agency"
+  : x.src || "directly");
+const PAY_COLS = [
+  { key: "d", label: "Date", render: (x) => el("span", "muted nowrap", fmt.date(x.d)) },
+  { key: "ch", label: "Paid", render: (x) => el("span", "nowrap", payWhere(x)) },
+  { key: "desc", label: "What", render: (x) => el("div", "stack-1", [
+    el("span", "muted", x.desc || "—"),
+    x.as ? el("span", "small muted", "ledger name: " + x.as) : null]) },
+  { key: "usd", label: "Amount", num: true, render: (x) => fmt.usd2(x.usd) },
+];
+
+function hirePaymentsDrill(M, r) {
+  const c = (M.clients || {})[r.w.client];
+  const from = r.w.from || "";
+  const rows = c ? c.rows.filter((x) => (x.m || "") >= from) : [];
   openDrill({
-    title: `${r.client}: payments`, subtitle: `from ${fmt.date(r.start || r.sent)} on`,
-    rows, total: rows.length,
-    columns: [
-      { key: "d", label: "Date", render: (x) => dateCell(x.d) },
-      { key: "desc", label: "What", cls: "muted" },
-      { key: "usd", label: "Amount", num: true, render: (x) => fmt.usd2(x.usd) },
+    title: `${r.client}: payments`,
+    subtitle: `from ${fmt.date(from + "-01").replace(/^01 /, "")} on, every rail`,
+    rows, total: rows.length, columns: PAY_COLS,
+    facets: [{ label: "Paid", allLabel: "All", of: payWhere }],
+    amount: (x) => x.usd, time: (x) => x.d, defaultSort: "newest",
+  });
+}
+
+/* ── 1b. money in from the clients you found on Upwork ────────────────────── */
+// Answers "how much did Upwork bring in over the last six months" — which the
+// tiles above cannot: they follow the proposals SENT in the period, this
+// follows the money that ARRIVED in it, from every client first met on Upwork
+// (whatever year), on every rail. Sums by ../propfunnel.js income().
+
+const CH_SUB = {
+  freelancer: "contracts on your own profile",
+  agency: "contracts run through the Etherwise agency",
+  direct: "Wise, Stripe or the bank, once a client moved off Upwork",
+};
+const INC_PAGE = 10;
+
+function foundWords(c) {
+  if (c.by === "cold") return "a cold proposal";
+  if (c.by === "invite") return "an invitation";
+  if (c.by === "arranged") return "a direct offer";
+  if (c.by === "contract") return c.profile === "agency" ? "an agency contract, no proposal on record"
+    : "a contract, no proposal on record";
+  return "Upwork payments, no proposal or contract on record";
+}
+
+function incomeBlock(d, state, sel) {
+  const M = d.money;
+  if (!M || M.blocked) return null;                  // the funnel card already says money is hidden
+  const inc = F().income(M, sel.bounds);
+  if (!inc) return null;
+  const p = F().PERIODS.find((x) => x.k === state.period);
+  const sec = el("section", "card fn-income");
+  sec.append(el("div", "fn-hero-head", [
+    el("h3", "fn-h", "Money in from clients you found on Upwork"),
+    el("span", "muted small", (p ? p.label.toLowerCase() + " · " : "")
+      + (sel.bounds.lo ? `paid from ${fmt.date(sel.bounds.lo)}` : "every payment on record")
+      + " · cold proposals, invitations and contracts alike"),
+  ]));
+  if (!inc.clients.length) {
+    sec.append(emptyState("No payments from Upwork clients in this period.", { icon: "inbox" }));
+    return sec;
+  }
+  const share = inc.others > 0 && inc.share != null
+    ? ` That is ${pct(inc.share, inc.share > 0.99 ? 1 : 0)} of all revenue in the period.`
+    : " That is all of the revenue in the period.";
+  sec.append(el("div", "fn-inc-top", [
+    el("button", { class: "fn-inc-big", type: "button",
+      attrs: { "aria-label": `every payment behind ${fmt.usd2(inc.total)}` },
+      on: { click: () => incomeDrill(inc, sel, {}) } }, fmt.usd(inc.total)),
+    el("div", "fn-inc-say", [
+      el("div", null, `came in from ${plural(inc.clients.length, "client")} you first met on Upwork.` + share),
+      inc.newer != null ? el("div", "muted small", `${fmt.usd(inc.newer)} from clients first met in this period`
+        + ` · ${fmt.usd(inc.older)} from clients met before it, who are still paying`) : null,
+    ]),
+  ]));
+  sec.append(el("div", "fn-inc-tiles", F().CHANNELS.map((c) =>
+    tile(c.label, fmt.usd(inc[c.k]), CH_SUB[c.k], inc[c.k] ? () => incomeDrill(inc, sel, { ch: c.k }) : null))));
+  const chartHost = el("div");
+  sec.append(el("div", "fn-inc-grid", [
+    el("div", "stack-2", [el("div", "fn-side-h", "Month by month, by how it was paid"), chartHost,
+      el("div", "muted small", "click a month for its payments")]),
+    el("div", "stack-2", [el("div", "fn-side-h", "Client by client"), clientTable(inc, sel)]),
+  ]));
+  incomeChart(chartHost, inc, sel);
+  sec.append(el("div", "small muted", "Counted by the day each payment arrived, before Upwork's fee (the Money"
+    + " page's revenue). A client counts from the month you first met them on Upwork and keeps counting after"
+    + " they move to Wise, Stripe or the bank; the ledger's different spellings of one client are merged"
+    + " through the client list."));
+  if (M.registry === false) sec.append(notice("warn", "The client list did not load, so names are not merged:"
+    + " one client may show as several."));
+  return sec;
+}
+
+function incomeChart(host, inc, sel) {
+  const months = inc.months;
+  if (!months.length) return;
+  const labels = months.map((m) => new Date(m.month + "-01T00:00:00").toLocaleDateString("en-GB",
+    { month: "short", year: months.length > 12 ? "2-digit" : undefined }));
+  const money = (v) => (v < 0 ? "−$" : "$") + (Math.abs(v) >= 1000 ? Math.round(Math.abs(v) / 1000) + "k" : Math.abs(v));
+  chart(host, (p) => ({
+    type: "bar",
+    data: { labels, datasets: F().CHANNELS.map((c, i) => ({
+      label: c.label, data: months.map((m) => m[c.k]), backgroundColor: p.color(i),
+      borderRadius: 3, borderSkipped: "start", maxBarThickness: 28, stack: "s" })) },
+    options: {
+      interaction: { mode: "index", intersect: false },
+      onClick: (e, els) => {
+        if (!els.length) return;
+        const m = months[els[0].index];
+        incomeDrill(inc, sel, { month: m.month, label: labels[els[0].index] });
+      },
+      plugins: { legend: { position: "bottom" }, tooltip: { callbacks: {
+        title: (it) => `${labels[it[0].dataIndex]} · ${fmt.usd(months[it[0].dataIndex].total)}`,
+        label: (it) => `${it.dataset.label}: ${fmt.usd(it.raw)}`,
+      } } },
+      scales: (() => {
+        const a = axes(p, { yTicks: { callback: money } });
+        return { x: { ...a.x, stacked: true }, y: { ...a.y, stacked: true } };
+      })(),
+    },
+  }), { height: 220 });
+}
+
+function clientTable(inc, sel) {
+  const host = el("div", "stack-2");
+  let all = false;
+  const usdCell = (v) => el("span", v ? null : "muted", fmt.usd(v));
+  function fill() {
+    clear(host);
+    host.append(table({
+      wrapClass: "fn-inc-table",
+      rows: all ? inc.clients : inc.clients.slice(0, INC_PAGE),
+      columns: [
+        { key: "name", label: "Client", render: (c) => el("div", "stack-1", [
+          el("span", null, c.name),
+          c.aka.length ? el("span", "small muted", "also in the ledger as " + c.aka.join(", ")) : null]) },
+        { key: "by", label: "Found through", render: (c) => el("div", "stack-1", [
+          c.pid ? extLink("https://www.upwork.com/nx/proposals/" + c.pid, foundWords(c), { title: "your proposal on Upwork" })
+            : el("span", null, foundWords(c)),
+          el("span", "small muted nowrap", "first met " + fmt.date(c.first))]) },
+        { key: "up", label: "Upwork", num: true, render: (c) => usdCell(c.freelancer + c.agency) },
+        { key: "direct", label: "Directly", num: true, render: (c) => usdCell(c.direct) },
+        { key: "usd", label: "Total", num: true, render: (c) => el("button", { class: "linknum", type: "button",
+          attrs: { "aria-label": `the payments behind ${fmt.usd2(c.usd)}` },
+          on: { click: () => clientPaymentsDrill(c, sel) } }, fmt.usd(c.usd)) },
+      ],
+    }));
+    if (inc.clients.length > INC_PAGE) {
+      host.append(el("button", { class: "linktext small", type: "button", on: { click: () => { all = !all; fill(); } } },
+        all ? `Show the top ${INC_PAGE}` : `Show all ${inc.clients.length} clients`));
+    }
+  }
+  fill();
+  return host;
+}
+
+function clientPaymentsDrill(c, sel) {
+  openDrill({
+    title: `${c.name}: payments`,
+    subtitle: (sel.bounds.lo ? `from ${fmt.date(sel.bounds.lo)}` : "every payment") + ` · first met on Upwork ${fmt.date(c.first)}`,
+    rows: c.rows, total: c.rows.length, columns: PAY_COLS,
+    facets: [{ label: "Paid", allLabel: "All", of: payWhere }],
+    amount: (x) => x.usd, time: (x) => x.d, defaultSort: "newest",
+  });
+}
+
+function incomeDrill(inc, sel, opts) {
+  const rows = [];
+  inc.clients.forEach((c) => c.rows.forEach((x) => {
+    if (opts.ch && x.ch !== opts.ch) return;
+    if (opts.month && x.d.slice(0, 7) !== opts.month) return;
+    rows.push({ ...x, client: c.name });
+  }));
+  const what = opts.ch ? F().CHANNELS.find((c) => c.k === opts.ch).label : "Every payment";
+  openDrill({
+    title: opts.month ? `${opts.label}: money in from Upwork clients` : `${what}: money in from Upwork clients`,
+    subtitle: sel.bounds.lo ? `from ${fmt.date(sel.bounds.lo)}` : "every payment on record",
+    rows, total: rows.length, wide: true,
+    columns: [PAY_COLS[0], { key: "client", label: "Client" }, ...PAY_COLS.slice(1)],
+    search: (x) => `${x.client} ${x.as || ""} ${x.desc || ""}`,
+    facets: [
+      { label: "Paid", allLabel: "All", of: payWhere },
+      { label: "Client", allLabel: "All", of: (x) => x.client },
     ],
     amount: (x) => x.usd, time: (x) => x.d, defaultSort: "newest",
   });
@@ -852,7 +1042,8 @@ function footBlock(d) {
   return el("p", "muted small fn-foot", [
     "Where this comes from: every proposal's own Upwork record (read 8 Oct, read-only), the date each",
     " client first opened it from the proposal's page in your browser (last read ", fmt.dateTimeShort(f.views_at),
-    " UTC), the job records, and the ledger for money. A first open is permanent; a proposal answered",
+    " UTC), the job records, and the ledger for money (every rail, one client however the ledger spells it).",
+    " A first open is permanent; a proposal answered",
     " straight from the list counts as opened. Nothing on this page is sent anywhere.",
   ]);
 }

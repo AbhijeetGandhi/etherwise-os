@@ -1019,6 +1019,23 @@ tr.attn td { background: var(--warning-soft); }
 .fn-tile-sub { margin-top: 2px; font-size: var(--text-xs); color: var(--muted-foreground); }
 .fn-purch { text-align: left; }
 
+/* money in from the clients found on Upwork: one big figure, the three ways it
+   was paid, then month by month above client by client */
+.fn-inc-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4);
+              margin-bottom: var(--space-4); }
+.fn-inc-big { padding: 0; border: 0; background: none; color: var(--foreground); font: inherit;
+              font-size: var(--text-2xl); font-weight: 600; letter-spacing: -0.02em; cursor: pointer;
+              text-decoration: underline dotted var(--border-strong); text-underline-offset: 6px; }
+.fn-inc-big:hover { color: var(--info); }
+.fn-inc-big:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
+.fn-inc-say { display: grid; gap: 2px; max-width: 72ch; font-size: var(--text-sm); }
+.fn-inc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3);
+                margin-bottom: var(--space-5); }
+@media (max-width: 720px) { .fn-inc-tiles { grid-template-columns: 1fr; } }
+.fn-inc-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6);
+               margin-bottom: var(--space-4); }
+.fn-inc-table td { vertical-align: top; }
+
 /* what we know */
 .fn-summary { max-width: 82ch; margin: 0 0 var(--space-5); font-size: var(--text-base); line-height: 1.6; }
 .fn-ins-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: var(--space-6); }
