@@ -1161,7 +1161,8 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
         "linkage": {"contracts_linked": linked_contracts,
                     "contracts_total": len(contracts),
                     "owed_linked": linked_owed, "owed_total": len(owed),
-                    "note": "contracts/owed-replies linked by exact room-name"
+                    "note": "contracts/owed-replies linked exactly — by the"
+                            " conversation's registry client, else a room-name"
                             " token; unmatched are counted, never misassigned"},
         "source": "ledger:transactions+contracts+threads"}
 

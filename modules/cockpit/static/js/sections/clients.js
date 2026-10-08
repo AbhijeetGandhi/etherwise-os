@@ -23,8 +23,10 @@
 //                        merged onto the ledger rows BY EXACT NAME. Where the
 //                        names do not line up this page SAYS SO and lists both
 //                        sides, rather than fuzzy-matching a client's status.
-//   · the linkage note   contracts and owed replies are matched by an exact
-//                        room-name token. Unmatched ones are counted, never
+//   · the linkage note   contracts and owed replies are matched exactly: by
+//                        the conversation's client (the registry's), else by
+//                        a room-name token, as written or as the registry
+//                        names it. Unmatched ones are counted, never
 //                        misassigned.
 //
 // TWO RULES THIS FILE OBEYS LITERALLY:
@@ -336,7 +338,7 @@ export async function render(root, ctx) {
         ? "the contract-linkage pass did not run, so no contract could be"
           + " matched to a payer — this is not a zero"
         : `${fmt.num(linked)} of ${fmt.num(totalC)} active/pending contracts`
-          + ` matched a paying client by exact room-name token`
+          + ` matched a paying client exactly (the conversation's client, or a room-name token)`
           + (totalC > linked
             ? ` · ${fmt.num(totalC - linked)} matched none and are counted,`
               + ` never guessed at`
@@ -362,8 +364,8 @@ export async function render(root, ctx) {
           + ` carry more than one, which is why the two numbers differ.`
           + (linked != null && totalC != null && totalC > linked
             ? ` The remaining ${fmt.num(totalC - linked)} of ${fmt.num(totalC)}`
-              + ` active contracts matched no paying client by an exact`
-              + ` room-name token, so they belong to no row here — they are`
+              + ` active contracts matched no paying client exactly (by the`
+              + ` conversation's client or a room-name token), so they belong to no row here — they are`
               + ` counted in the sub-line and nowhere else.`
             : ""),
         emptyText: "No contract is linked to a paying client.",
