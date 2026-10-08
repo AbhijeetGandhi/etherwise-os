@@ -348,6 +348,8 @@ clients:
       - Hipp Health Inc
     billing:
       canonical: Hipp Health
+    found_via: referral
+    referred_by: Alex
     emails:
       - hipp.health
   -
@@ -451,6 +453,8 @@ clients:
       - Mitosis Consulting International LLC
     billing:
       canonical: Mitosis Consulting
+    found_via: referral
+    referred_by: simyon-pinsky
   -
     id: morten-kremmer
     name: Morten Kremmer
@@ -635,6 +639,8 @@ clients:
       - Conci
     billing:
       canonical: Simyon Pinsky
+    found_via: upwork
+    scope_notes: "Found on Upwork; that engagement closed and started again a few months later off Upwork, paid by Wise as Conci, his company (Abhijeet, 2026-10-08: found through upwork then our engagement closed and we started again after few month outside upwork; conci and simyon pinsky are the same). Referred Mitosis Consulting."
   -
     id: studio3b
     name: Studio3B
