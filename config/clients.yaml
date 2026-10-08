@@ -98,13 +98,13 @@ clients:
       canonical: Brendan Jansen
   -
     id: celciusherbs
-    name: celciusherbs
+    name: Celsius Herbs
     aliases:
-      - Celsius Herbs
+      - celciusherbs
       - Rick K
       - CelsiusHerbs
     billing:
-      canonical: celciusherbs
+      canonical: Celsius Herbs
     clickup: CelsiusHerbs
   -
     id: christoph-weingartner-unternehmensberatung

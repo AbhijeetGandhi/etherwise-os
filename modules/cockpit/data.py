@@ -495,7 +495,12 @@ def _kb_overview(conn, db_path: Optional[Path] = None) -> dict:
         except ValueError:
             return None
     for d in dossiers:
+        # through the registry too: a Clients row carries the registry's name
+        # (`_client_key` step 7), and a dossier keeps the name it was compiled
+        # under until its next compile — a rename must not blank the link
         d["revenue_usd"] = rev_by_client.get(_deaccent(d["client_name"] or ""))
+        if d["revenue_usd"] is None and d["client_name"]:
+            d["revenue_usd"] = rev_by_client.get(_deaccent(_registry_name(d["client_name"]) or ""))
         d["stale_days"] = _stale_days(d["last_compiled_at"])
         d["stale"] = bool(d["stale_days"] is not None
                           and d["stale_days"] > _KB_STALE_DAYS)
