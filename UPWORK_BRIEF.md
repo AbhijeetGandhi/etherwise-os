@@ -1215,6 +1215,12 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-08 (23:00 IST) · Where a client came from is HIS word when the records cannot
+  say it: registry `found_via` (upwork | referral | other) + `referred_by`. Simyon Pinsky
+  (Conci) was found on Upwork, closed, restarted off Upwork — counts as Upwork money; Mitosis
+  Consulting (referred by Simyon Pinsky) and Hipp Health (referred by Alex) never do; PT Bank
+  Mandiri unknown, "you can ignore". Declared origin beats the records, except a client a
+  proposal of ours won.
 - 2026-10-08 (22:30 IST) · One client, one name everywhere: the client registry has the
   last word on every ledger name (`abac85e`), on his "yes please merge them". Origin facts
   from him: Remote Office Australia is Diat Khan (an Upwork client); Mitosis Consulting came
