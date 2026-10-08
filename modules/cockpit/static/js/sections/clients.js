@@ -67,12 +67,18 @@ export function normName(s) {
  * ("Joshua Cates, Hero Marketing Agency") — the same shape the server's own
  * contract matcher splits on. Each comma part is still matched exactly.
  */
-function matchRoster(name, index) {
-  const whole = index.get(normName(name));
-  if (whole) return whole;
-  for (const part of String(name || "").split(",")) {
-    const hit = index.get(normName(part));
-    if (hit) return hit;
+// A client row carries the registry's name and, since 2026-10-08, the ways
+// the ledger spelled it ("aka": Homestyling was paid as "Tomas Eklund"). An
+// Airtable record may sit under either, so both are tried — still exact.
+function matchRoster(c, index) {
+  const names = typeof c === "string" ? [c] : [c.name, ...(c.aka || [])];
+  for (const name of names) {
+    const whole = index.get(normName(name));
+    if (whole) return whole;
+    for (const part of String(name || "").split(",")) {
+      const hit = index.get(normName(part));
+      if (hit) return hit;
+    }
   }
   return null;
 }
@@ -169,12 +175,13 @@ export async function render(root, ctx) {
   function clientRow(c, why) {
     const initials = String(c.name || "?").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase();
     const dz = dossierIndex.get(normName(c.name));
-    const m = matchRoster(c.name, rosterIndex);
+    const m = matchRoster(c, rosterIndex);
     const bits = [];
     if ((c.active_contracts || 0) > 0) bits.push(el("span", "pos", `${c.active_contracts === 1 ? "a live contract" : c.active_contracts + " live contracts"}`));
     bits.push(el("span", null, ["paid us ", el("b", null, fmt.usd(c.revenue_usd)), " to date",
       c.last ? [", last ", el("b", null, fmt.dateShort(c.last))] : ""]));
     if ((c.channels || []).length) bits.push(`talks on ${c.channels.join(", ")}`);
+    if ((c.aka || []).length) bits.push(el("span", "muted", `also in the ledger as ${c.aka.join(", ")}`));
     if ((c.owed_replies || 0) > 0) bits.push(el("span", "neg", `owed a reply${c.owed_replies > 1 ? ` on ${c.owed_replies} threads` : ""}`));
     if (c.passthrough) bits.push(el("span", "warn", "a payment still to be attributed"));
     if (dz) bits.push(el("span", null, ["knows ", el("b", null, fmt.num(dz.fact_count)), ` facts, compiled ${dz.last_compiled_at ? fmt.dateShort(dz.last_compiled_at) : "never"}`]));
@@ -423,12 +430,16 @@ export async function render(root, ctx) {
         if (c.passthrough) {
           box.appendChild(pill("attribution pending", "warn"));
         }
+        if ((c.aka || []).length) {
+          box.appendChild(el("span", { class: "muted small", attrs: { title: "the ledger's own spellings of this client,"
+            + " merged by the client list" } }, "also " + c.aka.join(", ")));
+        }
         return box;
       } },
     ];
     if (roster) {
       columns.push({ key: "_status", label: "Status", render: (c) => {
-        const m = matchRoster(c.name, rosterIndex);
+        const m = matchRoster(c, rosterIndex);
         return m ? pill(m.status, STATUS_TONE[m.status] || "outline")
           : el("span", "dash", "—");
       } });
@@ -487,7 +498,7 @@ export async function render(root, ctx) {
   /** the roster context for one client, used as the drill's caveat line */
   function rosterNote(c) {
     if (!roster) return null;
-    const m = matchRoster(c.name, rosterIndex);
+    const m = matchRoster(c, rosterIndex);
     if (!m) {
       return "This payer is not in the Airtable roster under a matching name, so"
         + " no status, tags or notes are shown for it — that is a missing link,"
@@ -505,7 +516,7 @@ export async function render(root, ctx) {
   function rosterPanel(clients) {
     const matched = [], unmatchedLedger = [];
     clients.forEach((c) => {
-      const m = matchRoster(c.name, rosterIndex);
+      const m = matchRoster(c, rosterIndex);
       if (m) matched.push({ client: c, roster: m });
       else unmatchedLedger.push(c);
     });
@@ -537,7 +548,7 @@ export async function render(root, ctx) {
         total: unmatchedLedger.length,
         amount: (x) => x.revenue_usd,
         time: (x) => x.last,
-        search: (x) => x.name,
+        search: (x) => [x.name, ...(x.aka || [])].join(" "),
         columns: [
           { key: "name", label: "Client (as the ledger names it)" },
           { key: "revenue_usd", label: "Revenue to date", num: true,

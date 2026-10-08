@@ -262,26 +262,21 @@ def _registry():
 
 class _Who:
     """One key per client, however the ledger spells it: the registry id when
-    the name is a registry name, alias or billing name (exact after
-    registry.norm — never a substring), else '~' + the name itself."""
+    the name is a registry client's (data._registry_id — exact after
+    registry.norm: a name, alias or billing name, also with its company suffix
+    off; never a substring), else '~' + the name itself. Since 2026-10-08 the
+    Money page's ladder already returns registry names (data._client_key step
+    7), so this mostly meets canonical names; contract and proposal labels
+    still arrive raw."""
 
     def __init__(self, reg):
-        from core import registry
-        self.reg, self.norm = reg, registry.norm
+        self.reg = reg
         self.names: dict = {}
-        self.billing: dict = {}
-        if reg is not None:
-            for cid in reg.matchable_ids():
-                n = reg.canonical(cid)
-                if n:
-                    self.billing.setdefault(registry.norm(n), cid)
 
     def __call__(self, name: Optional[str]) -> Optional[str]:
         if not name:
             return None
-        cid = None
-        if self.reg is not None:
-            cid = self.reg.match_name(name) or self.billing.get(self.norm(name))
+        cid = _d._registry_id(name, self.reg) if self.reg is not None else None
         if cid:
             self.names.setdefault(cid, self.reg.canonical(cid) or name)
             return cid

@@ -746,7 +746,12 @@ def _contract_client(raw: Optional[str]) -> Optional[str]:
     contract bridge reaches, while the rows Upwork labelled directly kept the
     raw name — SPLITTING one client into two rows on the Clients tab, the exact
     failure this function exists to end. A composite cannot split anything,
-    because a composite is never a name any other path produces."""
+    because a composite is never a name any other path produces.
+
+    (2026-10-08) The registry now DOES have the last word on every name — but
+    in `_client_key` step 7, applied to whatever ANY path returns, uniformly.
+    The split described above came from resolving one path and not the others;
+    a lookup every path goes through cannot split a client.)"""
     s = (raw or "").strip()
     if not s:
         return None
@@ -800,6 +805,72 @@ def _ledger_label_client(raw: Optional[str]) -> Optional[str]:
     return reg.canonical(cid) if cid else None
 
 
+# ── step 7 of _client_key: the registry has the last word on a client's name ──
+_REG_IX: dict = {}
+
+
+def _registry_index(reg) -> dict:
+    """{normalised name -> client id} for the names `Registry.match_name` does
+    not hold itself: each client's billing name, and every name, alias and
+    billing name with its company suffix taken off exactly the way
+    `_canon_client` takes it off a ledger string — so 'Remote Office Australia
+    Pty Ltd' (an alias of diat-khan) is also filed under 'remote office
+    australia', which is what Wise's payer line reduces to. A key two clients
+    would both reach is dropped: an ambiguous name is no evidence. Cached per
+    registry content (its sha), at most a few registries at a time."""
+    key = getattr(reg, "sha", None) or id(reg)
+    ix = _REG_IX.get(key)
+    if ix is not None:
+        return ix
+    owners: dict = {}
+    for cid in reg.matchable_ids():
+        c = reg.by_id.get(cid) or {}
+        for n in (c.get("name"), reg.canonical(cid), *(c.get("aliases") or [])):
+            if not n:
+                continue
+            for k in {registry.norm(n), registry.norm(_CO_SUFFIX.sub("", n).strip())}:
+                if k:
+                    owners.setdefault(k, set()).add(cid)
+    ix = {k: next(iter(v)) for k, v in owners.items() if len(v) == 1}
+    if len(_REG_IX) > 3:
+        _REG_IX.clear()
+    _REG_IX[key] = ix
+    return ix
+
+
+def _registry_id(name: Optional[str], reg=None) -> Optional[str]:
+    """The registry client a ledger name belongs to, or None. Exact after
+    `registry.norm` — the registry's own alias index first (so an exact name
+    or alias always wins), then `_registry_index`. Never a substring."""
+    s = (name or "").strip()
+    if not s:
+        return None
+    if reg is None:
+        try:
+            reg = registry.load()
+        except Exception:                                 # noqa: BLE001
+            return None
+    cid = reg.match_name(s)
+    if cid:
+        return cid
+    ix = _registry_index(reg)
+    return ix.get(registry.norm(s)) or ix.get(registry.norm(_CO_SUFFIX.sub("", s).strip()))
+
+
+def _registry_name(name: Optional[str]) -> Optional[str]:
+    """`name` as the registry names that client (its billing canonical), or
+    `name` unchanged when the registry does not know it — or will not load: a
+    broken registry costs the merges, never the Money or Clients page."""
+    if not name:
+        return name
+    try:
+        reg = registry.load()
+    except Exception:                                     # noqa: BLE001
+        return name
+    cid = _registry_id(name, reg)
+    return (reg.canonical(cid) or name) if cid else name
+
+
 def _client_key(row: dict, title_map: Optional[dict] = None,
                 id_map: Optional[dict] = None) -> Optional[str]:
     """The canonical client a revenue row belongs to, or None if unattributable.
@@ -840,7 +911,32 @@ def _client_key(row: dict, title_map: Optional[dict] = None,
     THE SOURCE GATE IS NOT THE PROVENANCE (2026-08-13). Step 6 keyed on
     `source LIKE 'Upwork%'`, but 17 live rows carry `source IS NULL` — a legacy
     batch whose `canonical_key` is nonetheless `upwork:<record id>`. The
-    canonical namespace is the row's real identity, so it gates step 6 too."""
+    canonical namespace is the row's real identity, so it gates step 6 too.
+
+      7. THE REGISTRY HAS THE LAST WORD (2026-10-08). Whatever name steps 1-6
+         found is handed to the client registry, and a registry client is
+         returned under the registry's own name. Each rail spells a client the
+         way it saw it, and every spelling became its own row: Globaltize was
+         THREE clients on this tab ("Globaltize" $6,544.80 from Wise,
+         "Ryan Stomberg" $1,190.00 and "Globaltize LLC" $210.00 from the
+         agency), Mustafa A / Mustafa Ahmed, Amanda T / Amanda Thomas and
+         Dhanya S / Dhanya Sangolli two each, and Remote Office Australia
+         (Wise) sat apart from Diat Khan (Upwork). Abhijeet, asked whether to
+         merge them here: "yes please merge them. remote office is diat khan".
+         The match is exact (`_registry_id`: a registry name, alias or billing
+         name, also with its company suffix off) and UNIFORM — every path's
+         name goes through the same lookup, which is what makes it safe where
+         resolving only the contract bridge's names was not (see
+         `_contract_client`: that split Tomas Eklund in two; this cannot).
+         Measured before shipping (var/prop/rev/before.json vs after.json).
+    """
+    return _registry_name(_ledger_name(row, title_map, id_map))
+
+
+def _ledger_name(row: dict, title_map: Optional[dict] = None,
+                 id_map: Optional[dict] = None) -> Optional[str]:
+    """Steps 1-6 of `_client_key`: the client name the row's own evidence
+    gives, before the registry has its say (step 7)."""
     src = row.get("source") or ""
     ac = row.get("assignment_company")
     ac_is_title = bool(title_map) and _deaccent(ac or "") in (title_map or {})
@@ -963,11 +1059,11 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
         # active contracts + owed replies, linked by a DETERMINISTIC token match
         # to a revenue client (never a fuzzy guess) — unmatched surfaced, not faked
         contracts = [dict(r) for r in conn.execute(
-            "SELECT c.upwork_status, t.room_name FROM contracts c"
+            "SELECT c.upwork_status, t.room_name, t.client_id FROM contracts c"
             " LEFT JOIN threads t ON t.id=c.thread_id"
             " WHERE c.upwork_status IN ('ACTIVE','PENDING')")]
         owed = [dict(r) for r in conn.execute(
-            "SELECT room_name FROM threads WHERE bucket IN ('owed','unmatched-owed')")]
+            "SELECT room_name, client_id FROM threads WHERE bucket IN ('owed','unmatched-owed')")]
         title_map, id_map = _contract_maps(conn)
     finally:
         conn.close()
@@ -977,14 +1073,20 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
     unlinked_minor, unlinked_n = 0, 0
     for r in rev_rows:
         total_minor += r["amount_base_minor"] or 0
-        k = _client_key(r, title_map, id_map)
+        # == _client_key, in its two halves: the row keeps the registry's name
+        # and remembers how the ledger spelled it ("aka"), so a renamed row is
+        # still recognisable — and still meets an Airtable record by that name
+        raw = _ledger_name(r, title_map, id_map)
+        k = _registry_name(raw)
         if not k:
             unlinked_minor += r["amount_base_minor"] or 0
             unlinked_n += 1
             continue
         a = agg.setdefault(k, {"name": k, "revenue_minor": 0, "payments": 0,
                                "first": None, "last": None, "channels": set(),
-                               "passthrough": _is_passthrough(k)})
+                               "aka": set(), "passthrough": _is_passthrough(k)})
+        if raw and raw != k:
+            a["aka"].add(raw)
         a["revenue_minor"] += r["amount_base_minor"] or 0
         a["payments"] += 1
         a["channels"].add("Upwork" if (r["source"] or "").startswith("Upwork")
@@ -996,22 +1098,38 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
 
     # deterministic linkage: a client's core token appearing as a comma-part of
     # the room name. Unmatched contracts/threads are counted, never misassigned.
-    def _match(room_name: str):
-        parts = [_deaccent(p) for p in (room_name or "").split(",")]
-        for name in agg:
-            if _deaccent(name) in parts:
-                return name
+    # Rows carry the REGISTRY's name since `_client_key` step 7 ('Homestyling'),
+    # while a room is still named after the person ('Tomas Eklund'). So a room
+    # matches by its conversation's registry client (threads.client_id, set by
+    # the deterministic linker), then by each comma-part as written AND as the
+    # registry names it. Still exact; still never a guess.
+    by_name = {_deaccent(name): name for name in agg}
+    try:
+        _reg = registry.load()
+    except Exception:                                     # noqa: BLE001
+        _reg = None
+
+    def _match(room_name: str, client_id: Optional[str] = None):
+        cands = []
+        if client_id and _reg is not None:
+            cands.append(_reg.canonical(client_id))
+        parts = [p.strip() for p in (room_name or "").split(",") if p.strip()]
+        cands += parts + [_registry_name(p) for p in parts]
+        for c in cands:
+            k = by_name.get(_deaccent(c or ""))
+            if k:
+                return k
         return None
 
     linked_contracts = 0
     for c in contracts:
-        k = _match(c.get("room_name"))
+        k = _match(c.get("room_name"), c.get("client_id"))
         if k:
             agg[k]["active_contracts"] = agg[k].get("active_contracts", 0) + 1
             linked_contracts += 1
     linked_owed = 0
     for o in owed:
-        k = _match(o.get("room_name"))
+        k = _match(o.get("room_name"), o.get("client_id"))
         if k:
             agg[k]["owed_replies"] = agg[k].get("owed_replies", 0) + 1
             linked_owed += 1
@@ -1022,6 +1140,7 @@ def clients(db_path: Optional[Path] = None, *, sort: Optional[str] = None,
             "name": a["name"], "revenue_usd": _from_minor(a["revenue_minor"]),
             "payments": a["payments"], "first": a["first"], "last": a["last"],
             "channels": sorted(a["channels"]),
+            "aka": sorted(a["aka"]),
             "active_contracts": a.get("active_contracts", 0),
             "owed_replies": a.get("owed_replies", 0),
             "passthrough": a["passthrough"]})
