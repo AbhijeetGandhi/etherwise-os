@@ -1215,6 +1215,21 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-09 (overnight build) · **The sales engine, built from what was already stored**
+  (design and state: `docs/upwork/sales-engine.md`; `548588b`, `7810efc`). A top-level
+  **Pipeline** tab (Flow · Scanner · Proposals · Conversations · After the hire · Tests ·
+  Agents) on `/api/lifecycle` beside `/api/upwork/funnel`; the Upwork tab's Funnel and
+  Analysis moved into it (old links redirect; `#/pipeline` is a tab again, no longer an
+  alias). Seven agents named on the tab with what blocks each: Scout, Writer, Tracker,
+  Conversation reader, Account keeper, Win-back, Analyst. New and NOT switched on (they
+  wait for his word and AI credit): the conversation reader (`conversation_codes`, $25 first
+  pass, Globaltize never, secrets cut before text leaves), the win-back drafter (five a
+  week, eight weeks' rest; the ranking itself is live on the tab: 44 past clients, every
+  point explained), the progress email (Mon/Wed/Fri 08:30 + Sunday 10:30 as its own email —
+  folding Sunday's into the outcome email is his call). The read-only pull
+  (`scripts/upwork_pull_all.py`: every contract, the 97 conversations with no stored
+  messages, the proposals since 8 Oct) waits for the two Upwork sign-ins. Plists in
+  `launchd/proposed/`; the config lines in `docs/upwork/proposed-config-2026-10-09.md`.
 - 2026-10-09 (night) · **Upwork is the sales engine; build the whole client lifecycle.** His
   words: "now Upwork is our sales engine ... starting with the scanner, then people we apply
   to, then the people who opened our proposal, then the people who replied, then the people

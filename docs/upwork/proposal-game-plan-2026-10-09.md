@@ -1,6 +1,6 @@
 # The proposal game: plan for your approval
 
-*Prepared 9 Oct 2026 for Abhijeet. Status: his four answers are in (section 0); waiting for his go. Nothing below is built yet.*
+*Prepared 9 Oct 2026 for Abhijeet. Status: his four answers are in (section 0). Built overnight 9 Oct: T1 in the draft writer (`9719bf5`), the Pipeline tab with the tests view, the progress email (`548588b`, `7810efc`; the email is not switched on yet). The whole engine: `docs/upwork/sales-engine.md`.*
 
 ---
 
@@ -9,8 +9,9 @@
 | Question | Answer | What it means |
 |---|---|---|
 | First test | **Volume + openings** | T1 below |
-| Weekly connects budget | **$150 a week** | About 10 proposals a week at the 2026 average bid (107 connects, $16). To send more within $150, boosts must be smaller. The data supports that: small boosts were opened as often as big ones (section 3). So T1 runs at **about 18–20 a week, with boosts kept to 60 extra connects or less**. |
-| Progress email | **Mon, Wed, Fri and Sun** | Mon/Wed/Fri at 8:30 IST. On Sunday it joins the existing Sunday outcome email, so you get one email that day, not two. |
+| Weekly connects budget | **No fixed cap** (9 Oct, night): "300 to 400 is like my last range ... until we hit some good clients with more revenue" | Each bid is judged on the job; the progress email shows connects spent against $150 a week as a guide, not a limit. The bid calculator (T2) will advise per job. |
+| (the first answer, superseded the same night) | $150 a week | About 10 proposals a week at the 2026 average bid; T1 was sized at 18–20 a week with boosts of 60 extra connects or less to fit it. |
+| Progress email | **Mon, Wed, Fri and Sun** | Mon/Wed/Fri at 8:30 IST, and the week on Sunday at 10:30 (built 9 Oct, `modules/upwork/progress_email.py`; not switched on yet). The plan was to fold Sunday's into the outcome email; as built it is its own email, because the outcome email skips any Sunday with nothing to ask. Folding it in is a change to that email, so it is your call. |
 | Test length | **About 40 per side + 7 days**, at most 6 weeks | At 18–20 a week, T1's openings result is due about mid-November |
 
 ---
@@ -178,7 +179,7 @@ The Friday email carries the decision prompt.
 
 | # | Test | Change | Deciding number | Earliest call |
 |---|---|---|---|---|
-| T1 | **Aimed volume + opening lines** | 18–20 cold a week within $150: every 28+ job first, then the best 19–27, applied within 24h, boosts of 60 extra connects or less. Openings alternate: your current style vs "their problem first" | opened (openings); replies, hires and revenue per 100 sent and per $ compared with Apr–Sep (volume) | about mid-November (openings); the volume read continues after that |
+| T1 | **Aimed volume + opening lines** | 18–20 cold a week within $150: every 28+ job first, then the best 19–27, applied within 24h, boosts of 60 extra connects or less. Openings alternate: your current style vs "their problem first" | **wrote back, of sent** (as built: the opening is read before and after the open, so the reply is what it moves); hires and revenue per 100 sent and per $ compared with Apr–Sep (volume) | about mid-November (openings); the volume read continues after that |
 | T2 | **Bid calculator** | on alternating proposals, bid what the calculator says; on the others, your usual bid | wrote back per $ of connects | after T1 |
 | T3 | **Crowd filter** | skip jobs already past ~50 proposals with a client who hasn't been active in the last day, unless top band (needs A3) | opened | after T1 |
 | T4 | **Profile title** | a sharper title, before and after (one profile, so it can't alternate) | opened | later |
