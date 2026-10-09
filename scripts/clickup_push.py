@@ -83,12 +83,17 @@ def req(method: str, path: str, tok: str, body=None) -> dict:
 def list_for_score(total, invite: bool, icp_tier=None):
     # ICP outranks everything except a direct invite: it is the ideal-client
     # profile ON TOP of a hot score, so it must not drown in the Hot list.
+    # Since 2026-10-09 a top-band score routes there too (config.ICP_SCORE_MIN,
+    # his "28+ go into ICP and the rest go in hot leads"): the ICP list is the
+    # short one he works first; nothing below it is dropped.
     if invite:
         return LIST_INVITES
     if icp_tier == "icp":
         return LIST_ICP
     if total is None:
         return None
+    if total >= config.ICP_SCORE_MIN:
+        return LIST_ICP
     if total >= config.HOT_LEAD_THRESHOLD:
         return LIST_HOT
     if total >= config.SCORE_STANDARD:

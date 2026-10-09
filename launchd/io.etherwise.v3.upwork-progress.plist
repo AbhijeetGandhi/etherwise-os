@@ -3,8 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key><string>io.etherwise.v3.upwork-progress</string>
-  <!-- PROPOSED, not installed (2026-10-09): the progress email, Mon/Wed/Fri 08:30 and Sunday 10:30 (his cadence).
-       To switch on: move this file up into launchd/ and run launchd/install.sh for io.etherwise.v3.upwork-progress -->
+  <!-- the progress email, Mon/Wed/Fri 08:30 and Sunday 10:30 (his cadence). Switched on 2026-10-09 on his word ("All three now"). -->
   <key>ProgramArguments</key>
   <array>
     <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>

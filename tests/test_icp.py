@@ -115,6 +115,19 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(cp.list_for_score(24, invite=False, icp_tier="icp_near"),
                          cp.LIST_HOT)
 
+    def test_a_top_band_score_goes_to_the_icp_list_and_nothing_below_is_lost(self):
+        # 2026-10-09, his: "28+ go into ICP and the rest go in hot leads"
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import clickup_push as cp
+        top = config.ICP_SCORE_MIN
+        self.assertEqual(top, config.LOOM_FLAG_THRESHOLD)
+        self.assertEqual(cp.list_for_score(top, invite=False), cp.LIST_ICP)
+        self.assertEqual(cp.list_for_score(top - 1, invite=False), cp.LIST_HOT)
+        self.assertEqual(cp.list_for_score(config.HOT_LEAD_THRESHOLD, invite=False), cp.LIST_HOT)
+        self.assertEqual(cp.list_for_score(top + 5, invite=True), cp.LIST_INVITES)   # an invite still wins
+
 
 if __name__ == "__main__":
     unittest.main()

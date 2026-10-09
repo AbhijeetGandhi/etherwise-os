@@ -79,6 +79,12 @@ RERUN_JOBS = {
     "upwork_pulse": "io.etherwise.v3.upwork-pulse",
     # the hiring side (2026-08-27, Phase 3): reads on his OWN postings.
     "upwork_hiring": "io.etherwise.v3.upwork-hiring",
+    # the sales engine (2026-10-09, his "All three now"): the progress email
+    # refuses a second send the same day; the win-back drafter five a week.
+    # The conversation reader is NOT here: it is not catch-up eligible (it runs
+    # every two hours anyway) and the registry and this table must agree.
+    "upwork_progress": "io.etherwise.v3.upwork-progress",
+    "upwork_reactivation": "io.etherwise.v3.upwork-reactivation",
     # 2026-08-27, with the catch_up flip. This one SENDS (the Sunday outcome
     # email), and it is here anyway because outcome_capture.already_sent()
     # refuses a second send inside one ISO week — so a kick can only ever

@@ -401,6 +401,12 @@ ICP_HOURLY_USD = 51.0            # $51/hr must be in the budget range
 ICP_FIXED_USD = 5000.0           # fixed-price equivalent
 ICP_CLIENT_SPEND_USD = 50000.0   # proven spender
 ICP_SPEND_PER_HIRE_USD = 2000.0  # readiness-to-pay proxy (avg-rate enrichment pending)
+# A SCORE route into the ICP list too (Abhijeet, 2026-10-09: "28+ go into ICP
+# and the rest go in hot leads" — the top of the pipeline uncrowded, and no job
+# lost: 19-27 still lands in Hot). Why 28: in 2026 his cold proposals on 28+
+# jobs were written back 16% of the time (4 hires in 43), on 19-27 jobs 5% (1
+# in 55). It is the Loom bar, so a top-band card is ICP-listed and Loom-flagged.
+ICP_SCORE_MIN = LOOM_FLAG_THRESHOLD
 
 # ── Rate-unstated hourly gate (2026-07-16, option B) ─────────────────────────
 # Upwork ships a blank hourly rate as $0, and the $30 floor read $0 as 'cheap',
@@ -877,6 +883,26 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.upwork-outcomes", "catch_up": True,
      "why": "the Loop 2 outcome-reason capture; a week with nothing to ask is a"
             " clean skip, a week that never ran is not"},
+    # the sales engine's three new agents (2026-10-09, his "All three now";
+    # docs/upwork/sales-engine.md). The progress email is catch-up safe for the
+    # same reason the outcome email is: it refuses a second send the same day.
+    {"key": "upwork_progress", "label": "Progress email (Mon/Wed/Fri + Sunday)",
+     "task_name": "upwork_progress", "max_age_hours": 80,      # Fri 08:30 -> Mon 08:30 + grace
+     "degrade_kinds": (), "critical": False, "backs": "pipeline", "empty_ok": True,
+     "launchd_label": "io.etherwise.v3.upwork-progress", "catch_up": True,
+     "why": "the game's scoreboard in his inbox (his cadence, 2026-10-09);"
+            " stale means days of proposals nobody summed up"},
+    {"key": "upwork_conversation_codes", "label": "Conversation reader (AI, every 2h)",
+     "task_name": "upwork_conversation_codes", "max_age_hours": 6,
+     "degrade_kinds": (), "critical": False, "backs": "pipeline", "empty_ok": True,
+     "launchd_label": "io.etherwise.v3.upwork-conversation-codes", "catch_up": False,
+     "why": "why conversations did or did not become hires; capped at $25 for"
+            " the first pass and $0.50 a run; never reads Globaltize"},
+    {"key": "upwork_reactivation", "label": "Win-back drafts (Mondays)",
+     "task_name": "upwork_reactivation", "max_age_hours": 192,
+     "degrade_kinds": (), "critical": False, "backs": "pipeline", "empty_ok": True,
+     "launchd_label": "io.etherwise.v3.upwork-reactivation", "catch_up": True,
+     "why": "at most five check-in drafts a week for past clients; he sends them"},
     {"key": "cos_sweep", "label": "Card sweep (chief of staff)",
      "task_name": "cos_sweep", "max_age_hours": 10,           # every 2h 12:30-04:30; the overnight gap is 8h
      "degrade_kinds": (), "critical": True, "backs": "today", "empty_ok": True,

@@ -241,13 +241,16 @@ DRAFT_SYSTEM = (
     " automation agency), to a past client who has stopped working with him."
     " The goal is to reopen a friendly conversation, not to sell.\n"
     "Rules:\n"
-    "- 40 to 90 words. Warm, plain, specific. Address them by first name if the"
-    " material shows it.\n"
+    "- 40 to 90 words. Warm, plain, specific. Address them by first name when the"
+    " material gives one (\"Their contact\"); otherwise open with \"Hi,\". Never"
+    " write a placeholder in brackets.\n"
     "- Mention ONE concrete thing from the material: what was built for them, or"
     " a next step they mentioned. If the material has nothing concrete, keep it"
     " general rather than invent anything.\n"
     "- No prices, discounts, or claims about results that are not in the material.\n"
     "- No em dashes. No exclamation marks in a row. No 'just checking in'.\n"
+    "- Do not mention how often they worked with us, gaps, or that they came back;"
+    " that is our bookkeeping, not their business.\n"
     "- End with one simple question that is easy to answer.\n"
     "- Sign off: Abhijeet\n"
     "- Never say this message is automated, part of a list, or how many days it"
@@ -283,8 +286,6 @@ def material(conn, cand: dict) -> str:
              f"Worked with us in {cand['months']} different months; first paid"
              f" {cand['first_paid']}, last paid {cand['last_paid']}.",
              f"How they reached us: {(cand.get('origin') or {}).get('words') or 'not on record'}."]
-    if cand.get("came_back"):
-        lines.append("They came back once before after a long gap.")
     if cand.get("angle"):
         lines.append(f"An angle the conversation suggests: {cand['angle']}")
     key = cand["key"]
@@ -297,6 +298,11 @@ def material(conn, cand: dict) -> str:
             lines += ["- " + redact(f)[:300] for f in facts]
     room = (cand.get("room") or {}).get("room")
     if room:
+        who = conn.execute(
+            "SELECT sender_user_name FROM messages WHERE thread_id=? AND lower(direction)='inbound'"
+            " AND sender_user_name IS NOT NULL ORDER BY created_dt DESC LIMIT 1", (room,)).fetchone()
+        if who and who[0]:
+            lines.insert(1, f"Their contact: {who[0]}")
         msgs = [dict(r) for r in conn.execute(
             "SELECT created_dt, lower(direction) AS dir, message FROM messages WHERE thread_id=?"
             " AND lower(direction) IN ('inbound','outbound') ORDER BY created_dt DESC LIMIT ?",
@@ -307,6 +313,17 @@ def material(conn, cand: dict) -> str:
             lines += [f"[{str(m['created_dt'])[:10]}] {'Client' if m['dir'] == 'inbound' else 'Abhijeet'}:"
                       f" {redact((m['message'] or '').strip())[:800]}" for m in msgs]
     return "\n".join(lines)
+
+
+def tidy(body: str) -> str:
+    """The rules the model is asked for, enforced: no em or en dashes, no
+    bracketed placeholder left in the greeting."""
+    import re as _re
+    out = (body or "").strip()
+    out = _re.sub(r"\s*[—–]\s*", ", ", out)
+    out = _re.sub(r"^(Hi|Hey|Hello)\s*\[[^\]]*\]\s*,", r"\1,", out)
+    out = _re.sub(r"\[[^\]]*\]", "", out)
+    return _re.sub(r",\s*,", ",", out)
 
 
 def draft_week(conn, ranked: dict, today: str, *, db_path=None, reg=None, _call=None) -> dict:
@@ -330,7 +347,7 @@ def draft_week(conn, ranked: dict, today: str, *, db_path=None, reg=None, _call=
         res = call(task_name=TASK_NAME, model_key=DRAFT_MODEL, system=DRAFT_SYSTEM,
                    user_content=material(conn, r), purpose=f"win-back {r['key']}",
                    max_output_tokens=400, db_path=db_path)
-        body = (getattr(res, "text", "") or "").strip()
+        body = tidy(getattr(res, "text", "") or "")
         if not body:
             continue
         room = (r.get("room") or {}).get("room")
