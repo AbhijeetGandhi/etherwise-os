@@ -740,8 +740,12 @@ details.group[open] > summary::before { content: "▾ "; }
 .subtabs {
   display: flex; gap: 2px; border-bottom: 1px solid var(--border);
   margin: var(--space-2) 0 var(--space-5);
+  /* seven views (Pipeline) do not fit a phone: the bar scrolls sideways, the page never does */
+  overflow-x: auto; scrollbar-width: none;
 }
+.subtabs::-webkit-scrollbar { display: none; }
 .subtab {
+  flex: none; white-space: nowrap;
   font: inherit; font-size: var(--text-base); font-weight: 500; color: var(--muted-foreground);
   background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
   padding: 10px 14px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center;
