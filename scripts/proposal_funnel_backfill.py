@@ -187,6 +187,9 @@ def main(argv=None) -> int:
     ap.add_argument("--db", type=Path, default=None, help="DB path (default: config.DB_PATH)")
     ap.add_argument("--dir", type=Path, default=config.V3_ROOT / "var" / "prop",
                     help="the research folder (default: var/prop)")
+    ap.add_argument("--source", default=SOURCE,
+                    help="the label a NEW row gets (a row already stored keeps its own);"
+                         " scripts/upwork_pull_all.py passes 'refresh YYYY-MM-DD'")
     a = ap.parse_args(argv)
     base = a.dir
     rows = json.loads((base / "rows.json").read_text())
@@ -212,6 +215,7 @@ def main(argv=None) -> int:
                 room_id = None
         about = blind.get(pid) if r.get("kind") == "cold" else None
         o = build_outcome(r, views.get(pid), about, room_id, companies.get(pid))
+        o["source"] = a.source
         d = disagreements(r, o)
         if d:
             odd.append((pid, d))
@@ -235,7 +239,8 @@ def main(argv=None) -> int:
     with db.connect(a.db) as conn:
         cols = ", ".join(OUTCOME_COLS)
         marks = ", ".join("?" for _ in OUTCOME_COLS)
-        upd = ", ".join(f"{c} = excluded.{c}" for c in OUTCOME_COLS if c != "proposal_id")
+        # the source is where a row was FIRST read from: a refresh never relabels it
+        upd = ", ".join(f"{c} = excluded.{c}" for c in OUTCOME_COLS if c not in ("proposal_id", "source"))
         conn.executemany(
             f"INSERT INTO proposal_outcomes ({cols}) VALUES ({marks})"
             f" ON CONFLICT(proposal_id) DO UPDATE SET {upd}, updated_at = datetime('now')",
