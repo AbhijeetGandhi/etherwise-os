@@ -230,6 +230,10 @@ def step_funnel(db_path, dry: bool) -> dict:
     _run("var/prop/fetch_jobs.py")
     if _tail_says_stopped(PROP / "fetch_jobs.log"):
         raise RuntimeError("the jobs fetch stopped (see var/prop/fetch_jobs.log)")
+    # the research's own chain, in its order: one record per proposal (with the
+    # ledger), the letter and context features, then the flat rows the backfill reads
+    _run("var/prop/build_dataset.py")
+    _run("var/prop/features.py")
     _run("var/prop/export_rows.py")
     _run("scripts/proposal_funnel_backfill.py", "--apply", "--source",
          f"refresh {date.today().isoformat()}")

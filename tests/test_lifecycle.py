@@ -56,7 +56,10 @@ class LifeCase(FunnelCase):
         stub.reds.return_value = [mock.Mock(invariant="t1")] if not green else []
         with mock.patch("modules.finance.doctor.run", return_value=stub), \
                 mock.patch.object(proposal_funnel, "_registry", return_value=self.reg):
-            return lifecycle.lifecycle(self.db_path, "2026-10-08", _now=NOW)
+            # never the machine's real grant log: a test must not depend on when
+            # the sign-ins were last renewed on the Mac it runs on
+            return lifecycle.lifecycle(self.db_path, "2026-10-08", _now=NOW,
+                                       _events=self.tmp / "no-grant-events.jsonl")
 
 
 class TestLifecycleReader(LifeCase):
@@ -198,6 +201,32 @@ class TestLifecycleReader(LifeCase):
         for a in A["agents"]:
             self.assertTrue(a["does"])
             self.assertNotIn("_", a["name"])
+
+    def test_a_renewed_sign_in_clears_the_blocker_before_the_next_run(self):
+        mcp = ("RuntimeError(\"Upwork MCP session could not start (auth): MCPAuthError('Upwork MCP grant has"
+               " been dead since 2026-10-08 16:15:05 IST (invalid_grant: ...)')\")")
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO runs (task_name, started_at, status, error) VALUES"
+                         " ('upwork_financials', '2026-10-09T06:05:05+05:30', 'failed', ?)", (mcp,))
+        ev = self.tmp / "events.jsonl"
+        ev.write_text('{"at": "2026-10-09 13:12:59 IST", "file": "upwork-mcp.json", "event": "authorized"}\n'
+                      '{"at": "2026-10-08 16:15:05 IST", "file": "upwork-mcp.json", "event": "marked_dead"}\n')
+        stub = mock.Mock(green=True)
+        stub.reds.return_value = []
+        with mock.patch("modules.finance.doctor.run", return_value=stub), \
+                mock.patch.object(proposal_funnel, "_registry", return_value=self.reg):
+            A = lifecycle.lifecycle(self.db_path, "2026-10-09", _now=NOW, _events=ev)["agents"]
+        self.assertNotIn("upwork_mcp", [b["kind"] for b in A["blockers"]])
+        acc = next(a for a in A["agents"] if a["id"] == "accounts")
+        self.assertNotEqual(acc["state"], "blocked")
+        fin = next(t for t in acc["tasks"] if t["task"] == "upwork_financials")
+        self.assertTrue(fin["recovered"])
+        # a renewal BEFORE the failure clears nothing
+        ev.write_text('{"at": "2026-10-09 05:00:00 IST", "file": "upwork-mcp.json", "event": "authorized"}\n')
+        with mock.patch("modules.finance.doctor.run", return_value=stub), \
+                mock.patch.object(proposal_funnel, "_registry", return_value=self.reg):
+            A = lifecycle.lifecycle(self.db_path, "2026-10-09", _now=NOW, _events=ev)["agents"]
+        self.assertIn("upwork_mcp", [b["kind"] for b in A["blockers"]])
 
     def test_the_knowledge_base_lists_its_stores(self):
         kb = self.read()["kb"]

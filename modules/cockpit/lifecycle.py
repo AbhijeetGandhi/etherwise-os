@@ -332,6 +332,35 @@ def _clients(db_path, facts: list, day: str) -> dict:
 
 # ── the agents ───────────────────────────────────────────────────────────────
 
+# which grant file a sign-in blocker is about (var/upwork-grant-events.jsonl)
+_GRANT_FILE = {"upwork_mcp": "upwork-mcp.json", "upwork_api": "upwork-api.json"}
+
+
+def _reauthorized(events_path: Optional[Path] = None) -> dict:
+    """{blocker kind: the last time that sign-in was renewed} from the grant
+    guard's own event log ('authorized' / 'breaker_cleared'), as an IST wall
+    clock 'YYYY-MM-DDTHH:MM:SS' — the shape runs.started_at begins with. The
+    log never holds a token (modules/upwork/grant_guard.py)."""
+    path = events_path or (config.VAR_DIR / "upwork-grant-events.jsonl")
+    out: dict = {}
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return out
+    by_file = {v: k for k, v in _GRANT_FILE.items()}
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        kind = by_file.get(e.get("file"))
+        if kind and e.get("event") in ("authorized", "breaker_cleared"):
+            at = str(e.get("at") or "")[:19].replace(" ", "T")
+            if at > out.get(kind, ""):
+                out[kind] = at
+    return out
+
+
 def _blocker_of(error: Optional[str]) -> Optional[tuple]:
     for kind, rx, words, fix in _BLOCKERS:
         m = rx.search(error or "")
@@ -356,7 +385,8 @@ def _ai_credit(conn) -> Optional[dict]:
     return {"since": since, "failed_calls": n, "last_ok": ok}
 
 
-def _agents(conn, now: datetime) -> dict:
+def _agents(conn, now: datetime, _events: Optional[Path] = None) -> dict:
+    renewed = _reauthorized(_events)
     cut = (now - timedelta(hours=24)).isoformat(timespec="seconds")
     week = (now - timedelta(days=7)).isoformat(timespec="seconds")
     day = now.strftime("%Y-%m-%d")
@@ -375,13 +405,19 @@ def _agents(conn, now: datetime) -> dict:
         spend = conn.execute("SELECT COALESCE(SUM(total_cost_usd),0) FROM claude_usage"
                              " WHERE task_name=? AND ist_date=?", (t, day)).fetchone()[0]
         b = _blocker_of(last["error"]) if last and last["status"] == "failed" else None
+        # a sign-in renewed AFTER the run that died of it: the job is waiting
+        # for its next run, not blocked (9 Oct: the banner kept saying "expired"
+        # for hours after he had re-authorized)
+        recovered = bool(b and b[0] in renewed and renewed[b[0]] > str(last["started_at"])[:19])
+        if recovered:
+            b = None
         tasks[t] = {"task": t, "ran": bool(last), "last_at": last["started_at"] if last else None,
                     "last_status": last["status"] if last else None,
                     "error": (str(last["error"] or "").splitlines() or [""])[0][:240]
                     if last and last["status"] == "failed" else None,
                     "last_ok": lastok, "ok_24h": okn, "failed_24h": bad,
                     "ai_usd_today": round(float(spend or 0), 2),
-                    "blocker": b[0] if b else None}
+                    "blocker": b[0] if b else None, "recovered": recovered}
     credit = _ai_credit(conn)
     blockers: dict = {}
     for t in tasks.values():
@@ -412,7 +448,7 @@ def _agents(conn, now: datetime) -> dict:
             state = "off"
         elif bl:
             state = "blocked"
-        elif any(t["last_status"] == "failed" for t in ts):
+        elif any(t["last_status"] == "failed" and not t.get("recovered") for t in ts):
             state = "failing"
         else:
             state = "working"
@@ -508,7 +544,7 @@ def _kb(conn) -> dict:
 # ── the route ────────────────────────────────────────────────────────────────
 
 def lifecycle(db_path: Optional[Path] = None, today: Optional[str] = None, *,
-              _now: Optional[datetime] = None) -> dict:
+              _now: Optional[datetime] = None, _events: Optional[Path] = None) -> dict:
     """GET /api/lifecycle — everything the Pipeline tab adds to the funnel."""
     day = today or _d._ist_today()
     now = _now or datetime.now(config.TZ)
@@ -527,7 +563,7 @@ def lifecycle(db_path: Optional[Path] = None, today: Optional[str] = None, *,
         talks = _talks(conn)
         codes = _codes(conn, reg)
         tests = _tests(conn, {f["id"]: f for f in facts}, day)
-        agents = _agents(conn, now)
+        agents = _agents(conn, now, _events)
         kb = _kb(conn)
     finally:
         conn.close()

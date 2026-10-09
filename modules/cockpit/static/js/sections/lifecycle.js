@@ -778,10 +778,11 @@ function testsView(D, L) {
 function taskLine(t) {
   const words = TASK_WORDS[t.task] || "a scheduled job";
   if (!t.ran) return el("li", "muted", `${words}: not switched on yet`);
-  const bad = t.last_status === "failed";
+  const bad = t.last_status === "failed" && !t.recovered;
   return el("li", null, [
     el("span", null, words + ": "),
-    el("span", bad ? "neg" : null, `last ran ${fmt.dateTimeShort(t.last_at)}, ${bad ? "failed" : "fine"}`),
+    el("span", bad ? "neg" : null, `last ran ${fmt.dateTimeShort(t.last_at)}, `
+      + (t.recovered ? "failed before the sign-in was renewed; fine from its next run" : bad ? "failed" : "fine")),
     el("span", "muted", ` · ${fmt.num(t.ok_24h)} fine, ${fmt.num(t.failed_24h)} failed in 24 hours`
       + (t.ai_usd_today ? ` · AI today ${fmt.usd2(t.ai_usd_today)}` : "")),
   ]);
