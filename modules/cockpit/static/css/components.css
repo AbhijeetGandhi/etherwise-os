@@ -1123,3 +1123,78 @@ tr.attn td { background: var(--warning-soft); }
 .fn-inv-col { cursor: default; outline: none; }
 .fn-inv-col:hover .fn-mbar, .fn-inv-col:focus-visible .fn-mbar { filter: brightness(1.08); }
 .fn-foot { margin: 0; line-height: 1.55; }
+
+/* ══ Pipeline (sections/lifecycle.js, 2026-10-09) ══════════════════════════════
+   Upwork as the sales engine, job to paying client. The strip reuses the Jobs
+   view's .flow/.stage; the rest is the drop cards, the blockers banner, the
+   win-back cards, the tests and the agents. Tokens only. */
+.lc-page { gap: var(--space-5); }
+.lc-body { gap: var(--space-5); }
+.lc-lede { margin: 0; max-width: 90ch; font-size: var(--text-base); line-height: 1.6; color: var(--foreground); }
+.lc-sec { display: flex; flex-direction: column; gap: var(--space-4); }
+.lc-sec-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-3); }
+.lc-h { margin: 0; font-size: var(--text-md); font-weight: 600; letter-spacing: -0.01em; }
+.lc-flow .stage .s { min-height: 3.2em; }
+.lc-table td { vertical-align: top; }
+.lc-them { color: var(--warning); font-weight: 600; }
+
+/* what is stopping the machine */
+.lc-block { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4);
+            border: 1px solid var(--destructive-border); border-radius: var(--radius); background: var(--destructive-soft); }
+.lc-block-head { display: flex; align-items: center; gap: var(--space-2); color: var(--destructive); }
+.lc-block-head b { color: var(--foreground); }
+.lc-block-list { display: grid; gap: var(--space-3); margin: 0; padding-left: 1.2em; font-size: var(--text-sm); line-height: 1.5; }
+.lc-fix { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: 4px; }
+.lc-cmd { padding: 2px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card);
+          font-family: var(--font-mono); font-size: var(--text-xs); overflow-wrap: anywhere; }
+
+/* where they drop, and why */
+.lc-drops { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
+.lc-drop { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4);
+           border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.lc-drop-t { font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); }
+.lc-drop-big { font-size: var(--text-base); }
+.lc-drop-big b { font-size: var(--text-lg); font-weight: 600; }
+.lc-drop-lines { display: grid; gap: 6px; margin: 0; padding-left: 1.1em; font-size: var(--text-sm); line-height: 1.5;
+                 color: var(--muted-foreground); }
+.lc-drop-lines b { font-weight: 600; color: var(--foreground); }
+.lc-drop-foot { margin-top: auto; font-size: var(--text-sm); }
+@media (max-width: 1100px) { .lc-drops { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .lc-drops { grid-template-columns: 1fr; } }
+
+/* after the hire */
+.lc-after { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
+.lc-after .strip-item { gap: 2px; }
+@media (max-width: 1100px) { .lc-after { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .lc-after { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lc-page .linktext { display: inline; text-align: left; }
+.lc-wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-3); }
+.lc-wb { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4);
+         border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.lc-wb-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.lc-wb-rank { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+              background: var(--muted); font-size: var(--text-xs); font-weight: 600; }
+.lc-wb-name { font-size: var(--text-base); }
+.lc-wb-score { width: 70px; height: 6px; margin-left: auto; overflow: hidden; border-radius: 3px; background: var(--muted); }
+.lc-wb-score i { display: block; height: 100%; background: var(--chart-2); }
+.lc-wb-why { display: grid; gap: 2px; margin: 0; padding-left: 1.1em; font-size: var(--text-sm); color: var(--muted-foreground); }
+.lc-wb-foot { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: auto; }
+
+/* tests */
+.lc-test { display: flex; flex-direction: column; gap: var(--space-3); }
+.lc-test-change { margin: 0; max-width: 90ch; font-size: var(--text-sm); line-height: 1.55; }
+.lc-details summary { cursor: pointer; font-size: var(--text-sm); color: var(--muted-foreground); }
+.lc-details p { margin: var(--space-2) 0 0; max-width: 90ch; font-size: var(--text-sm); line-height: 1.55; }
+
+/* the agents */
+.lc-agents-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.lc-agent-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer;
+                 border: 1px solid var(--border); border-radius: var(--radius-full); background: var(--card);
+                 color: var(--foreground); font: inherit; font-size: var(--text-sm); }
+.lc-agent-chip:hover { background: var(--accent); }
+.lc-agent-chip .dot { margin-right: 0; }
+.lc-agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-3); }
+.lc-agent { display: flex; flex-direction: column; gap: var(--space-2); }
+.lc-agent-does { margin: 0; font-size: var(--text-sm); line-height: 1.5; }
+.lc-agent-tasks { display: grid; gap: 4px; margin: 0; padding-left: 1.1em; font-size: var(--text-xs); line-height: 1.45; }
+.lc-agent-made { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: auto; font-size: var(--text-sm); }

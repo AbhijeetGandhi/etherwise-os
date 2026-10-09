@@ -167,7 +167,8 @@ const PROPOSAL_COLS = [
     { title: "your proposal on Upwork" }) },
 ];
 
-function drillRows(title, rows, opts = {}) {
+/** the proposals behind any figure — also the Pipeline tab's proposal drill */
+export function drillRows(title, rows, opts = {}) {
   openDrill({
     title,
     subtitle: opts.subtitle,

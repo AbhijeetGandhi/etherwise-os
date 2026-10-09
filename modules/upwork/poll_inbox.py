@@ -404,12 +404,16 @@ def poll(ctx, client_factory=UpworkClient) -> dict:
                              "tier": tier, "bucket": bucket,
                              "intent": intent, "draft": draft})
 
-    # stale-draft clearing (verbatim)
+    # stale-draft clearing (verbatim). A win-back draft (draft_kind
+    # 'reactivation', modules/upwork/reactivation.py) is written FOR a quiet
+    # room — quiet is the point — so it is never cleared here; a new message
+    # from them still supersedes it above, like any pending draft on the room.
     with db.connect(dbp) as conn:
         marks = ",".join("?" * len(ACTIONABLE_BUCKETS))
         cur = conn.execute(
             f"UPDATE drafts SET sent_status='stale' WHERE"
-            f" sent_status='pending' AND thread_id NOT IN"
+            f" sent_status='pending' AND draft_kind != 'reactivation'"
+            f" AND thread_id NOT IN"
             f" (SELECT id FROM threads WHERE bucket IN ({marks}))",
             ACTIONABLE_BUCKETS)
         metrics["stale_drafts_cleared"] = cur.rowcount

@@ -83,6 +83,9 @@ _PLAN = [
     # resurrect a client that no longer exists the next time anyone reverts.
     ("reclass_log.prior_client", "reclass_log", "prior_client"),
     ("reclass_log.new_client", "reclass_log", "new_client"),
+    # migration 039 (the sales engine): the conversation reader's note names the
+    # conversation's client, and the Pipeline's win-back angles key on it
+    ("conversation_codes.client_id", "conversation_codes", "client_id"),
 ]
 
 # display-name columns that ride along with the id in the same table
@@ -131,6 +134,12 @@ _FOREIGN = {
     ("nudge_state", "item_key"): "handled by the card re-key pass",
     ("card_subjects", "card_key"): "handled by the card re-key pass",
     ("transactions", "dedup_key"): "ledger identity, never a client id",
+    # migration 039 (the sales engine)
+    ("job_snapshots", "client_last_activity"): "a time off the job post, not an id",
+    ("reactivation_log", "client_id"): "the weekly win-back log, keyed (client, week):"
+                                       " moving it could collide two halves drafted"
+                                       " the same week, so the old id's weeks stay"
+                                       " behind (they only rest a client 8 weeks)",
 }
 
 

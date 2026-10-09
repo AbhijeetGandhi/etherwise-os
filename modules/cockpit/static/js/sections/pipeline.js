@@ -442,8 +442,7 @@ export async function render(root, ctx, opts = {}) {
   root.appendChild(el("div", "hstack", [
     segHost, customWrap,
     el("span", "muted small", analysisOnly
-      ? "every chart below is scoped to this range · the funnel above is the cohort view"
-        + " and does not follow it"
+      ? "every chart below is scoped to this range · the Flow view has its own period"
       : "everything below is scoped to this range · the KPI strip above is not"
         + " (it is the live 7/30-day board)"),
   ]));

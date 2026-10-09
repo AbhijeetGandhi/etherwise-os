@@ -780,25 +780,28 @@ def _node():
 
 class TestUpworkSection(unittest.TestCase):
     """The Upwork tab's JS is a browser module; what a Python test can hold it
-    to: it exists, it is registered where Pipeline was (digit 2), the old id is
-    aliased, it names no send route, it imports only the house primitives, the
+    to: it exists, it is registered right after the Pipeline tab (digit 3; the
+    Pipeline id is its own tab again since 2026-10-09), it names no send route, it imports only the house primitives, the
     modules it depends on export what it imports, the styles it uses exist,
     the server serves it as JavaScript, and it parses under node."""
 
-    def test_registered_in_pipelines_slot_with_the_alias(self):
+    def test_registered_right_after_the_pipeline_tab(self):
+        # 2026-10-09, his answer: "New top-level Pipeline tab" — Pipeline is its
+        # own tab again (the sales engine, end to end), right after Today, and
+        # the Upwork tab follows it; #/pipeline is no longer an alias of #/upwork
         app = (STATIC / "js" / "app.js").read_text()
         ids = re.findall(r'\{ id: "([a-z]+)"', app)
-        self.assertIn("upwork", ids)
-        self.assertNotIn("pipeline", ids)
-        self.assertEqual(ids.index("upwork"), 1)               # keyboard digit 2
-        self.assertRegex(app, r'pipeline: "upwork"')          # #/pipeline still opens
+        self.assertEqual(ids.index("pipeline"), 1)             # keyboard digit 2
+        self.assertEqual(ids.index("upwork"), 2)               # keyboard digit 3
+        self.assertNotRegex(app, r'pipeline: "upwork"')
 
     def test_section_file_imports_house_primitives_only_and_never_sends(self):
         src = (STATIC / "js" / "sections" / "upwork.js").read_text()
         imports = re.findall(r'from "([^"]+)"', src)
+        # Funnel and Analysis moved to the Pipeline tab (2026-10-09), so the
+        # Upwork tab no longer imports their renderers
         self.assertEqual(set(imports), {"../ui.js", "../drill.js", "./today.js",
-                                        "./pipeline.js", "../conversation.js",
-                                        "./upwork_funnel.js"})
+                                        "../conversation.js"})
         self.assertNotIn("/send", src)
         self.assertNotIn("fetch(", src)                        # ctx.api / ctx.post only
         self.assertIn('ctx.api("/api/upwork")', src)

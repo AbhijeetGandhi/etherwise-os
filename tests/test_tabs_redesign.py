@@ -23,7 +23,7 @@ from tests.test_cockpit import seed_today
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "modules" / "cockpit" / "static"
-SECTIONS = ("today", "money", "clients", "knowledge", "activity", "review", "upwork")
+SECTIONS = ("today", "money", "clients", "knowledge", "activity", "review", "upwork", "lifecycle")
 
 
 def _node():
