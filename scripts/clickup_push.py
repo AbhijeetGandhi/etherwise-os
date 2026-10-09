@@ -114,6 +114,21 @@ def is_invite(row) -> bool:
     return (_breakdown(row).get("bonuses") or {}).get("invite", 0) > 0
 
 
+def _test_note(row) -> str:
+    """One line above a draft written under a test (modules/upwork/experiments),
+    so the letter he edits keeps its version and the proposal still counts."""
+    try:
+        t = (json.loads(row.get("draft_evidence_json") or "{}") or {}).get("test")
+    except (TypeError, ValueError):
+        t = None
+    if not t:
+        return ""
+    keep = ("keep the first two sentences about the client (no I / we / my / our)"
+            if t.get("arm") == "B" else "send the opening as written")
+    return (f"**Test {str(t.get('id', '')).split('-')[0].upper()} · version {t.get('arm')}"
+            f" — {t.get('label')}.** To count, {keep}.")
+
+
 def task_body(row) -> str:
     """v2 _build_clickup_description format — job_url FROM THE ROW."""
     s = _breakdown(row)
@@ -146,7 +161,11 @@ def task_body(row) -> str:
         if s.get(key) is not None:
             lines.append(f"**{label}**: {s.get(key)}")
     if row.get("draft_proposal"):
-        lines += ["", "## Draft Proposal", "", row["draft_proposal"], ""]
+        lines += ["", "## Draft Proposal", ""]
+        test = _test_note(row)
+        if test:
+            lines += [test, ""]
+        lines += [row["draft_proposal"], ""]
     lines += [
         "## Client Context",
         f"- Country: {row.get('client_country') or '—'}",

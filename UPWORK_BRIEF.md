@@ -1215,6 +1215,20 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-09 (night) · **Upwork is the sales engine; build the whole client lifecycle.** His
+  words: "now Upwork is our sales engine ... starting with the scanner, then people we apply
+  to, then the people who opened our proposal, then the people who replied, then the people
+  who actually hired us and then how much they are paying ... each of these metrics can then
+  reflect back to the scanner ... and the proposal writer ... why 25 people did not move ahead
+  with us ... reactivation of the client ... different agents doing different things but
+  ... a cohesive knowledge base". His answers the same night: Mac stays awake with Chrome
+  open for read-only page reads; a **new top-level Pipeline tab** (Funnel and the scanner
+  funnel fold into it — no parallel dashboard); AI reading of conversations and calls up to
+  **$25** for the first pass, Globaltize excluded (their contract §6.4); reactivation =
+  **drafts, at most 5 a week**, he sends. Connects: **no fixed cap** — bids are per
+  opportunity, **300–400 connects is the ceiling** "until we hit some good clients with more
+  revenue"; the $150/week of 9 Oct is tracked, not enforced. First optimisation targets: the
+  scanner and the proposal writer.
 - 2026-10-09 · **The proposal game** — plan `docs/upwork/proposal-game-plan-2026-10-09.md`
   (awaiting his go on the build order). His ask: test one change at a time ("make this a
   game"), a tracker, a progress email, scanner feedback, and "is this all the data we can

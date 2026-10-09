@@ -332,8 +332,11 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             verdict = scoring.score_job(row, task_name=ctx.task_name,
                                         db_path=dbp)
             if verdict["score"] >= config.HOT_LEAD_THRESHOLD:
+                # invitations sit outside the cold tests (their letter is a reply)
+                kind = ("invite" if ((verdict.get("breakdown") or {}).get("bonuses")
+                                     or {}).get("invite", 0) > 0 else "cold")
                 draft, prov = scoring.draft_proposal_grounded(
-                    row, task_name=ctx.task_name, db_path=dbp)
+                    row, task_name=ctx.task_name, db_path=dbp, kind=kind)
                 if draft:
                     drafted += 1
                     grounded += 1 if prov.get("status") == "supplied" else 0

@@ -512,8 +512,42 @@ def _fact_note(f: dict) -> dict:
             "fact_text": (f.get("fact_text") or "")[:300]}
 
 
-def draft_proposal_grounded(job: dict, task_name: str, db_path=None):
+def _test_for_draft(job: dict, db_path, kind: str) -> Optional[dict]:
+    """The running test's version for this draft (modules/upwork/experiments),
+    or None. Only with an explicit db_path — the scan passes one; a unit test
+    that calls the drafter bare must never write an assignment into the live
+    database. A test must never cost a draft, so any failure here is None."""
+    if db_path is None:
+        return None
+    try:
+        from core import db
+        from modules.upwork import experiments
+        with db.connect(db_path) as conn:
+            return experiments.arm_for_draft(conn, str(job.get("id")), kind)
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _record_test(test: Optional[dict], job: dict, db_path) -> None:
+    if not test or db_path is None:
+        return
+    try:
+        from core import db
+        from modules.upwork import experiments
+        with db.connect(db_path) as conn:
+            experiments.record_draft(conn, test["experiment_id"], str(job.get("id")), test["arm"])
+    except Exception:                                     # noqa: BLE001
+        pass
+
+
+def draft_proposal_grounded(job: dict, task_name: str, db_path=None, kind: str = "cold"):
     """(draft_text_or_None, provenance) — the whole emit ladder, code-enforced.
+
+    TESTS (2026-10-09, "make this a game"): when a test is running for this kind
+    of job, the draft gets its version's instruction in the USER message — after
+    the evidence, before any retry note, on every rung — and the version goes in
+    the provenance and in experiment_assignments once a draft exists. The system
+    block never changes (it is cached for an hour, and tests pin it).
 
     1. Enough graded evidence  -> draft WITH the numbered block, then validate.
     2. Rejected, or there was never enough evidence -> plain draft, validate.
@@ -541,15 +575,22 @@ def draft_proposal_grounded(job: dict, task_name: str, db_path=None):
         if ev["status"] == "supplied" else [("plain", None, [])]
     plan.append(("plain", None, []))
 
+    test = _test_for_draft(job, db_path, kind)
+    instruction = (test or {}).get("instruction")
+    if test:
+        from modules.upwork import experiments
+        prov["test"] = experiments.prov_note(test)
+
     last_problems = []
     for attempt, block, facts in plan:
         addendum = evidence.retry_note(last_problems)
         text = draft_proposal(
             job, task_name, db_path=db_path,
-            evidence_block="\n\n".join(p for p in (block, addendum) if p)
+            evidence_block="\n\n".join(p for p in (block, instruction, addendum) if p)
             or None)
         ok, problems = evidence.validate_draft(text, reference, facts, job)
         if ok:
+            _record_test(test, job, db_path)
             prov.update({"attempt": attempt, "validated": True,
                          "retried": bool(last_problems),
                          "facts": [_fact_note(f) for f in facts]})
