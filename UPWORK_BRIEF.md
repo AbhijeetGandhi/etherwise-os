@@ -1215,6 +1215,16 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-09 (13:15 IST) · **Back up; three agents switched on; 28+ to the ICP list.** He
+  renewed both Upwork sign-ins (13:12/13:13) and added AI credit. His answers: "All three
+  now" — the conversation reader, the win-back drafter and the progress email are
+  installed (`f2c86e2`; first runs 13:28: the email sent, five check-in drafts, the reader
+  reading); the Sunday progress email stays its own email. Scanner: "28+ go into ICP and
+  the rest go in hot leads" — `config.ICP_SCORE_MIN` (= the 28 Loom bar) routes a top-band
+  card to the ICP list, 19–27 stays Hot, nothing is dropped. Globaltize: **keep as is** —
+  the API is a business service, so calls, emails and reply drafts for them continue; only
+  the conversation reader skips them (his earlier answer). The read-only pull started
+  13:29 (31 closed contracts added; the 97 conversations' messages coming in).
 - 2026-10-09 (overnight build) · **The sales engine, built from what was already stored**
   (design and state: `docs/upwork/sales-engine.md`; `548588b`, `7810efc`). A top-level
   **Pipeline** tab (Flow · Scanner · Proposals · Conversations · After the hire · Tests ·
