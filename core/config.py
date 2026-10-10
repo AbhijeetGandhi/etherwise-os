@@ -898,6 +898,14 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.upwork-conversation-codes", "catch_up": False,
      "why": "why conversations did or did not become hires; capped at $25 for"
             " the first pass and $0.50 a run; never reads Globaltize"},
+    {"key": "upwork_funnel_refresh", "label": "Funnel refresh (nightly)",
+     "task_name": "upwork_funnel_refresh", "max_age_hours": 30,   # daily 05:20 + grace
+     "degrade_kinds": (), "critical": False, "backs": "pipeline",
+     # catch-up safe: read-only on Upwork, every step resumable, the backfill
+     # an upsert — a night the Mac slept through is read the next morning
+     "launchd_label": "io.etherwise.v3.upwork-funnel-refresh", "catch_up": True,
+     "why": "new proposals, their opens, replies and hires, and the tests'"
+            " links; stale means the Pipeline and the running test stop counting"},
     {"key": "upwork_reactivation", "label": "Win-back drafts (Mondays)",
      "task_name": "upwork_reactivation", "max_age_hours": 192,
      "degrade_kinds": (), "critical": False, "backs": "pipeline", "empty_ok": True,

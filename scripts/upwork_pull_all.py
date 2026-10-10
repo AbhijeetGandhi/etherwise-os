@@ -14,8 +14,8 @@ them all, or name some):
              far, through mcp_messages' own fetch and upsert
   funnel     the proposals since the research (8 Oct) and a fresh read of the
              last FRESH_DAYS days' (their status, room and job move): the
-             research fetchers in var/prop (list + get, rooms, jobs), the rows
-             export, then the funnel backfill. Old lists and the recent gets
+             research fetchers (scripts/funnel: list + get, rooms, jobs), the
+             dataset, features and rows, then the funnel backfill. Old lists and the recent gets
              and jobs are MOVED aside (never deleted) so they are read again.
              New rows are labelled 'refresh <day>'; a stored row keeps its label.
 
@@ -223,18 +223,18 @@ def step_funnel(db_path, dry: bool) -> dict:
     _move_aside(gets, f"proposal reads from the last {FRESH_DAYS} days")
     _move_aside(rooms, f"room reads from the last {FRESH_DAYS} days")
     _move_aside(jobs, f"job reads from the last {FRESH_DAYS} days")
-    _run("var/prop/fetch.py")
+    _run("scripts/funnel/fetch.py")
     if _tail_says_stopped(PROP / "fetch.log"):
         raise RuntimeError("the proposals fetch stopped (see var/prop/fetch.log)")
-    _run("var/prop/fetch_rooms.py")
-    _run("var/prop/fetch_jobs.py")
+    _run("scripts/funnel/fetch_rooms.py")
+    _run("scripts/funnel/fetch_jobs.py")
     if _tail_says_stopped(PROP / "fetch_jobs.log"):
         raise RuntimeError("the jobs fetch stopped (see var/prop/fetch_jobs.log)")
     # the research's own chain, in its order: one record per proposal (with the
     # ledger), the letter and context features, then the flat rows the backfill reads
-    _run("var/prop/build_dataset.py")
-    _run("var/prop/features.py")
-    _run("var/prop/export_rows.py")
+    _run("scripts/funnel/build_dataset.py")
+    _run("scripts/funnel/features.py")
+    _run("scripts/funnel/export_rows.py")
     _run("scripts/proposal_funnel_backfill.py", "--apply", "--source",
          f"refresh {date.today().isoformat()}")
     with db.connect(db_path) as conn:
@@ -249,6 +249,8 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--rooms", type=int, default=0, help="messages: read at most this many rooms")
     ap.add_argument("--db", type=Path, default=None)
+    ap.add_argument("--json-out", type=Path, default=None,
+                    help="write each step's result here (the nightly refresh reads it)")
     a = ap.parse_args(argv)
     steps = a.steps or list(STEPS)
     bad = [x for x in steps if x not in STEPS]
@@ -256,6 +258,16 @@ def main(argv=None) -> int:
         ap.error(f"unknown step(s): {', '.join(bad)} (choose from {', '.join(STEPS)})")
     dbp = a.db or config.DB_PATH
     log(f"START {', '.join(steps)}{' (dry run)' if a.dry_run else ''}")
+    results: dict = {}
+
+    def done(code: int) -> int:
+        if a.json_out:
+            try:
+                Path(a.json_out).write_text(json.dumps({"exit": code, "steps": results}))
+            except OSError:
+                pass
+        return code
+
     for st in steps:
         try:
             if st == "contracts":
@@ -264,15 +276,18 @@ def main(argv=None) -> int:
                 m = step_messages(dbp, a.dry_run, a.rooms)
             else:
                 m = step_funnel(dbp, a.dry_run)
+            results[st] = m
             log(f"{st}: {json.dumps(m)}")
         except Exception as exc:                           # noqa: BLE001
             if _is_auth(exc):
+                results[st] = {"stopped": "sign-in refused"}
                 log(f"STOPPED at {st}: the Upwork sign-in was refused — not retried. {str(exc)[:200]}")
-                return 2
+                return done(2)
+            results[st] = {"failed": repr(exc)[:300]}
             log(f"{st} FAILED: {exc!r}")
-            return 1
+            return done(1)
     log("DONE")
-    return 0
+    return done(0)
 
 
 if __name__ == "__main__":
