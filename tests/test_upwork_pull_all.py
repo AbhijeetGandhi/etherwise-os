@@ -4,7 +4,7 @@
 Pins what can be held without the network: which conversations it would read
 (proposal rooms with no stored message first, newest first, then client
 rooms), that a dry run touches nothing, that files it re-reads are MOVED aside
-and never deleted, that a refused sign-in stops the run (exit 2, never
+(one previous copy each, so nothing grows), that a refused sign-in stops the run (exit 2, never
 retried), and that the funnel backfill keeps a stored row's label.
 """
 from __future__ import annotations
@@ -72,8 +72,12 @@ class TestPullAll(PullCase):
         n = pull._move_aside([d / "p1.json", d / "nope.json"], "reads")
         self.assertEqual(n, 1)
         self.assertFalse((d / "p1.json").exists())
-        kept = list((self.tmp / "raw").glob("get_before_*/p1.json"))
-        self.assertEqual(len(kept), 1)
+        self.assertEqual((self.tmp / "raw" / "get_previous" / "p1.json").read_text(), "{}")
+        # the next night replaces the previous copy: the folder never grows
+        (d / "p1.json").write_text('{"night": 2}')
+        pull._move_aside([d / "p1.json"], "reads")
+        self.assertEqual((self.tmp / "raw" / "get_previous" / "p1.json").read_text(), '{"night": 2}')
+        self.assertEqual(len(list((self.tmp / "raw").iterdir())), 2)          # get/ and get_previous/
 
     def test_a_refused_sign_in_stops_the_run_and_is_not_retried(self):
         from modules.upwork.feeds import mcp_client

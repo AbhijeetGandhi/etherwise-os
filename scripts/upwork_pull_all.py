@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -174,16 +175,17 @@ def step_messages(db_path, dry: bool, limit: int = 0) -> dict:
 # ── funnel: new proposals, and a fresh read of the recent ones ───────────────
 
 def _move_aside(paths, label: str) -> int:
-    """Move files to an archive folder beside them — never delete."""
+    """Move files into `<folder>_previous/` beside them, so the fetchers read
+    them again. One previous copy per file, replaced each night: the folder
+    never grows, and nothing is deleted outright."""
     n = 0
-    stamp = datetime.now().strftime("%Y%m%d-%H%M")
     for p in paths:
         p = Path(p)
         if not p.exists():
             continue
-        dest = p.parent.parent / f"{p.parent.name}_before_{stamp}"
+        dest = p.parent.parent / f"{p.parent.name}_previous"
         dest.mkdir(exist_ok=True)
-        shutil.move(str(p), str(dest / p.name))
+        os.replace(str(p), str(dest / p.name))
         n += 1
     log(f"  moved aside {n} {label}")
     return n
