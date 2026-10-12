@@ -51,10 +51,32 @@ class TestSeedAndAlternate(Base):
             t = ex.running(conn, "cold")
         self.assertEqual(t["id"], ex.T1_ID)
         self.assertEqual(sorted(t["arms"]), ["A", "B"])
-        self.assertIsNone(t["arms"]["A"]["draft_instruction"])
+        # 2026-10-12: A got its own opening (he asked for two different
+        # versions, both in his voice), so A and B no longer read the same
+        self.assertIn("VERSION A", t["arms"]["A"]["draft_instruction"])
+        self.assertIn("first person", t["arms"]["A"]["draft_instruction"])
         self.assertIn("client's situation", t["arms"]["B"]["draft_instruction"])
+        for arm in ("A", "B"):
+            self.assertIn("no rate", t["arms"][arm]["draft_instruction"])
         self.assertEqual((t["metric"], t["min_per_arm"], t["wait_days"], t["max_weeks"]),
                          ("replied", 40, 7, 6))
+
+    def test_sync_brings_a_stored_t1_in_line_and_keeps_assignments(self):
+        with db.connect(self.db_path) as conn:
+            # the T1 as it was stored on 9 Oct: A had no instruction
+            conn.execute("UPDATE experiment_arms SET label='As today',"
+                         " draft_instruction=NULL WHERE experiment_id=? AND arm='A'",
+                         (ex.T1_ID,))
+            conn.execute("UPDATE experiments SET change='old' WHERE id=?", (ex.T1_ID,))
+            ex.record_draft(conn, ex.T1_ID, "j1", "A")
+            self.assertEqual(ex.sync_t1(conn), 2)        # the test row + version A
+            self.assertEqual(ex.sync_t1(conn), 0)        # idempotent
+            t = ex.running(conn, "cold")
+            n = conn.execute("SELECT COUNT(*) FROM experiment_assignments").fetchone()[0]
+        self.assertEqual(t["arms"]["A"]["label"], "You first")
+        self.assertEqual(t["arms"]["A"]["draft_instruction"], ex.T1_A_INSTRUCTION)
+        self.assertIn("open with you", t["change"])
+        self.assertEqual(n, 1)
 
     def test_versions_alternate_and_stick_to_a_job(self):
         picks = []
@@ -81,12 +103,17 @@ class TestDrafter(Base):
                 job, "t", db_path=self.db_path if db_path == "db" else db_path)
         return out, dp
 
-    def test_version_b_gets_the_instruction_and_a_does_not(self):
-        (_, prov_a), dp_a = self.draft(dict(self.JOB, id="1"))
+    def test_each_version_gets_its_own_instruction(self):
+        # 2026-10-12: A has its own opening instruction too (it used to get none),
+        # and each draft opens the way its version asks, so no repair call is made
+        (_, prov_a), dp_a = self.draft(dict(self.JOB, id="1"),
+                                       texts=("I built lead intake for a CRM team. It held.",))
         (_, prov_b), dp_b = self.draft(dict(self.JOB, id="2"))
         self.assertEqual((prov_a["test"]["arm"], prov_b["test"]["arm"]), ("A", "B"))
-        self.assertIsNone(dp_a.call_args.kwargs["evidence_block"])
+        self.assertIn("TEST T1, VERSION A", dp_a.call_args.kwargs["evidence_block"])
+        self.assertNotIn("VERSION B", dp_a.call_args.kwargs["evidence_block"])
         self.assertIn("TEST T1, VERSION B", dp_b.call_args.kwargs["evidence_block"])
+        self.assertNotIn("VERSION A", dp_b.call_args.kwargs["evidence_block"])
         with db.connect(self.db_path) as conn:
             got = {r["job_id"]: r["arm"] for r in conn.execute(
                 "SELECT job_id, arm FROM experiment_assignments WHERE via='draft'")}

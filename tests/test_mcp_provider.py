@@ -309,6 +309,19 @@ class TestScanMcpProvider(McpScanCase):
         self.assertIn("mcp:airtable", result.metrics["feeds"])
         self.assertEqual(result.metrics["feeds"]["mcp:airtable"]["new"], 2)
 
+    def test_screening_questions_are_kept_for_the_drafter(self):
+        """2026-10-12: the `get` carries a post's screening questions; the claim
+        path dropped them, so the draft never answered them (migration 040)."""
+        result = self.run_scan(FakeSession())
+        self.assertEqual(result.status, "completed", result.error)
+        rows = {r["id"]: r for r in self.rows("SELECT * FROM scored_jobs")}
+        self.assertEqual(json.loads(rows[J_HOURLY]["screening_questions_json"]),
+                         ["Describe 2\u20133 production AI automation systems you've built"])
+        self.assertIsNone(rows[J_FIXED]["screening_questions_json"])     # none asked
+        self.assertIsNone(rows[J_OLD]["screening_questions_json"])       # no `get`
+        self.assertIn("1. Describe 2\u20133 production AI automation systems",
+                      scoring.job_brief(rows[J_HOURLY]))
+
     def test_second_round_claims_nothing_and_skips_empty(self):
         self.run_scan(FakeSession())
         result = self.run_scan(FakeSession())

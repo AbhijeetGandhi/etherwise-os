@@ -129,7 +129,7 @@ def _test_note(row) -> str:
     if not t:
         return ""
     keep = ("keep the first two sentences about the client (no I / we / my / our)"
-            if t.get("arm") == "B" else "send the opening as written")
+            if t.get("arm") == "B" else "keep the opening about you and your work")
     return (f"**Test {str(t.get('id', '')).split('-')[0].upper()} · version {t.get('arm')}"
             f" — {t.get('label')}.** To count, {keep}.")
 

@@ -124,10 +124,15 @@ class TestReadersFollowConfig(unittest.TestCase):
         # live behaviour at today's values (2026-09-23): the hot bar sits ON the
         # card floor, so the Low and Standard lists receive nothing. Every card
         # is hot or there is no card — the routing IS the collapse.
-        for score in (19, 21, 23, 30):
+        for score in (19, 21, 23, 27):
             self.assertEqual(clickup_push.list_for_score(score, invite=False),
                              clickup_push.LIST_HOT, score)
         self.assertIsNone(clickup_push.list_for_score(18, invite=False))
+        # since 2026-10-09 the top band goes to the ICP list (config.ICP_SCORE_MIN,
+        # his "28+ go into ICP and the rest go in hot leads")
+        for score in (config.ICP_SCORE_MIN, 30):
+            self.assertEqual(clickup_push.list_for_score(score, invite=False),
+                             clickup_push.LIST_ICP, score)
 
     def test_clickup_priority_reads_config_at_call_time(self):
         row = {"score": 28, "score_breakdown_json": "{}"}

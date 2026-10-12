@@ -242,6 +242,26 @@ def _fetch_chrome(ctx, dbp, _sleep) -> dict:
     return feeds
 
 
+def _store_screening(dbp, jobs, claimed) -> int:
+    """Keep Upwork's screening questions for the jobs this round claimed
+    (migration 040), so the draft writer can answer them. They arrive on the
+    `get` (mcp_feed puts them in mcp_extra), which feed_bridge's claim does not
+    store. One short write after every network call (finding 12)."""
+    rows = []
+    for job in jobs:
+        jid = str(job.get("id") or "")
+        qs = [str(q).strip() for q in
+              ((job.get("mcp_extra") or {}).get("screening_questions") or [])
+              if str(q or "").strip()]
+        if qs and jid in claimed:
+            rows.append((json.dumps(qs), jid))
+    if rows:
+        with db.connect(dbp) as conn:
+            conn.executemany(
+                f"UPDATE {TABLE} SET screening_questions_json=? WHERE id=?", rows)
+    return len(rows)
+
+
 def _fetch_mcp(ctx, dbp) -> dict:
     """Provider 'mcp': one bounded standing-query round, then the SAME claim
     path as Chrome (feed_bridge.process — the Iron-Law validation, the
@@ -281,14 +301,19 @@ def _fetch_mcp(ctx, dbp) -> dict:
                 f" (< {config.MCP_MIN_HEALTHY_SURFACED}) — lead-gen is under-scanning")
     feeds = {}
     by_feed: dict = {}
+    claimed: set = set()
     for job in round_["jobs"]:
         by_feed.setdefault(job.get("feed_source") or "mcp", []).append(job)
     for feed, jobs in by_feed.items():
         summary = feed_bridge.process(feed, jobs, db_path=dbp, table=TABLE,
                                       feeds=(feed,))
+        claimed.update(str(i) for i in summary.get("claimed_ids") or [])
         feeds[feed] = {k: summary[k] for k in
                        ("extracted", "valid", "new", "known", "invalid")}
         feeds[feed]["source"] = "mcp"
+    stored = _store_screening(dbp, round_["jobs"], claimed)
+    if stored:
+        ctx.log(f"mcp round: screening questions kept for {stored} new job(s)")
     # every query the round ran is reported, claimed something or not — a
     # query that surfaced only known/cut rows still proves it ran
     for feed, fm in m["by_feed"].items():

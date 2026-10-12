@@ -606,6 +606,40 @@ def allowed_claims(reference: str, facts: List[dict], job: dict) -> dict:
             "clients": set(pairs)}
 
 
+# Claims that carry no number, so the number checks below cannot see them
+# (2026-10-12). Once the drafter was handed Upwork's screening questions, the
+# first test draft said "I hold the Airtable Builder Certification" and "over
+# five years" — the very gate the job set, and two years more than he has.
+# Section 15 of the reference keeps certifications out of letters entirely, and
+# Section 4 says three years.
+_CREDENTIAL = re.compile(
+    r"\bI\s+(?:hold|have|earned|got|passed|am)\b[^.!?\n]{0,60}?\bcertifi\w*", re.I)
+_NEGATION = re.compile(r"\b(?:not|never|no)\b|n['’]t\b", re.I)
+_YEARS_WORDS = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20}
+# the years phrase must follow an "I" in the same sentence: "I have been doing
+# this for five years", not "your team has run for ten years, and I would"
+_YEARS = re.compile(r"\bI\b[^.!?\n]{0,80}?\b(\d+|" + "|".join(_YEARS_WORDS)
+                    + r")\+?\s+years\b", re.I)
+YEARS_MAX = 3
+
+
+def claim_problems(draft: str) -> List[dict]:
+    """Credentials and years of experience claimed in the first person."""
+    problems: List[dict] = []
+    for m in _CREDENTIAL.finditer(draft or ""):
+        if _NEGATION.search(m.group(0)):
+            continue                      # "I have not taken the certification"
+        problems.append({"kind": "credential_claim", "value": m.group(0).strip()[:90]})
+    for sentence in _SENTENCE.findall(draft or ""):
+        for m in _YEARS.finditer(sentence):
+            raw = m.group(1).lower()
+            n = int(raw) if raw.isdigit() else _YEARS_WORDS.get(raw, 0)
+            if n > YEARS_MAX:
+                problems.append({"kind": "years_claim", "value": f"{m.group(1)} years"})
+    return problems
+
+
 def validate_draft(draft: str, reference: str, facts: List[dict],
                    job: dict) -> Tuple[bool, List[dict]]:
     """(ok, problems). A problem is a claim that traces to nothing we supplied.
@@ -636,6 +670,7 @@ def validate_draft(draft: str, reference: str, facts: List[dict],
             problems.append({"kind": "client_number_mismatch",
                              "client": named[0], "value": value,
                              "sentence": sentence.strip()[:160]})
+    problems.extend(claim_problems(draft))
     return (not problems), problems
 
 
@@ -665,6 +700,12 @@ def retry_note(problems: List[dict]) -> str:
         if p["kind"] == "client_number_mismatch":
             lines.append("- %s is not a figure on record for %s"
                          % (pretty, p.get("client")))
+        elif p["kind"] == "credential_claim":
+            lines.append("- \"%s\": no certification is on record; claim none"
+                         % pretty)
+        elif p["kind"] == "years_claim":
+            lines.append("- \"%s\": his experience is three years (Section 4)"
+                         % pretty)
         else:
             lines.append("- %s appears in no source" % pretty)
     return "\n".join(lines)

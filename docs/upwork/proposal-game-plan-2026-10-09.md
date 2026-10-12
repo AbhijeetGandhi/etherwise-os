@@ -1,6 +1,6 @@
 # The proposal game: plan for your approval
 
-*Prepared 9 Oct 2026 for Abhijeet. Status: his four answers are in (section 0). Built overnight 9 Oct: T1 in the draft writer (`9719bf5`), the Pipeline tab with the tests view, the progress email (`548588b`, `7810efc`; the email is not switched on yet). The whole engine: `docs/upwork/sales-engine.md`.*
+*Prepared 9 Oct 2026 for Abhijeet. Status: his four answers are in (section 0). Built overnight 9 Oct: T1 in the draft writer (`9719bf5`), the Pipeline tab with the tests view, the progress email (`548588b`, `7810efc`; the email is not switched on yet). The whole engine: `docs/upwork/sales-engine.md`. 12 Oct: version A now opens with you, as your own letters do (it had no instruction, and most A drafts opened with the client); version B is unchanged apart from "do not judge or praise their plan". No test letter had been sent.*
 
 ---
 

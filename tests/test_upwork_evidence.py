@@ -492,5 +492,45 @@ class TestTheEmitLadder(unittest.TestCase):
         self.assertIn("citation", prov["facts"][0])
 
 
+
+class TestClaimsWithoutNumbers(unittest.TestCase):
+    """2026-10-12: the first draft written with a job's screening questions said
+    "I hold the Airtable Builder Certification" (the job's own gate) and "over
+    five years". Neither carries a number the number checks could see."""
+
+    def problems(self, text):
+        return evidence.claim_problems(text)
+
+    def test_a_claimed_certification_is_a_problem(self):
+        for text in ("I hold the Airtable Builder Certification and am a partner.",
+                     "I am Airtable certified."):
+            self.assertEqual([p["kind"] for p in self.problems(text)],
+                             ["credential_claim"], text)
+
+    def test_saying_he_does_not_hold_one_is_fine(self):
+        for text in ("I do not hold the Airtable Builder Certification yet.",
+                     "I have not taken the certification, but I have built 49+ bases."):
+            self.assertEqual(self.problems(text), [], text)
+
+    def test_more_years_than_he_has_is_a_problem(self):
+        for text in ("I have been doing this kind of work for over five years.",
+                     "I have 7 years of experience.", "I have Five years in Make."):
+            self.assertEqual([p["kind"] for p in self.problems(text)],
+                             ["years_claim"], text)
+
+    def test_his_real_spans_and_the_clients_years_are_fine(self):
+        for text in ("Over the past three years I have built 3,000+ Make.com automations.",
+                     "I have been their architect for close to two years.",
+                     "Your team has run this process for ten years, and I would start there."):
+            self.assertEqual(self.problems(text), [], text)
+
+    def test_the_validator_rejects_them_and_says_why(self):
+        ok, problems = evidence.validate_draft(
+            "Hi,\n\nI hold the Airtable Builder Certification.", "", [], {})
+        self.assertFalse(ok)
+        note = evidence.retry_note(problems)
+        self.assertIn("no certification is on record", note)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,7 +54,26 @@ T1_B_INSTRUCTION = (
     "- No credentials, no years of experience, no proof points, and no \"I\","
     " \"we\", \"my\", \"our\" or \"Etherwise\" in those two sentences. Proof and"
     " who you are come after.\n"
-    "Everything else follows the reference unchanged: voice, length, rate,"
+    "- Describe their situation; do not judge, approve or praise their plan.\n"
+    "Everything else follows the reference unchanged: voice, length, no rate,"
+    " no em dashes, no contractions.")
+
+# Version A's own opening (Abhijeet, 2026-10-12, before any test letter was
+# sent): "we wanna try with different version but the tonality the the
+# statment forming and all that hsould feel personally written by me and
+# rather than ai". Until then A had no instruction, and 12 of 19 A drafts
+# opened with the client anyway, so the two versions read the same.
+T1_A_INSTRUCTION = (
+    "TEST T1, VERSION A — the opening. For this draft only, the first two"
+    " sentences follow this rule, which takes precedence over the reference's"
+    " guidance on openings:\n"
+    "- Open with Abhijeet himself, the way his own letters open: the first"
+    " sentence is in the first person and says what he has built or run that"
+    " matches this job, using a real anchor from the reference or the evidence,"
+    " and the second ties it to what this post needs.\n"
+    "- No generic claim of years of experience, no fit claim (\"great fit\","
+    " \"exactly what I do\") and no enthusiasm.\n"
+    "Everything else follows the reference unchanged: voice, length, no rate,"
     " no em dashes, no contractions.")
 
 T1 = {
@@ -72,8 +91,10 @@ T1 = {
         " letter has opened with credentials)."),
     "change": (
         "Every other cold draft opens with the client's situation (version B);"
-        " the others are written as today (version A). Volume: about 25 cold"
-        " proposals a week, top band first, within 24 hours of the post."),
+        " the others open with you, the way your own letters do (version A,"
+        " given its own instruction on 12 Oct, before any test letter was"
+        " sent). Volume: about 25 cold proposals a week, top band first, within"
+        " 24 hours of the post."),
     "scope": "cold",
     "metric": "replied",
     "min_per_arm": 40, "wait_days": 7, "max_weeks": 6,
@@ -82,10 +103,12 @@ T1 = {
     "approved_by": "Abhijeet 2026-10-09 (\"Volume + openings\")",
 }
 T1_ARMS = (
-    ("A", "As today",
-     "The draft writer as it is: the master reference alone. Since late August"
-     " almost every letter has opened with credentials.",
-     None, "the first two sentences mention you (I / we / my / our / Etherwise)"),
+    ("A", "You first",
+     "The first sentence is about you: what you have built that matches the"
+     " job, in the first person, the way your own letters open. Changed on"
+     " 12 Oct at your word, before any test letter was sent; until then A had"
+     " no instruction and most A drafts opened with the client too.",
+     T1_A_INSTRUCTION, "the first two sentences mention you (I / we / my / our / Etherwise)"),
     ("B", "The client's situation first",
      "The first two sentences describe the client's situation from the post; no"
      " credentials and no I/we until the third sentence. Everything else as today.",
@@ -117,6 +140,26 @@ def seed_t1(conn) -> bool:
             " draft_instruction, detect_rule) VALUES (?, ?, ?, ?, ?, ?)",
             (T1_ID, arm, label, desc, instr, rule))
     return True
+
+
+def sync_t1(conn) -> int:
+    """Bring the stored T1 text in line with the code; seed_t1 only ever
+    inserts. Run once on 2026-10-12, when version A got its own instruction at
+    his word. Touches the test's `change` and the two versions' label,
+    description, draft instruction and detect rule, nothing else: assignments
+    and counts stay as they are. Returns the number of rows changed."""
+    if not _has_tables(conn):
+        return 0
+    changed = conn.execute(
+        "UPDATE experiments SET change=? WHERE id=? AND change IS NOT ?",
+        (T1["change"], T1_ID, T1["change"])).rowcount
+    for arm, label, desc, instr, rule in T1_ARMS:
+        changed += conn.execute(
+            "UPDATE experiment_arms SET label=?, description=?, draft_instruction=?,"
+            " detect_rule=? WHERE experiment_id=? AND arm=? AND (label IS NOT ?"
+            " OR description IS NOT ? OR draft_instruction IS NOT ? OR detect_rule IS NOT ?)",
+            (label, desc, instr, rule, T1_ID, arm, label, desc, instr, rule)).rowcount
+    return changed
 
 
 def _has_tables(conn) -> bool:
@@ -350,6 +393,6 @@ def prov_note(test: Optional[dict]) -> Optional[dict]:
     return {"id": test["experiment_id"], "arm": test["arm"], "label": test["label"]}
 
 
-__all__ = ["T1_ID", "seed_t1", "running", "arm_for_draft", "record_draft", "detect_arm",
+__all__ = ["T1_ID", "seed_t1", "sync_t1", "running", "arm_for_draft", "record_draft", "detect_arm",
            "link_sent", "chance_better", "scoreboard", "assignments", "tests", "prov_note",
            "METRICS", "json"]

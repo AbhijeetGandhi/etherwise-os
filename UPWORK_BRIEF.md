@@ -1215,6 +1215,33 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-12 (evening) · **Proposals in his voice; the writer reads the whole post; no rate
+  line; version A opens with him.** His words on the 11 Oct ICP drafts: "too robotic",
+  "remove the part my rate is", "we want proposal to read fluently not trying to save words",
+  "you are not answering the questions in the job post. that needs to be answered
+  seperately". The three ICP proposals were rewritten by hand (ClickUp comments on
+  14zervyuqbu, 14zervyuqbr, 14zervyuk97; the 11 Oct comments marked superseded). The
+  cause in the writer: `scoring.job_brief` cut every post at 3,000 characters, and
+  Freedom Property's six questions began at character 6,114; Upwork's screening questions
+  were never stored at all. His answers: "Fix code and reference"; for T1, "we wanna try
+  with different version but the tonality ... should feel personally written by me";
+  the Airtable Delivery Expert job (cert required, $25-35): skip. Built: the whole post
+  reaches the writer; migration 040 keeps screening questions from the MCP `get`, answered
+  after a SCREENING ANSWERS line; a valid draft that is over Upwork's 5,000 characters, or
+  opens against its test version, is written again once and flagged if still off
+  (`scoring.letter_issues`); the sign-off is moved after the post's answers
+  (`scoring.tidy_letter`); the validator now rejects a claimed certification and more
+  than three years of experience (the first test draft claimed both); the system prompt
+  forbids invented stories and asks for a NOTE FOR ABHIJEET instead, and the reference
+  gained Section 18, ten true stories from his calls and letters to tell as written.
+  Checked on two live jobs: the post's six questions answered, no rate, both openings B,
+  the screening gap left to him; it still embellishes details at times, so drafts need
+  his read before sending. Version A got its own instruction (open with him, as his own letters do),
+  applied to the stored test by `experiments.sync_t1` (nothing had been sent; 31 A and 30
+  B assignments kept). His reference (`upwork/proposal-writing-master-reference.md`,
+  backup in `var/prop/life/icp_v2/`): no rate in the letter, questions in their own section
+  ("Q1." headings), full connected sentences instead of fragments, and two of his own
+  reply-winning letters as the voice examples in place of the fragment-style one.
 - 2026-10-09 (13:15 IST) · **Back up; three agents switched on; 28+ to the ICP list.** He
   renewed both Upwork sign-ins (13:12/13:13) and added AI credit. His answers: "All three
   now" — the conversation reader, the win-back drafter and the progress email are

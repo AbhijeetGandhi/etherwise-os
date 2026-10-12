@@ -441,6 +441,14 @@ _DRAFT_SYSTEM_PREFIX = (
     " message. If a number, a client name or a project detail is in neither,"
     " you may not write it — write the sentence without it, or leave the claim"
     " out. An unsupported specific is worse than no specific.\n\n"
+    "Stories are claims too. Never invent an event, a conversation, a problem,"
+    " a mistake, a fix or a detail about a past project, and never move a real"
+    " story from one client to another: tell a story only as the reference or"
+    " the EVIDENCE block tells it. When a question asks for an example that"
+    " neither of them holds (a scope dispute, a mistake, a team problem), write"
+    " NOTE FOR ABHIJEET: no example on record for this question, and leave the"
+    " answer for him. Never claim a certification, a qualification or more"
+    " years of experience than the reference states.\n\n"
     "--- REFERENCE ---\n\n")
 
 
@@ -478,14 +486,132 @@ def draft_system() -> str:
     return _DRAFT_SYSTEM_PREFIX + proposal_reference()
 
 
+def screening_questions(job: dict) -> list:
+    """Upwork's screening questions for this job (migration 040), or []."""
+    raw = job.get("screening_questions_json")
+    if not raw:
+        return []
+    try:
+        qs = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    return [str(q).strip() for q in (qs or []) if str(q or "").strip()]
+
+
+# Upwork's cover letter box (a platform limit, not a tunable): a longer letter
+# is cut off. LETTER_TARGET_CHARS is what the brief asks for, leaving room for
+# his own edits.
+LETTER_MAX_CHARS = 5000
+LETTER_TARGET_CHARS = 4700
+SCREENING_MARK = "SCREENING ANSWERS"
+
+
+def letter_chars(text: Optional[str]) -> int:
+    """Characters in the part that goes in the cover letter box: everything
+    before a SCREENING ANSWERS line (those go in their own boxes)."""
+    body = text or ""
+    cut = re.search(r"(?m)^\s*" + SCREENING_MARK + r"\s*$", body)
+    return len((body[:cut.start()] if cut else body).rstrip())
+
+
+def length_note(chars: int) -> str:
+    return (f"SHORTEN. The cover letter in the previous attempt (everything"
+            f" before any {SCREENING_MARK} line) was {chars:,} characters, and"
+            f" Upwork cuts the box off at {LETTER_MAX_CHARS:,}. Write it again"
+            f" under {LETTER_TARGET_CHARS:,} characters. Keep every question"
+            " answered and keep full sentences: shorten by saying less, never by"
+            " cutting sentences into fragments.")
+
+
+_SIGNOFF = re.compile(r"(?m)^[ \t]*Best,?[ \t]*(?:\n[ \t]*)?Abhijeet(?: Gandhi)?[ \t]*$")
+_ANSWERS = re.compile(r"(?m)^[ \t]*Answers to your questions[ \t]*:?[ \t]*$")
+_RULE = re.compile(r"(?m)^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\n|$)")
+_SCREENING_LINE = re.compile(r"(?m)^[ \t]*" + SCREENING_MARK + r"[ \t]*$")
+
+
+def tidy_letter(text: Optional[str]) -> str:
+    """Layout only, never wording. Drops markdown rules ("---"), and when the
+    answers to the post's own questions come after the sign-off (the first
+    drafts of 2026-10-12 did this twice despite the reference), moves the
+    sign-off to after the last answer. Screening answers stay after it."""
+    body = _RULE.sub("", text or "")
+    cut = _SCREENING_LINE.search(body)
+    head, tail = (body[:cut.start()], body[cut.start():]) if cut else (body, "")
+    sign, ans = _SIGNOFF.search(head), _ANSWERS.search(head)
+    if sign and ans and sign.start() < ans.start():
+        head = (head[:sign.start()] + head[sign.end():]).rstrip() \
+            + "\n\n" + sign.group(0).strip()
+    out = head.rstrip() + ("\n\n" + tail.strip() if tail else "")
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+OPENING_NOTES = {
+    "B": ("OPENING. The previous attempt's first two sentences mentioned you (I,"
+          " me, my, we, our or Etherwise). This draft is test version B: the first"
+          " two sentences are about the client's situation only, without those"
+          " words. Write it again with that opening; the rest may stay as it was."),
+    "A": ("OPENING. The previous attempt's first two sentences did not mention you."
+          " This draft is test version A: the first sentence is in the first person"
+          " and says what you have built that matches this job. Write it again with"
+          " that opening; the rest may stay as it was."),
+}
+
+
+def letter_issues(text: Optional[str], test: Optional[dict] = None) -> list:
+    """[(kind, note)] for what a VALID draft still breaks that the claim
+    validator cannot see: Upwork's 5,000-character box, and the opening its
+    test version asks for (a B letter that opens with "I" is counted as A, so
+    the test loses the draft it was written for)."""
+    out = []
+    n = letter_chars(text)
+    if n > LETTER_MAX_CHARS:
+        out.append(("too_long", length_note(n)))
+    if test and test.get("arm") in OPENING_NOTES:
+        from modules.upwork import experiments
+        got = experiments.detect_arm(test.get("experiment_id"), text)
+        if got and got != test["arm"]:
+            out.append(("opening", OPENING_NOTES[test["arm"]]))
+    return out
+
+
+def _badness(text: Optional[str], test: Optional[dict]) -> tuple:
+    issues = letter_issues(text, test)
+    return (len(issues), max(0, letter_chars(text) - LETTER_MAX_CHARS))
+
+
+SCREENING_INSTRUCTION = (
+    "This job also has Upwork screening questions. Upwork shows each one in its"
+    " own answer box, separate from the cover letter. After the letter and its"
+    " sign-off, write a line that says SCREENING ANSWERS, then answer every"
+    " question in order, each under its own heading (Q1., Q2., ...), in full"
+    " sentences, ready to paste into its box.")
+
+
 def job_brief(job: dict) -> str:
-    return ("Draft a proposal for this job. Return ONLY the proposal text.\n\n"
-            f"Title: {job.get('title')}\n"
-            f"Description: {(job.get('description') or '')[:3000]}\n"
-            f"Type: {job.get('contract_type')}"
-            f" Budget: {job.get('fixed_budget') or ''}"
-            f" ${job.get('hourly_min')}-{job.get('hourly_max')}/hr\n"
-            f"Skills: {job.get('skills_json')}")
+    """The job as the drafter sees it: the WHOLE post, and Upwork's screening
+    questions when the feed carried them.
+
+    Until 2026-10-12 this cut the description at 3,000 characters. Upwork posts
+    run to about 7,000, and a post's own questions usually come last ("How to
+    Apply"), so they never reached the model: Freedom Property's six questions
+    started at character 6,114 and the draft answered none of them. Never
+    slice the post (tests/test_upwork_drafting.py pins this)."""
+    brief = ("Draft a proposal for this job. Return ONLY the proposal text.\n\n"
+             f"Title: {job.get('title')}\n"
+             f"Description: {job.get('description') or ''}\n"
+             f"Type: {job.get('contract_type')}"
+             f" Budget: {job.get('fixed_budget') or ''}"
+             f" ${job.get('hourly_min')}-{job.get('hourly_max')}/hr\n"
+             f"Skills: {job.get('skills_json')}")
+    qs = screening_questions(job)
+    brief += (f"\n\nThe cover letter must stay under {LETTER_TARGET_CHARS:,}"
+              f" characters; Upwork cuts it off at {LETTER_MAX_CHARS:,}.")
+    if qs:
+        brief += " The screening answers have their own boxes and do not count toward it."
+        brief += ("\n\nUpwork screening questions:\n"
+                  + "\n".join(f"{i}. {q}" for i, q in enumerate(qs, 1))
+                  + "\n\n" + SCREENING_INSTRUCTION)
+    return brief
 
 
 def draft_proposal(job: dict, task_name: str, db_path=None,
@@ -500,7 +626,7 @@ def draft_proposal(job: dict, task_name: str, db_path=None,
         task_name=task_name, model_key="drafting",
         system=draft_system(), user_content=user,
         purpose=f"draft {job.get('id')}", db_path=db_path)
-    return result.text.strip()
+    return tidy_letter(result.text)
 
 
 def _fact_note(f: dict) -> dict:
@@ -589,7 +715,28 @@ def draft_proposal_grounded(job: dict, task_name: str, db_path=None, kind: str =
             evidence_block="\n\n".join(p for p in (block, instruction, addendum) if p)
             or None)
         ok, problems = evidence.validate_draft(text, reference, facts, job)
+        issues = letter_issues(text, test) if ok else []
+        if issues:
+            # A valid draft that is too long for Upwork's box, or opens against
+            # its test version: ONE more call on the same rung, told exactly
+            # what to change. The repair is kept only when it is valid and
+            # better; a draft that still breaks a rule is flagged, never
+            # dropped (he can fix an opening; he cannot send an empty card).
+            fixed = draft_proposal(
+                job, task_name, db_path=db_path,
+                evidence_block="\n\n".join(
+                    p for p in (block, instruction, *(n for _, n in issues)) if p))
+            ok2, _ = evidence.validate_draft(fixed, reference, facts, job)
+            if ok2 and _badness(fixed, test) < _badness(text, test):
+                text = fixed
+            prov["repaired"] = [k for k, _ in issues]
         if ok:
+            prov["letter_chars"] = letter_chars(text)
+            left = [k for k, _ in letter_issues(text, test)]
+            if left:
+                prov["letter_issues"] = left
+            if "too_long" in left:
+                prov["too_long"] = True
             _record_test(test, job, db_path)
             prov.update({"attempt": attempt, "validated": True,
                          "retried": bool(last_problems),

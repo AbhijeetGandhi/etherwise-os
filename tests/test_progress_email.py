@@ -100,18 +100,20 @@ class TestRun(unittest.TestCase):
             x.stop()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def go(self, shadow, sent):
+    def go(self, shadow, sent, today="2026-10-09"):
         with mock.patch.dict(config.SHADOW_MODE, {"upwork": shadow}), \
                 mock.patch("modules.cockpit.lifecycle.lifecycle", return_value=L), \
                 mock.patch("modules.cockpit.proposal_funnel.funnel", return_value=D):
             return runner.run_task(pe.TASK_NAME,
-                                   lambda ctx: pe.run(ctx, _send=lambda s, h: sent.append(s), _today="2026-10-09"),
+                                   lambda ctx: pe.run(ctx, _send=lambda s, h: sent.append(s), _today=today),
                                    module="upwork", db_path=self.db_path)
 
     def test_live_sends_once_a_day(self):
+        # the once-a-day guard reads the runs' real start dates, so the email
+        # day here must be the real one (a fixed 9 Oct only passed on 9 Oct)
         sent = []
-        r1 = self.go(False, sent)
-        r2 = self.go(False, sent)
+        r1 = self.go(False, sent, today=None)
+        r2 = self.go(False, sent, today=None)
         self.assertEqual((r1.status, r2.status), ("completed", "skipped_empty"))
         self.assertEqual(len(sent), 1)
 
