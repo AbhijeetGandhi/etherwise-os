@@ -96,6 +96,34 @@ class TestPullAll(PullCase):
         with self.assertRaises(SystemExit):
             pull.main(["everything", "--db", str(self.db_path)])
 
+    def test_the_new_step_is_named_only_never_part_of_all(self):
+        self.assertNotIn("new", pull.STEPS)
+        self.assertIn("new", pull.EXTRA_STEPS)
+
+    def test_the_new_step_reads_nothing_when_nothing_is_new(self):
+        with mock.patch.object(pull, "_run", side_effect=AssertionError("nothing to read")):
+            rc = pull.main(["new", "--db", str(self.db_path)])
+        self.assertEqual(rc, 0)
+        self.assertIn('new: {"new": 0}', (self.tmp / "pull.log").read_text())
+
+    def test_the_new_step_runs_the_chain_without_moving_anything_aside(self):
+        from datetime import date
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO proposals (id, created_dt, job_title) VALUES ('n1', ?, 't')",
+                         (date.today().isoformat() + "T08:10:06+00:00",))
+        ran = []
+        with mock.patch.object(pull, "_run", side_effect=lambda *c: ran.append(c)), \
+             mock.patch.object(pull, "_move_aside", side_effect=AssertionError("nothing is moved")), \
+             mock.patch.object(pull, "_tail_says_stopped", return_value=False):
+            rc = pull.main(["new", "--db", str(self.db_path)])
+        self.assertEqual(rc, 0)
+        self.assertEqual([c[0] for c in ran], [
+            "scripts/funnel/fetch.py", "scripts/funnel/fetch_jobs.py", "scripts/funnel/build_dataset.py",
+            "scripts/funnel/features.py", "scripts/funnel/export_rows.py",
+            "scripts/proposal_funnel_backfill.py"])
+        self.assertEqual(ran[0], ("scripts/funnel/fetch.py", "--new-only"))
+        self.assertTrue(ran[-1][-1].startswith("top-up "))
+
 
 class TestBackfillKeepsTheLabel(unittest.TestCase):
     def test_a_stored_row_keeps_its_source_on_refresh(self):

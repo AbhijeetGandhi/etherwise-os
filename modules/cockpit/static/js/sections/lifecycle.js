@@ -69,6 +69,7 @@ const TASK_WORDS = {
   upwork_pulse: "the 15-minute heartbeat",
   upwork_inbox: "the inbox read",
   upwork_funnel_refresh: "the nightly funnel refresh",
+  upwork_funnel_topup: "the hourly funnel top-up",
   upwork_financials: "the Upwork ledger read (daily)",
   finance_wise_mail: "Wise payment emails",
   finance_stripe: "Stripe payments",

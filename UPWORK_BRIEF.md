@@ -1215,6 +1215,19 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-13 (night) · **Proposals reach the funnel within the hour.** His words, on the
+  Proposals view's "4 newer proposals are not in the funnel yet. The daily refresh that
+  adds them is the next thing to build": "Can we build this". The nightly refresh had been
+  running since 11 Oct (the notice was stale); the four were sent after that morning's
+  05:20 run. Built: an hourly top-up (`funnel_refresh --topup`, task upwork_funnel_topup,
+  :55) that reads only the proposals the sync has stored and the funnel has not (a `get`
+  each and their job, then the same chain and backfill; no list re-read, nothing moved
+  aside) and ties them to the running test. It skips when nothing is new and while the
+  nightly refresh holds its lock; the nightly run still re-reads opens, replies and rooms.
+  First run 00:11 IST 14 Oct: 4 added in 51 s with 8 reads (604 stored), 3 tied to T1
+  (A, B, B as drafted). The notice now says new proposals are added within the hour.
+  Registered in `config.SOURCES` (empty_ok, catch-up safe) and the rerun allowlist under
+  his "build this".
 - 2026-10-12 (evening) · **Proposals in his voice; the writer reads the whole post; no rate
   line; version A opens with him.** His words on the 11 Oct ICP drafts: "too robotic",
   "remove the part my rate is", "we want proposal to read fluently not trying to save words",

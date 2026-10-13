@@ -80,12 +80,107 @@ class TestRefresh(RefreshCase):
         self.assertEqual(fr.STEPS, ("messages", "funnel"))
 
 
+class TestTopup(RefreshCase):
+    """The hourly top-up (2026-10-13): new proposals reach the funnel within the
+    hour, not the next morning."""
+
+    def ledger(self, pid, created, job="J9"):
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO proposals (id, created_dt, job_title, marketplace_job_id)"
+                         " VALUES (?, ?, 't', ?)", (pid, created, job))
+
+    def topup(self, pull=None):
+        calls = []
+
+        def fake(ctx):
+            calls.append(1)
+            return (pull or (lambda c: (0, {"new": {"new": 1}})))(ctx)
+        r = runner.run_task(fr.TOPUP_TASK, lambda ctx: fr.topup(ctx, _pull_fn=fake),
+                            module="upwork", db_path=self.db_path)
+        return r, calls
+
+    def test_new_means_stored_by_the_sync_not_in_the_funnel_and_recent(self):
+        from datetime import date
+        self.ledger("N2", "2026-10-13T17:25:49+00:00")
+        self.ledger("N1", "2026-10-13T08:10:06+00:00")
+        self.ledger("OLD", "2026-09-01T08:00:00+00:00")          # the nightly run's to re-read
+        self.ledger("P1", "2026-10-13T09:00:00+00:00")           # already in the funnel
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(fr.new_proposal_ids(conn, today=date(2026, 10, 13)), ["N2", "N1"])
+
+    def test_nothing_new_is_a_clean_skip_with_no_reads(self):
+        r, calls = self.topup()
+        self.assertEqual(r.status, "skipped_empty")
+        self.assertEqual(calls, [])
+
+    def test_a_new_proposal_is_added_and_tied_to_its_test(self):
+        from datetime import date
+        today = date.today().isoformat()
+        self.ledger("N1", today + "T08:10:06+00:00", job="J3")
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO experiment_assignments (experiment_id, job_id, arm, via)"
+                         " VALUES (?, 'J3', 'B', 'draft')", (ex.T1_ID,))
+
+        def pull(ctx):            # what the read-only pull's backfill leaves behind
+            with db.connect(self.db_path) as conn:
+                conn.execute("INSERT INTO proposal_outcomes (proposal_id, sent_dt, kind, job_id, letter, source)"
+                             " VALUES ('N1', ?, 'cold', 'J3', ?, 'top-up')", (today + "T08:10:06Z", B_LETTER))
+            return 0, {"new": {"new": 1, "added": 1}}
+        r, calls = self.topup(pull)
+        self.assertEqual(r.status, "completed", r.error)
+        self.assertEqual((r.metrics["new"], r.metrics["added"]), (1, 1))
+        self.assertEqual(r.metrics["tests"]["linked"], 2)        # N1, and P1 from the fixture
+        with db.connect(self.db_path) as conn:
+            row = conn.execute("SELECT proposal_id, sent_arm FROM experiment_assignments WHERE job_id='J3'").fetchone()
+        self.assertEqual(tuple(row), ("N1", "B"))
+
+    def test_it_waits_for_the_nightly_refresh(self):
+        from datetime import date
+        self.ledger("N1", date.today().isoformat() + "T08:10:06+00:00")
+        held = runner._acquire_lock(fr.TASK_NAME)
+        try:
+            r, calls = self.topup()
+        finally:
+            runner._release_lock(held)
+        self.assertEqual(r.status, "skipped_empty")
+        self.assertEqual(calls, [])
+
+    def test_a_refused_sign_in_fails_once(self):
+        from datetime import date
+        self.ledger("N1", date.today().isoformat() + "T08:10:06+00:00")
+        calls = []
+
+        def refused(ctx):
+            calls.append(1)
+            return 2, {"new": {"stopped": "sign-in refused"}}
+        with self.assertRaises(RuntimeError) as cm:
+            runner.run_task(fr.TOPUP_TASK, lambda ctx: fr.topup(ctx, _pull_fn=refused),
+                            module="upwork", db_path=self.db_path)
+        self.assertIn("sign-in was refused", str(cm.exception))
+        self.assertEqual(calls, [1])                               # asked once, never again
+
+    def test_the_pull_is_asked_for_the_new_step_only(self):
+        self.assertEqual(fr.TOPUP_STEPS, ("new",))
+
+
 class TestWiring(unittest.TestCase):
     def test_scheduled_and_registered(self):
         label = "io.etherwise.v3.upwork-funnel-refresh"
         self.assertTrue((ROOT / "launchd" / f"{label}.plist").is_file())
         src = {s["key"]: s for s in config.SOURCES}["upwork_funnel_refresh"]
         self.assertEqual((src["task_name"], src["launchd_label"], src["catch_up"]), (fr.TASK_NAME, label, True))
+
+    def test_the_topup_is_scheduled_registered_and_rerunnable(self):
+        import plistlib
+        from modules.cockpit import actions
+        label = "io.etherwise.v3.upwork-funnel-topup"
+        plist = plistlib.loads((ROOT / "launchd" / f"{label}.plist").read_bytes())
+        self.assertEqual(plist["ProgramArguments"][-2:], ["modules.upwork.funnel_refresh", "--topup"])
+        self.assertEqual(plist["StartCalendarInterval"], {"Minute": 55})
+        src = {s["key"]: s for s in config.SOURCES}["upwork_funnel_topup"]
+        self.assertEqual((src["task_name"], src["launchd_label"], src["catch_up"], src["empty_ok"]),
+                         (fr.TOPUP_TASK, label, True, True))
+        self.assertEqual(actions.RERUN_JOBS["upwork_funnel_topup"], label)
 
     def test_the_research_fetchers_are_tracked_and_run_from_scripts_funnel(self):
         for f in ("fetch", "fetch_rooms", "fetch_jobs", "build_dataset", "features", "model", "export_rows"):

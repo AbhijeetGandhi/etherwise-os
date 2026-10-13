@@ -18,6 +18,10 @@ them all, or name some):
              dataset, features and rows, then the funnel backfill. Old lists and the recent gets
              and jobs are MOVED aside (never deleted) so they are read again.
              New rows are labelled 'refresh <day>'; a stored row keeps its label.
+  new        (not part of "all") the hourly top-up, 2026-10-13: only the
+             proposals the sync has stored and the funnel has not — a `get`
+             each and their job, then the same chain and backfill. No list is
+             re-read and nothing is moved aside. Rows labelled 'top-up <day>'.
 
 Not here: the open date of each proposal (it is read off the proposal page in
 Chrome, with him awake — var/prop/fetch_viewed.py), and anything that writes
@@ -54,6 +58,7 @@ LOG = PROP / "pull_all.log"
 FRESH_DAYS = 60                     # proposals this young get their status, room and job read again
 MESSAGE_PAGES = 30                  # pages of 20 per room: a long conversation is read whole
 STEPS = ("contracts", "messages", "funnel")
+EXTRA_STEPS = ("new",)              # named only, never part of "all steps"
 
 
 def log(msg: str) -> None:
@@ -245,9 +250,38 @@ def step_funnel(db_path, dry: bool) -> dict:
     return plan
 
 
+def step_new(db_path, dry: bool) -> dict:
+    from modules.upwork.funnel_refresh import new_proposal_ids
+    with db.connect(db_path) as conn:
+        ids = new_proposal_ids(conn)
+    plan = {"new": len(ids)}
+    if dry or not ids:
+        return plan
+    _run("scripts/funnel/fetch.py", "--new-only")
+    if _tail_says_stopped(PROP / "fetch.log"):
+        raise RuntimeError("the proposals fetch stopped (see var/prop/fetch.log)")
+    _run("scripts/funnel/fetch_jobs.py")
+    if _tail_says_stopped(PROP / "fetch_jobs.log"):
+        raise RuntimeError("the jobs fetch stopped (see var/prop/fetch_jobs.log)")
+    # rooms are left to the nightly run: fetch_rooms reads the previous dataset,
+    # and the room's flag already rides on the proposal's own `get`
+    _run("scripts/funnel/build_dataset.py")
+    _run("scripts/funnel/features.py")
+    _run("scripts/funnel/export_rows.py")
+    _run("scripts/proposal_funnel_backfill.py", "--apply", "--source",
+         f"top-up {date.today().isoformat()}")
+    with db.connect(db_path) as conn:
+        left = set(new_proposal_ids(conn))
+        plan["added"] = sum(1 for i in ids if i not in left)
+        plan["stored_now"] = conn.execute("SELECT COUNT(*) FROM proposal_outcomes").fetchone()[0]
+        plan["newest_now"] = conn.execute("SELECT MAX(sent_dt) FROM proposal_outcomes").fetchone()[0]
+    return plan
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("steps", nargs="*", help="any of: " + ", ".join(STEPS) + " (default: all)")
+    ap.add_argument("steps", nargs="*", help="any of: " + ", ".join(STEPS + EXTRA_STEPS)
+                    + " (default: " + ", ".join(STEPS) + ")")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--rooms", type=int, default=0, help="messages: read at most this many rooms")
     ap.add_argument("--db", type=Path, default=None)
@@ -255,9 +289,9 @@ def main(argv=None) -> int:
                     help="write each step's result here (the nightly refresh reads it)")
     a = ap.parse_args(argv)
     steps = a.steps or list(STEPS)
-    bad = [x for x in steps if x not in STEPS]
+    bad = [x for x in steps if x not in STEPS + EXTRA_STEPS]
     if bad:
-        ap.error(f"unknown step(s): {', '.join(bad)} (choose from {', '.join(STEPS)})")
+        ap.error(f"unknown step(s): {', '.join(bad)} (choose from {', '.join(STEPS + EXTRA_STEPS)})")
     dbp = a.db or config.DB_PATH
     log(f"START {', '.join(steps)}{' (dry run)' if a.dry_run else ''}")
     results: dict = {}
@@ -276,6 +310,8 @@ def main(argv=None) -> int:
                 m = step_contracts(dbp, a.dry_run)
             elif st == "messages":
                 m = step_messages(dbp, a.dry_run, a.rooms)
+            elif st == "new":
+                m = step_new(dbp, a.dry_run)
             else:
                 m = step_funnel(dbp, a.dry_run)
             results[st] = m

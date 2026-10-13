@@ -25,7 +25,11 @@ PACE_S = 6.0
 STATUSES = ("Accepted", "Offered", "Activated", "Hired", "Declined", "Withdrawn", "Pending", "Archived")
 TOOL = "list_freelancer_proposals"
 LOGF = open("var/prop/fetch.log", "a", buffering=1)
-MAX_GETS = int(sys.argv[1]) if len(sys.argv) > 1 else 100000
+_ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+MAX_GETS = int(_ARGS[0]) if _ARGS else 100000
+# the hourly top-up (2026-10-13): no list is read; the proposals the sync has
+# stored and the funnel has not are added to the census and read with a `get`
+NEW_ONLY = "--new-only" in sys.argv[1:]
 _last = [0.0]
 calls = [0]
 
@@ -129,8 +133,16 @@ def created_of(node):
     return str(a.get("displayValue") or a.get("rawValue") or "")
 
 
-def phase_get(s, org, index):
-    ids = sorted(index, key=lambda i: created_of(index[i]["node"]), reverse=True)
+def ledger_entry(pid, created, ustatus, lst):
+    """A census entry for a proposal only the ledger knows (no list read)."""
+    return {"lists": [], "ledger_only": True, "node": {
+        "id": str(pid), "auditDetails": {"createdDateTime": {"displayValue": created or ""}},
+        "status": {"status": ustatus}, "ledger_list": lst}}
+
+
+def phase_get(s, org, index, only=None):
+    ids = sorted(index if only is None else [i for i in only if i in index],
+                 key=lambda i: created_of(index[i]["node"]), reverse=True)
     done = fails = streak = 0
     for pid in ids:
         f = GET / f"{pid}.json"
@@ -156,10 +168,42 @@ def phase_get(s, org, index):
         done += 1
         if done % 25 == 0:
             log(f"get: {done} fetched this run, {fails} failed, {len(list(GET.glob('*.json')))}/{len(ids)} on disk")
-    log(f"get: finished this run - {done} fetched, {fails} failed, {len(list(GET.glob('*.json')))}/{len(ids)} on disk")
+    log(f"get: finished this run - {done} fetched, {fails} failed, {len(list(GET.glob('*.json')))}/{len(index)} on disk")
+
+
+def main_new_only():
+    """Add the new proposals to the census (every entry already there is kept,
+    so the lists the nightly run read stay in force) and `get` only those."""
+    import sqlite3
+    from modules.upwork.funnel_refresh import new_proposal_ids
+    c = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True, timeout=20)
+    ids = new_proposal_ids(c)
+    led = {str(r[0]): r[1:] for r in c.execute(
+        "SELECT id, created_dt, upwork_status, mcp_list_status FROM proposals")}
+    c.close()
+    path = Path("var/prop/census.json")
+    index = json.loads(path.read_text()) if path.exists() else {}
+    added = [pid for pid in ids if pid not in index]
+    for pid in added:
+        index[pid] = ledger_entry(pid, *led[pid])
+    path.write_text(json.dumps(index))
+    log(f"START new-only: {len(ids)} new proposal(s), {len(added)} added to the census of {len(index)}")
+    if not ids:
+        log("DONE nothing new")
+        return
+    s = mcp_client.MCPSession()
+    s.initialize()
+    org = config.UPWORK_ORGS["personal"]
+    try:
+        phase_get(s, org, index, only=ids)
+        log(f"DONE calls {calls[0]}")
+    except Stop as exc:
+        log(f"STOPPED: {exc} (calls {calls[0]})")
 
 
 def main():
+    if NEW_ONLY:
+        return main_new_only()
     log(f"START pace {PACE_S}s, max gets {MAX_GETS}")
     s = mcp_client.MCPSession()
     s.initialize()
@@ -172,9 +216,7 @@ def main():
         for pid, created, ustatus, lst in c.execute(
                 "SELECT id, created_dt, upwork_status, mcp_list_status FROM proposals"):
             if str(pid) not in index:
-                index[str(pid)] = {"lists": [], "ledger_only": True, "node": {
-                    "id": str(pid), "auditDetails": {"createdDateTime": {"displayValue": created or ""}},
-                    "status": {"status": ustatus}, "ledger_list": lst}}
+                index[str(pid)] = ledger_entry(pid, created, ustatus, lst)
         c.close()
         Path("var/prop/census.json").write_text(json.dumps(index))
         log(f"census: {listed} listed today + {len(index) - listed} only the ledger knows = {len(index)} proposals")

@@ -61,7 +61,8 @@ AGENTS = (
      "does": "Drafts a proposal for every hot job from your proof points. Every"
              " other draft carries the running test's version."},
     {"id": "tracker", "name": "Tracker", "stage": "opened",
-     "tasks": ("upwork_sync", "upwork_pulse", "upwork_inbox", "upwork_funnel_refresh"),
+     "tasks": ("upwork_sync", "upwork_pulse", "upwork_inbox", "upwork_funnel_refresh",
+               "upwork_funnel_topup"),
      "does": "Keeps every proposal, open, reply, offer and contract current from Upwork."},
     {"id": "reader", "name": "Conversation reader", "stage": "talking",
      "tasks": ("upwork_conversation_codes",),

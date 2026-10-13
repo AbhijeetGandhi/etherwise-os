@@ -87,6 +87,8 @@ RERUN_JOBS = {
     "upwork_reactivation": "io.etherwise.v3.upwork-reactivation",
     # the nightly funnel refresh (2026-10-11): read-only, resumable, an upsert
     "upwork_funnel_refresh": "io.etherwise.v3.upwork-funnel-refresh",
+    # the hourly top-up (2026-10-13): read-only, skips when nothing is new
+    "upwork_funnel_topup": "io.etherwise.v3.upwork-funnel-topup",
     # 2026-08-27, with the catch_up flip. This one SENDS (the Sunday outcome
     # email), and it is here anyway because outcome_capture.already_sent()
     # refuses a second send inside one ISO week — so a kick can only ever

@@ -263,9 +263,12 @@ function filters(d, state, redraw) {
         "proposals to ", fmt.dateShort(fresh.newest_sent),
         " · opened dates read ", fmt.dateShort(fresh.views_at)]),
     ]),
-    behind ? notice("warn", `${plural(behind, "newer proposal")} ${behind === 1 ? "is" : "are"} not in the funnel yet.`
-      + " The daily refresh that adds them is the next thing to build; until then this view stops at "
-      + fmt.dateShort(fresh.newest_sent) + ".") : null,
+    // 2026-10-13: an hourly top-up adds new proposals (:55); the nightly
+    // refresh (05:20) reads opens and replies again. This line is the gap
+    // between the sync seeing a proposal and the next top-up.
+    behind ? notice("info", `${plural(behind, "newer proposal")} ${behind === 1 ? "is" : "are"} not in the funnel yet.`
+      + " New proposals are added within the hour, and opens and replies are read again every night;"
+      + " until then this view runs to " + fmt.dateShort(fresh.newest_sent) + ".") : null,
   ]);
 }
 

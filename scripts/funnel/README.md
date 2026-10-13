@@ -14,6 +14,12 @@ runs them in this order, from the repo root, so they live here now:
 6. `export_rows.py`    `model.load()` -> `var/prop/rows.json`
 7. then `scripts/proposal_funnel_backfill.py --apply` loads the rows.
 
+The hourly top-up (`funnel_refresh --topup`, 2026-10-13) runs `fetch.py
+--new-only` instead of step 1: no list is read; the proposals the sync has
+stored and the funnel has not are added to `census.json` (every entry already
+there is kept) and read with one `get` each. Then 3, 4, 5, 6 and 7. Step 2
+waits for the nightly run, since it reads the previous dataset.
+
 Their data stays in `var/prop/` (raw reads, logs, the dataset). They pace
 their calls, keep out of the hourly sync's and the scan's minutes, and stop
 at once on a refused sign-in. Nothing here writes to Upwork.

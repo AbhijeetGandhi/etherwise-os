@@ -906,6 +906,16 @@ SOURCES = (
      "launchd_label": "io.etherwise.v3.upwork-funnel-refresh", "catch_up": True,
      "why": "new proposals, their opens, replies and hires, and the tests'"
             " links; stale means the Pipeline and the running test stop counting"},
+    # the hourly top-up (2026-10-13, his "Can we build this"): only proposals
+    # the sync has stored and the funnel has not. Skips are its steady state
+    # (most hours send nothing new). Catch-up safe: read-only on Upwork, the
+    # backfill an upsert, and it steps aside while the nightly refresh runs.
+    {"key": "upwork_funnel_topup", "label": "Funnel top-up (hourly)",
+     "task_name": "upwork_funnel_topup", "max_age_hours": 6,
+     "degrade_kinds": (), "critical": False, "backs": "pipeline", "empty_ok": True,
+     "launchd_label": "io.etherwise.v3.upwork-funnel-topup", "catch_up": True,
+     "why": "a proposal he sends reaches the funnel and the running test within"
+            " the hour instead of the next morning"},
     {"key": "upwork_reactivation", "label": "Win-back drafts (Mondays)",
      "task_name": "upwork_reactivation", "max_age_hours": 192,
      "degrade_kinds": (), "critical": False, "backs": "pipeline", "empty_ok": True,

@@ -431,13 +431,15 @@ class EmptyOkCase(unittest.TestCase):
         2026-10-09 with the sales engine's three agents: the conversation
         reader (no conversation moved since its last reading), the win-back
         drafter (nobody new to draft for this week) and the progress email (it
-        already went today) — each skip is the healthy steady state."""
+        already went today) — each skip is the healthy steady state. Added
+        2026-10-13: the hourly funnel top-up (no proposal sent since the last
+        hour, most hours)."""
         opted = {s["key"] for s in config.SOURCES if s.get("empty_ok")}
         self.assertEqual(
             opted, {"jarvis_sweep", "jarvis_imap_01", "jarvis_imap_02",
                     "loom_fetch", "cos_sweep", "upwork_outcomes",
                     "upwork_progress", "upwork_conversation_codes",
-                    "upwork_reactivation"}, opted)
+                    "upwork_reactivation", "upwork_funnel_topup"}, opted)
         # upwork_scan's TaskSkip means a broken feed — it must stay opted out
         scan = next(s for s in config.SOURCES if s["key"] == "scanner")
         self.assertFalse(scan.get("empty_ok"))
