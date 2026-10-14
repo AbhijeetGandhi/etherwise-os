@@ -1215,6 +1215,14 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-14 · **Client spend was lost for 16 days (`5b97bb0`).** His question: why did
+  "AI Specialist for Business Automation" (2110469361463140393) score 16? Skill fit 3 (no
+  tool named, all-AI tags), budget 2 ($19-40/hr), and client quality 2 because the scorer
+  read "no spend recorded" for a client with $65,990.74 spent, 33 hires and 5.0 stars.
+  Since 28 Sep the MCP `get` sends `spend_total` as text and `mcp_feed._num` refused it, so
+  every job since then had no spend: the $100K+ bonus fired 0 times (169 in the 13 days
+  before), the rate-unstated rule could not see a proven spender, the ICP spend gate could
+  not pass. Fixed from the next scan; rescored with its spend, the job is 17, still under 19.
 - 2026-10-13 (night) · **Proposals reach the funnel within the hour.** His words, on the
   Proposals view's "4 newer proposals are not in the funnel yet. The daily refresh that
   adds them is the next thing to build": "Can we build this". The nightly refresh had been
