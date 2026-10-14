@@ -318,5 +318,34 @@ class DegradesRatherThanRaises(unittest.TestCase):
         self.assertEqual(job["total_applicants"], 39)
 
 
+
+class SpendAsText(unittest.TestCase):
+    """2026-10-14: since 28 Sep the `get` sends client_record.spend_total as
+    "$65,990.74". float() refused it, so for 16 days every client looked like
+    one who had spent nothing (job 2110469361463140393: 33 hires, $65,990.74
+    spent, scored "no spend recorded")."""
+
+    def with_spend(self, value):
+        import copy
+        g = copy.deepcopy(GET_HOURLY)
+        g["client_record"]["spend_total"] = value
+        return mcp_feed.normalize(SEARCH_HOURLY, g)["client_total_spent"]
+
+    def test_money_text_is_read(self):
+        self.assertEqual(self.with_spend("$65,990.74"), 65990.74)
+
+    def test_the_old_number_still_reads(self):
+        self.assertEqual(self.with_spend(5642.0), 5642.0)
+
+    def test_short_forms_and_junk(self):
+        self.assertEqual(self.with_spend("$1.2K"), 1200.0)
+        self.assertEqual(self.with_spend("$100K+"), 100000.0)
+        self.assertEqual(self.with_spend("$0.00"), 0.0)
+        self.assertIsNone(self.with_spend("n/a"))
+
+    def test_a_spender_proven_by_text_passes_the_rate_unstated_rule(self):
+        self.assertTrue(scoring._proven_spender({"client_total_spent": self.with_spend("$65,990.74")}))
+
+
 if __name__ == "__main__":
     unittest.main()

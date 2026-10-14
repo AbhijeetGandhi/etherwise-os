@@ -54,14 +54,33 @@ def _slug(title: str) -> str:
     return s[:100] or "job"
 
 
+# Money as Upwork writes it for people: "$65,990.74", "$1.2K", "$100K+".
+_MONEY = re.compile(r"^\s*\$?\s*(\d[\d,]*(?:\.\d+)?)\s*([KkMm])?\s*\+?\s*$")
+
+
 def _num(v) -> Optional[float]:
+    """A number from a number, a numeric string, or a money string.
+
+    Since 2026-09-28 the MCP `get` sends client_record.spend_total as text
+    ("$65,990.74"), and float() refused it, so every MCP job from then on was
+    stored with client_total_spent = None. Found 2026-10-14 when he asked why
+    a job from a client with 33 hires and $66K spent scored 16: the scorer read
+    "no spend recorded", the $100K+ bonus had not fired once in 16 days (169
+    times in the 13 before), the rate-unstated rule could not see a proven
+    spender, and the ICP spend gate could never pass."""
     if v is None or isinstance(v, bool):
         return None
+    if isinstance(v, (int, float)):
+        return float(v)
     try:
-        f = float(v)
+        return float(v)
     except (TypeError, ValueError):
+        pass
+    m = _MONEY.match(str(v))
+    if not m:
         return None
-    return f
+    unit = {"k": 1e3, "m": 1e6}.get((m.group(2) or "").lower(), 1.0)
+    return float(m.group(1).replace(",", "")) * unit
 
 
 def _posting(get_row: dict) -> dict:
