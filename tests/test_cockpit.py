@@ -2347,6 +2347,86 @@ def seed_money(db_path):
                 (acct, ccy, closing, closing, "2026-06-30", f"authoritative:{acct}"))
 
 
+class TestRefundsAreNettedIntoRevenue(unittest.TestCase):
+    """Billed − Went out must equal Left, in a month containing a refund.
+
+    2026-10-16, Abhijeet: "why the collected - fees does not match left".
+    October showed Billed $11,266, Went out $1,015, Left $9,822 — $430 adrift,
+    exactly one refund ('Freelancer Refund - Refund Given', 6 Oct). The Billed
+    card read `revenue.month_usd`, which counted the 'revenue' bucket alone,
+    while the Left card is summed in the browser from revenue+refund+costs. The
+    refund came off Left and appeared in no cell on the screen.
+
+    Every revenue figure the reader emits is now net of refunds, matching
+    `pnl.compute`'s net_revenue and the drill behind the card itself. These
+    tests fail if any one of them drifts back to gross.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-refund-"))
+        self.db_path = self.tmp / "v3.db"
+        db.migrate(self.db_path)
+        seed_money(self.db_path)
+        # a refund in the SAME month as seeded revenue (2026-06: 2000.00 +
+        # 1500.00 = 3500.00 revenue), sized so a gross/net mix-up cannot pass
+        # by coincidence
+        with db.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO transactions (record_id, canonical_key, type,"
+                " category, amount_minor, amount_base_minor, currency,"
+                " creation_dt, source, pnl_bucket, description) VALUES"
+                " ('rf1','krf1','Refund',NULL,-43000,-43000,'USD',"
+                " '2026-06-06T00:00:00+0000','Upwork','refund',"
+                " 'Freelancer Refund - Refund Given - Ref ID 954886811')")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_month_headline_is_net_and_matches_its_own_drill(self):
+        """The Billed card and the rows behind it are one number. This is the
+        reconciliation the screen was failing."""
+        m = data.money(self.db_path, today="2026-06-15")
+        billed = m["revenue"]["month_usd"]
+        drill = data.money_transactions(self.db_path, bucket="revenue,refund",
+                                        month="2026-06")
+        self.assertEqual(billed, drill["sum_usd"])
+        self.assertEqual(billed, 3070.0)            # 3500.00 − 430.00
+
+    def test_billed_minus_went_out_equals_left(self):
+        """The arithmetic a reader does with their eyes, in a refund month."""
+        m = data.money(self.db_path, today="2026-06-15")
+        billed = m["revenue"]["month_usd"]
+        costs = sum(data.money_transactions(self.db_path, bucket=b,
+                                            month="2026-06")["sum_usd"]
+                    for b in ("platform_fee", "tax", "payroll", "opex"))
+        left = data.money_transactions(
+            self.db_path, bucket="revenue,refund,platform_fee,tax,payroll,opex",
+            month="2026-06")["sum_usd"]
+        self.assertAlmostEqual(billed + costs, left, places=2)
+
+    def test_refund_is_reported_so_the_card_can_name_it(self):
+        """Netting silently is the same failure wearing a different hat."""
+        m = data.money(self.db_path, today="2026-06-15")
+        self.assertEqual(m["revenue"]["refund_usd"], -430.0)
+
+    def test_chart_bar_and_target_use_the_same_net_basis(self):
+        """A chart on a different basis from the cards above it is two answers
+        to one question."""
+        m = data.money(self.db_path, today="2026-06-15")
+        bar = {x["month"]: x["usd"] for x in m["revenue"]["by_month"]}
+        self.assertEqual(bar["2026-06"], m["revenue"]["month_usd"])
+        self.assertEqual(
+            m["revenue"]["pct_to_target"],
+            round(100 * m["revenue"]["month_usd"]
+                  / config.MONTHLY_REVENUE_TARGET_USD, 1))
+
+    def test_a_month_with_no_refund_is_unchanged(self):
+        """The fix must not move numbers it has no business moving."""
+        m = data.money(self.db_path, today="2026-05-20")
+        self.assertEqual(m["revenue"]["month_usd"], 4000.0)
+        self.assertEqual(m["revenue"]["refund_usd"], 0.0)
+
+
 class TestMoneyReader(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cockpit-money-"))

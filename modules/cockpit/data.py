@@ -4189,11 +4189,34 @@ def money(db_path: Optional[Path] = None,
 
     mo, cash_mo = _pnl_month_of, _cash_month_of
 
-    # revenue = the pnl 'revenue' bucket (base-USD), MTD-vs-same-day-last-month
-    def rev_minor(pred):
+    # REVENUE IS NET OF REFUNDS — 'revenue' AND 'refund', base-USD.
+    #
+    # It used to be the 'revenue' bucket alone, and that quietly broke the
+    # Money tab's own arithmetic (2026-10-16, his "why the collected - fees
+    # does not match left"): the Billed card read `month_usd` (revenue only)
+    # while the Left card is summed in the browser from revenue+refund+costs,
+    # so October's one refund — $430.00, 6 Oct, 'Freelancer Refund - Refund
+    # Given - Ref ID 954886811' — came off Left while appearing in no cell on
+    # the screen. Billed $11,266 − Went out $1,015 showed Left $9,822.
+    #
+    # Net is the right basis, not just the reconciling one: `pnl.compute`
+    # already defines net_revenue as revenue+refund, the Net-revenue KPI
+    # queries both, and the drill BEHIND the Billed card is already
+    # bucket=revenue,refund. This was the only place still counting gross. A
+    # refund reduces what we earned; it is not a cost of operating, so it
+    # belongs here rather than in Went out (his call, same day).
+    #
+    # `refund_minor` is reported separately so the card can NAME the deduction
+    # instead of absorbing it — a figure that moves with no explanation is the
+    # bug we just fixed, in a new costume.
+    def _bucket_minor(buckets, pred):
         return sum(r["amount_base_minor"] or 0 for r in rows
-                   if r.get("pnl_bucket") == "revenue" and pred(r))
+                   if r.get("pnl_bucket") in buckets and pred(r))
+
+    def rev_minor(pred):
+        return _bucket_minor(("revenue", "refund"), pred)
     month_minor = rev_minor(lambda r: mo(r) == month)
+    refund_minor = _bucket_minor(("refund",), lambda r: mo(r) == month)
     # BILLED vs RECEIVED, the two halves of his question. `month_minor` is
     # billed; these are the cash side and the bridge between them.
     received_minor = rev_minor(lambda r: cash_mo(r) == month)
@@ -4214,7 +4237,9 @@ def money(db_path: Optional[Path] = None,
                                and (r.get("creation_dt") or "")[8:10] <= dom)
     bm = defaultdict(int)
     for r in rows:
-        if r.get("pnl_bucket") == "revenue" and mo(r):
+        # net, like every other revenue figure on this screen — a chart on a
+        # different basis from the cards above it is two answers to one question
+        if r.get("pnl_bucket") in ("revenue", "refund") and mo(r):
             bm[mo(r)] += r["amount_base_minor"] or 0
     by_month = [{"month": k, "usd": usd(v), "current": k == month}
                 for k, v in sorted(bm.items())][-13:]     # 13 bars (design brief)
@@ -4272,6 +4297,10 @@ def money(db_path: Optional[Path] = None,
             "received_usd": usd(received_minor),
             "billed_lands_later_usd": usd(billed_not_yet_in_minor),
             "received_billed_earlier_usd": usd(received_billed_earlier_minor),
+            # negative when money went back to a client this month. Every
+            # revenue figure above is already net of it; this is here so the
+            # card can say so out loud.
+            "refund_usd": usd(refund_minor),
         },
         "pnl": {
             "net_revenue_usd": usd(allp["net_revenue_minor"]),

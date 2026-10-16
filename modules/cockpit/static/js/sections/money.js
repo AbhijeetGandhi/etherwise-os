@@ -601,6 +601,14 @@ export async function render(root, ctx) {
     // thousand, but in account we received like twenty two thousand"). Other
     // ranges keep the cash view: `cameIn` is summed from payment dates.
     const cameSub = [];
+    // A refund is netted into every revenue figure (server: pnl_bucket in
+    // revenue+refund). Say so, or the card silently shows a smaller number
+    // than the month's invoices — which is the 2026-10-16 bug inverted.
+    if (r.refund_usd) {
+      cameSub.push("after ", el("b", null, fmt.usd(Math.abs(r.refund_usd))),
+        " refunded to a client");
+      cameSub.push(el("div", null, []));
+    }
     if (isThis && r.received_usd != null) {
       cameSub.push(el("b", null, fmt.usd(r.received_usd)), " reached the account");
       if (r.billed_lands_later_usd) {
