@@ -222,6 +222,77 @@ def is_reply(subject: Optional[str]) -> bool:
     return bool(_REPLY.match(subject or ""))
 
 
+# ── the structural gate (no model, no network) ───────────────────────────────
+#
+# WHY THIS EXISTS (2026-10-18). `route()` above was built on 2026-08-20 to stop
+# the board filling with receipts and notifications — and it was wired into
+# exactly ONE of the three paths that can queue an event. sweep.py's two
+# DETERMINISTIC paths, `domain_echo` and `room_link`, call `events.set_queued`
+# directly, so anything they recognised went to the board unasked. Measured
+# then: 42 Upwork "X sent you a message" notifications (8 rooms, already
+# attributed at 0.85-0.95), 10 Globaltize receipts and invites, 6 Cradle
+# calendar RSVPs — about 50 rows, every one of them a message whose whole
+# content is that another message exists.
+#
+# Those paths cannot call the proposer (that is the point of them — zero LLM),
+# so the gate they get is structural: shapes that are decidable from the
+# envelope alone, and nothing else. Everything unrecognised falls through to
+# `review`, because this is a filter for known-inert shapes, not a classifier.
+_UPWORK_ROOM_SENDER = re.compile(r"^room_[0-9a-f]{16,}@", re.I)
+# Upwork's own wording: "Mustafa A. sent you a message". The message itself
+# arrives on the thread rail — this is a duplicate announcement of it.
+_UPWORK_NOTIFY = re.compile(
+    r"^[^@\s][^@]{0,60}\ssent you (a message|an offer|a file)\s*$", re.I)
+# Google Calendar's RSVP and invite verbs, which are always the whole subject.
+_CAL_VERB = re.compile(
+    r"^\s*(accepted|declined|tentative|invitation|updated invitation"
+    r"|cancelled event|canceled event|new time proposed"
+    r"|this event has been (cancelled|canceled))\s*:", re.I)
+
+STRUCTURAL_FILE_REASON = {
+    "upwork_notification": "filed:upwork-notification",
+    "calendar_rsvp": "filed:calendar-rsvp",
+}
+# read by resweep.rules_fingerprint: editing a shape here must re-open the
+# backlog, the same way editing sender-rules.json does. A gate whose changes
+# apply only to tomorrow's mail is how the board filled up the first time.
+STRUCTURAL_PATTERNS = (_UPWORK_ROOM_SENDER.pattern, _UPWORK_NOTIFY.pattern,
+                       _CAL_VERB.pattern)
+
+
+def structural_shape(author: Optional[str],
+                     subject: Optional[str]) -> Optional[str]:
+    """A known-inert message shape, or None to let it through to review.
+
+    Deliberately narrow. It reads the sender and the subject line and nothing
+    else: a wider rule here would be a classifier without a classifier's
+    evidence, on the path that exists precisely because it does not call one.
+    """
+    a, s = (author or "").strip(), (subject or "").strip()
+    if _UPWORK_ROOM_SENDER.match(a) and _UPWORK_NOTIFY.match(s):
+        return "upwork_notification"
+    if _CAL_VERB.match(s):
+        return "calendar_rsvp"
+    return None
+
+
+def route_structural(author: Optional[str], subject: Optional[str], *,
+                     protected: bool = False) -> tuple:
+    """(destination, reason) for the deterministic queue paths.
+
+    `protected` keeps the transactional-sender override from `route()`: an
+    e-signature or background-check notice reaches the board even if it is
+    shaped like a notification, for the same reason as there — that judgement
+    is too expensive to leave to a pattern.
+    """
+    if protected:
+        return "review", None
+    shape = structural_shape(author, subject)
+    if shape is None:
+        return "review", None
+    return "file", STRUCTURAL_FILE_REASON[shape]
+
+
 def route(intent: str, *, protected: bool = False,
           subject: Optional[str] = None) -> str:
     """Where a classified message goes.

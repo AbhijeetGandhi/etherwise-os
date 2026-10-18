@@ -144,7 +144,19 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
     with db.connect(dbp) as conn:
         held = [dict(r) for r in events.held_for_run(conn, ctx.run_id)]
         mapped = echoed = room_linked = 0
+        structural = {}
         still_held = []
+
+        def _gate(ev):
+            """The intent gate for the zero-LLM paths. Until 2026-10-18 these
+            two branches went straight to set_queued, so `mapping.route`'s
+            whole purpose — keep notifications off the board — applied to the
+            proposer path only. Returns a file-reason to exclude, or None."""
+            prot = bool(sender_rules.transactional_reason(ev.get("author") or ""))
+            dest, reason = mapping.route_structural(
+                ev.get("author"), ev.get("subject"), protected=prot)
+            return reason if dest == "file" else None
+
         for ev in held:
             cid = mapping.match_deterministic(reg, ev["author"])
             if cid:
@@ -152,6 +164,17 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
                 continue
             echo = mapping.domain_echo(reg, ev["author"])
             if echo:
+                # KEEP THE ATTRIBUTION, DROP THE INTERRUPTION: a receipt or an
+                # RSVP from a client's own domain is still that client's, so it
+                # is filed under them (findable by exclude_reason) rather than
+                # put in front of him.
+                reason = _gate(ev)
+                if reason:
+                    events.set_excluded(
+                        conn, ev["id"],
+                        f"{reason}:{echo['proposed_client_id']}")
+                    structural[reason] = structural.get(reason, 0) + 1
+                    continue
                 events.set_queued(conn, ev["id"], echo["proposed_client_id"],
                                   echo["confidence"], echo["evidence"])
                 echoed += 1
@@ -165,6 +188,18 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             link = room_link.match_event(conn, ev)
             if link:
                 room_link.record(conn, ev["id"], link)
+                # The link is RECORDED either way — the Upwork tab and the
+                # draft-writer read room_links, and that signal is why a
+                # prospect's mail gets attributed at all. What the gate
+                # decides is only whether a human is interrupted: "Mustafa A.
+                # sent you a message" carries no content the thread rail does
+                # not already hold.
+                reason = _gate(ev)
+                if reason:
+                    events.set_excluded(conn, ev["id"],
+                                        f"{reason}:{link['client_id']}")
+                    structural[reason] = structural.get(reason, 0) + 1
+                    continue
                 room = conn.execute("SELECT room_name FROM threads WHERE id=?",
                                     (link["thread_id"],)).fetchone()
                 events.set_queued(conn, ev["id"], link["client_id"], 0.9,
@@ -240,6 +275,10 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             "mapped": counts["mapped"], "queued": counts["queued"],
             "held": counts["held"], "excluded": counts["excluded"],
             "domain_echoed": echoed, "room_linked": room_linked,
+            # what the structural gate kept off the board on the zero-LLM
+            # paths, by shape — visible per run, so a gate that starts eating
+            # real mail shows up as a number rather than as silence
+            "filed_structural": structural,
             "proposer_calls": len(proposals),
             "imap_excluded_no_signal": imap_excluded,
             "filed_by_intent": filed,

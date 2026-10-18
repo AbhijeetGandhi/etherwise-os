@@ -4849,11 +4849,29 @@ def review_threads(db_path: Optional[Path] = None, *,
 
     conn = _ro(db_path)
     try:
+        # A THREAD WITH NO ROOM IS NOT A THREAD (2026-10-18). `scripts/
+        # upwork_pull_all.step_messages` backfills a room's messages and, to
+        # satisfy the messages->threads foreign key, writes
+        # `INSERT OR IGNORE INTO threads (id) VALUES (?)` — a placeholder
+        # carrying an id and nothing else. 97 of them landed in one burst on
+        # 9 Oct and rendered here as "Direct message, no job attached", which
+        # is simply what a row with no room_name, room_type or counterparty
+        # looks like to the grouper. They were a THIRD of the whole Review
+        # board, and one of them had 124 real messages behind it.
+        #
+        # `room_name IS NOT NULL` is the discriminator the writer itself
+        # establishes: every real sync path (mcp_messages.py, poll_inbox.py)
+        # sets it, and the FK stub is the only writer that cannot. Stubs stay
+        # in the table — the messages hang off them — they are just not
+        # mistaken for something a human was asked about.
         threads = [dict(r) for r in conn.execute(
             "SELECT id, room_name, topic, room_type, contract_id, proposal_id,"
             " offer_ids_json, bucket, tier, awaiting_reply_from,"
             " latest_message_dt, first_seen_at FROM threads"
-            " WHERE client_id IS NULL")]
+            " WHERE client_id IS NULL AND room_name IS NOT NULL")]
+        stubs = conn.execute(
+            "SELECT COUNT(*) n FROM threads WHERE room_name IS NULL"
+        ).fetchone()["n"]
         attributed = conn.execute(
             "SELECT COUNT(*) n FROM threads WHERE client_id IS NOT NULL"
         ).fetchone()["n"]
@@ -5026,6 +5044,10 @@ def review_threads(db_path: Optional[Path] = None, *,
         "dismissed_total": dismissed_n,
         "shown_total": len(shown),
         "attributed_total": attributed,
+        # shown, never counted as work: message-backfill FK placeholders. A
+        # number that silently drops by 97 is a number you stop trusting, so
+        # the board says where they went instead of just getting shorter.
+        "stub_total": stubs,
         # a REAL zero with its reason attached (UI_BUILD_BRIEF §0): every one of
         # the 57 synced contracts points at a thread that already has a client,
         # so "no unattributed thread is contract-backed" is a finding, not a gap.
@@ -5049,7 +5071,21 @@ def review_counts(db_path: Optional[Path] = None) -> dict:
     per-thread evidence — because the shell re-reads this every five minutes and
     on every action.
 
-    `events_queued + events_held` is the mapping queue (recordings and mail);
+    THE BADGE COUNTS DECISIONS, NOT BACKLOG (2026-10-18). It used to be
+    `queued + held + threads_open`, and both of the added terms were lying:
+
+      * `held` means the PROPOSER HAS NOT RUN YET — the machine is behind its
+        own per-sweep budget, which is an ops problem, not a question for him.
+        84 of them were being presented as waiting on his judgement.
+      * thread rows with no `room_name` are messages-table foreign-key
+        placeholders from `upwork_pull_all.step_messages`, not rooms. 97 of
+        them, all written on 9 Oct, were a third of the badge.
+
+    Both are still returned — `events_held` and `threads_stub` — because the
+    machine being behind is worth seeing on the Activity/system view. They are
+    simply not counted as his queue. `total` is now what it claims to be: rows
+    a human is being asked to decide.
+
     `threads_open` is the unattributed Upwork rooms MINUS the ones already
     dismissed, which is the whole point of the dismissal store: the badge has to
     fall when he clears the backlog, or he will stop believing it."""
@@ -5059,12 +5095,17 @@ def review_counts(db_path: Optional[Path] = None) -> dict:
             "SELECT state, COUNT(*) n FROM events"
             " WHERE state IN ('queued','held') GROUP BY state")}
         threads_total = conn.execute(
-            "SELECT COUNT(*) n FROM threads WHERE client_id IS NULL"
+            "SELECT COUNT(*) n FROM threads"
+            " WHERE client_id IS NULL AND room_name IS NOT NULL"
+        ).fetchone()["n"]
+        threads_stub = conn.execute(
+            "SELECT COUNT(*) n FROM threads WHERE room_name IS NULL"
         ).fetchone()["n"]
         dismissed = conn.execute(
             "SELECT COUNT(*) n FROM nudge_state WHERE state='dismissed'"
             " AND item_key LIKE ? ESCAPE '\\' AND substr(item_key, ?) IN"
-            " (SELECT id FROM threads WHERE client_id IS NULL)",
+            " (SELECT id FROM threads WHERE client_id IS NULL"
+            "  AND room_name IS NOT NULL)",
             (_like_escape(_REVIEW_THREAD_PREFIX) + "%",
              len(_REVIEW_THREAD_PREFIX) + 1)).fetchone()["n"]
     finally:
@@ -5073,8 +5114,10 @@ def review_counts(db_path: Optional[Path] = None) -> dict:
     threads_open = max(threads_total - dismissed, 0)
     return {"events_queued": queued, "events_held": held,
             "threads_total": threads_total, "threads_dismissed": dismissed,
+            "threads_stub": threads_stub,
             "threads_open": threads_open,
-            "total": queued + held + threads_open}
+            # decisions only — held and stubs are reported above, not counted
+            "total": queued + threads_open}
 
 
 # ── Activity: what the system actually did on a day (UI brief §3) ────────────

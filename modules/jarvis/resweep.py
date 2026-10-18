@@ -52,7 +52,7 @@ import sqlite3
 from typing import Optional
 
 from core import config
-from modules.jarvis import events, mail_pipeline
+from modules.jarvis import events, mail_pipeline, mapping
 from modules.jarvis import sender_rules as SR
 
 FINGERPRINT_KEY = "jarvis_rules_fingerprint"
@@ -93,6 +93,8 @@ def rules_fingerprint(*, rules: Optional[dict] = None,
         "noise_sender_substr": list(mail_pipeline._NOISE_SENDER_SUBSTR),
         "noise_sender_domains": list(mail_pipeline._NOISE_SENDER_DOMAINS),
         "noise_subject_substr": list(mail_pipeline._NOISE_SUBJECT_SUBSTR),
+        # the structural gate (2026-10-18) is a verdict input like any other
+        "structural_shapes": list(mapping.STRUCTURAL_PATTERNS),
         "registry_sha": getattr(reg, "sha", None),
     }
     blob = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
@@ -167,6 +169,24 @@ def decide(row: dict, *, reg=None, rules: Optional[dict] = None,
 
     # 2. transactional protection, BEFORE anything that reads address shape
     prot = SR.transactional_reason(author, rules)
+
+    # 2a. THE STRUCTURAL GATE, retroactively (2026-10-18). sweep.py's two
+    # deterministic paths now file known-inert message shapes instead of
+    # queueing them; the board already held ~50 rows they would have caught —
+    # 42 Upwork "X sent you a message" notifications, calendar RSVPs, and the
+    # same shapes echoed off client domains. Same rule, same reason string,
+    # applied backwards: that is this module's whole job, and it is why the
+    # cleanup is a re-sweep rather than a hand-written UPDATE nobody can audit.
+    # Protection is honoured first, exactly as at the door.
+    if not prot:
+        dest, structural = mapping.route_structural(author, subject)
+        if dest == "file":
+            rule = (f"{structural}:{proposed}" if proposed else structural)
+            return {"action": "exclude", "rule": rule, "reason": structural,
+                    "client_id": proposed,
+                    "evidence": "a notification that another message exists —"
+                                " the thread rail already holds the message"
+                                " itself, so there is nothing here to decide"}
 
     # 2b. …and OPERATIONAL protection, at the same point and for the same
     # reason. This has to be here as well as in mail_pipeline.classify: the

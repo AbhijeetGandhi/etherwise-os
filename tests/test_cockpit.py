@@ -4511,7 +4511,15 @@ class TestReviewDismissalSticks(ReviewCase):
 
 
 class TestReviewCounts(ReviewCase):
-    def test_the_badge_counts_all_three_backlogs(self):
+    def test_the_badge_counts_decisions_not_backlog(self):
+        """CONTRACT CHANGED 2026-10-18 — it used to be queued+held+threads.
+
+        `held` means the proposer has not run on the row yet: the machine is
+        behind its per-sweep budget, which is an ops fact, not a question for
+        Abhijeet. On the live board that term was 84 of 290. It is still
+        RETURNED (the Activity view wants it); it is no longer counted as his
+        queue. Same for message-backfill thread stubs, covered in
+        tests/test_review_noise.py."""
         with db.connect(self.db_path) as conn:
             for i, state in enumerate(["queued", "queued", "held", "excluded",
                                        "mapped"]):
@@ -4522,13 +4530,15 @@ class TestReviewCounts(ReviewCase):
         self.thread("room_b", "B")
         c = data.review_counts(self.db_path)
         self.assertEqual(c["events_queued"], 2)
-        self.assertEqual(c["events_held"], 1)
+        self.assertEqual(c["events_held"], 1)    # reported…
         self.assertEqual(c["threads_open"], 2)
-        self.assertEqual(c["total"], 5)          # excluded/mapped never count
+        self.assertEqual(c["total"], 4)          # …but not his queue
+        # excluded and mapped have never counted, and still do not
+        self.assertNotIn("events_excluded", c)
 
         actions.review_thread(self.db_path, {"thread_ids": ["room_a"],
                                              "action": "dismiss"})
-        self.assertEqual(data.review_counts(self.db_path)["total"], 4)
+        self.assertEqual(data.review_counts(self.db_path)["total"], 3)
 
 
 class TestQueueLearnsHonesty(unittest.TestCase):
