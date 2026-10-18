@@ -2,7 +2,8 @@
 client interview anyone, hire anyone, how did it close, what did they ask for, when was it posted.
 -> var/prop/raw/job/<job id>.json. Newest proposals first. Resumable.
 
-PACE: one call every PACE_S seconds, silent during :14-:20 (the hourly scan uses this same tool).
+PACE: one call every PACE_S seconds, silent around every job-scan slot (the scan uses this same
+tool; since 2026-10-18 it runs every 15 minutes, so the window is mcp_search.in_scan_window).
 Starts only once the proposals fetch has finished (waits for DONE/STOPPED in var/prop/fetch.log).
 Stops at once on anything that smells of auth; backs off on a rate limit. Nothing is written to the
 ledger. Nothing is sent."""
@@ -15,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 from core import config                                    # noqa: E402
-from modules.upwork.feeds import mcp_client                # noqa: E402
+from modules.upwork.feeds import mcp_client, mcp_search    # noqa: E402
 
 JOB = Path("var/prop/raw/job")
 PACE_S = 7.0
@@ -33,7 +34,7 @@ def log(m):
 
 
 def quiet_window():
-    while 14 <= time.localtime().tm_min <= 20:
+    while mcp_search.in_scan_window(time.localtime().tm_min):
         time.sleep(20)
 
 

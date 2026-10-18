@@ -64,7 +64,7 @@ const TABS = [
 
 // the scheduled jobs, in words (the screen never prints a task name)
 const TASK_WORDS = {
-  upwork_scan: "the job scan (every 30 minutes)",
+  upwork_scan: "the job scan (every 15 minutes)",
   upwork_sync: "the Upwork sync (hourly)",
   upwork_pulse: "the 15-minute heartbeat",
   upwork_inbox: "the inbox read",

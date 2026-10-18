@@ -8,9 +8,11 @@ a 10 s busy timeout and killed a concurrent writer). Splitting the round into
 the same house rule as "model calls outside the with-block".
 
 Bounded by construction (API & MCP Terms §4.1): first pages only per query,
-one `get` per NEW job, a hard per-run ceiling on gets, hourly cadence. The
-bounds are config (MCP_SMART_PAGES, MCP_PER_QUERY_LIMIT, MCP_MAX_GETS_PER_RUN,
-MCP_TERM_QUERIES), never literals here.
+one `get` per NEW job, a hard per-run ceiling on gets, a fixed cadence (hourly
+until 2026-10-18, every quarter hour since, his decision:
+config.UPWORK_SCAN_MINUTES). The bounds are config (MCP_SMART_PAGES,
+MCP_PER_QUERY_LIMIT, MCP_MAX_GETS_PER_RUN, MCP_TERM_QUERIES), never literals
+here.
 """
 from __future__ import annotations
 
@@ -46,6 +48,15 @@ def paced_call(session, tool: str, args: dict, log: Callable[[str], None]):
         return session.call(tool, args)
     finally:
         _last_call[0] = time.monotonic()
+
+
+def in_scan_window(minute: int) -> bool:
+    """True from one minute before each scan slot (config.UPWORK_SCAN_MINUTES)
+    to five after: the minutes the job scan is reading find_jobs. Another reader
+    of the same tool (the funnel's job fetch) waits these out, so the two never
+    share the tool's per-minute allowance. The window is the one the hourly
+    scan had (:14-:20), kept for every slot."""
+    return any((minute - m + 1) % 60 <= 6 for m in config.UPWORK_SCAN_MINUTES)
 
 
 def org_uid(session) -> str:

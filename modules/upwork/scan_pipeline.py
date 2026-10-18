@@ -1,4 +1,5 @@
-"""M1a hourly scan pipeline (live since the 2026-07-06 cutover).
+"""M1a scan pipeline (live since the 2026-07-06 cutover; hourly until
+2026-10-18, every 15 minutes since: config.UPWORK_SCAN_MINUTES).
 
 TWO PROVIDERS, ONE TAIL (Phase 0.1, Upwork chat 2026-08-25; config.JOB_FEED_PROVIDER):
 
@@ -476,7 +477,7 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             entry["carded"] = True
 
     # ICP hits get their OWN immediate email — they must never be buried in the
-    # hourly hot digest (81% of scored jobs are 'hot'; these are the few that
+    # per-scan hot digest (81% of scored jobs are 'hot'; these are the few that
     # match the ideal-client profile).
     icp_status = None
     if icp_hits and not ctx.shadow:

@@ -20,9 +20,17 @@
   <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/upwork-scan.log</string>
   <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/upwork-scan.log</string>
   <key>RunAtLoad</key><false/>
+  <!-- Every 15 minutes since 2026-10-18 (hourly at :15 before), at his word
+       "can we do scann for job posts more frequently like every 15 or 30
+       minutes so that we can apply quickly"; config.UPWORK_SCAN_MINUTES holds
+       the same four minutes and a test keeps them equal. The pulse sits at
+       :05/:20/:35/:50, so the two still never share a minute. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Minute</key><integer>15</integer>
-  </dict>
+  <array>
+    <dict><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Minute</key><integer>45</integer></dict>
+  </array>
 </dict>
 </plist>

@@ -509,7 +509,14 @@ PAYER_ALIASES = {
 # per-run bounds so a bad day can never run away (§4.3 per-run ceilings):
 JARVIS_SWEEP_TIMES = ("11:00", "19:00", "00:00")   # IST (informational; see plist)
 JARVIS_SWEEP_MAX_EVENTS = 60        # collect at most N new items per sweep
-JARVIS_SWEEP_MAX_PROPOSALS = 15     # at most N Haiku proposer calls per sweep;
+# RAISED 15 -> 40 on 2026-10-18. 'held' means the proposer has not run yet, and
+# at 15 calls x 3 sweeps the ceiling sat below the inflow, so the backlog only
+# grew — 84 events were waiting, some for weeks, and they were being counted on
+# the Review badge as though they were decisions he owed. 40 clears a 60-event
+# collection inside two sweeps while staying a hard bound (Haiku, bounded
+# prompt: the whole ceiling is cents per sweep). The backlog, not the cost, was
+# the thing running away.
+JARVIS_SWEEP_MAX_PROPOSALS = 40     # at most N Haiku proposer calls per sweep;
                                     # the rest stay 'held' for the next sweep
 # A retroactive re-sweep (modules/jarvis/resweep.py) that clears more than this
 # many rows off the Review board files a `warn` anomaly. Not a limit — it always
@@ -857,7 +864,10 @@ SOURCES = (
      # FLIPPED 2026-08-26 (Phase 0.1): the same task, the same plist, the MCP
      # standing-query round inside instead of the Chrome scrape (scan_pipeline
      # dispatches on JOB_FEED_PROVIDER below). The shadow poller that proved
-     # the feed retired the same minute — one MCP budget, one round an hour.
+     # the feed retired the same minute — one MCP budget, one round an hour
+     # until 2026-10-18, four since (UPWORK_SCAN_MINUTES). max_age stays 3h:
+     # a quiet quarter hour ends skipped_empty, which is not a success here,
+     # so a tighter bar would cry "late" over a slow night.
      "why": "backs the funnel + carded board; a thin MCP round is"
             " scan_feed_degraded and silently under-scans lead-gen"},
     # ── the Upwork rails that were invisible (Upwork chat, 2026-08-25) ────────
@@ -1328,6 +1338,19 @@ MCP_MIN_HEALTHY_SURFACED = 20
 # of an hourly slot) and a refused call is retried once after the advised wait.
 MCP_CALL_INTERVAL_S = 5.0
 MCP_RATE_LIMIT_WAIT_S = 6.0
+# THE SCAN'S SLOTS, minutes past every hour. Hourly (:15) until 2026-10-18;
+# then Abhijeet: "can we do scann for job posts more frequently like every 15
+# or 30 minutes so that we can apply quickly", and, asked with the trade-offs
+# in front of him (the hourly cadence was our own margin under the API & MCP
+# Terms §4.1 line on "continuously monitor"; four times the searching moves
+# toward it), he chose every 15 minutes for all 14 searches. Load: a round is
+# ~17 find_jobs calls at the pace above (~1.5 min), so four an hour is ~70 of
+# the ~720 an hour the tool allows; each job is still fetched and scored ONCE,
+# so model spend does not move. Must match the StartCalendarInterval of
+# launchd/io.etherwise.v3.upwork-scan.plist (tests/test_scan_schedule.py holds
+# them together). Other readers of find_jobs keep out of these minutes
+# (feeds/mcp_search.in_scan_window).
+UPWORK_SCAN_MINUTES = (0, 15, 30, 45)
 # At the flip, posts created BEFORE this instant are never claimed (Abhijeet,
 # 2026-08-25 20:40: "only jobs posted after the flip"). The search pages at
 # any moment hold ~100 jobs the scraper never saw; claiming them all would

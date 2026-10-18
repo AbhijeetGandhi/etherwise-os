@@ -1123,7 +1123,7 @@ function kpiStrip(d, openRows, when) {
       + "; recent numbers may be low"
     : null;
 
-  // 1) CARDED — the 7-day window, not "today": the scanner runs hourly and he
+  // 1) CARDED — the 7-day window, not "today": the scanner runs all day and he
   //    reads this at 3am, when today is structurally near-zero and says nothing.
   //    The drill used to pass no window at all: the tile said 188 for seven
   //    days and opened 2,152 rows for all time. `week=<day−6>` reproduces the
