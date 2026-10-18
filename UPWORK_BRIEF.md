@@ -84,8 +84,10 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
    in code. Writes get enabled ONE tool at a time, draft-semantics only, per Abhijeet's go.
 2. **§5.2 — no mixed provenance.** MCP data and scraped data never combine. When a module
    cuts over to MCP, its Chrome twin RETIRES; they never co-feed one store.
-3. **§4.1 — bounded standing queries.** First pages, capped gets, hourly cadence. One
-   freelancer's lead flow, never corpus enumeration.
+3. **§4.1 — bounded standing queries.** First pages, capped gets, a fixed cadence. One
+   freelancer's lead flow, never corpus enumeration. (Cadence: hourly until 2026-10-18,
+   every 15 minutes since — his choice, made with the "continuously monitor" risk
+   in front of him; see the decision log.)
 4. **§5.9 — hiring side is presentation, not scoring.** No agent scores/rankings of
    applicants for hiring decisions. Summarize uniformly; Abhijeet judges.
 5. **UI law (learned from the Today tab, 2026-08-25):** default view ≤ one screen; counts
@@ -1215,6 +1217,23 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-18 · **The scan runs every 15 minutes (`342ef00`).** His words: "can we do scann
+  for job posts more frequently like every 15 or 30 minutes so that we can apply quickly".
+  Put to him before building: hourly was our own margin under the API & MCP Terms §4.1
+  line ("enumerate or continuously monitor"), and four times the searching moves toward
+  it; the MCP has room (~25 calls an hour against ~12 a minute, never throttled) and
+  model spend does not move (a job is scored once); and the bigger delay is his, not the
+  scan's — a card lands a median 41 min after posting, his proposal a median 8.1 h after
+  the card (77 scanner jobs), and in his own history the first hour did no better than
+  the rest of the day, while after 24 h replies fall to 1 in 29. Offered Best Matches
+  every 15 min with the keyword searches hourly (26 of the 37 jobs he applied to since
+  the flip came from it), all every 30, or no change; he chose all 14 searches every
+  15 minutes. Built: the plist at :00/:15/:30/:45 (the pulse keeps :05/:20/:35/:50),
+  `config.UPWORK_SCAN_MINUTES` with a test holding the two equal, and
+  `mcp_search.in_scan_window` so the funnel's job fetch (the other find_jobs reader)
+  stays out of every slot, not just :15. The 3 h freshness bar is unchanged on purpose:
+  a quiet quarter hour ends skipped_empty, which does not count as a success. Law 3 above
+  now says the cadence is his.
 - 2026-10-18 · **Budget floors are firm again; a placeholder price is the only way past
   (`83c74b2`).** His words: "if the budget mentioned by client less that 500$ fixed price
   simply skip. unless in the proposla they have mentioned its a placehodler price / same
