@@ -1215,6 +1215,22 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-18 · **Budget floors are firm again; a placeholder price is the only way past
+  (`83c74b2`).** His words: "if the budget mentioned by client less that 500$ fixed price
+  simply skip. unless in the proposla they have mentioned its a placehodler price / same
+  for hourly we need 30$/hr to be in range they provided if not skip those." This reverses
+  the 23 Sep exemption that let a platform in the title lift the floors. Measured over its
+  25 days: 632 low-budget jobs let through (243 hourly with $30 outside the range, 389
+  fixed under $500), 81 carded, not one proposal; 63 of those cards had been skipped on
+  the board and 11 had expired. Now: fixed under $500 and hourly with a top under $30 are
+  skipped for every title, unless the post calls the price a placeholder ("placeholder"
+  next to a money word, "ignore the posted budget", "not the real budget", "budget TBD";
+  a template placeholder does not count). A range with no top ("$25+") holds $30 and is
+  scored. A blank rate is unchanged (proven spender or his tools in the title). From the
+  next hourly scan; the board was not touched: five open cards it would have stopped
+  ($200, $100, $50 fixed; $10/hr; $5-10/hr) wait on his word, and two low-budget cards
+  marked applied / interview with no proposal on record (14zervyujfu, 14zervyuxc9) are
+  left as they are.
 - 2026-10-14 · **Client spend was lost for 16 days (`5b97bb0`).** His question: why did
   "AI Specialist for Business Automation" (2110469361463140393) score 16? Skill fit 3 (no
   tool named, all-AI tags), budget 2 ($19-40/hr), and client quality 2 because the scorer
