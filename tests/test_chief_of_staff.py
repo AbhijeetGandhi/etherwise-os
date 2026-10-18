@@ -831,17 +831,38 @@ class TestBrief(CoSCase):
         self.assertEqual(len(b["commitments"]["due_soon"]), 1)      # 2026-06-23
         self.assertEqual(b["commitments"]["awaiting_client"], 1)
 
-    def test_write_brief_creates_draft_no_send(self):
+    def test_write_brief_writes_the_artifact_then_mails_it(self):
+        """The artifact is written FIRST and unconditionally — it is the
+        record; the email is a delivery of it. (Before 2026-10-18 this asserted
+        the body said DRAFT, because the brief was never sent; it is sent now,
+        and the banner tracks the gate — see tests/test_cos_brief_email.py.)"""
         self.seed_state()
         from modules.chief_of_staff import brief
+        sent = []
         with mock.patch.object(config, "COS_BRIEFS_DIR", self.tmp / "briefs"):
             b = brief.write_brief(self.db_path, "am", now=dt(d=22),
-                                  _narrate=self._narr)
+                                  _narrate=self._narr,
+                                  _send=lambda s, h: sent.append((s, h)))
         self.assertTrue(Path(b["path"]).exists())
         body = Path(b["path"]).read_text()
-        self.assertIn("DRAFT", body)
         self.assertIn("commitment_due item", body)                  # digest rendered
         self.assertIn("OVERDUE", body)
+        self.assertTrue(b["emailed"])
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][1], body)        # mailed exactly what was filed
+
+    def test_a_dead_smtp_still_leaves_the_brief_on_disk(self):
+        self.seed_state()
+        from modules.chief_of_staff import brief
+
+        def boom(subject, html):
+            raise OSError("connection refused")
+        with mock.patch.object(config, "COS_BRIEFS_DIR", self.tmp / "briefs"):
+            b = brief.write_brief(self.db_path, "am", now=dt(d=22),
+                                  _narrate=self._narr, _send=boom)
+        self.assertTrue(Path(b["path"]).exists())
+        self.assertFalse(b["emailed"])
+        self.assertIn("send failed", b["email_reason"])
 
     # ── source health reaches Abhijeet through the brief ─────────────────────
     # bin/doctor is pull-based; the brief is what actually lands in front of
@@ -1229,15 +1250,45 @@ class TestInterrupts(CoSCase):
 
 # ── guard: nothing in the sweep path auto-sends a client message ─────────────
 class TestNoAutoSend(CoSCase):
-    def test_no_send_calls_in_module(self):
+    """Nothing here reaches the outside world except through a named gate.
+
+    AMENDED 2026-10-18. The rule used to be "no module sends, full stop",
+    enforced by scanning for transport symbols. Abhijeet then asked for the
+    AM/PM brief by email (v2's morning-briefing had just been stopped for
+    serving 119-day-old threads), so `brief` now sends — behind
+    SHADOW_MODE['cos_brief_email'], and ONLY there. The scan is kept for every
+    other module, because the thing it was protecting against is a send
+    appearing somewhere nobody is looking, not a send existing at all.
+    """
+
+    SILENT_MODULES = ("nudges", "rules", "sweep", "commitments", "capture")
+
+    def test_no_send_calls_in_the_silent_modules(self):
+        import importlib
         import inspect
-        from modules.chief_of_staff import (nudges as n, rules as r, sweep as s,
-                                            commitments as cm, brief as br,
-                                            capture as cp)
-        for mod in (n, r, s, cm, br, cp):
+        for name in self.SILENT_MODULES:
+            mod = importlib.import_module(f"modules.chief_of_staff.{name}")
             src = inspect.getsource(mod)
             for bad in ("smtplib", "sendmail", "send_gmail", ".send("):
                 self.assertNotIn(bad, src, f"{mod.__name__} must not send")
+
+    def test_the_brief_sends_only_through_its_gate(self):
+        """The one module allowed to send must route every send through
+        send_brief, so there is exactly one place the gate can be checked."""
+        import inspect
+        from modules.chief_of_staff import brief as br
+        src = inspect.getsource(br)
+        self.assertNotIn("smtplib", src)        # transport stays in core.notify
+        self.assertEqual(src.count("notify.send_gmail"), 1)
+        self.assertIn("def email_is_live", src)
+        # and the gate is actually consulted by the sender
+        self.assertIn("if not email_is_live():",
+                      inspect.getsource(br.send_brief))
+
+    def test_interrupts_still_rides_the_module_flag(self):
+        """The brief's gate is separate on purpose: flipping the module flag
+        would start double-pinging hot leads the upwork module already mails."""
+        self.assertTrue(config.SHADOW_MODE["chief_of_staff"])
 
 
 if __name__ == "__main__":

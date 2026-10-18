@@ -151,8 +151,12 @@ def render_html(brief: dict, narr: dict) -> str:
     parts = [
         "<div style='font-family:-apple-system,Segoe UI,sans-serif;max-width:680px'>",
         f"<h2 style='margin-bottom:2px'>{html.escape(narr['headline'])}</h2>",
+        # the banner has to track the gate, not restate the old default: a
+        # mail stamped "not sent" sitting in his inbox is the kind of small
+        # lie that makes the whole page untrustworthy
         f"<div style='color:#888;font-size:13px'>{brief['generated_at']} · "
-        f"{brief['slot'].upper()} brief · DRAFT (shadow — not sent)</div>",
+        f"{brief['slot'].upper()} brief"
+        f"{'' if email_is_live() else ' · DRAFT (shadow — not sent)'}</div>",
         f"<p style='font-size:15px;line-height:1.5'>{html.escape(narr['narrative'])}</p>",
         "<h3>Top priorities</h3><ol>"
         + ("".join(_nudge_li(n) for n in brief["top"]) or "<li>None</li>") + "</ol>",
@@ -230,21 +234,62 @@ def render_text(brief: dict, narr: dict) -> str:
     return "\n".join(L)
 
 
-# ── write (shadow draft, no send) ────────────────────────────────────────────
+# ── write + send ─────────────────────────────────────────────────────────────
+
+def email_is_live() -> bool:
+    """Is the brief allowed to leave the machine? Its OWN gate — see
+    config.SHADOW_MODE['cos_brief_email']. The module-wide 'chief_of_staff'
+    flag stays True, because interrupts.py rides on it and would double-ping
+    hot leads the upwork module already sends."""
+    return not config.SHADOW_MODE.get("cos_brief_email", True)
+
+
+def send_brief(brief: dict, body: str, *,
+               _send: Optional[Callable] = None) -> dict:
+    """Email the rendered brief. Returns {sent, reason}.
+
+    A FAILED SEND IS NOT A FAILED BRIEF. The artifact is already on disk and
+    the cockpit already reads it, so SMTP trouble is reported in the metrics
+    and left there rather than raised — a brief that exists but could not be
+    mailed is a degraded morning, not a broken task, and failing the run would
+    also lose the narrative it just paid Opus to write.
+    """
+    if not email_is_live():
+        return {"sent": False, "reason": "shadow: cos_brief_email"}
+    send = _send or _default_send()
+    subject = f"{brief['slot'].upper()} brief · {brief['date']} — {brief['headline']}"
+    try:
+        send(subject, body)
+    except Exception as exc:                                   # noqa: BLE001
+        return {"sent": False, "reason": f"send failed: {type(exc).__name__}"}
+    return {"sent": True, "reason": None}
+
+
+def _default_send() -> Callable:
+    from core import notify
+    return notify.send_gmail
+
 
 def write_brief(db_path, slot: str, now: Optional[datetime] = None,
-                _narrate: Callable = narrate) -> dict:
+                _narrate: Callable = narrate,
+                _send: Optional[Callable] = None) -> dict:
     now = now or datetime.now(config.TZ)
     brief = build_brief(db_path, slot, now)
     narr = _narrate(db_path, brief)
     out_dir = config.COS_BRIEFS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{brief['date']}-{slot}.html"
-    path.write_text(render_html(brief, narr))
+    body = render_html(brief, narr)
+    path.write_text(body)
     brief["headline"] = narr["headline"]
     brief["narrative"] = narr["narrative"]
     brief["path"] = str(path)
-    # SHADOW: a draft artifact on disk only. No email transport in this module.
+    # the artifact is written FIRST and unconditionally: the disk copy and the
+    # cockpit replay are the record, the email is a delivery of it.
+    out = send_brief(brief, body, _send=_send)
+    brief["emailed"] = out["sent"]
+    if out["reason"]:
+        brief["email_reason"] = out["reason"]
     return brief
 
 

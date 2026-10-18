@@ -136,6 +136,21 @@ SHADOW_MODE = {
     "cockpit": False,          # cockpit is local-only; nothing to shadow
     "knowledge": True,
     "chief_of_staff": True,
+    # THE AM/PM BRIEF EMAIL, decoupled from 'chief_of_staff' the same way 'crm'
+    # was decoupled from 'finance' — and for a concrete reason, not tidiness:
+    # `modules/chief_of_staff/interrupts.py` reads the module flag too, and its
+    # own docstring says flipping it would double-ping hot leads, which the
+    # upwork module already emails. So the brief gets its own gate and the
+    # module stays shadowed.
+    #
+    # FLIPPED LIVE 2026-10-18 on Abhijeet's "wire a v3 brief in email". The
+    # trigger: v2's `com.etherwise.morning-briefing` was stopped that morning
+    # for serving 119-day-old threads off the v2 DB, and the scanner note above
+    # ("v2 morning-briefing still covers them") stopped being true the moment
+    # it did. v3 had been writing a correct brief to var/briefs/ daily since
+    # the module was built, and nobody was reading it.
+    # Rollback = True: the artifact keeps being written, the email stops.
+    "cos_brief_email": False,
     "finance": True,
     # CRM Airtable mirror gates (read by modules.crm.mirror). DECOUPLED from
     # 'upwork' (2026-07-02) so the mirror can go live WITHOUT lighting up the
