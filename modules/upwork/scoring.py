@@ -31,6 +31,21 @@ _OTHER_TOOLS_RE = re.compile(
     r"\b(make\.com|airtable|claude|zapier|vapi|retell|gohighlevel|ghl|"
     r"python|openai|gpt|hubspot|salesforce|notion|monday\.com)\b", re.I)
 _NO_ASIA_RE = re.compile(r"no\s+asia", re.I)
+# A client saying the posted price is not the real one (2026-10-18, his rule:
+# "unless in the proposal they have mentioned its a placeholder price"). The
+# word alone is not enough, because automation posts are full of template
+# placeholders ("replace the placeholder text"), so it must sit next to a money
+# word. Real examples it catches: "This listing uses a standard $5.00
+# placeholder contract setup budget", "The budget listed on this post is purely
+# a placeholder".
+_MONEY_WORD = r"(?:budget|price|pricing|rate|amount|fee|cost|\$\s?\d[\d,]*)"
+_PLACEHOLDER_RE = re.compile(
+    rf"{_MONEY_WORD}[^.!?\n]{{0,40}}\bplace[\s-]?holder"
+    rf"|\bplace[\s-]?holder\b[^.!?\n]{{0,25}}{_MONEY_WORD}"
+    r"|\bignore\s+the\s+(?:posted\s+|listed\s+|set\s+)?(?:budget|price|rate)\b"
+    r"|\bnot\s+(?:the\s+|our\s+)?(?:real|actual|final|true)\s+(?:budget|price|rate)\b"
+    r"|\b(?:budget|price)\s+(?:is\s+)?(?:tbd|tbc|to\s+be\s+(?:determined|decided|discussed|agreed))\b",
+    re.I)
 _ONSITE_RE = re.compile(r"\bon[- ]?site\b", re.I)
 # The Category Priority Gate caps a GHL/Vapi/Retell-centric job so it can never
 # be Hot while staying VISIBLE. It was 15 against a hot bar of 20; after the
@@ -126,28 +141,33 @@ def _proven_spender(job: dict) -> bool:
 
 def hard_rule_skip(job: dict) -> Optional[str]:
     """Skip reason or None. Title/description only for n8n — tags do NOT
-    trigger (2026-06-10 decision). No placeholder escape (v4.9).
+    trigger (2026-06-10 decision).
 
     2026-09-23: the two rules added on 08 Sep (`off_domain_title`,
-    `no_platform_named`) are GONE at his instruction, and the rate floors now
-    yield to a platform in the title. See the block below for what the numbers
-    said; the short version is that the gate had stopped being a filter and
-    started being the reason his queue was empty."""
+    `no_platform_named`) are GONE at his instruction. That day the rate floors
+    also started yielding to a platform in the title.
+
+    2026-10-18, his words: "if the budget mentioned by client less that 500$
+    fixed price simply skip. unless in the proposla they have mentioned its a
+    placehodler price / same for hourly we need 30$/hr to be in range they
+    provided if not skip those." So the floors are firm again, for every title,
+    and the one way past them is a client saying the posted price is a
+    placeholder. Measured that day over the 25 days the title exemption ran
+    (23 Sep - 18 Oct): it let 632 low-budget jobs through (243 hourly with $30
+    outside the range, 389 fixed under $500); 81 became cards, not one got a
+    proposal, and 74 of the 81 had already been skipped or had expired on the
+    board."""
     title = job.get("title") or ""
     text = title + "\n" + (job.get("description") or "")
-    # HIS OWN TOOLS IN THE TITLE OUTRANK THE RATE FLOORS. Abhijeet, 2026-09-23:
-    # "with current filter seems like lot of important jobs are also not getting
-    # scored." Measured against the only ground truth there is — the 90 proposals
-    # he has actually sent since 1 June — the RATE rules hid ten jobs he went on
-    # to bid on: "Airtable Expert", "Airtable Developer & Interface Expert",
-    # "Airtable Setup Specialist", "Process Optimization & Automation Expert",
-    # "AI Automation Specialist" among them, every one killed for a posted rate
-    # under $30 or for no rate at all. He bid anyway and negotiated up, which
-    # says a posted rate is a client's opening position, not a fact about the
-    # work. So when the title names a platform he sells, the number stops being
-    # a veto: the job goes to the model, budget is graded there, and a genuinely
-    # cheap job dies at the score — which is where a close call belongs.
+    # HIS OWN TOOLS IN THE TITLE still lift the RATE-UNSTATED rule (a blank
+    # rate is not a low rate; 2026-09-23). They no longer lift the floors on a
+    # rate the client DID state: 2026-10-18 he asked for those to be firm.
+    # (Why they were lifted on 09-23: ten of the 90 jobs he had bid on since
+    # 1 June were hidden by the rate rules, and he negotiated up on them. Why
+    # they are firm now: in the 25 days after, the exemption carded 81 cheap
+    # jobs and not one of them got a proposal.)
     core_stack_in_title = bool(_PLATFORMS_RE.search(title))
+    placeholder_price = bool(_PLACEHOLDER_RE.search(text))
     if _N8N_TITLE_START_RE.search(title):
         return "n8n_exclusion"
     if _N8N_RE.search(text) and not _OTHER_TOOLS_RE.search(text):
@@ -160,12 +180,15 @@ def hard_rule_skip(job: dict) -> Optional[str]:
             if not (_proven_spender(job) or core_stack_in_title):
                 return "rate_unstated_low_client"
             # proven spender, or his own tools named -> fall through and SCORE it
-        elif ((job.get("hourly_max") or 0) < config.HARD_FLOOR_HOURLY
-                and not core_stack_in_title):
-            return "hourly_below_30"    # a rate WAS stated, and it's too low
+        elif (job.get("hourly_max") is not None
+                and job.get("hourly_max") < config.HARD_FLOOR_HOURLY
+                and not placeholder_price):
+            # a rate WAS stated and $30 is not inside it. A range with no top
+            # is open upward, so $30 is inside it and it is scored.
+            return "hourly_below_30"
     elif job.get("contract_type") == "Fixed":
         if ((job.get("fixed_budget") or 0) < config.HARD_FLOOR_FIXED
-                and not core_stack_in_title):
+                and not placeholder_price):
             return "fixed_below_500"
     if _NO_ASIA_RE.search(text):
         return "no_asia_timezone"

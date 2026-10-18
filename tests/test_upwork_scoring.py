@@ -29,10 +29,11 @@ class TestHardRules(unittest.TestCase):
     def test_clean_job_passes(self):
         self.assertIsNone(scoring.hard_rule_skip(job()))
 
-    # NOTE on `title=`: since 2026-09-23 a platform in the TITLE exempts a job
-    # from the rate floors, and the shared fixture's title is "Make.com
-    # Automation Build". Every rate test therefore states a neutral title —
-    # otherwise it would be asserting the exemption, not the floor.
+    # NOTE on `title=`: from 2026-09-23 to 2026-10-18 a platform in the TITLE
+    # exempted a job from the rate floors, so these rate tests state a neutral
+    # title. Since 2026-10-18 the floors hold for every title (only a blank rate
+    # still yields to a platform in the title), and the neutral titles stay so
+    # each test asserts the floor and nothing else.
     def test_hourly_floor(self):
         self.assertEqual(
             scoring.hard_rule_skip(job(title="Backend Developer", hourly_max=25.0)),
@@ -76,19 +77,48 @@ class TestHardRules(unittest.TestCase):
                 client_total_spent=200_000.0)
         self.assertEqual(scoring.hard_rule_skip(j), "hourly_below_30")
 
-    def test_no_placeholder_escape_even_for_whales(self):
+    def test_a_whale_is_no_escape(self):
         j = job(title="Backend Developer", contract_type="Fixed", hourly_max=None,
                 fixed_budget=50.0, client_total_spent=200_000.0)
         self.assertEqual(scoring.hard_rule_skip(j), "fixed_below_500")
 
-    def test_the_same_placeholder_budget_passes_when_he_sells_the_tool(self):
-        """The other half of the rule above, and the reason it moved: a $50
-        "Airtable Expert" post is a client who has not thought about price yet,
-        not a client offering $50 for the work. He has bid on four of these."""
+    def test_a_platform_title_no_longer_lifts_a_low_budget(self):
+        """2026-10-18, his rule: under $500 fixed is skipped, whatever the title.
+        In its 25 days the old title exemption carded 81 low-budget jobs and
+        not one of them got a proposal."""
         j = job(title="Airtable Expert", contract_type="Fixed", hourly_max=None,
                 fixed_budget=50.0, client_total_spent=0.0,
                 client_payment_verified=False, client_hires=0)
-        self.assertIsNone(scoring.hard_rule_skip(j))
+        self.assertEqual(scoring.hard_rule_skip(j), "fixed_below_500")
+
+    def test_a_placeholder_price_is_the_way_past(self):
+        """His exception: "unless ... they have mentioned its a placeholder
+        price". Both phrasings below are real posts from the scan."""
+        for text in ("Please note: The budget listed on this post is purely a placeholder.",
+                     "This listing uses a standard $5.00 placeholder contract setup budget."):
+            j = job(title="AI Automation Expert", contract_type="Fixed", hourly_max=None,
+                    fixed_budget=5.0, description=text)
+            self.assertIsNone(scoring.hard_rule_skip(j), text)
+        cheap = job(title="Backend Developer", hourly_min=10.0, hourly_max=15.0,
+                    description="The rate shown is a placeholder; we pay market rates.")
+        self.assertIsNone(scoring.hard_rule_skip(cheap))
+
+    def test_a_template_placeholder_is_not_a_price(self):
+        """Automation posts are full of template placeholders; the word only
+        counts next to a money word."""
+        j = job(title="Backend Developer", contract_type="Fixed", hourly_max=None,
+                fixed_budget=200.0,
+                description="Replace the placeholder text in our email templates with merge fields.")
+        self.assertEqual(scoring.hard_rule_skip(j), "fixed_below_500")
+
+    def test_thirty_must_be_inside_the_posted_range(self):
+        """His words: "we need 30$/hr to be in range they provided". A top of
+        exactly $30 is in range; a range with no top is open upward."""
+        self.assertEqual(scoring.hard_rule_skip(
+            job(title="Backend Developer", hourly_min=15.0, hourly_max=29.0)), "hourly_below_30")
+        for lo, hi in ((15.0, 30.0), (19.0, 40.0), (35.0, 60.0), (25.0, None)):
+            self.assertIsNone(scoring.hard_rule_skip(
+                job(title="Backend Developer", hourly_min=lo, hourly_max=hi)), (lo, hi))
 
     # n8n rule REFINED 2026-06-12 (Abhijeet): primary-subject-only.
     def test_n8n_title_start_skips(self):
@@ -308,30 +338,26 @@ class TestPlatformGateAndWeights(unittest.TestCase):
                      fixed_budget=150.0)
         self.assertEqual(scoring.hard_rule_skip(small), "fixed_below_500")
 
-    def test_his_own_tools_in_the_title_outrank_the_rate_floors(self):
-        """THE RULES THAT WERE ACTUALLY HIDING HIS WORK. Ten of the 90 jobs he
-        bid on since 1 June were hard-gated, and not one of them by the 08 Sep
-        rules — six by `hourly_below_30`, three by `rate_unstated_low_client`,
-        one by n8n. Four had "Airtable" in the title: "Airtable Expert",
-        "Airtable Developer & Interface Expert", "Airtable Setup Specialist".
-        He bid on them anyway and negotiated up, so the posted rate is the
-        client's opening position, not a fact about the work."""
+    def test_his_tools_in_the_title_lift_only_a_blank_rate(self):
+        """2026-09-23 his tools in the title lifted every rate rule; 2026-10-18
+        he made the floors on a STATED rate or budget firm again. A blank rate
+        still goes to the model when the title names a platform he sells."""
         body = "Set up our base and the interfaces on top of it. " * 10
         for title in ("Airtable Setup Specialist",
                       "GoHighLevel Pipeline Setup for Cleaning Business",
                       "HubSpot Marketing Operations Specialist"):
             cheap = dict(self._job(title, body), hourly_min=10.0, hourly_max=15.0)
-            self.assertIsNone(scoring.hard_rule_skip(cheap), title)
+            self.assertEqual(scoring.hard_rule_skip(cheap), "hourly_below_30", title)
             blank = dict(self._job(title, body), hourly_min=None, hourly_max=None)
             self.assertIsNone(scoring.hard_rule_skip(blank), title)
             small = dict(self._job(title, body), contract_type="Fixed",
                          hourly_min=None, hourly_max=None, fixed_budget=150.0)
-            self.assertIsNone(scoring.hard_rule_skip(small), title)
+            self.assertEqual(scoring.hard_rule_skip(small), "fixed_below_500", title)
 
     def test_the_exemption_reads_the_title_only(self):
         """A platform mentioned in passing in the body is not a client buying
-        configuration of it. The exemption is a door, not a hole — the same
-        shape as every other title rule here."""
+        configuration of it. (Since 2026-10-18 a stated low rate is skipped
+        whatever the title; this pins that the body never lifted it either.)"""
         j = dict(self._job("Backend Developer",
                            "You will occasionally touch our Airtable base. " * 10),
                  hourly_min=10.0, hourly_max=15.0)

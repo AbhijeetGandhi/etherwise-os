@@ -226,10 +226,10 @@ class HardRulesBehaveIdentically(unittest.TestCase):
                                                            "hourlyBudgetMax": hmax}}}}}
         return mcp_feed.normalize({"id": "x", "client": {}}, g)
 
-    # NOTE on titles: since 2026-09-23 a platform in the TITLE exempts a job
-    # from the rate floors, so these boundary cases state a neutral one. The
-    # fixture's default ("Make.com work") is kept for every rule that is not a
-    # rate rule, and exercised as the exemption in its own test below.
+    # NOTE on titles: from 2026-09-23 to 2026-10-18 a platform in the TITLE
+    # exempted a job from the rate floors, so these boundary cases state a
+    # neutral one. Since 2026-10-18 the floors hold for every title; the test
+    # below proves that through the MCP mapping too.
     NEUTRAL = "Backend Developer"
 
     def test_hourly_floor(self):
@@ -239,12 +239,11 @@ class HardRulesBehaveIdentically(unittest.TestCase):
         self.assertIsNone(scoring.hard_rule_skip(self._hourly(10, 30, title=self.NEUTRAL)))
         self.assertIsNone(scoring.hard_rule_skip(self._hourly(20, 50, title=self.NEUTRAL)))
 
-    def test_the_rate_floors_yield_to_a_platform_in_the_title(self):
+    def test_a_platform_in_the_title_no_longer_lifts_a_stated_rate(self):
         """Through the MCP mapping as well as the scraper's — the rules must
-        agree 100%, and this one is new enough to be worth proving on both
-        sides of the bridge."""
-        self.assertIsNone(scoring.hard_rule_skip(
-            self._hourly(10, 15, title="Airtable Setup Specialist")))
+        agree 100% (his rule of 2026-10-18: $30 must be inside the range)."""
+        self.assertEqual(scoring.hard_rule_skip(
+            self._hourly(10, 15, title="Airtable Setup Specialist")), "hourly_below_30")
         self.assertEqual(scoring.hard_rule_skip(
             self._hourly(10, 15, title="Backend Developer")), "hourly_below_30")
 
@@ -258,7 +257,7 @@ class HardRulesBehaveIdentically(unittest.TestCase):
             return mcp_feed.normalize({"id": "x", "client": {}}, g)
         self.assertEqual(scoring.hard_rule_skip(fx(499)), "fixed_below_500")
         self.assertIsNone(scoring.hard_rule_skip(fx(500)))
-        self.assertIsNone(scoring.hard_rule_skip(fx(499, title="Airtable Expert")))
+        self.assertEqual(scoring.hard_rule_skip(fx(499, title="Airtable Expert")), "fixed_below_500")
 
     def test_rate_unstated_needs_a_proven_spender(self):
         """The blank-rate escape: unproven client skips, proven one scores."""
