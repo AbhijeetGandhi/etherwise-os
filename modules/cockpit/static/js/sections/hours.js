@@ -167,7 +167,7 @@ async function openClient(ctx, clientId, listId) {
       + " where that is visible without reopening ClickUp.")]
     .filter(Boolean).forEach((c) => body.appendChild(c));
 
-  const actions = el("div", "row", [
+  const actions = el("div", "field-row", [
     btn("See the entries", async () => {
       const r = await ctx.api("/api/hours/rows?" + q);
       openDrill({
@@ -211,12 +211,14 @@ async function openClient(ctx, clientId, listId) {
   body.appendChild(actions);
 
   if ((d.periods || []).length > 1) {
-    const sel = el("select", { class: "sel" },
-      d.periods.map((p) => el("option",
-        { value: p.list_id, selected: p.name === d.period ? "" : undefined },
-        `${p.name}`)));
+    const sel = el("select", { class: "input",
+      attrs: { "aria-label": "period" } },
+    d.periods.map((p) => el("option",
+      { value: p.list_id, selected: p.name === d.period },
+      `${p.name}`)));
     sel.addEventListener("change", () => openClient(ctx, clientId, sel.value));
-    body.appendChild(el("div", "row", [el("span", "small muted", "Period"), sel]));
+    body.appendChild(el("div", "rep-controls", [
+      el("div", "rep-field", [el("label", null, "Period"), sel])]));
   }
 
   openDrill({ title: `Hours — ${clientId}`, custom: body,

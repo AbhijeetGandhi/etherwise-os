@@ -679,6 +679,33 @@ details.group[open] > summary::before { content: "▾ "; }
 /* ── a stacked composition bar + its legend (Pipeline lead quality) ─────────
    One bar that partitions a whole. Segment width comes from the data (inline
    `flex`), everything else is here. */
+/* ── Reports: the weekly-report toolbar ─────────────────────────────────────
+   Written 2026-10-19 after the first version shipped with `class="row"` and
+   `class="sel"`. `.sel` does not exist, so the selects were unstyled; `.row`
+   DOES exist and means a bordered list-row card, so the controls landed inside
+   a box with no flex at all — label and control touching, the lot jammed left.
+   Guessing at class names is how that happens; these are named for this
+   surface and defined here, next to .rev-bar which does the same job. */
+.rep-controls {
+  display: flex; align-items: flex-end; gap: var(--space-4); flex-wrap: wrap;
+}
+/* label ABOVE its control: inline labels collide the moment a client name is
+   long, which is most of them */
+.rep-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rep-field > label {
+  font-size: var(--text-xs); color: var(--muted-foreground);
+  letter-spacing: 0.02em; text-transform: uppercase;
+}
+/* a <select> sizes itself to its widest option — same trap the Review picker
+   documents. Cap it, or one long sprint name pushes the button off-screen. */
+.rep-field > .input { max-width: 260px; }
+.rep-controls > .btn { margin-left: auto; }
+.rep-md {
+  width: 100%; min-height: 320px; resize: vertical;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--text-xs); line-height: 1.55;
+}
+
 .stackbar {
   display: flex; width: 100%; height: 26px; overflow: hidden;
   border-radius: var(--radius-sm); background: var(--muted);

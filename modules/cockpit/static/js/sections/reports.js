@@ -47,16 +47,22 @@ async function eow(root, ctx) {
 
   // the picker IS the page: client + period, then the report. No drill, no
   // hunting — the one job this tab exists for is the first thing on it.
-  const pick = el("div", "row", []);
-  const cSel = el("select", { class: "sel" },
-    clients.map((c) => el("option", { value: c.client_id }, c.client)));
-  const pSel = el("select", { class: "sel" }, []);
+  const cSel = el("select", { class: "input",
+    attrs: { "aria-label": "client" } },
+  clients.map((c) => el("option", { value: c.client_id }, c.client)));
+  const pSel = el("select", { class: "input",
+    attrs: { "aria-label": "period" } }, []);
   const out = el("div", "stack");
-  pick.append(el("span", "small muted", "Client"), cSel,
-    el("span", "small muted", "Period"), pSel,
-    btn("Build report", () => build()));
+
+  const field = (label, control) => el("div", "rep-field",
+    [el("label", null, label), control]);
+
   root.append(card("Weekly client report", el("div", "stack", [
-    pick,
+    el("div", "rep-controls", [
+      field("Client", cSel),
+      field("Period", pSel),
+      btn("Build report", () => build()),
+    ]),
     el("div", "small muted",
       "Nothing is sent from here — the report renders for you to send."),
   ])), out);
@@ -118,12 +124,11 @@ async function eow(root, ctx) {
         "Nothing waiting on them."),
     );
 
-    const ta = el("textarea", { class: "mono", rows: "18",
-      style: { width: "100%" } }, r.markdown || "");
+    const ta = el("textarea", { class: "input rep-md" }, r.markdown || "");
     out.appendChild(card("Send this", el("div", "stack", [
       el("div", "small muted", r.basis),
       ta,
-      el("div", "row", [
+      el("div", "field-row", [
         btn("Copy", async () => {
           try {
             await navigator.clipboard.writeText(ta.value);
