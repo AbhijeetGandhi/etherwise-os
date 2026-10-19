@@ -130,7 +130,8 @@ QUERY_PARAMS: dict = {
     "period": "sprint list id (defaults to the client's current period)",
     "frm": "YYYY-MM-DD (hours gap window start)",
     "to": "YYYY-MM-DD (hours gap window end)",
-    "fmt": "md — ask /api/hours/eow for the sendable markdown too",
+    "fmt": "md | doc — /api/hours/eow adds the markdown (md) or the markdown"
+           " plus the branded HTML document (doc)",
     # /api/today/rows
     "which": "fresh|accumulated",
     # /api/pipeline/rows — the one drill behind every Pipeline figure
@@ -201,6 +202,9 @@ POST_ROUTES: dict = {
     "/api/cos-nudge": actions.cos_nudge,  # act on a real M4 nudge
     "/api/card/closure": actions.card_closure,  # J1.5 confirm/reject a chip
     "/api/finance/import": actions.finance_import,  # dry-run/commit via importer bins
+    # print the weekly client report to PDF (local file + returned for download).
+    # POST because it writes a file; it sends nothing to anyone.
+    "/api/hours/eow_pdf": actions.hours_eow_pdf,
 }
 # raw-body route (file bytes, not JSON): staged into finance-inbox, kind-allowlisted
 UPLOAD_ROUTE = "/api/finance/upload"

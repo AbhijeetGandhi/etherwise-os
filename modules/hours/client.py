@@ -128,6 +128,9 @@ def time_entries(tok: str, *, start_ms: int, end_ms: int,
         "end_date": end_ms,
         "assignee": ",".join(str(m) for m in member_ids),
         "include_location_names": "true",
+        # the task's tags, with ClickUp's own colours — the workstream a
+        # client recognises their bill by (migration 043)
+        "include_task_tags": "true",
     }
     if space_id:
         params["space_id"] = space_id

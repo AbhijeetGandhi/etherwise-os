@@ -1372,8 +1372,14 @@ HOURS_DONE_TYPES = ("closed", "done")
 # Statuses (lowercased display names) that mean the ball is with the CLIENT.
 # These drive the report's "Needs your input" section — the one part a client
 # reads for an action rather than for reassurance.
-HOURS_AWAITING_CLIENT = ("waiting on client", "blocked", "awaiting approval",
-                         "needs approval", "client review", "on hold")
+# Only statuses that EXPLICITLY name the client. "blocked" and "on hold" were in
+# this list and came out of it on 2026-10-19: on Hermon's Sprint 22 report a
+# task BLOCKED for our own reasons was printed under "Waiting on your review".
+# Telling a client something waits on them when it does not is worse than
+# leaving it in progress. Matched as substrings, so "NEEDS CLIENT REVIEW" hits.
+HOURS_AWAITING_CLIENT = ("waiting on client", "awaiting client",
+                         "awaiting approval", "needs approval",
+                         "client review", "client approval")
 # How many tasks changing status within the same MINUTE counts as a sprint
 # tidy-up rather than delivery. Measured on Horizons 44 (2026-10-19): 40 of 43
 # "completed" tasks shared one close timestamp. Listing those as forty things

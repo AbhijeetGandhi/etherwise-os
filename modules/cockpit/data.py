@@ -5141,8 +5141,12 @@ def hours_eow(db_path: Optional[Path] = None, *,
               period: Optional[str] = None,
               fmt: Optional[str] = None) -> dict:
     """The end-of-week client report — the five sections he already sends,
-    sourced from v3. `fmt=md` adds the sendable markdown beside the data."""
-    from modules.hours import eow
+    sourced from v3. `fmt=md` adds the older five-section markdown;
+    `fmt=doc` adds the branded document (`html` — what the Reports tab
+    previews and the PDF is printed from) and `text`, the same report as
+    plain text, built from the same model so the message and the PDF can
+    never disagree."""
+    from modules.hours import eow, eow_doc
     if not client:
         return {"error": "client is required", "as_of": None}
     conn = _ro(db_path)
@@ -5150,8 +5154,12 @@ def hours_eow(db_path: Optional[Path] = None, *,
         rep = eow.build(conn, client, period, _ist_today())
     finally:
         conn.close()
-    if not rep.get("error") and (fmt or "").lower() in ("md", "markdown"):
+    f = (fmt or "").lower()
+    if not rep.get("error") and f in ("md", "markdown"):
         rep["markdown"] = eow.render_markdown(rep)
+    if not rep.get("error") and f == "doc":
+        rep["html"] = eow_doc.render(rep, for_print=False)
+        rep["text"] = eow_doc.render_text(rep)
     return rep
 
 

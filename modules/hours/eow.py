@@ -29,6 +29,7 @@ NOTHING IS SENT (hours brief law 2). This renders a report. Abhijeet sends it.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 from typing import Optional
 
@@ -40,6 +41,20 @@ MS_H = 3_600_000
 
 def _ms(day: str, *, end: bool = False) -> int:
     return hr._ms(day, end=end)
+
+
+def client_name(client_id: str) -> str:
+    """The name on the cover — from the registry, which is the only roster in
+    this codebase. A raw slug like 'horizons-aba' on a client's report is the
+    kind of detail that makes a document look generated."""
+    try:
+        from core import registry
+        name = registry.load().canonical(client_id)
+        if name:
+            return name
+    except Exception:                                            # noqa: BLE001
+        pass
+    return client_id.replace("-", " ").title()
 
 
 def _age_words(ms: Optional[int], now_ms: int) -> str:
@@ -197,14 +212,16 @@ def in_progress(conn, client_id: str, now_ms: int) -> list:
 def needs_input(conn, client_id: str, now_ms: int) -> list:
     """Where the ball is with the client — tasks parked in a waiting status,
     and commitments we recorded as theirs."""
+    # classified in Python through status_class, not `lower(status) IN (...)`:
+    # the exact match missed "NEEDS CLIENT REVIEW", which is Hermon's real
+    # status and the most important line a client report carries
     out = [{"what": r["name"], "why": r["status"], "source": "task",
             "waiting": _age_words(r["status_changed_ms"], now_ms)}
            for r in conn.execute(
-               "SELECT name, status, status_changed_ms FROM hours_tasks"
-               " WHERE client_id=? AND gone_at IS NULL"
-               " AND lower(status) IN ({})".format(
-                   ",".join("?" * len(config.HOURS_AWAITING_CLIENT))),
-               (client_id, *config.HOURS_AWAITING_CLIENT))]
+               "SELECT name, status, status_type, status_changed_ms"
+               " FROM hours_tasks WHERE client_id=? AND gone_at IS NULL",
+               (client_id,))
+           if status_class(r["status"], r["status_type"]) == "review"]
     try:
         out += [{"what": r["text"], "why": "promised to us", "source":
                  "commitment", "waiting": None}
@@ -215,6 +232,153 @@ def needs_input(conn, client_id: str, now_ms: int) -> list:
     except Exception:                                            # noqa: BLE001
         pass            # commitments schema varies; the task list stands alone
     return out
+
+
+def status_class(status: Optional[str], status_type: Optional[str]) -> str:
+    """done | review | active — the three things a client reads a status as.
+
+    `review` is matched by substring, not membership: the first version looked
+    for an exact "client review" and missed Hermon's actual status, "NEEDS
+    CLIENT REVIEW", which is the single most important line on the report —
+    it is the one asking the client to do something.
+    """
+    s = (status or "").strip().lower()
+    if (status_type or "").lower() in config.HOURS_DONE_TYPES:
+        return "done"
+    if any(k in s for k in config.HOURS_AWAITING_CLIENT):
+        return "review"
+    return "active"
+
+
+def _tags(raw) -> list:
+    try:
+        tags = json.loads(raw) if raw else []
+    except (TypeError, ValueError):
+        return []
+    return [t for t in tags if isinstance(t, dict) and t.get("name")]
+
+
+def workstreams(conn, client_id: str, list_id: Optional[str],
+                lo: str, hi: str) -> dict:
+    """Hours grouped the way his own export groups them: by the task's TAGS.
+
+    His Sprint 22 export for Hermon is headed "Grouped by tag" — cashswipe,
+    eskool, mc, spm, cashcow … each a workstream, task rows under it, a total
+    per group. A task with two tags is its own group ("vibe coding cashswipe +
+    vibe coding spm"), exactly as ClickUp shows it, because splitting its time
+    across both would invent an allocation nobody made.
+
+    Rows are every task with time logged in the window, PLUS tasks in the
+    period's sprint list with none yet — scope the team is carrying is part of
+    the picture. Alert tickets with no time are left out: fifty-four "the
+    scenario has been stopped" rows at zero minutes would bury the work.
+    """
+    tasks: dict = {}
+    for r in conn.execute(
+            "SELECT task_id, task_name, user_name, duration_ms, task_tags_json,"
+            " task_status, task_status_type, folder_name FROM hours_entries"
+            " WHERE client_id=? AND gone_at IS NULL AND duration_ms > 0"
+            " AND start_ms BETWEEN ? AND ?",
+            (client_id, _ms(lo), _ms(hi, end=True))):
+        key = r["task_id"] or f"name:{r['task_name']}"
+        t = tasks.setdefault(key, {
+            "name": r["task_name"] or "Untitled task", "ms": 0, "team": set(),
+            "tags": _tags(r["task_tags_json"]), "status": r["task_status"],
+            "status_type": r["task_status_type"], "folder": r["folder_name"]})
+        t["ms"] += r["duration_ms"]
+        if r["user_name"]:
+            t["team"].add(r["user_name"])
+
+    if list_id:
+        listed = [dict(r) for r in conn.execute(
+            "SELECT id, name, status, status_type, assignees_json, tags_json,"
+            " status_changed_ms FROM hours_tasks"
+            " WHERE list_id=? AND gone_at IS NULL", (list_id,))]
+        # the same tidy-up rule as shipped(): a zero-time task closed in a
+        # bulk sweep would otherwise reach "Delivered" through this side door
+        bulk = _bulk_closed([r for r in listed if (r["status_type"] or "")
+                             .lower() in config.HOURS_DONE_TYPES])
+        for r in listed:
+            if r["id"] in tasks or not is_delivery(r["name"]):
+                continue
+            if ((r["status_changed_ms"] or 0) // 60_000) in bulk and \
+                    (r["status_type"] or "").lower() in config.HOURS_DONE_TYPES:
+                continue
+            try:
+                team = set(json.loads(r["assignees_json"] or "[]")) - {None}
+            except (TypeError, ValueError):
+                team = set()
+            tasks[r["id"]] = {"name": r["name"], "ms": 0, "team": team,
+                              "tags": _tags(r["tags_json"]),
+                              "status": r["status"],
+                              "status_type": r["status_type"], "folder": None}
+
+    groups: dict = {}
+    for t in tasks.values():
+        names = sorted({x["name"] for x in t["tags"]})
+        key = " + ".join(names) or "No tags"
+        g = groups.setdefault(key, {
+            "name": key,
+            "color": next((x.get("color") for x in t["tags"] if x.get("color")),
+                          None),
+            "ms": 0, "rows": []})
+        g["ms"] += t["ms"]
+        cls = status_class(t["status"], t["status_type"])
+        g["rows"].append({"name": t["name"], "ms": t["ms"],
+                          "team": sorted(t["team"]),
+                          "status": t["status"] or "—", "cls": cls})
+
+    out = sorted(groups.values(), key=lambda g: -g["ms"])
+    for g in out:
+        g["rows"].sort(key=lambda x: (-x["ms"], x["name"].lower()))
+        g["task_count"] = len(g["rows"])
+    # "No tags" is ClickUp's word, not a client's: on a report it reads like a
+    # filing error. One group for the whole period is just "All work"; beside
+    # tagged workstreams it is "Other work" — and it is never named in the
+    # summary sentence as somewhere the time "went".
+    for g in out:
+        if g["name"] == "No tags":
+            g["name"] = "All work" if len(out) == 1 else "Other work"
+            g["catch_all"] = True
+    rows = [x for g in out for x in g["rows"]]
+    return {"groups": out,
+            "total_ms": sum(g["ms"] for g in out),
+            "task_count": len(rows),
+            "done": sum(1 for x in rows if x["cls"] == "done"),
+            "review": [dict(x, workstream=g["name"]) for g in out
+                       for x in g["rows"] if x["cls"] == "review"],
+            "active": [dict(x, workstream=g["name"]) for g in out
+                       for x in g["rows"] if x["cls"] == "active"],
+            "people": sorted({p for x in rows for p in x["team"]})}
+
+
+def summary_text(client_name: str, ws: dict, shipped_n: int,
+                 caught_: dict) -> str:
+    """Two or three plain sentences built ONLY from the figures above them.
+
+    Templated, not generated: a model asked to summarise a client's week will
+    reach for a claim the data does not make, and this paragraph is the one the
+    client reads first.
+    """
+    h = ws["total_ms"] / MS_H
+    parts = [f"This period the team logged {h:.1f} hours for {client_name}"
+             f" across {ws['task_count']} tasks"
+             + (f" in {len(ws['groups'])} workstreams." if len(ws["groups"]) > 1
+                else ".")]
+    tops = [g for g in ws["groups"]
+            if g["ms"] > 0 and not g.get("catch_all")][:3]
+    if len(tops) > 1:
+        parts.append("Most of the time went to " + ", ".join(
+            f"{g['name']} ({g['ms'] / MS_H:.1f}h)" for g in tops) + ".")
+    tail = f"{ws['done']} tasks are complete"
+    if ws["review"]:
+        tail += (f" and {len(ws['review'])} are waiting on your review"
+                 " — listed first below")
+    parts.append(tail + ".")
+    if caught_.get("total_alerts"):
+        parts.append(f"We also handled {caught_['total_alerts']} automation"
+                     f" alerts, {caught_['resolved']} of them already resolved.")
+    return " ".join(parts)
 
 
 def build(conn, client_id: str, list_id: Optional[str], today: str) -> dict:
@@ -231,12 +395,19 @@ def build(conn, client_id: str, list_id: Optional[str], today: str) -> dict:
     open_items = [x for x in in_progress(conn, client_id, now_ms)
                   if is_delivery(x["name"])]
     waiting = needs_input(conn, client_id, now_ms)
+    period_list = next((p["list_id"] for p in period["periods"]
+                        if p["name"] == period["period"]), list_id)
+    ws = workstreams(conn, client_id, period_list, lo, hi)
+    name = client_name(client_id)
 
     return {
         "as_of": period["as_of"],
         "client_id": client_id,
+        "client_name": name,
         "period": period["period"], "starts_on": lo, "ends_on": hi,
         "open": period["open"],
+        "workstreams": ws,
+        "summary": summary_text(name, ws, len(done), alerts),
         "hours": {"total": period["hours"], "entries": period["entries"],
                   "by_folder": period["by_folder"],
                   # the breakdown a client sees is the one they asked for; the

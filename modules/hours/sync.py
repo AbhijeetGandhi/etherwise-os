@@ -179,6 +179,18 @@ def sync(ctx, *, since: Optional[str] = None,
                              r[14], r[15], r[16], r[17], r[18], now, eid))
                         if cur["duration_ms"] != r[12]:
                             updated += 1
+                    # the task's tags and CURRENT status ride on the entry
+                    # (migration 043). Written for new and existing rows alike,
+                    # because a task is re-tagged and moves status long after
+                    # its time was logged — and the report groups by tag.
+                    tstat = (e.get("task") or {}).get("status") or {}
+                    if not isinstance(tstat, dict):
+                        tstat = {"status": tstat}
+                    conn.execute(
+                        "UPDATE hours_entries SET task_tags_json=?,"
+                        " task_status=?, task_status_type=? WHERE id=?",
+                        (_tags_json(e.get("task_tags")),
+                         tstat.get("status"), tstat.get("type"), eid))
 
         # entries the API no longer returns, inside the window we just read
         gone = conn.execute(
@@ -296,6 +308,8 @@ def _sync_tasks(conn, tok, reg, now, _client, log) -> int:
                      _int(t.get("date_done")) or _int(t.get("date_updated")),
                      _int(t.get("date_closed")), _int(t.get("due_date")),
                      t.get("url"), now, now))
+                conn.execute("UPDATE hours_tasks SET tags_json=? WHERE id=?",
+                             (_tags_json(t.get("tags")), str(t.get("id"))))
                 seen += 1
     return seen
 
@@ -305,6 +319,15 @@ def _int(v):
         return int(v)
     except (TypeError, ValueError):
         return None
+
+
+def _tags_json(tags) -> Optional[str]:
+    """[{name, color}] — ClickUp's own tag colour is kept, so a workstream looks
+    the same in the report as it does in the client's ClickUp."""
+    out = [{"name": (t.get("name") or "").strip(),
+            "color": t.get("tag_bg") or t.get("tag_fg")}
+           for t in (tags or []) if (t.get("name") or "").strip()]
+    return json.dumps(out) if out else None
 
 
 def main() -> int:

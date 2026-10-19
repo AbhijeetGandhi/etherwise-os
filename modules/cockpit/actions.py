@@ -791,3 +791,36 @@ def card_closure(db_path, body: dict) -> dict:
                 "engine_rows": res.get("engine_rows", 0)}
     return {"updated": 0, "closure_state": state, "via": "none",
             "note": "no stored card for that key — it was already open"}
+
+
+def hours_eow_pdf(db_path: Optional[Path], body: dict) -> dict:
+    """POST /api/hours/eow_pdf — print the weekly client report to PDF.
+
+    body: {client, period}. Builds the same report the Reports tab previews,
+    renders the PRINT variant (every workstream open — a closed <details>
+    prints nothing) through headless Chrome, keeps a copy under
+    var/reports/eow/<client>/ and returns the bytes so the browser can save
+    it. Writes one local file; sends nothing to anyone (drafts-only, §0).
+    """
+    import base64
+    import re as _re
+    from modules.hours import eow, eow_doc, pdf
+    from modules.cockpit.data import _ist_today
+    client = (body or {}).get("client")
+    period = (body or {}).get("period") or None
+    if not client:
+        raise ValueError("client is required")
+    with db.connect(db_path or config.DB_PATH) as conn:
+        rep = eow.build(conn, client, period, _ist_today())
+    if rep.get("error"):
+        return {"ok": False, "error": rep["error"]}
+    dest = pdf.render(eow_doc.render(rep, for_print=True),
+                      pdf.out_path(client, rep["period"]))
+    data = dest.read_bytes()
+    sprint = rep["period"].split(" (")[0]
+    # the name the CLIENT sees when he attaches it — not the local slug
+    name = _re.sub(r'[\\/:*?"<>|]+', "-",
+                   f"{rep['client_name']} - {sprint} - Etherwise report.pdf")
+    return {"ok": True, "filename": name, "saved_to": str(dest),
+            "bytes": len(data),
+            "pdf_b64": base64.b64encode(data).decode("ascii")}
