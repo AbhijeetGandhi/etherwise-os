@@ -5136,6 +5136,25 @@ def hours_report(db_path: Optional[Path] = None, *,
         conn.close()
 
 
+def hours_eow(db_path: Optional[Path] = None, *,
+              client: Optional[str] = None,
+              period: Optional[str] = None,
+              fmt: Optional[str] = None) -> dict:
+    """The end-of-week client report — the five sections he already sends,
+    sourced from v3. `fmt=md` adds the sendable markdown beside the data."""
+    from modules.hours import eow
+    if not client:
+        return {"error": "client is required", "as_of": None}
+    conn = _ro(db_path)
+    try:
+        rep = eow.build(conn, client, period, _ist_today())
+    finally:
+        conn.close()
+    if not rep.get("error") and (fmt or "").lower() in ("md", "markdown"):
+        rep["markdown"] = eow.render_markdown(rep)
+    return rep
+
+
 def hours_rows(db_path: Optional[Path] = None, *,
                client: Optional[str] = None,
                period: Optional[str] = None) -> dict:

@@ -53,6 +53,10 @@ const SECTIONS = [
   { id: "upwork", label: "Upwork", icon: "trending-up", load: () => import("./sections/upwork.js") },
   { id: "money", label: "Money", icon: "wallet", load: () => import("./sections/money.js") },
   { id: "clients", label: "Clients", icon: "users", load: () => import("./sections/clients.js") },
+  // Reports is its own tab (2026-10-19). Hours shipped inside Clients and the
+  // weekly report sat three clicks deep behind a drill — "currently i only see
+  // hours". A thing you have to hunt for is a thing that was not delivered.
+  { id: "reports", label: "Reports", icon: "file-text", load: () => import("./sections/reports.js") },
   { id: "knowledge", label: "Knowledge", icon: "book-open", load: () => import("./sections/knowledge.js") },
   { id: "activity", label: "Activity", icon: "activity", load: () => import("./sections/activity.js") },
   { id: "review", label: "Review", icon: "inbox", load: () => import("./sections/review.js"), badge: true },

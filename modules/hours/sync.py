@@ -191,12 +191,13 @@ def sync(ctx, *, since: Optional[str] = None,
                          (now, gid))
 
         periods_written = _sync_periods(conn, tok, reg, now, _client)
+        tasks = _sync_tasks(conn, tok, reg, now, _client, ctx.log)
 
     metrics = {"entries_seen": len(seen_ids), "inserted": inserted,
                "duration_changed": updated, "marked_gone": len(vanished),
                "chunks": chunks, "spaces": len(config.HOURS_SPACES),
-               "periods": periods_written, "since": lo, "as_of": now,
-               "suspicious_chunks": suspicious}
+               "periods": periods_written, "tasks": tasks, "since": lo,
+               "as_of": now, "suspicious_chunks": suspicious}
     ctx.log(f"hours sync: {json.dumps(metrics)}")
     return metrics
 
@@ -241,6 +242,69 @@ def _sync_periods(conn, tok, reg, now, _client) -> int:
                  p["ends_on"], p["parse_ok"], p["parse_note"], now))
             n += 1
     return n
+
+
+def _sync_tasks(conn, tok, reg, now, _client, log) -> int:
+    """Tasks for the RECENT sprint lists only.
+
+    Not every list ever: a client with 44 sprints would be 44 paged reads per
+    night for history that cannot change the current report. The EOW report
+    looks at the period being reported and the one before it, so the sync
+    follows the same horizon — config.HOURS_TASK_PERIODS back from today.
+    """
+    import json as _json
+    seen = 0
+    for space_id, space_name in config.HOURS_SPACES.items():
+        client_id = _client_for_space(reg, space_name)
+        recent = [dict(r) for r in conn.execute(
+            "SELECT list_id, list_name FROM hours_periods"
+            " WHERE space_id=? AND parse_ok=1 ORDER BY starts_on DESC LIMIT ?",
+            (space_id, config.HOURS_TASK_PERIODS))]
+        for p in recent:
+            try:
+                tasks = _client.tasks_in_list(tok, p["list_id"])
+            except Exception as exc:                             # noqa: BLE001
+                log(f"hours tasks {p['list_name']}: {exc!r}")
+                continue
+            for t in tasks:
+                st = t.get("status") or {}
+                loc_folder = (t.get("folder") or {})
+                conn.execute(
+                    "INSERT INTO hours_tasks (id, name, status, status_type,"
+                    " space_id, space_name, folder_id, folder_name, list_id,"
+                    " list_name, client_id, assignees_json, created_ms,"
+                    " updated_ms, status_changed_ms, closed_ms, due_ms, url,"
+                    " first_seen_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    " ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
+                    " status=excluded.status, status_type=excluded.status_type,"
+                    " list_id=excluded.list_id, list_name=excluded.list_name,"
+                    " client_id=excluded.client_id,"
+                    " assignees_json=excluded.assignees_json,"
+                    " updated_ms=excluded.updated_ms,"
+                    " status_changed_ms=excluded.status_changed_ms,"
+                    " closed_ms=excluded.closed_ms, due_ms=excluded.due_ms,"
+                    " gone_at=NULL, updated_at=excluded.updated_at",
+                    (str(t.get("id")), t.get("name"), st.get("status"),
+                     st.get("type"), space_id, space_name,
+                     str(loc_folder.get("id") or "") or None,
+                     loc_folder.get("name"), p["list_id"], p["list_name"],
+                     client_id,
+                     _json.dumps([a.get("username")
+                                  for a in (t.get("assignees") or [])]),
+                     _int(t.get("date_created")), _int(t.get("date_updated")),
+                     _int(t.get("date_done")) or _int(t.get("date_updated")),
+                     _int(t.get("date_closed")), _int(t.get("due_date")),
+                     t.get("url"), now, now))
+                seen += 1
+    return seen
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def main() -> int:

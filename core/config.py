@@ -1360,6 +1360,25 @@ HOURS_GAP_EXCLUDE_USER_IDS = ("101070656",)
 HOURS_REPORT_BREAKDOWNS = {
     "horizons-aba": ("task",),      # Alex asked first (2026-10-19)
 }
+# How many recent sprint lists to pull TASKS for. The EOW report covers the
+# period being reported and the one before it; pulling tasks for all 44 of
+# Horizons' sprints every night would be 44 paged reads for history that cannot
+# change the current report.
+HOURS_TASK_PERIODS = 3
+# ClickUp status types that mean "finished". `type` is ClickUp's own
+# classification, not the display name, so a client renaming "Complete" to
+# "Shipped" does not silently empty the report's first section.
+HOURS_DONE_TYPES = ("closed", "done")
+# Statuses (lowercased display names) that mean the ball is with the CLIENT.
+# These drive the report's "Needs your input" section — the one part a client
+# reads for an action rather than for reassurance.
+HOURS_AWAITING_CLIENT = ("waiting on client", "blocked", "awaiting approval",
+                         "needs approval", "client review", "on hold")
+# How many tasks changing status within the same MINUTE counts as a sprint
+# tidy-up rather than delivery. Measured on Horizons 44 (2026-10-19): 40 of 43
+# "completed" tasks shared one close timestamp. Listing those as forty things
+# shipped is a claim a client checks once and then stops believing the report.
+HOURS_BULK_CLOSE_MIN = 5
 
 # ── Job feed provider (Phase 0.1 cutover, Upwork chat 2026-08-25) ────────────
 # THE switch. "chrome" = the three personalized feed tabs in his logged-in

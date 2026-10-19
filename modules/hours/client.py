@@ -94,6 +94,15 @@ def _request(path: str, params: dict, tok: str, *, method: str = "GET",
                     f"GET {path} -> {exc.code}: {body}") from exc
             delay = float(exc.headers.get("Retry-After") or 0) or 2 ** (attempt + 1)
             sleep(delay)
+        except (urllib.error.URLError, OSError) as exc:          # noqa: PERF203
+            # A dropped connection is as retryable as a 429 and arrives as a
+            # DIFFERENT exception — measured 2026-10-19, "Connection reset by
+            # peer" killed a full sync two-thirds through because only
+            # HTTPError was being caught. A nightly job that dies on one reset
+            # is a job that silently stops producing numbers.
+            if attempt == _MAX_RETRIES - 1:
+                raise ClickUpReadError(f"GET {path}: {exc}") from exc
+            sleep(2 ** (attempt + 1))
     raise ClickUpReadError(f"GET {path}: retries exhausted")      # unreachable
 
 
@@ -136,6 +145,29 @@ def members(tok: str) -> list:
              "username": m["user"].get("username"),
              "email": m["user"].get("email")}
             for m in (team.get("members") or []) if m.get("user")]
+
+
+def tasks_in_list(tok: str, list_id: str) -> list:
+    """Every task in a list, including closed ones.
+
+    `include_closed=true` is the whole point: the EOW report's first section is
+    what SHIPPED, and ClickUp omits closed tasks by default — ask without it and
+    the report says nothing was finished. Paged at 100 (ClickUp's own page
+    size), walked to the end rather than trusted to be one page.
+    """
+    out, page = [], 0
+    while True:
+        res = _request(f"/list/{list_id}/task",
+                       {"include_closed": "true", "subtasks": "true",
+                        "page": page}, tok)
+        batch = res.get("tasks") or []
+        out.extend(batch)
+        if res.get("last_page") or not batch:
+            break
+        page += 1
+        if page > 20:                       # 2000 tasks in one sprint: report it
+            break
+    return out
 
 
 def lists_in_folder(tok: str, folder_id: str) -> list:

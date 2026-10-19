@@ -69,6 +69,7 @@ GET_ROUTES: dict = {
     "/api/hours/gaps": data.hours_gaps,
     "/api/hours/report": data.hours_report,
     "/api/hours/rows": data.hours_rows,       # the drill (traceability)
+    "/api/hours/eow": data.hours_eow,         # the weekly client report
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     # the capture box's poll target (?note_id=N): "is it a card yet, and if not
     # what did the classifier decide instead?" The classifying runs in a child
@@ -129,6 +130,7 @@ QUERY_PARAMS: dict = {
     "period": "sprint list id (defaults to the client's current period)",
     "frm": "YYYY-MM-DD (hours gap window start)",
     "to": "YYYY-MM-DD (hours gap window end)",
+    "fmt": "md — ask /api/hours/eow for the sendable markdown too",
     # /api/today/rows
     "which": "fresh|accumulated",
     # /api/pipeline/rows — the one drill behind every Pipeline figure

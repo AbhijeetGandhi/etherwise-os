@@ -91,6 +91,8 @@ _PLAN = [
     # missing, only hours that are wrong.
     ("hours_entries.client_id", "hours_entries", "client_id"),
     ("hours_periods.client_id", "hours_periods", "client_id"),
+    # migration 042: the tasks the weekly client report is built from
+    ("hours_tasks.client_id", "hours_tasks", "client_id"),
 ]
 
 # display-name columns that ride along with the id in the same table
