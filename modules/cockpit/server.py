@@ -62,6 +62,13 @@ GET_ROUTES: dict = {
     # client is now + the win-back list (doctor-gated), the agents and the
     # knowledge base. No params; the page reads /api/upwork/funnel beside it.
     "/api/lifecycle": lifecycle.lifecycle,
+    # Hours (2026-10-19): ClickUp time, read-only, inside the Clients tab.
+    # Every figure carries its as-of and drills to the entries behind it.
+    "/api/hours": data.hours_overview,
+    "/api/hours/client": data.hours_client,
+    "/api/hours/gaps": data.hours_gaps,
+    "/api/hours/report": data.hours_report,
+    "/api/hours/rows": data.hours_rows,       # the drill (traceability)
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     # the capture box's poll target (?note_id=N): "is it a card yet, and if not
     # what did the classifier decide instead?" The classifying runs in a child
@@ -116,6 +123,12 @@ QUERY_PARAMS: dict = {
     "q": "free-text search",
     # /api/clients
     "sort": "revenue|recent",
+    # /api/hours/* — `client` and `q` are already declared above; these are the
+    # two this surface adds. `period` is a ClickUp list id, so the sprint being
+    # looked at is explicit rather than inferred from a date the UI guessed.
+    "period": "sprint list id (defaults to the client's current period)",
+    "frm": "YYYY-MM-DD (hours gap window start)",
+    "to": "YYYY-MM-DD (hours gap window end)",
     # /api/today/rows
     "which": "fresh|accumulated",
     # /api/pipeline/rows — the one drill behind every Pipeline figure

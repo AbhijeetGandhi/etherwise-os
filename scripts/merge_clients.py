@@ -86,6 +86,11 @@ _PLAN = [
     # migration 039 (the sales engine): the conversation reader's note names the
     # conversation's client, and the Pipeline's win-back angles key on it
     ("conversation_codes.client_id", "conversation_codes", "client_id"),
+    # migration 041 (hours): billed time. Left behind on a merge, a client's
+    # hours would simply stop appearing — and nobody notices hours that are
+    # missing, only hours that are wrong.
+    ("hours_entries.client_id", "hours_entries", "client_id"),
+    ("hours_periods.client_id", "hours_periods", "client_id"),
 ]
 
 # display-name columns that ride along with the id in the same table

@@ -1306,6 +1306,61 @@ CLICKUP_LISTS = {
 # stay where they are. Same horizon as the cockpit's board window.
 CLICKUP_PUSH_RETRY_DAYS = 7
 
+# ── Hours (2026-10-19) — ClickUp time into the cockpit ───────────────────────
+# The eight Spaces that carry a Sprint Folder, which is the convention the
+# period logic depends on (his scope decision, 2026-10-19). Excluded on
+# purpose: `Template Space` (a template), `Client Projects` (24 folders, no
+# sprint structure), `Client Tasks Board`, `Auto-Tasks`, `Abhijeet's Space`.
+# Scope lives here and not in a reader so widening it is a reviewed change.
+HOURS_SPACES = {
+    "90164727594": "Horizons ABA",
+    "90166003526": "Hermon",
+    "90164737880": "Adelye",
+    "90167875609": "Globaltize",
+    "90167673606": "TCC",
+    "90166841994": "homestyling",
+    "90167745788": "Discover Data",
+    "90166867133": "Netfly",
+}
+HOURS_SPRINT_FOLDERS = {
+    "90164727594": "90166142809",   # Horizons ABA
+    "90166003526": "90168014133",   # Hermon
+    "90164737880": "90166276702",   # Adelye
+    "90167875609": "901610974588",  # Globaltize
+    "90167673606": "901610674888",  # TCC
+    "90166841994": "90169370191",   # homestyling
+    "90167745788": "901610779598",  # Discover Data
+    "90166867133": "90169411810",   # Netfly
+}
+# Sprint list names carry no YEAR ("Horizons 21 (12/29 - 1/11)"), so the first
+# list in each folder needs an anchor; everything after it is inferred from the
+# month going backwards. Verify a space's oldest sprint before adding it here.
+HOURS_DEFAULT_YEAR = 2026
+HOURS_SPRINT_ANCHOR_YEAR = {
+    "90164727594": 2025,            # Horizons 0 (7/27 - 8/2) is July 2025
+}
+# How far back the sync reads. Not "all time": the window is walked in
+# month-sized chunks and every chunk is a request.
+HOURS_SYNC_SINCE = "2025-07-01"
+# A client whose space total should INCLUDE a folder outside the sprint folder.
+# Hermon's Vibe Coding Projects is ~70h of a 178h sprint and is client work that
+# simply is not sprint-tracked (his decision, 2026-10-19: billable, folded into
+# the sprint total). The folder attribution is kept on every row so "70 of those
+# hours were Vibe Coding" stays answerable without reopening ClickUp.
+HOURS_FOLD_IN_FOLDERS = {
+    "90169726549": "90166003526",   # Vibe Coding Projects -> Hermon
+}
+# Jaap Meijvogel is jaap@hermon.io — a CLIENT's person who happens to hold a
+# seat in our workspace. Checking him for logging gaps would report a teammate
+# who never logs time, every single period.
+HOURS_GAP_EXCLUDE_USER_IDS = ("101070656",)
+# Report breakdowns, per client, switched on as they ask for them. Default is
+# TOTAL BILLED HOURS ONLY — most clients get a number. Keys map to the groupings
+# in modules/hours/report.client_period: person | task | folder.
+HOURS_REPORT_BREAKDOWNS = {
+    "horizons-aba": ("task",),      # Alex asked first (2026-10-19)
+}
+
 # ── Job feed provider (Phase 0.1 cutover, Upwork chat 2026-08-25) ────────────
 # THE switch. "chrome" = the three personalized feed tabs in his logged-in
 # Chrome (scan_pipeline._fetch_chrome, the M1 sourcing invariant); "mcp" = the

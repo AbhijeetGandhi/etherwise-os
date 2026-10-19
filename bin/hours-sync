@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Pull ClickUp time entries into the ledger. Read-only on ClickUp.
+
+    PYTHONPATH=. python3 bin/hours-sync
+    PYTHONPATH=. python3 bin/hours-sync --since 2026-09-01
+
+Run on the Mac. SQLite WAL does not work through the Cowork FUSE mount.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from modules.hours import sync                                   # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(sync.main())

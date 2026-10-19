@@ -5065,6 +5065,125 @@ def review_threads(db_path: Optional[Path] = None, *,
     }
 
 
+# ── Hours (2026-10-19) ───────────────────────────────────────────────────────
+# Thin readers: modules/hours/report.py computes, these format and gate. Same
+# split as the rest of this file — a reader that also aggregates is a second
+# place for a number to be made, and then the two disagree.
+
+def hours_overview(db_path: Optional[Path] = None) -> dict:
+    """Every client's current period, with the as-of stamp every hours figure
+    carries (his decision 2026-10-19: always live, always stamped)."""
+    from modules.hours import report as hr
+    conn = _ro(db_path)
+    try:
+        return hr.overview(conn, _ist_today())
+    finally:
+        conn.close()
+
+
+def hours_client(db_path: Optional[Path] = None, *,
+                 client: Optional[str] = None,
+                 period: Optional[str] = None) -> dict:
+    """One client's period: totals, by person, by task, by folder.
+
+    A missing `client` is an ERROR ENVELOPE, not an empty dict — a rejected
+    filter must never look like "no data" (UI_BUILD_BRIEF §0)."""
+    from modules.hours import report as hr
+    if not client:
+        return {"error": "client is required", "as_of": None}
+    conn = _ro(db_path)
+    try:
+        return hr.client_period(conn, client, period, _ist_today())
+    finally:
+        conn.close()
+
+
+def hours_gaps(db_path: Optional[Path] = None, *,
+               frm: Optional[str] = None,
+               to: Optional[str] = None) -> dict:
+    """Weekdays on which someone logged nothing. Defaults to the last 14 days —
+    the current period, not all history: a gap list nobody can finish is a gap
+    list nobody reads."""
+    import datetime as _d
+    from modules.hours import report as hr
+    today = _ist_today()
+    lo = frm or (_d.date.fromisoformat(today) - _d.timedelta(days=13)).isoformat()
+    for v, nm in ((lo, "frm"), (to or today, "to")):
+        try:
+            _d.date.fromisoformat(v)
+        except ValueError:
+            return {"error": f"{nm} must be YYYY-MM-DD (got {v!r})",
+                    "people": []}
+    conn = _ro(db_path)
+    try:
+        return hr.logging_gaps(conn, lo, to or today)
+    finally:
+        conn.close()
+
+
+def hours_report(db_path: Optional[Path] = None, *,
+                 client: Optional[str] = None,
+                 period: Optional[str] = None) -> dict:
+    """What goes to the client: total billed hours, plus whichever breakdowns
+    that client has been switched on for in config."""
+    from modules.hours import report as hr
+    if not client:
+        return {"error": "client is required", "as_of": None}
+    conn = _ro(db_path)
+    try:
+        return hr.report(conn, client, period, _ist_today())
+    finally:
+        conn.close()
+
+
+def hours_rows(db_path: Optional[Path] = None, *,
+               client: Optional[str] = None,
+               period: Optional[str] = None) -> dict:
+    """The drill: the exact entries behind a period's figure. They sum to the
+    headline to the minute, which is the whole traceability contract — a number
+    sent to a client has to open into the entries that made it."""
+    import datetime as _d
+    from modules.hours import report as hr
+    if not client:
+        return {"error": "client is required", "rows": []}
+    conn = _ro(db_path)
+    try:
+        d = hr.client_period(conn, client, period, _ist_today())
+        if d.get("error"):
+            return {"error": d["error"], "rows": []}
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, task_name, user_name, folder_name, list_name,"
+            " duration_ms, start_ms, created_ms FROM hours_entries"
+            " WHERE client_id=? AND gone_at IS NULL AND duration_ms > 0"
+            " AND start_ms BETWEEN ? AND ? ORDER BY start_ms",
+            (client, hr._ms(d["starts_on"]),
+             hr._ms(d["ends_on"], end=True)))]
+    finally:
+        conn.close()
+
+    def when(ms):
+        return _d.datetime.fromtimestamp(
+            (ms or 0) / 1000, config.TZ).strftime("%Y-%m-%d %H:%M")
+
+    out = [{"id": r["id"], "task": r["task_name"], "who": r["user_name"],
+            "folder": r["folder_name"], "list": r["list_name"],
+            "hours": round(r["duration_ms"] / 3_600_000, 2),
+            "when": when(r["start_ms"]),
+            # when the entry was WRITTEN, which is how a closed period's total
+            # can still move — see the as-of note on every figure
+            "logged_at": when(r["created_ms"]) if r["created_ms"] else None}
+           for r in rows]
+    # SUM THE INTEGERS, ROUND ONCE. Summing the per-row 2dp values drifts: on
+    # Hermon Sprint 22 that is 179 entries and the drill came to 178.26h
+    # against a headline of 178.31h. "The rows behind a number add up to it" is
+    # the whole traceability contract, and a three-minute gap breaks it exactly
+    # as thoroughly as a three-hour one — it just takes longer to notice.
+    return {"as_of": d["as_of"], "client_id": client, "period": d["period"],
+            "rows": out, "count": len(out),
+            "sum_hours": round(sum(r["duration_ms"] for r in rows) / 3_600_000, 2),
+            "headline_hours": d["hours"]}
+
+
 def review_counts(db_path: Optional[Path] = None) -> dict:
     """The nav badge's one source of truth: what genuinely awaits a decision,
     across all three backlogs. Counts only — no rows, no registry load, no

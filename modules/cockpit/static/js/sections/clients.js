@@ -150,14 +150,22 @@ export async function render(root, ctx) {
 
   await subtabs(root, {
     section: "clients", ctx,
-    tabs: [{ id: "now", label: "Working with now" }, { id: "all", label: "Everyone" }, { id: "look", label: "Needs a look" }],
+    // Hours sits here rather than as its own tab (his call, 2026-10-19): it is
+    // a fact about a client, read next to what that client pays.
+    tabs: [{ id: "now", label: "Working with now" }, { id: "all", label: "Everyone" },
+      { id: "look", label: "Needs a look" }, { id: "hours", label: "Hours" }],
     badge: (id) => (id === "now" ? el("span", "n", String(working.length))
       : id === "all" ? el("span", "n", String(allClients.length))
-        : needsLook.length ? el("span", "n warn", String(needsLook.length)) : null),
+        : id === "look" && needsLook.length ? el("span", "n warn", String(needsLook.length)) : null),
     views: {
       now: () => clientRows(working, "A client is here while a contract is live or money arrived in the last 90 days. Most recent first."),
       all: () => { paint(); return body; },
       look: () => clientRows(needsLook, "Owed a reply, a payment the parser could not attribute, or a contract Upwork still calls live with no payment for four months (probably finished — worth closing).", true),
+      hours: () => {
+        const host = el("div", "stack");
+        import("./hours.js").then((m) => m.render(host, ctx));
+        return host;
+      },
     },
   });
 

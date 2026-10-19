@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.hours-sync</string>
+  <!-- HOURS SYNC (2026-10-19). READ-ONLY on ClickUp — modules/hours/client.py
+       refuses any method but GET before it touches the network, so this job
+       cannot write a task, a status or a time entry even by mistake.
+
+       NIGHTLY AT 04:10, after the day's logging has settled and before the
+       11:00 brief reads anything. The full backfill is ~130 windowed reads;
+       ClickUp rate-limits per minute and the client paces itself, so a run
+       takes a few minutes and that is fine at this hour.
+
+       It re-reads the whole window every night rather than only since the last
+       run, deliberately: entries are EDITED and BACK-DATED after the fact (13.6h
+       landed one morning against a sprint that had closed the day before), and
+       a sync that only looked forward would never see them. Storage is keyed on
+       ClickUp's entry id, so re-reading changes nothing that has not changed. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3/bin/hours-sync</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/hours-sync.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/hours-sync.log</string>
+  <key>RunAtLoad</key><false/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>10</integer>
+  </dict>
+</dict>
+</plist>
