@@ -1217,6 +1217,33 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-10-23 · **The crowd check (`0b146d1`).** His worry: "in the past 20 days or 25
+  days ... we haven't gotten a single reply ... more than 95% of the proposals are not
+  having been open", Upwork says the account is healthy, and was it the MCP, HubSpot,
+  or speed? The diagnosis, from every proposal since March and Upwork read directly:
+  replies were 28 of 197 cold proposals (14%) to 25 Aug and 1 of 38 since; the scanner
+  misses no Make.com or Airtable job (by skill and by title, the newest 20 of each were
+  all already stored; ~2 a day name Airtable, 1-2 Make.com); the mix moved - Make.com
+  was 35 proposals at 29% replied and is 1 since, generic AI posts went from 49% of his
+  proposals to 61% with no reply; on jobs he applied to since 1 Aug, under 100
+  proposals 7 of 32 were opened, 100-249 1 of 8, 250+ 0 of 10; generic AI posts gather
+  50-400 proposals within hours (a half-hour-old Best Matches job at 76, an
+  eight-hour-old one at 412). Boost bids went from ~100 connects in spring to 200-300;
+  19 boosted proposals in the last 30 days (~4,300 connects) bought 3 opens. Not speed
+  (he applies faster than in spring). Profile signals left to him: invitations 13 in
+  April to 1-2 a month since July; headline "Make.coml" typo and three skipped tools
+  (GoHighLevel, Vapi, n8n) advertised. Of four builds offered he chose this one, in his
+  words of the option: "Re-read each job's proposal count when the card is made and
+  again before you apply. Flag 50+, and skip 150+ unless it's Make.com or Airtable."
+  Built: Best Matches rows never carry a count (0 of 494), so a card's count is the
+  search row's or one title search (12 of 12 found in the probe); 150+ and not
+  Make.com/Airtable is scored, kept and never drafted or carded; open cards under 48 h
+  are re-read hourly, banded in the name ("· ⚠ 50+ proposals"), skipped at 150+ only
+  while still `new`; invites and applied jobs untouched. Migration 044. The migration
+  file sat unapplied from 03:27 to 03:35 IST and the runner refused three runs (scan,
+  catch_up, pulse) until it was applied - my ordering mistake, recorded so it is not
+  repeated: apply a migration the moment it is written. First live recheck 03:45: 8
+  cards read, 5 renamed, 2 he had already skipped left alone, 1 not found.
 - 2026-10-18 · **The scan runs every 15 minutes (`342ef00`).** His words: "can we do scann
   for job posts more frequently like every 15 or 30 minutes so that we can apply quickly".
   Put to him before building: hourly was our own margin under the API & MCP Terms §4.1
