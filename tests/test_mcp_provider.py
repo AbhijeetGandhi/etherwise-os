@@ -69,7 +69,9 @@ class FakeSession:
         if action == "smart_search":
             return {"jobs": self.smart, "pageInfo": {"hasNextPage": False}}
         if action == "search":
-            return {"jobs": self.terms.get(args["params"]["query"], [])}
+            # a title search is the crowd check's lookup (2026-10-23); this
+            # fake knows none, so the count stays unknown
+            return {"jobs": self.terms.get(args["params"].get("query"), [])}
         if action == "get":
             row = self.gets.get(args["params"]["id"])
             if row is None:

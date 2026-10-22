@@ -1446,6 +1446,21 @@ MCP_RATE_LIMIT_WAIT_S = 6.0
 # them together). Other readers of find_jobs keep out of these minutes
 # (feeds/mcp_search.in_scan_window).
 UPWORK_SCAN_MINUTES = (0, 15, 30, 45)
+# THE CROWD CHECK (2026-10-23, his pick from the diagnosis: "Re-read each
+# job's proposal count when the card is made and again before you apply.
+# Flag 50+, and skip 150+ unless it's Make.com or Airtable."). Measured since
+# 1 Aug on the jobs he applied to: under 100 proposals 7 of 32 were opened by
+# the client, 100-249 1 of 8, 250+ 0 of 10; his Make.com and Airtable
+# proposals were opened 6 of 22 while generic AI posts went 3 of 31 - and the
+# generic ones collect 50-400 proposals in their first hours. Counts come
+# from the search row when it has one, else one title search
+# (feeds/mcp_search.proposal_count); modules/upwork/crowd.py decides.
+CROWD_FLAG_AT = 50          # the card's name says "⚠ 50+ proposals"
+CROWD_SKIP_AT = 150         # not carded, and an open card goes to `skipped`...
+CROWD_EXEMPT_PATTERN = r"make\.com|integromat|airtable"   # ...unless title/skills
+CROWD_RECHECK_HOURS = 48    # an open card's count is re-read for this long
+CROWD_RECHECK_EVERY_MIN = 60
+CROWD_RECHECK_PER_RUN = 8   # title searches per scan run (~40 s at the pace)
 # At the flip, posts created BEFORE this instant are never claimed (Abhijeet,
 # 2026-08-25 20:40: "only jobs posted after the flip"). The search pages at
 # any moment hold ~100 jobs the scraper never saw; claiming them all would

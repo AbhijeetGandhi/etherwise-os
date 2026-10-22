@@ -16,6 +16,7 @@ here.
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Optional
@@ -80,6 +81,12 @@ def search_rows(session, org: str, log: Callable[[str], None]) -> dict:
                 continue
             if jid in rows:
                 rows[jid].setdefault("_also", []).append(label)
+                # Best Matches rows carry NO proposal count (0 of 494 in the
+                # two weeks to 22 Oct); a keyword row for the same job does.
+                # Keep it: it is the crowd check's free reading.
+                if (not isinstance(rows[jid].get("proposal_count"), int)
+                        and isinstance(j.get("proposal_count"), int)):
+                    rows[jid]["proposal_count"] = j["proposal_count"]
             else:
                 rows[jid] = {**j, "_feed_source": label, "_also": []}
 
@@ -110,6 +117,57 @@ def search_rows(session, org: str, log: Callable[[str], None]) -> dict:
             continue
         absorb(res.get("jobs"), f"mcp:{q}")
     return rows
+
+
+# ── the crowd check's reading (2026-10-23) ────────────────────────────────────
+# Best Matches never says how many proposals a job has, and `get` does not
+# either. A `title` search does: it matches the job title only ("1-3 key words,
+# ANDed, stemmed, whole words"), newest first, and every row carries the live
+# proposal_count. Probed on 23 Oct against the 12 newest Best Matches cards:
+# 12 of 12 found on the first page.
+_LOOKUP_STOP = frozenset(
+    "a an and the for of to in on with by or at from your our we you need needed "
+    "looking expert specialist developer freelancer help seeking wanted urgent "
+    "long term part full time project build builder setup set up into via using "
+    "new needs is are be will can this that it ai".split())
+_LOOKUP_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+#-]*")
+
+
+def lookup_words(title: str, n: int = 3) -> list:
+    """The few title words most likely to find this job and few others."""
+    words = [w.strip(".-") for w in _LOOKUP_WORD.findall(title or "")]
+    return [w for w in words if len(w) > 2 and not w.isdigit()
+            and w.lower() not in _LOOKUP_STOP][:n]
+
+
+def proposal_count(session, org: str, job_id: str, title: str,
+                   log: Callable[[str], None], pages: int = 2) -> Optional[int]:
+    """The live proposal count on one job, read off a title search; None when
+    the search does not return it (the caller treats None as 'not known',
+    never as zero)."""
+    words = lookup_words(title)
+    if not words:
+        return None
+    cursor = None
+    for _ in range(pages):
+        params = {"title": " ".join(words), "limit": config.MCP_PER_QUERY_LIMIT}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            res = paced_call(session, "find_jobs", {"action": "search",
+                             "org_uid": org, "params": params}, log) or {}
+        except Exception as exc:                                 # noqa: BLE001
+            log(f"crowd lookup {job_id} failed: {exc!r}")
+            return None
+        for r in res.get("jobs") or []:
+            if str(r.get("id")) == str(job_id):
+                pc = r.get("proposal_count")
+                return pc if isinstance(pc, int) else None
+        info = res.get("pageInfo") or {}
+        cursor = info.get("endCursor")
+        if not info.get("hasNextPage") or not cursor:
+            return None
+    return None
 
 
 def get_row(session, org: str, jid: str, log: Callable[[str], None]):

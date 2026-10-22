@@ -181,6 +181,7 @@ const SKIP_LABEL = {
   low_hourly_rate: "hourly < $30 (stated, v2 rule)",
   low_hourly: "hourly < $30 (stated, v2 rule)",
   fixed_below_500: "fixed < $500",
+  crowded: "150+ proposals already (crowd check)",
   fixed_below_floor: "fixed below floor (v2 rule)",
   fixed_5_placeholder: "fixed $5 placeholder",
   fixed_5_low_quality: "fixed $5, low quality",

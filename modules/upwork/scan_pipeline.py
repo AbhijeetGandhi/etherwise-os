@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from core import config, db, notify, runner
-from modules.upwork import icp, scoring
+from modules.upwork import crowd, icp, scoring
 
 sys.path.insert(0, str(config.V3_ROOT / "scripts"))
 import clickup_push  # noqa: E402  (routing/list names for intents)
@@ -134,7 +134,9 @@ def _icp_html(hits) -> str:
                 else f"${r.get('fixed_budget') or 0:,.0f} fixed")
         items.append(
             f'<li style="margin-bottom:14px"><a href="{r.get("job_url")}"><b>'
-            f'{r.get("title")}</b></a> — score {r.get("score")}<br>'
+            f'{r.get("title")}</b></a> — score {r.get("score")}'
+            + (f' · {crowd.band(r.get("proposals_now"))}'
+               if crowd.band(r.get("proposals_now")) else "") + '<br>'
             f'{rate} · client spent ${r.get("client_total_spent") or 0:,.0f}'
             f' · {r.get("client_hires") or 0} hires · {r.get("client_country") or "—"}'
             f'<br><span style="color:#0f9d58">✓ '
@@ -166,8 +168,10 @@ def _digest_html(dbp, hot_ids) -> str:
                                             r.get("client_country")) if p)
             card = (f' · <a href="{r["clickup_task_url"]}">ClickUp card</a>'
                     if r.get("clickup_task_url") else "")
+            crowd_words = crowd.band(r.get("proposals_now"))
             items.append(f'<li><a href="{link}">{r.get("title") or jid}</a>'
                          f' — score {r.get("score")}'
+                         f'{" · " + crowd_words if crowd_words else ""}'
                          f'{" · " + client if client else ""}{card}</li>')
     return ("<h2>Hot Upwork leads</h2><ul>" + "\n".join(items) + "</ul>"
             f"<p>Scored ≥{config.HOT_LEAD_THRESHOLD} this scan; drafts are on"
@@ -328,19 +332,38 @@ def _fetch_mcp(ctx, dbp) -> dict:
     if m["skipped_before_cut"]:
         ctx.log(f"mcp round: {m['skipped_before_cut']} post(s) older than"
                 f" MCP_CLAIM_SINCE={config.MCP_CLAIM_SINCE} not claimed")
-    return feeds
+    # the session goes on to the crowd check, which reads with it (2026-10-23)
+    return feeds, (session, org)
 
 
 def scan(ctx, _sleep=time.sleep) -> dict:
     dbp = ctx.db_path or config.DB_PATH
     provider = config.JOB_FEED_PROVIDER
+    mcp = None          # (session, org) on the MCP provider: the crowd check reads with it
     if provider == "mcp":
-        feeds = _fetch_mcp(ctx, dbp)
+        feeds, mcp = _fetch_mcp(ctx, dbp)
     elif provider == "chrome":
         feeds = _fetch_chrome(ctx, dbp, _sleep)
     else:
         raise RuntimeError(f"config.JOB_FEED_PROVIDER={provider!r} is neither"
                            " 'chrome' nor 'mcp' — refusing to guess a feed")
+
+    # THE CROWD CHECK before he applies (2026-10-23): re-read the open cards,
+    # rename the ones whose band moved, skip the ones that crossed
+    # CROWD_SKIP_AT. Right after the round, so every find_jobs call of a scan
+    # sits in its first minutes (the window the funnel's job fetch keeps out
+    # of), and on a quiet quarter hour too. Live only: in shadow there are no
+    # cards to read.
+    recheck_m = {}
+    if mcp and not ctx.shadow:
+        try:
+            recheck_m = crowd.recheck(ctx, dbp, mcp, clickup_push.token(),
+                                      req=clickup_push.req,
+                                      name_for=clickup_push.task_name)
+        except Exception as exc:                      # noqa: BLE001
+            # never the scan's undoing
+            ctx.log(f"crowd recheck FAILED: {exc!r}")
+            recheck_m = {"error": repr(exc)[:200]}
 
     # score everything 'New' — includes leftovers from a crashed prior run
     with db.connect(dbp) as conn:
@@ -348,16 +371,35 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             f"SELECT * FROM {TABLE} WHERE status='New' ORDER BY fetched_at")]
 
     scored, skipped, drafted = [], [], 0
+    crowd_m = {"read": 0, "looked_up": 0, "unknown": 0, "flagged": 0,
+               "skipped": 0}
     grounded = 0        # drafts that carried supplied, cited evidence
     ungrounded = 0      # drafts written from the reference alone (honest)
     blocked = 0         # drafts that failed validation on EVERY attempt
     for row in new_rows:
         skip = scoring.hard_rule_skip(row)
         verdict, draft, prov = None, None, None
+        count, crowded, checked = None, False, False
         if not skip:
             verdict = scoring.score_job(row, task_name=ctx.task_name,
                                         db_path=dbp)
             if verdict["score"] >= config.HOT_LEAD_THRESHOLD:
+                # THE CROWD CHECK at the card (2026-10-23): read the live
+                # proposal count before any draft is written. 150+ and not
+                # Make.com/Airtable -> no draft, no card.
+                count, source = crowd.count_now(row, mcp, ctx.log)
+                checked = True
+                crowd_m["read"] += 1
+                crowd_m["looked_up"] += 1 if source == "lookup" else 0
+                decision = crowd.decide(count, row)
+                crowd_m["unknown"] += 1 if decision == "unknown" else 0
+                crowd_m["flagged"] += 1 if decision == "flag" else 0
+                if decision == "skip":
+                    crowded = True
+                    crowd_m["skipped"] += 1
+                    ctx.log(f"{row['id']}: not carded, {count} proposals already"
+                            f" (crowd check)")
+            if verdict["score"] >= config.HOT_LEAD_THRESHOLD and not crowded:
                 # invitations sit outside the cold tests (their letter is a reply)
                 kind = ("invite" if ((verdict.get("breakdown") or {}).get("bonuses")
                                      or {}).get("invite", 0) > 0 else "cold")
@@ -378,9 +420,16 @@ def scan(ctx, _sleep=time.sleep) -> dict:
                             f" — {json.dumps(prov.get('problems', []))[:300]}")
         with db.connect(dbp) as conn:
             _update_scored(conn, row["id"], verdict, draft, skip, prov)
-        (skipped if skip else scored).append(
+            if checked:
+                crowd.store(conn, row["id"], count)
+            if crowded:
+                # scored and kept, so the number stays chartable; never carded
+                conn.execute(f"UPDATE {TABLE} SET status='Skipped',"
+                             " hard_rule_skip=? WHERE id=?",
+                             (crowd.SKIP_REASON, row["id"]))
+        (skipped if (skip or crowded) else scored).append(
             {"id": row["id"], "score": verdict["score"] if verdict else None,
-             "skip": skip})
+             "skip": skip or (crowd.SKIP_REASON if crowded else None)})
 
     # intended ClickUp tasks: this run's verdicts PLUS what an earlier run left
     # uncarded (finding 13, Upwork chat 2026-08-25). A scan that dies between
@@ -549,7 +598,8 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             "hot": len(hot), "hot_retried": len(hot_retried),
             "digest": digest_status,
             "icp": len(icp_hits), "icp_near": len(icp_near),
-            "icp_email": icp_status}
+            "icp_email": icp_status,
+            "crowd": dict(crowd_m, **{f"recheck_{k}": v for k, v in recheck_m.items()})}
 
 
 def main() -> int:

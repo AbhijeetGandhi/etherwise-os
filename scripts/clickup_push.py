@@ -42,6 +42,7 @@ import job_id_guard  # noqa: E402  (shared fabricated-id patterns)
 # root importable for the standalone CLI (scan_pipeline already has it)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config  # noqa: E402
+from modules.upwork import crowd  # noqa: E402  (the crowd band on the card)
 
 ROOT = next(p for p in Path(__file__).resolve().parents
             if (p / "etherwise-os").is_dir())   # workspace root, symlink-safe
@@ -104,8 +105,13 @@ def list_for_score(total, invite: bool, icp_tier=None):
 
 
 def task_name(row) -> str:
+    """Title, score and — since 2026-10-23 — how crowded the job is, as a band
+    ("· ⚠ 50+ proposals") so the board shows it without opening the card. No
+    reading, no band."""
     loom = "🎥 " if row.get("loom_flag") else ""
-    return f"{loom}{row.get('title')} — score {row.get('score')}"
+    words = crowd.band(row.get("proposals_now"))
+    return (f"{loom}{row.get('title')} — score {row.get('score')}"
+            + (f" · {words}" if words else ""))
 
 
 def _breakdown(row) -> dict:
@@ -187,6 +193,9 @@ def task_body(row) -> str:
                      f" ${row.get('hourly_max')}/hr")
     elif row.get("contract_type") == "Fixed":
         lines.append(f"- Fixed: ${row.get('fixed_budget')}")
+    if row.get("proposals_now") is not None:
+        lines.append(f"- Proposals when carded: {row.get('proposals_now')}"
+                     " (re-read while the card is open)")
     lines += [f"- Applicants: {row.get('total_applicants')}",
               f"- Engagement: {row.get('engagement')}"
               f" ({row.get('engagement_duration')})"]
