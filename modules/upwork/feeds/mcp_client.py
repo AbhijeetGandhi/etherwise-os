@@ -89,6 +89,10 @@ READ_TOOLS = frozenset({
     "find_saved_jobs", "get_tool_help", "get_messages",
     # the hiring side (Phase 3, 2026-08-27) — reads on HIS OWN postings
     "list_client_proposals", "list_client_invitations", "get_client_dashboard",
+    # marketplace freelancer search, read-only (2026-10-23): his rate question,
+    # "I am seeing lot of upwork profile better than us but they are charing
+    # like 25$ 30$ ... can you do research on that"
+    "find_freelancers",
 })
 
 
