@@ -48,6 +48,9 @@ import { openDrill } from "../drill.js";
 // a follow-up / owed-reply card renders as a person with their last message,
 // the draft and one state word — here and on Upwork › Inbox alike.
 import { conversationRow, act, closure } from "../conversation.js";
+// LinkedIn — needs you (2026-10-28): the SAME rows the LinkedIn tab shows, so
+// the two screens cannot describe one draft differently.
+import { needsYouItems as linkedinItems } from "./linkedin.js";
 
 export const meta = { title: "Today", hint: "what to act on right now" };
 
@@ -95,6 +98,7 @@ export async function render(root, ctx) {
     quickCapture(ctx),
     ...captured(d, ctx),
     ...groups(d, ctx),
+    ...linkedinBlock(d.linkedin, ctx),
     expander("More — hot leads waiting, the numbers at a glance, the latest brief", (body) => {
       body.append(...backlog(d, ctx), heading("At a glance", null, "h3"), atAGlance(d, m),
         expander("Latest brief (draft)", (b2) => renderBrief(b2, ctx)));
@@ -185,6 +189,33 @@ function groups(d, ctx) {
     out.push(el("p", "muted small", `${d.queue_auto_closed} card${d.queue_auto_closed === 1 ? "" : "s"} closed by themselves — a call or a reply settled them.`));
   }
   return out;
+}
+
+/* ── LinkedIn — needs you (2026-10-28) ───────────────────────────────────── */
+/*
+ * Derived from the Airtable tracker's own state, so an item leaves this list
+ * when the social session updates the tracker (a draft becomes Posted). No
+ * Done button, on purpose: a Done here would be a second copy of a state that
+ * lives in Airtable, and the two would drift. The pace line is always shown —
+ * a quiet block must still say how today's commenting is going.
+ */
+function linkedinBlock(li, ctx) {
+  if (!li) return [];
+  if (li.error) return [notice("warn", `LinkedIn: ${li.error}`)];
+  if (li.never_synced) return [];
+  const pace = `comments today ${li.comments_today} of ${li.comments_target_day}`;
+  const open = () => ctx.navigate("linkedin");
+  if (!li.total) {
+    return [el("p", "muted small", [
+      "LinkedIn: nothing waiting on you · ", pace, " · ",
+      el("button", { class: "linktext", type: "button", on: { click: open } }, "open the tab"),
+    ])];
+  }
+  const list = el("div", "card flush", el("div", "li-list", linkedinItems(li)));
+  return [
+    heading("LinkedIn — needs you", `— ${li.total} · ${pace}`, "h3"),
+    list,
+  ];
 }
 
 /* ── source health (the older box; kept for the Upwork tab's readers) ────── */

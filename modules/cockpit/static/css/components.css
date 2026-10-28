@@ -1251,3 +1251,15 @@ tr.attn td { background: var(--warning-soft); }
 .lc-agent-does { margin: 0; font-size: var(--text-sm); line-height: 1.5; }
 .lc-agent-tasks { display: grid; gap: 4px; margin: 0; padding-left: 1.1em; font-size: var(--text-xs); line-height: 1.45; }
 .lc-agent-made { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: auto; font-size: var(--text-sm); }
+
+/* ── LinkedIn (sections/linkedin.js, 2026-10-28) ──────────────────────────── */
+/* one row per thing that asks something of him — shared with Today's block */
+.li-list { display: flex; flex-direction: column; }
+.li-item { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3) var(--space-4);
+           border-top: 1px solid var(--border); }
+.li-item:first-child { border-top: 0; }
+.li-item > .pill { flex: none; margin-top: 2px; }
+.li-item .grow { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.li-item .small { line-height: 1.45; }
+.li-foot { padding: var(--space-2) var(--space-4) var(--space-3); border-top: 1px solid var(--border); }
+.li-verdicts { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; }

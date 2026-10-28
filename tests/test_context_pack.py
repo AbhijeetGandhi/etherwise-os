@@ -58,10 +58,24 @@ class StrategyParsing(unittest.TestCase):
 class HonestyRules(unittest.TestCase):
     def test_growth_declares_it_has_no_surface(self):
         """The empty slice IS the gate on creating a growth agent; if this ever
-        starts returning invented metrics, the rule has been broken."""
-        g = pack._slice_growth()
+        starts returning invented metrics, the rule has been broken. Since
+        2026-10-28 the surface is the LinkedIn copy — so 'no surface' is what
+        it must say whenever that copy does not exist (or cannot be read)."""
+        with mock.patch("modules.cockpit.linkedin.summary",
+                        return_value={"has_data_surface": False}):
+            g = pack._slice_growth()
         self.assertFalse(g["has_data_surface"])
         self.assertIn("build the surface", g["note"])
+        with mock.patch("modules.cockpit.linkedin.summary",
+                        side_effect=RuntimeError("no such table: li_records")):
+            self.assertFalse(pack._slice_growth()["has_data_surface"])
+
+    def test_growth_carries_linkedin_from_the_tabs_own_reader(self):
+        s = {"has_data_surface": True, "funnel": {"commented": 8}}
+        with mock.patch("modules.cockpit.linkedin.summary", return_value=s):
+            g = pack._slice_growth()
+        self.assertTrue(g["has_data_surface"])
+        self.assertIs(g["channels"]["linkedin"], s)
 
     def test_money_block_withholds_figures_when_doctor_is_red(self):
         with mock.patch("modules.cockpit.data.money",

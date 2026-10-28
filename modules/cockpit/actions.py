@@ -69,6 +69,9 @@ RERUN_JOBS = {
     "cos_sweep": "io.etherwise.v3.cos-sweep",
     "jarvis_sweep": "io.etherwise.v3.jarvis-sweep",
     "jarvis_slack": "io.etherwise.v3.jarvis-slack",
+    # the LinkedIn tracker (2026-10-28): read-only on Airtable, an upsert —
+    # the tab's Refresh button kicks it
+    "linkedin_sync": "io.etherwise.v3.linkedin-sync",
     "finance_stripe": "io.etherwise.v3.finance-stripe",
     "finance_wise_mail": "io.etherwise.v3.finance-wise-mail",
     "finance_upwork_weekly": "io.etherwise.v3.finance-upwork-weekly",

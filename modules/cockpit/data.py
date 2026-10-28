@@ -2809,9 +2809,22 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         captures = {"items": [], "total": None, "shown": 0, "pending": 0,
                     "needs_decision": 0,
                     "error": f"could not read the capture inbox: {exc!r}"[:200]}
+
+    # ── LinkedIn — needs you (2026-10-28) ────────────────────────────────────
+    # Derived from the tracker's own state (modules/cockpit/linkedin.py), so an
+    # item clears itself when the social session updates Airtable. No card
+    # keys: none of the nudge identity machinery applies. Wrapped like the
+    # blocks above — a failed read is a missing panel, never a blank Today.
+    try:
+        from modules.cockpit import linkedin as _li
+        linkedin_block = _li.needs_you(db_path, day)
+    except Exception as exc:  # noqa: BLE001
+        linkedin_block = {"total": 0,
+                          "error": f"could not read the LinkedIn copy: {exc!r}"[:200]}
     return {
         "sources": sources,
         "captures": captures,
+        "linkedin": linkedin_block,
         "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
         "queue_all": queue_all,
         "queue_hidden_no_provenance": _hidden_keys_n,

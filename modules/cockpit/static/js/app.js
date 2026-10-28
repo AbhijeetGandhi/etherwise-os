@@ -51,6 +51,10 @@ const SECTIONS = [
   // alias of #/upwork (decision 10, 2026-08-25) — the alias goes with it.
   { id: "pipeline", label: "Pipeline", icon: "filter", load: () => import("./sections/lifecycle.js") },
   { id: "upwork", label: "Upwork", icon: "trending-up", load: () => import("./sections/upwork.js") },
+  // LinkedIn (2026-10-28, his "New LinkedIn tab + Today cards"): the second
+  // channel, read-only off the Airtable tracker. Next to Upwork because the
+  // two are the acquisition channels; spec etherwise-v3-linkedin-brief.md.
+  { id: "linkedin", label: "LinkedIn", icon: "message-square", load: () => import("./sections/linkedin.js") },
   { id: "money", label: "Money", icon: "wallet", load: () => import("./sections/money.js") },
   { id: "clients", label: "Clients", icon: "users", load: () => import("./sections/clients.js") },
   // Reports is its own tab (2026-10-19). Hours shipped inside Clients and the

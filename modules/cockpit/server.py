@@ -23,7 +23,7 @@ from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 from core import config
-from modules.cockpit import actions, data, lifecycle, proposal_funnel
+from modules.cockpit import actions, data, lifecycle, linkedin, proposal_funnel
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _CT = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
@@ -70,6 +70,9 @@ GET_ROUTES: dict = {
     "/api/hours/report": data.hours_report,
     "/api/hours/rows": data.hours_rows,       # the drill (traceability)
     "/api/hours/eow": data.hours_eow,         # the weekly client report
+    # LinkedIn (2026-10-28): the engagement tracker's local copy, read-only.
+    # No params; every figure ships with its rows, so the drill needs no route.
+    "/api/linkedin": linkedin.linkedin,
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     # the capture box's poll target (?note_id=N): "is it a card yet, and if not
     # what did the classifier decide instead?" The classifying runs in a child

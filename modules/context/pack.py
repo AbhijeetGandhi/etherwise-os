@@ -233,10 +233,23 @@ def _slice_people() -> dict:
 
 
 def _slice_growth() -> dict:
-    """Deliberately empty. Growth has no data surface yet — no non-Upwork lead
-    store, no content calendar, no channel metrics. Saying so is the honest
-    answer AND the gate: an agent whose slice is empty is an agent whose first
+    """LinkedIn since 2026-10-28: the engagement tracker's local copy, through
+    the SAME reader as the cockpit's LinkedIn tab (modules/cockpit/linkedin.py
+    summary), so the pack and the tab cannot disagree. Until the copy exists
+    the slice says so — an agent whose slice is empty is an agent whose first
     job is to build its surface, not to advise."""
+    try:
+        from modules.cockpit import linkedin as _li
+        s = _li.summary()
+        if s.get("has_data_surface"):
+            return {"has_data_surface": True,
+                    "channels": {"linkedin": s},
+                    "note": "LinkedIn is the only measured channel besides"
+                            " Upwork. Goal = suitable paying clients; views and"
+                            " reactions are diagnostics (business/social/"
+                            "CONTEXT.md §2)."}
+    except Exception:  # noqa: BLE001 — fall through to the honest empty answer
+        pass
     return {"has_data_surface": False,
             "note": "no non-Upwork lead store, content calendar or channel"
                     " metrics exist yet. Upwork is the only measured channel"

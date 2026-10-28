@@ -134,6 +134,9 @@ SHADOW_MODE = {
     # covers them). Rollback = True + re-enable the Cowork scanner.
     "upwork": False,
     "cockpit": False,          # cockpit is local-only; nothing to shadow
+    # read-only on Airtable (modules/linkedin/sync.py has no write path), so
+    # there is nothing outward to shadow (2026-10-28)
+    "linkedin": False,
     "knowledge": True,
     "chief_of_staff": True,
     # THE AM/PM BRIEF EMAIL, decoupled from 'chief_of_staff' the same way 'crm'
@@ -1073,6 +1076,17 @@ SOURCES = (
      "why": "reads client Slack workspaces (both sides of the thread) for the"
             " follow-up logic; a stale/logged-out rail means client Slack goes"
             " unseen and we cannot tell what we already replied to"},
+    # LinkedIn (2026-10-28) — the engagement tracker, read-only from Airtable
+    # every 2h 12:05-04:05 IST. The overnight gap is 8h, so 10h is late. Not
+    # critical: a channel being built, not a money/pipeline source. Catch-up
+    # safe: read-only, and the store is an upsert.
+    {"key": "linkedin_sync", "label": "LinkedIn tracker (Airtable)",
+     "task_name": "linkedin_sync", "max_age_hours": 10,
+     "degrade_kinds": ("linkedin_schema_drift",),
+     "critical": False, "backs": "linkedin",
+     "launchd_label": "io.etherwise.v3.linkedin-sync", "catch_up": True,
+     "why": "the LinkedIn tab and Today's LinkedIn block read it; stale means"
+            " drafts, replies and DM-ready people stop appearing"},
     # Manually fed: statement imports have no scheduled run to age, but the DATA
     # still has an age — freshness_sql asks the ledger when it was last fed.
     {"key": "finance_ledger", "label": "Statement imports (bank/card/Wise)",
@@ -1385,6 +1399,41 @@ HOURS_AWAITING_CLIENT = ("waiting on client", "awaiting client",
 # "completed" tasks shared one close timestamp. Listing those as forty things
 # shipped is a claim a client checks once and then stops believing the report.
 HOURS_BULK_CLOSE_MIN = 5
+
+# ── LinkedIn (2026-10-28) — the engagement tracker into the cockpit ──────────
+# Spec: etherwise-v3-linkedin-brief.md. The base is OWNED by the social
+# sessions (business/social/); v3 only reads it (modules/linkedin/sync.py).
+# Tables by ID, not name: an Airtable rename must not break the sync.
+LINKEDIN_BASE = "applkzewYyLbRmcss"
+LINKEDIN_TABLES = {
+    "people": "tbl3TyfufD46ZZYWE",
+    "comments": "tblWjENF13bcYNf8r",
+    "messages": "tblnHZq9TvpQtUjsq",
+    "candidates": "tble7hk9KHTSaG8id",
+    "posts": "tbl5beYW61JtCnsxg",
+    "profile": "tblMPcJyCPUaWlAl3",     # Profile snapshots, added 2026-10-28
+}
+# The fields the readers DEPEND on, per table. Absent on every record of a
+# non-empty table = a rename or a deletion in Airtable, filed as the
+# `linkedin_schema_drift` degrade so the tab cannot quietly read zeros. (An
+# empty table proves nothing — Airtable omits empty cells — so it is skipped.)
+LINKEDIN_REQUIRED_FIELDS = {
+    "people": ("Name", "Stage", "Next action"),
+    "comments": ("Commented at", "Person"),
+    "candidates": ("Post", "Verdict", "Found on"),
+    "posts": ("Post", "Posted at", "Impressions"),
+}
+# Targets, his decisions. Comments: 10 A DAY (2026-10-28, superseding the
+# 10/week of 11 Oct). Posts: Aastha's written scope, 3-4 a week (7 Oct) —
+# the pace bar uses the lower bound. Day-90 gate: five conversations with
+# plausible buyers (CONTEXT §2), counted from her first working session.
+LINKEDIN_COMMENTS_PER_DAY = 10
+LINKEDIN_POSTS_PER_WEEK = 3
+LINKEDIN_DAY0 = "2026-10-09"
+LINKEDIN_DAY90_CONVERSATIONS = 5
+# Today shows LinkedIn items found within this many days; older ones are
+# counted, not listed — a LinkedIn post is cold within days.
+LINKEDIN_TODAY_FRESH_DAYS = 7
 
 # ── Job feed provider (Phase 0.1 cutover, Upwork chat 2026-08-25) ────────────
 # THE switch. "chrome" = the three personalized feed tabs in his logged-in
