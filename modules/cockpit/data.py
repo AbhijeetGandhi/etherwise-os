@@ -1943,11 +1943,20 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
         # are a contracted client at all. See that module for what each channel
         # can and cannot prove.
         _fu_rows: list = []
+        # A pending draft is NOT by itself an owed reply. The Monday win-back
+        # job (modules/upwork/reactivation.py) writes draft_kind='reactivation'
+        # into the same table for past clients quiet for months, and on
+        # 2026-10-30 those were 17 of the 19 pending drafts — so "People
+        # waiting on you" led with College Life (1,054 days), Diat Khan and
+        # Pangea Maps, and the three real ones sat below them. Win-back drafts
+        # have their own home (Pipeline › After the hire); here only drafts
+        # written to answer someone count.
         for r in conn.execute(
             "SELECT d.thread_id, d.body, d.word_count, d.tier,"
             " t.bucket, t.topic, t.room_name, t.client_id, t.latest_message_dt"
             " FROM drafts d JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status = 'pending'"
+            " AND COALESCE(d.draft_kind,'') != 'reactivation'"
             " ORDER BY CASE t.bucket WHEN 'owed' THEN 0 WHEN 'unmatched-owed'"
             " THEN 1 ELSE 2 END, d.generated_at DESC"):
             row = dict(r)
@@ -2267,7 +2276,9 @@ def _act_now_queue(db_path: Optional[Path], day: str, *,
                 "commitment_due": "commitments", "hotlead_no_loom": "hot leads",
                 "won_no_outcome": "win outcomes", "escalate_client": "escalations",
                 "lost_pattern": "scoring", "stale_dossier": "dossiers",
-                "system": "system", "capture": "captures"}
+                "system": "system", "capture": "captures",
+                "upwork_invitation": "invites", "upwork_offer": "offers",
+                "stalled_milestone": "unfunded milestones"}
     _cl_counts: dict = {}
     for e in queue:
         label = _CLUSTER.get(e.get("nudge_kind") or e.get("kind"), "other")

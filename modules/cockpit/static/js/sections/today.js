@@ -64,6 +64,7 @@ const CLUSTER_SINGULAR = {
   "follow-ups": "follow-up", "commitments": "commitment", "dossiers": "dossier",
   "hot leads": "hot lead", "win outcomes": "win outcome",
   "escalations": "escalation", "captures": "capture",
+  "invites": "invite", "offers": "offer", "unfunded milestones": "unfunded milestone",
 };
 
 const clusterText = (c) => `${c.count} `
@@ -138,7 +139,10 @@ const GROUPS = [
   { key: "house", title: "Housekeeping", hint: "nothing a client can see" },
 ];
 const DECIDE_KINDS = new Set(["escalate_client", "escalate_commitment", "won_no_outcome",
-  "deadline", "lost_pattern", "capture", "owed_reply"]);
+  "deadline", "lost_pattern", "capture", "owed_reply",
+  // priced kinds since 2026-11-01 — they used to arrive here disguised as
+  // escalate_client; an invite, an offer or an unfunded milestone IS a decision
+  "upwork_invitation", "upwork_offer", "stalled_milestone"]);
 const GROUP_FOLD = 5;
 
 function groupOf(it) {

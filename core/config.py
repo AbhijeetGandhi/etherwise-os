@@ -590,6 +590,10 @@ LOOM_FINGERPRINTS_PATH = V3_ROOT / "assets" / "loom-fingerprints.json"
 # only. See modules/knowledge/loom_fetch.py. Session loss FAILS LOUD, never a 0.
 LOOM_INDEX_LIMIT = 700               # my_videos(limit:) — comfortably over the ~591
 LOOM_FETCH_MAX_PER_RUN = 50          # transcripts fetched per run (bound; --limit)
+# Attributed looms kb_daily EXTRACTS per run (2026-11-01). The 72-deep backlog
+# used to wait for a human to run kb-backfill and carded Today meanwhile; at
+# this pace it drains in about a week on the Haiku pin, inside the run cap.
+KB_DAILY_LOOM_PER_RUN = 12
 LOOM_FETCH_POLL_TIMEOUT_SECONDS = 40 # per in-Chrome async fetch (index/share HTML)
 LOOM_TRANSCRIPT_HTTP_TIMEOUT_SECONDS = 30  # per Python urllib GET of a signed CDN
                                      # transcript URL (public — no session/CORS)
@@ -1187,6 +1191,17 @@ COS_URGENCY_BASE = {
     "system":           35,   # job failed / spend near cap / model deprecation
     "stale_dossier":    20,   # dossier not refreshed in a while
     "capture":          30,   # a captured note awaiting classification/action
+    # 2026-11-01 (the cockpit audit): these three were minted by rules with
+    # their own names (rules.rule_upwork_waiting, rule_stalled_milestone) but
+    # were NOT priced here, so canonical_kind filed every one of them as the
+    # default — 'escalate_client'. Six Upwork invitations and an unfunded
+    # milestone sat in Today's "Needs a decision" dressed as client escalations,
+    # ranked and decayed like them. An invitation is time-boxed (Upwork expires
+    # it), so it ranks high and decays fast; a milestone nobody funded is a
+    # standing money fact and refires while it holds.
+    "upwork_invitation": 75,
+    "upwork_offer":      85,
+    "stalled_milestone": 60,
 }
 COS_RECENCY_HALFLIFE_DAYS = 7.0   # urgency decays by half every 7 days of age
 # ONE-SHOT kinds: 'done'/'dismissed' is terminal — never resurrect on the next
@@ -1217,6 +1232,9 @@ COS_DECAY_TTL_DAYS = {
     "system":           7,
     "escalate_client":  7,
     "capture":          14,
+    "upwork_invitation": 3,       # Upwork itself closes an unanswered invite
+    "upwork_offer":      3,
+    "stalled_milestone": 14,      # refires from the pulse while unfunded
 }
 # THE CARD VOCABULARY. Every lifecycle table above is keyed by `kind`, and the
 # sweep lets Opus fill `kind` in as free text (see sweep.OPUS_SCHEMA — that is

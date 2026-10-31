@@ -39,7 +39,11 @@ TASK_NAME = "cos_sweep"
 # Opus correlation nudges (escalate_client, source='sweep') are NOT reconciled
 # here; they decay on their own TTL.
 RULE_KINDS = ("owed_reply", "hotlead_no_loom", "won_no_outcome", "lost_pattern",
-              "stale_dossier", "commitment_due", "system")
+              "stale_dossier", "commitment_due", "system",
+              # priced since 2026-11-01 (they used to canonicalise to
+              # escalate_client and so were never reconciled): an answered
+              # invite, an accepted offer or a funded milestone clears its card
+              "upwork_invitation", "upwork_offer", "stalled_milestone")
 
 def escalation_covers(conn, *, open_only: bool = False) -> dict:
     """{dedup_key -> set(covered dedup_keys)} for every ACTIVE escalation.
@@ -73,25 +77,32 @@ def escalation_covers(conn, *, open_only: bool = False) -> dict:
     return out
 
 
-MIN_MERGE_COVERS = 2
+def _constituents(covers) -> set:
+    """The CARDS an escalation is about — never other escalations. Opus lists
+    its own earlier escalations in `covers` ('escalate_client:cacheswipe-program'
+    covering 'escalate_client:cacheswipe-program'); counting those would let a
+    card match itself and nothing else."""
+    return {k for k in (covers or []) if not str(k).startswith("escalate")}
 
 
 def _same_situation(new: set, existing: set) -> bool:
-    """Two escalations are the same situation when one's constituents contain
-    the other's AND there are enough of them for that to mean anything.
+    """Two escalations are the same situation when they share a constituent
+    card.
 
-    Jaccard would call {A,B} and {B,C} similar; containment will not. But
-    containment alone still over-merges at the bottom: two escalations that each
-    cover one card ('Acme will churn', 'Acme deadline slipping' — both about
-    commitment:1) are different claims about the same fact, and merging them
-    OVERWRITES the first, because write_nudge refreshes title/action/payload
-    wholesale. A destroyed escalation is strictly worse than a duplicate one.
-
-    So: >=2 shared constituents before we call it one situation. Empty covers
-    never merges — a card that claims nothing gets its own scrutiny."""
-    if len(new) < MIN_MERGE_COVERS or len(existing) < MIN_MERGE_COVERS:
-        return False
-    return new <= existing or existing <= new
+    Until 2026-11-01 this demanded CONTAINMENT with at least two shared
+    constituents, on the argument that merging two one-card claims ('Acme will
+    churn' / 'Acme deadline slipping', both about commitment:1) destroys the
+    first because write_nudge refreshes the whole card. Measured on 30 Oct:
+    fifteen open escalations describing about five situations — CacheSwipe six
+    times under six keys with covers like {876,887,866}, {876,887,943},
+    {876,947,951,943}, none containing another. The duplicates were the thing
+    he scrolled past; the lost wording never came up. So: one shared card is
+    one situation, and the merge now KEEPS the earlier wordings in
+    payload.history instead of overwriting them (see run_sweep)."""
+    new, existing = _constituents(new), _constituents(existing)
+    if not new or not existing:
+        return False                 # a card that claims nothing stands alone
+    return bool(new & existing)
 
 
 def collapse_target(cand: dict, covers_by_key: dict) -> Optional[str]:
@@ -104,14 +115,22 @@ def collapse_target(cand: dict, covers_by_key: dict) -> Optional[str]:
     'escalate_workstream:aug8-10-capacity'. Five keys, one problem, and because
     escalations are not reconciled against rules they simply accumulated —
     Abhijeet's "manychat is in there like 10 times". Identity has to be derived
-    from WHAT the escalation is about, not from what it called itself."""
+    from WHAT the escalation is about, not from what it called itself.
+
+    When several open escalations share a card with the newcomer, the one with
+    the LARGEST overlap wins (ties: the older key — dict order is insertion
+    order and escalation_covers reads by dedup_key, so stable)."""
     key, new = cand.get("dedup_key"), set(cand.get("covers") or [])
     if key in covers_by_key:
         return key                                  # same key: ordinary refresh
+    best, best_n = None, 0
     for existing, ex_covers in covers_by_key.items():
-        if _same_situation(new, ex_covers):
-            return existing
-    return None
+        if not _same_situation(new, ex_covers):
+            continue
+        n = len(_constituents(new) & _constituents(ex_covers))
+        if n > best_n:
+            best, best_n = existing, n
+    return best
 
 OPUS_SCHEMA = {
     "type": "object",
@@ -356,6 +375,17 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
     live_now = {n["dedup_key"] for n in active} | live_keys
     with db.connect(db_path) as conn:
         covers_by_key = escalation_covers(conn, open_only=True)
+        # the earlier wording of every open escalation, so a merge can keep it
+        prior: dict = {}
+        for r in conn.execute(
+                "SELECT dedup_key, title, payload_json FROM nudges"
+                " WHERE state='open' AND source='sweep'"):
+            try:
+                pl = json.loads(r["payload_json"] or "{}")
+            except Exception:
+                pl = {}
+            prior[r["dedup_key"]] = {"title": r["title"],
+                                     "history": list(pl.get("history") or [])}
     for c in (opus.get("correlations") or [])[:3]:
         # cluster/count correlations are render-time groupings, never stored
         # cards (J1.5) — an atomic per-client / per-commitment escalation is kept
@@ -367,8 +397,21 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
         c = {**c, "covers": covers}
         target = collapse_target(c, covers_by_key)
         key = target or c["dedup_key"]
-        if target and target != c["dedup_key"]:
-            merged += 1
+        payload = {"rationale": c.get("rationale")}
+        if target:
+            # a merge UNIONS the constituents (so the card keeps covering every
+            # item it ever covered) and keeps the earlier wording in
+            # payload.history — the newest synthesis leads, nothing is destroyed
+            covers = sorted(set(covers) | covers_by_key.get(target, set()))
+            was = prior.get(target) or {}
+            hist = list(was.get("history") or [])
+            if was.get("title") and was["title"] != c["title"]:
+                hist = ([was["title"]] + [h for h in hist if h != was["title"]])[:5]
+            if hist:
+                payload["history"] = hist
+            if target != c["dedup_key"]:
+                merged += 1
+        payload["covers"] = covers
         try:
             nudges.write_nudge(
                 db_path, now=now, source="sweep", dept=c.get("dept", "sales"),
@@ -377,8 +420,10 @@ def run_sweep(ctx, _opus: Callable = opus_correlate,
                 # a second place that had to know the vocabulary.
                 kind=c.get("kind"), title=c["title"],
                 action=c.get("action"), due=c.get("due"), dedup_key=key,
-                payload={"rationale": c.get("rationale"), "covers": covers})
+                payload=payload)
             covers_by_key[key] = set(covers)
+            prior[key] = {"title": c["title"],
+                          "history": list(payload.get("history") or [])}
             new_corr += 1
         except Exception:
             continue

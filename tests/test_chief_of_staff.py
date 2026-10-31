@@ -566,8 +566,8 @@ class TestSweep(CoSCase):
             conn.execute("INSERT INTO scored_jobs (id,title,score,loom_flag,"
                          "status,first_scored_at) VALUES ('j2','L2',23,1,"
                          "'Scored','2026-06-22T08:00:00')")
-        # the real ladder covered four commitments; two is the floor at which
-        # containment means anything (MIN_MERGE_COVERS)
+        # the real ladder covered four commitments; one shared card is enough
+        # to call it one situation (sweep._same_situation, 2026-11-01)
         covers = ["hotlead_no_loom:j1", "hotlead_no_loom:j2"]
         s1 = mock.Mock(return_value={"correlations": [
             self._corr("escalate_capacity:aug8-10", covers)],
@@ -589,11 +589,12 @@ class TestSweep(CoSCase):
         self.assertEqual(esc[0]["dedup_key"], "escalate_capacity:aug8-10")
         self.assertEqual(esc[0]["title"], "Same crunch, new name")  # refreshed
 
-    def test_two_claims_about_one_card_are_not_merged(self):
-        # containment alone over-merges at the bottom: 'Acme will churn' and
-        # 'Acme deadline slipping' both cover exactly {commitment:1}. Merging
-        # them OVERWRITES the first, because write_nudge refreshes the whole
-        # card. A destroyed escalation is worse than a duplicate one.
+    def test_two_claims_about_one_card_merge_and_keep_the_earlier_wording(self):
+        # Until 2026-11-01 these were kept apart ("a destroyed escalation is
+        # worse than a duplicate one"). Measured on 30 Oct: fifteen open
+        # escalations for about five situations, CacheSwipe six times under six
+        # keys. One shared card is one situation now — and the merge keeps the
+        # earlier wording in payload.history, so nothing is destroyed either.
         self.seed_one_candidate()
         one = ["hotlead_no_loom:j1"]
         s1 = mock.Mock(return_value={"correlations": [
@@ -608,10 +609,28 @@ class TestSweep(CoSCase):
             self._corr("escalate_deadline:acme", one, "Acme deadline slipping")],
             "priorities": [], "narrative": "x"})
         out = sweep.run_sweep(self._ctx(), _opus=s2, now=dt(hh=14))
-        self.assertEqual(out["escalations_merged"], 0)
-        titles = {r["title"] for r in self.rows(
-            "SELECT title FROM nudges WHERE source='sweep'")}
-        self.assertEqual(titles, {"Acme will churn", "Acme deadline slipping"})
+        self.assertEqual(out["escalations_merged"], 1)
+        esc = self.rows("SELECT dedup_key, title, payload_json FROM nudges"
+                        " WHERE source='sweep' AND state IN ('open','snoozed')")
+        self.assertEqual(len(esc), 1)
+        self.assertEqual(esc[0]["dedup_key"], "escalate_client:acme")
+        self.assertEqual(esc[0]["title"], "Acme deadline slipping")
+        pl = json.loads(esc[0]["payload_json"])
+        self.assertEqual(pl["history"], ["Acme will churn"])
+        self.assertEqual(pl["covers"], one)
+
+    def test_an_escalation_that_names_only_itself_stands_alone(self):
+        # Opus lists its own earlier escalation in `covers`; that must not let a
+        # card match itself (or an unrelated one) through the escalate* key.
+        self.assertIsNone(sweep.collapse_target(
+            {"dedup_key": "escalate_client:b",
+             "covers": ["escalate_client:a"]},
+            {"escalate_client:a": {"escalate_client:a"}}))
+        # ...and the largest overlap wins when several share a card
+        self.assertEqual(sweep.collapse_target(
+            {"dedup_key": "escalate_client:new", "covers": ["c:1", "c:2", "c:3"]},
+            {"escalate_client:x": {"c:1"}, "escalate_client:y": {"c:2", "c:3"}}),
+            "escalate_client:y")
 
     def test_a_new_escalation_never_inherits_someone_elses_snooze(self):
         self.seed_one_candidate()

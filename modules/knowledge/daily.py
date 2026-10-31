@@ -3,8 +3,8 @@
   2. polls Gmail IF connected (token present) -> knowledge-inbox/email/
   3. ingests new inbox drops (dedup by content hash)
   4. extracts pending fathom+email sources, BUDGET-AWARE (stops cleanly at the
-     per-run cap; Loom backlog is excluded — its bulk extraction is a separate
-     gated decision, not a daily drip)
+     per-run cap), plus up to KB_DAILY_LOOM_PER_RUN attributed Looms a run
+     (2026-11-01 — the backlog used to wait for a human and card Today)
   5. recompiles dossiers + proof-points for the roster
 
 Incremental by design: after the one-time backfill clears the history, daily
@@ -27,12 +27,20 @@ from modules.knowledge import (fathom_poll, email_poll, ingest, extract, index,
 # searchable `sources` row immediately — no silent ingest-level backlog (the fetcher
 # also ingests as it goes; this is the belt-and-suspenders re-scan).
 DAILY_INGEST_TYPES = ("fathom", "email", "loom")
-# EXTRACT stays fathom+email only. A new loom has NO client_id until the gated
-# classify->heal chain (jarvis-loom-classify) attributes it, so auto-extracting it
-# in the drip would either do nothing or mint UNATTRIBUTED noise facts. Loom
-# extraction remains the deliberate, attributed-only step:
+# EXTRACT: fathom+email every run, plus ATTRIBUTED looms (2026-11-01). A new
+# loom has NO client_id until the gated classify->heal chain
+# (jarvis-loom-classify) attributes it, so an unattributed loom is never
+# extracted here (it would only mint unattributed noise facts). Once attributed
+# it used to wait for a human to run
 #   bin/kb-backfill extract loom --attributed --model classify --limit N
-DAILY_SOURCE_TYPES = ("fathom", "email")   # extract set (loom via the gated chain)
+# — and 72 attributed looms had waited since August, minting seven
+# "Unprocessed sources: <client>" cards on Today for a job the system could do
+# itself (the cockpit audit). The drip now takes up to KB_DAILY_LOOM_PER_RUN of
+# them a run, with the Haiku 'classify' pin kb-backfill used, so the backlog
+# drains in about a week and never comes back.
+DAILY_SOURCE_TYPES = ("fathom", "email")   # the every-run extract set
+LOOM_PER_RUN = int(getattr(config, "KB_DAILY_LOOM_PER_RUN", 12))
+LOOM_MODEL_KEY = "classify"                # the Haiku pin; dense walkthroughs
 TASK_NAME = "kb_daily"
 
 
@@ -77,25 +85,49 @@ def _extract_pending(db_path) -> dict:
             f"SELECT id, source_type, source_ref, client_id, raw_path FROM"
             f" sources WHERE status='ingested' AND source_type IN ({qs})"
             f" ORDER BY occurred_dt", DAILY_SOURCE_TYPES)]
-    done = facts = 0
+        looms = [dict(r) for r in conn.execute(
+            "SELECT id, source_type, source_ref, client_id, raw_path FROM"
+            " sources WHERE status='ingested' AND source_type='loom'"
+            " AND client_id IS NOT NULL ORDER BY client_id, occurred_dt LIMIT ?",
+            (LOOM_PER_RUN,))]
+        loom_backlog = conn.execute(
+            "SELECT COUNT(*) FROM sources WHERE status='ingested'"
+            " AND source_type='loom' AND client_id IS NOT NULL").fetchone()[0]
+    done = facts = looms_done = failed = 0
     touched = set()
-    for s in rows:
+    for s in rows + looms:
+        is_loom = s["source_type"] == "loom"
         try:
             payload = json.loads(Path(s["raw_path"]).read_text())
             parsed = ingest._PARSERS[s["source_type"]](payload)
-            out = extract.extract_facts(
-                {"source_ref": s["source_ref"], "client_id": s["client_id"]},
-                parsed["text"], db_path=db_path)
+            src = {"source_ref": s["source_ref"], "client_id": s["client_id"]}
+            kw = {}
+            if is_loom:
+                # the Loom share URL deep-links each fact to the recording, and
+                # a dense walkthrough needs the per-run token ceiling or the
+                # JSON truncates on the richest ones (kb-backfill's lessons)
+                src["cite_ref"] = parsed.get("url")
+                kw = {"model_key": LOOM_MODEL_KEY,
+                      "max_tokens": config.PER_RUN_MAX_OUTPUT_TOKENS}
+            out = extract.extract_facts(src, parsed["text"], db_path=db_path, **kw)
             res = index.index_facts(db_path, s["id"], s["client_id"], out)
             done += 1
+            looms_done += 1 if is_loom else 0
             facts += res["inserted"]
             if s["client_id"]:
                 touched.add(s["client_id"])
         except ClaudeBudgetExceeded:        # hit the cap — stop cleanly
             return {"extracted": done, "facts": facts, "touched": list(touched),
-                    "stopped": "budget", "pending": len(rows) - done}
+                    "stopped": "budget", "pending": len(rows) + len(looms) - done,
+                    "looms": looms_done, "loom_backlog": loom_backlog - looms_done}
+        except Exception as exc:            # noqa: BLE001 — one bad source
+            # (truncated JSON, unreadable raw file) stays status='ingested' and
+            # is retried next run; it must not take the rest of the drip down
+            failed += 1
+            continue
     return {"extracted": done, "facts": facts, "touched": list(touched),
-            "pending": 0}
+            "pending": 0, "failed": failed,
+            "looms": looms_done, "loom_backlog": max(0, loom_backlog - looms_done)}
 
 
 def _stamp() -> str:

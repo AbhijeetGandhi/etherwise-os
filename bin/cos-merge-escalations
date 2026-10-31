@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Heal the board after the 2026-11-01 escalation rules (the cockpit audit).
+
+Two things were wrong on the live board and the new code only prevents them
+going forward; this applies the same rules to the rows already there:
+
+  1. RE-KIND. rules.rule_upwork_waiting / rule_stalled_milestone wrote kinds
+     ('upwork_invitation', 'upwork_offer', 'stalled_milestone') that were not
+     priced in config.COS_URGENCY_BASE, so canonical_kind filed every one of
+     them as 'escalate_client'. Six invites and an unfunded milestone sat in
+     "Needs a decision" dressed as client escalations. They are priced now;
+     this sets the stored kind from the dedup_key prefix.
+
+  2. MERGE. sweep._same_situation now calls two escalations one situation when
+     they share a constituent card (it used to demand containment with >= 2).
+     Walking the open escalations oldest-first with sweep.collapse_target, each
+     one that would have refreshed an earlier card is folded into it: covers
+     union, its title kept in the survivor's payload.history, and the duplicate
+     decayed (never deleted — the row stays explicable).
+
+    PYTHONPATH=. python3 bin/cos-merge-escalations            # dry-run
+    PYTHONPATH=. python3 bin/cos-merge-escalations --commit
+
+Idempotent: a second run finds nothing to do.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db                                   # noqa: E402
+from modules.chief_of_staff import nudges, sweep              # noqa: E402
+
+_REKIND = (("upwork_invite:", "upwork_invitation"),
+           ("upwork_offer:", "upwork_offer"),
+           ("milestone:", "stalled_milestone"))
+
+
+def main() -> int:
+    commit = "--commit" in sys.argv
+    now = datetime.now(config.TZ)
+    ts = now.strftime("%Y-%m-%dT%H:%M:%S")
+    rekinded, merged = [], []
+    with db.connect(config.DB_PATH) as conn:
+        # 1. re-kind
+        for prefix, kind in _REKIND:
+            rows = conn.execute(
+                "SELECT id, dedup_key, kind FROM nudges WHERE dedup_key LIKE ?"
+                " AND kind != ? AND state IN ('open','snoozed')",
+                (prefix + "%", kind)).fetchall()
+            for r in rows:
+                rekinded.append((r["id"], r["dedup_key"], r["kind"], kind))
+                if commit:
+                    conn.execute("UPDATE nudges SET kind=?, updated_at=? WHERE id=?",
+                                 (kind, ts, r["id"]))
+        # 2. merge — oldest first, so the survivor is the card he has seen longest
+        esc = [dict(r) for r in conn.execute(
+            "SELECT id, dedup_key, title, payload_json, created_at FROM nudges"
+            " WHERE state='open' AND source='sweep' ORDER BY created_at, id")]
+        covers_by_key: dict = {}
+        survivor: dict = {}          # key -> {"title", "history", "covers"}
+        for r in esc:
+            try:
+                pl = json.loads(r["payload_json"] or "{}")
+            except Exception:
+                pl = {}
+            covers = set(pl.get("covers") or [])
+            cand = {"dedup_key": r["dedup_key"], "covers": sorted(covers)}
+            target = sweep.collapse_target(cand, covers_by_key)
+            if target and target != r["dedup_key"]:
+                s = survivor[target]
+                s["covers"] |= covers
+                if r["title"] and r["title"] != s["title"] \
+                        and r["title"] not in s["history"]:
+                    s["history"].append(r["title"])
+                merged.append((r["id"], r["dedup_key"], target))
+                if commit:
+                    conn.execute(
+                        "UPDATE nudges SET state='decayed', decayed_at=?,"
+                        " updated_at=?, note=COALESCE(note,'') || ? WHERE id=?",
+                        (ts, ts, f" [merged into {target} 2026-11-01]", r["id"]))
+                continue
+            covers_by_key[r["dedup_key"]] = covers
+            survivor[r["dedup_key"]] = {"title": r["title"], "covers": set(covers),
+                                        "history": list(pl.get("history") or []),
+                                        "payload": pl, "id": r["id"]}
+        if commit:
+            for key, s in survivor.items():
+                pl = dict(s["payload"])
+                pl["covers"] = sorted(s["covers"])
+                if s["history"]:
+                    pl["history"] = s["history"][:5]
+                conn.execute("UPDATE nudges SET payload_json=?, updated_at=?"
+                             " WHERE id=?", (json.dumps(pl), ts, s["id"]))
+    mode = "COMMITTED" if commit else "DRY-RUN"
+    print(f"{mode}: re-kinded {len(rekinded)}, merged {len(merged)},"
+          f" survivors {len(survivor)}")
+    for i, k, was, kind in rekinded:
+        print(f"  rekind  #{i} {k}: {was} -> {kind}")
+    for i, k, into in merged:
+        print(f"  merge   #{i} {k} -> {into}")
+    for k, s in survivor.items():
+        print(f"  keep    {k}: covers {len(s['covers'])}"
+              + (f", history {len(s['history'])}" if s["history"] else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

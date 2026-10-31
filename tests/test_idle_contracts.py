@@ -109,8 +109,13 @@ class TestCard(Case):
             self.contract(f"c{i}", f"client {i}", days_ago(400))
         self.assertEqual(rules.rule_idle_contracts(self.db_path, now=NOW), [])
 
-    def test_the_rule_is_registered_and_survives_a_db_without_the_tables(self):
-        self.assertIn(rules.rule_idle_contracts, rules.ALL_RULES)
+    def test_the_rule_is_off_the_board_and_survives_a_db_without_the_tables(self):
+        # 2026-11-01 (the cockpit audit): the pile of idle contracts already
+        # lives on Clients › Needs a look; the Today card was the same fact on a
+        # third screen. The rule stays callable (the Clients view and this test
+        # use it) but no longer mints cards.
+        self.assertNotIn(rules.rule_idle_contracts, rules.ALL_RULES)
+        self.assertNotIn(rules.rule_stale_dossier, rules.ALL_RULES)
         self.assertEqual(rules.rule_idle_contracts(self.tmp / "nope.db"), [])
         self.assertEqual((config.MCP_CONTRACT_IDLE_DAYS,
                           config.IDLE_CONTRACTS_CARD_MIN), (90, 3))

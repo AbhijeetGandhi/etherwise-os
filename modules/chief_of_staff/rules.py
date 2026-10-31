@@ -66,6 +66,9 @@ def rule_owed_replies(db_path, now=None) -> List[dict]:
             " t.client_id"
             " FROM drafts d JOIN threads t ON t.id = d.thread_id"
             " WHERE d.sent_status='pending'"
+            # a win-back draft (reactivation.py, Mondays) is not an owed reply —
+            # same exclusion as the Today follow-up builder (data._act_now_queue)
+            " AND COALESCE(d.draft_kind,'') != 'reactivation'"
             " AND substr(t.latest_message_dt,1,10) <= ?"
             " ORDER BY t.latest_message_dt DESC",
                 (cutoff.strftime("%Y-%m-%d"),)):
@@ -577,10 +580,21 @@ def rule_applicants_waiting(db_path, now=None) -> List[dict]:
     return out
 
 
+# Two rules left the board on 2026-11-01 (the cockpit audit; his call):
+#   rule_stale_dossier  — "Unprocessed sources: <client>, run extraction" was a
+#                         job the system can do itself. kb_daily now extracts
+#                         attributed Looms too (modules/knowledge/daily.py), so
+#                         the condition clears on its own instead of asking him.
+#   rule_idle_contracts — the pile of quiet Upwork contracts already lives on
+#                         Clients › Needs a look; it was the same fact on three
+#                         screens. One home.
+# Both functions stay importable (the Clients view and the tests use them); they
+# just no longer mint cards. Their kinds stay in sweep.RULE_KINDS so the cards
+# already on the board are reconciled away, not orphaned.
 ALL_RULES = (rule_owed_replies, rule_hotlead_no_loom, rule_won_no_outcome,
-             rule_lost_pattern, rule_stale_dossier, rule_commitments_due,
+             rule_lost_pattern, rule_commitments_due,
              rule_upwork_waiting, rule_stalled_milestone,
-             rule_idle_contracts, rule_applicants_waiting, rule_system)
+             rule_applicants_waiting, rule_system)
 
 
 def gather(db_path, now=None) -> List[dict]:
