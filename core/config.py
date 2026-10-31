@@ -1220,6 +1220,20 @@ COS_DONE_TERMINAL_KINDS = {"commitment_due", "won_no_outcome",
 # the stated deadline is meaningless — it stays in the commitments table for
 # review but leaves the act-now queue. Today is for what's actionable now.
 COS_COMMITMENT_STALE_DAYS = 30
+# ── Whose promise is it? (2026-11-01, the cockpit audit) ─────────────────────
+# The extractor files every "<name> will …" line on a call as who='us'. Of 711
+# open "us" promises only 68 named Abhijeet; the rest were Ankita/Shruti/Yogita
+# tasks (his team) and Abel/Jaap tasks (Hermon's side) — all nagging HIM. A
+# line whose subject is one of these names is re-filed at insert time
+# (commitments.classify_who): team names -> who='team' (kept, shown on the
+# client's dossier, never on Today or the brief — his call); client-side names
+# -> who='client' (awaiting them). First names, matched as whole words at the
+# START of the promise or as "<name> will/to/should"; a promise ABOUT someone
+# ("Send Shruti the brief") stays his. Keep these short and real.
+COS_TEAM_NAMES = ("Ankita", "Shruti", "Yogita", "Sachin", "Jay", "Aastha")
+COS_CLIENT_SIDE_NAMES = ("Abel", "Jaap")      # Hermon's side; add names as they recur
+# Lines the AM brief shows under Commitments before "and N more on Today"
+COS_BRIEF_COMMITMENT_LINES = 5
 # decay TTL in days per kind: None = never (until done); 0 = clears past its due
 COS_DECAY_TTL_DAYS = {
     "owed_reply":       7,

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import List, Optional
 
 from core import config, db, runner
@@ -55,6 +56,101 @@ SYSTEM = (
     "- quote: a short verbatim phrase from the text that anchors the commitment "
     "(REQUIRED — a commitment with no anchor is useless)."
 )
+
+
+# the SUBJECT of the sentence only: "<Name> will …", "<Name> to …",
+# "<Name> and <Name> will …", "<Name>: …". Not a name mid-sentence — "WhatsApp
+# Ankita to get her started" and "Invite Jay to the Slack" are HIS actions, and
+# a first pass that matched "<Name> to" anywhere filed both as the team's.
+_WHO_SUBJECT = re.compile(
+    r"^(?P<lead>[A-Z][a-z]+)(?:\s+and\s+[A-Z][a-z]+)?"
+    r"(?:\s+(?:will|to|should|is going to|needs to|has to)\b|\s*:)", re.U)
+
+
+def classify_who(who: Optional[str], text: str) -> str:
+    """Whose promise this really is (2026-11-01).
+
+    The model's enum is us|client and it calls every "<name> will …" line on
+    the call 'us'. A line whose SUBJECT is a teammate's first name
+    (config.COS_TEAM_NAMES) is the team's, not his; one whose subject is a
+    client-side person (config.COS_CLIENT_SIDE_NAMES) is the client's.
+    The subject test is deliberately narrow — the name at the start of the
+    sentence, or '<Name> will/to …' — so "Send Shruti the brief" (a promise
+    ABOUT her) stays his. Anything already 'client' stays 'client'."""
+    who = (who or "us").strip().lower()
+    if who != "us":
+        return who
+    t = (text or "").strip()
+    m = _WHO_SUBJECT.match(t)
+    if not m:
+        return "us"
+    name = (m.group("lead") or "").strip()
+    if not name:
+        return "us"
+    if name in config.COS_TEAM_NAMES:
+        return "team"
+    if name in config.COS_CLIENT_SIDE_NAMES:
+        return "client"
+    return "us"
+
+
+def reassign_open(db_path, *, commit: bool = False) -> dict:
+    """One-off: re-file the OPEN who='us' rows the rule above would not have
+    filed as his. Returns {team: n, client: n, rows: [...]}; writes only with
+    commit=True, and only the `who` column (reversible: the text is unchanged)."""
+    moved = {"team": [], "client": []}
+    with db.connect(db_path) as conn:
+        rows = conn.execute("SELECT id, text FROM commitments WHERE state='open'"
+                            " AND who='us'").fetchall()
+        for r in rows:
+            new = classify_who("us", r["text"])
+            if new != "us":
+                moved[new].append((r["id"], r["text"][:70]))
+                if commit:
+                    conn.execute("UPDATE commitments SET who=?, updated_at="
+                                 "datetime('now') WHERE id=?", (new, r["id"]))
+    return {"team": len(moved["team"]), "client": len(moved["client"]),
+            "rows": moved}
+
+
+def on_your_plate(db_path, now=None) -> dict:
+    """The commitments that are HIS to act on now — the one definition Today
+    and the brief share (2026-11-01).
+
+    Until then the brief listed every open who=us row past its due date,
+    unbounded: 158 lines on 30 Oct, growing 1.4 a day, led by April. Today's
+    card rule already applied two filters and showed 4. Same table, two
+    answers — and a list of 158 is a list nobody reads. So: open, who='us',
+    not flagged stale by the drain, overdue by no more than
+    COS_COMMITMENT_STALE_DAYS, or due within COS_COMMITMENT_DUE_DAYS. Grouped
+    by client, newest due first, so one message to a client can clear three."""
+    from datetime import datetime, timedelta
+    now = now or datetime.now(config.TZ)
+    today = now.strftime("%Y-%m-%d")
+    floor = (now - timedelta(days=config.COS_COMMITMENT_STALE_DAYS)).strftime("%Y-%m-%d")
+    horizon = (now + timedelta(days=config.COS_COMMITMENT_DUE_DAYS)).strftime("%Y-%m-%d")
+    with db.connect(db_path) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, client_id, text, due, source_cite FROM commitments"
+            " WHERE state='open' AND who='us' AND due IS NOT NULL"
+            " AND COALESCE(review_state,'') != 'stale'"
+            " AND substr(due,1,10) >= ? AND substr(due,1,10) <= ?"
+            " ORDER BY substr(due,1,10) DESC, id DESC", (floor, horizon))]
+        hidden = conn.execute(
+            "SELECT COUNT(*) FROM commitments WHERE state='open' AND who='us'"
+            " AND due IS NOT NULL AND substr(due,1,10) < ?"
+            " AND (COALESCE(review_state,'') = 'stale' OR substr(due,1,10) < ?)",
+            (today, floor)).fetchone()[0]
+    overdue = [r for r in rows if r["due"][:10] < today]
+    due_soon = [r for r in rows if r["due"][:10] >= today]
+    by_client: dict = {}
+    for r in overdue + due_soon:
+        by_client.setdefault(r["client_id"] or "", []).append(r)
+    # clients with the most on the line first; unattributed last
+    groups = sorted(by_client.items(),
+                    key=lambda kv: (kv[0] == "", -len(kv[1]), kv[0]))
+    return {"overdue": overdue, "due_soon": due_soon, "by_client": groups,
+            "count": len(rows), "hidden_old": hidden}
 
 
 def _dedup_key(text: str, source_ref: str) -> str:
@@ -106,7 +202,7 @@ def extract_from_source(db_path, source_id: int,
                 conn.execute(
                     "INSERT INTO commitments (who, client_id, text, due,"
                     " source_cite, dedup_key, state) VALUES (?,?,?,?,?,?, 'open')",
-                    (c.get("who") or "us", src["client_id"], text,
+                    (classify_who(c.get("who"), text), src["client_id"], text,
                      c.get("due"), cite, key))
                 inserted += 1
             except Exception:          # dedup_key UNIQUE -> already have it

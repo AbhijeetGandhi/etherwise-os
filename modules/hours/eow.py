@@ -223,11 +223,16 @@ def needs_input(conn, client_id: str, now_ms: int) -> list:
                (client_id,))
            if status_class(r["status"], r["status_type"]) == "review"]
     try:
+        # who='client' / state='open' are the real column values (the first
+        # version asked for owner='them' / resolved_at, which do not exist, so
+        # the except below swallowed it and the section was always empty)
         out += [{"what": r["text"], "why": "promised to us", "source":
                  "commitment", "waiting": None}
                 for r in conn.execute(
                     "SELECT text FROM commitments WHERE client_id=?"
-                    " AND owner='them' AND resolved_at IS NULL LIMIT 10",
+                    " AND who='client' AND state='open'"
+                    " AND COALESCE(review_state,'') != 'stale'"
+                    " ORDER BY id DESC LIMIT 10",
                     (client_id,))]
     except Exception:                                            # noqa: BLE001
         pass            # commitments schema varies; the task list stands alone

@@ -30,11 +30,19 @@ def _slug(name: str, client_id: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in base).strip("-")
 
 
+_WHO_LABEL = {"us": "Ours (Abhijeet)", "team": "Ours (team)",
+              "client": "Theirs (awaiting the client)"}
+
+
 def render_dossier(client_name: str, client_id: str, facts: List[dict],
-                   sources: List[dict], now_iso: str, routed: int = 0) -> str:
+                   sources: List[dict], now_iso: str, routed: int = 0,
+                   promises: Optional[List[dict]] = None) -> str:
     """Pure render. facts: rows with category/fact_text/citation/confidence
     (client-scoped only). sources: source_type/source_ref/title/occurred_dt.
-    routed: count of agency/cross-client facts sent to proof-points instead."""
+    routed: count of agency/cross-client facts sent to proof-points instead.
+    promises: open commitments for this client (who/text/due) — since
+    2026-11-01 a teammate's promise (who='team') lives HERE and nowhere that
+    nags Abhijeet; this section is where it stays visible."""
     trusted = [f for f in facts if f["confidence"] in kb.TRUSTED_TAGS]
     routed_note = (f" · {routed} agency/other-client facts routed to "
                    "proof-points" if routed else "")
@@ -65,6 +73,24 @@ def render_dossier(client_name: str, client_id: str, facts: List[dict],
             lines.append(f"- {f['fact_text']} "
                          f"[{tag} · {f['citation']}]")
         lines.append("")
+
+    if promises:
+        lines.append("## Open promises")
+        lines.append("")
+        lines.append("_From call transcripts; `who` says whose it is. Not the"
+                     " Today tab's list — this is everything still open for this"
+                     " client, including the team's._")
+        lines.append("")
+        for who in ("us", "team", "client"):
+            rows = [p for p in promises if p.get("who") == who]
+            if not rows:
+                continue
+            lines.append(f"**{_WHO_LABEL[who]}**")
+            lines.append("")
+            for p in rows:
+                due = f" · due {p['due'][:10]}" if p.get("due") else ""
+                lines.append(f"- {p['text']}{due}")
+            lines.append("")
 
     lines.append("## Sources")
     lines.append("")
@@ -113,6 +139,14 @@ def compile_dossier(db_path, client_id: str, client_name: str, now_iso: str,
             " sources WHERE client_id=? ORDER BY occurred_dt", (client_id,))]
         prev = conn.execute("SELECT fact_count FROM dossier_index WHERE"
                             " client_id=?", (client_id,)).fetchone()
+        try:
+            promises = [dict(r) for r in conn.execute(
+                "SELECT who, text, due FROM commitments WHERE client_id=?"
+                " AND state='open' AND COALESCE(review_state,'') != 'stale'"
+                " ORDER BY (due IS NULL), due DESC, id DESC LIMIT 40",
+                (client_id,))]
+        except Exception:                                      # noqa: BLE001
+            promises = []
         # is the READ trustworthy? An empty facts table is the signature of the
         # failure this guard exists for (wrong db / mid-write / un-migrated).
         kb_populated = bool(conn.execute(
@@ -136,7 +170,7 @@ def compile_dossier(db_path, client_id: str, client_name: str, now_iso: str,
                           " client, is what changed"}
 
     md = render_dossier(client_name, client_id, facts, sources, now_iso,
-                        routed=routed)
+                        routed=routed, promises=promises)
     path.write_text(md)
 
     with db.connect(db_path) as conn:
