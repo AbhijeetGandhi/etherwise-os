@@ -146,6 +146,48 @@ def clear_installed(conn, _loaded=None, uid: int = 0,
     return cleared
 
 
+def clear_recovered(conn, sources=None) -> list:
+    """Close `catch_up_gave_up` / `catch_up_failed` anomalies whose target has
+    since run cleanly (2026-11-01). The give-up is a claim that a source is
+    failing every attempt; one completed run of its task falsifies it, and
+    the same 30-minute shim is the natural place to notice. Re-arms the alarm
+    exactly the way clear_installed does for the not-installed case."""
+    by_key = {s["key"]: s["task_name"] for s in
+              (sources if sources is not None else config.SOURCES)}
+    rows = conn.execute(
+        "SELECT id, kind, detail_json, detected_at FROM anomalies WHERE"
+        " kind IN ('catch_up_gave_up','catch_up_failed') AND resolved_at IS NULL"
+    ).fetchall()
+    cleared = []
+    for row in rows:
+        try:
+            d = json.loads(row[2] or "{}")
+        except (TypeError, ValueError):
+            continue
+        keys = [d["key"]] if d.get("key") else [k for k in (d.get("sources") or [])
+                                                  if isinstance(k, str)]
+        keys = keys or [f.get("key") for f in (d.get("failed") or []) if f.get("key")]
+        if not keys:
+            continue
+        ok = True
+        for k in keys:
+            task = by_key.get(k)
+            if not task:
+                continue                      # a retired source: let it clear
+            done = conn.execute(
+                "SELECT 1 FROM runs WHERE task_name=? AND status IN"
+                " ('completed','skipped_empty') AND julianday(completed_at) >"
+                " julianday(?) LIMIT 1", (task, row[3])).fetchone()
+            if not done:
+                ok = False
+                break
+        if ok:
+            conn.execute("UPDATE anomalies SET resolved_at=datetime('now')"
+                         " WHERE id=?", (row[0],))
+            cleared.extend(keys)
+    return cleared
+
+
 def _bootstrap_cmd(label: str, uid: int) -> str:
     """The exact command a human runs to install a job launchd has never heard
     of — surfaced verbatim in the anomaly so nobody has to reconstruct it."""
@@ -197,6 +239,9 @@ def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
         cleared = [] if dry_run else clear_installed(conn, _loaded, uid)
         if cleared:
             ctx.log(f"not-installed alarm re-armed for: {', '.join(cleared)}")
+        recovered = [] if dry_run else clear_recovered(conn)
+        if recovered:
+            ctx.log(f"give-up alarm re-armed for: {', '.join(sorted(set(recovered)))}")
         candidates = overdue_sources(conn, now)
         due, skipped, gave_up, not_installed = [], [], [], []
         max_fail = config.CATCH_UP_MAX_CONSECUTIVE_FAILURES
@@ -265,10 +310,14 @@ def run(ctx, now: datetime = None, uid: int = None, _sleep=time.sleep,
                     {"sources": fresh_not_installed, "uid": uid,
                      "detail": "launchd label absent — run the bootstrap command"
                                " once; this is not a restart problem"})
-    if fresh_gave_up:
-        # not a restart problem — say plainly that a human is needed
+    for g in fresh_gave_up:
+        # not a restart problem — say plainly that a human is needed. ONE ROW
+        # PER KEY, with the key in the shape `_already_open` looks for.
+        # Until 2026-11-01 this wrote {"sources": [...]} and the guard searched
+        # for {"key": ...}, so it never matched and the same give-up was filed
+        # as a fresh critical every 30 minutes: 1,488 rows by 30 Oct.
         ctx.anomaly("catch_up_gave_up", "critical",
-                    {"sources": [g["key"] for g in fresh_gave_up],
+                    {"key": g["key"], "why": g.get("why"),
                      "detail": "failing every attempt; restarting will not fix it"})
     for g in gave_up:
         ctx.log(f"NOT restarting {g['key']} — it has failed its last"

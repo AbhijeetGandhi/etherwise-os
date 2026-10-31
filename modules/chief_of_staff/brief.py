@@ -74,8 +74,13 @@ def _system(conn, now: datetime) -> dict:
         ((now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S"),)).fetchone()["c"]
     sweep = conn.execute("SELECT last_swept_at, last_opus_at FROM sweep_state"
                          " WHERE id=1").fetchone()
+    # open criticals mean something again since 2026-11-01 (the runner
+    # resolves a run's anomalies on the task's next clean run), so the count
+    # is worth one glance here — the only place it reaches him
+    crit = conn.execute("SELECT COUNT(*) c FROM anomalies WHERE resolved_at IS NULL"
+                        " AND severity='critical'").fetchone()["c"]
     return {"spend_today": round(spent, 2), "cap": config.DAILY_HARD_LIMIT_USD,
-            "failed_runs_24h": fails,
+            "failed_runs_24h": fails, "open_criticals": crit,
             "last_sweep": sweep["last_swept_at"] if sweep else None}
 
 
@@ -240,7 +245,8 @@ def render_html(brief: dict, narr: dict) -> str:
                   "Numbers fed by these sources are not current.</div></div>")
     parts.append(f"<div style='color:#888;font-size:13px'>System: spend "
                  f"${s['spend_today']}/{s['cap']:.0f} · failed runs (24h) "
-                 f"{s['failed_runs_24h']} · last sweep {s['last_sweep'] or 'n/a'}"
+                 f"{s['failed_runs_24h']} · open criticals {s.get('open_criticals', 0)}"
+                 f" · last sweep {s['last_sweep'] or 'n/a'}"
                  f" · {brief['commitments']['on_plate']} commitments on your plate, "
                  f"{brief['commitments']['awaiting_client']} awaiting client</div>")
     parts.append("</div>")

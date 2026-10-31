@@ -189,6 +189,36 @@ def _finish_run(db_path: Optional[Path], run_id: int, status: str,
              error, run_id))
 
 
+# ── anomalies heal on the next clean run (2026-11-01, the cockpit audit) ─────
+# An anomaly bound to a run is a statement ABOUT THAT RUN. Nothing ever closed
+# them: 3,139 were open on 30 Oct (2,280 'critical'), 779 of them task_failure
+# rows for runs whose task had since completed hundreds of times, and the
+# critical-interrupt drain (bin/notify) had never run. "Critical" meant
+# nothing. So a later clean run of the same task resolves every anomaly its
+# earlier runs raised. A standing condition that still holds is re-raised by
+# the run that observes it, so nothing true is lost — only the pile.
+#
+# EXEMPT: catch_up's own anomalies are about OTHER sources, not about catch_up
+# (bin/catch-up clears those itself when the target recovers); and anything
+# not bound to a run (run_id NULL — a human-filed note, a cockpit read) is not
+# a run's statement and is left alone.
+SELF_HEAL_EXEMPT_TASKS = ("catch_up",)
+
+
+def _self_heal(db_path: Optional[Path], task_name: str, run_id: int) -> int:
+    if task_name in SELF_HEAL_EXEMPT_TASKS:
+        return 0
+    try:
+        with db.connect(db_path) as conn:
+            cur = conn.execute(
+                "UPDATE anomalies SET resolved_at=datetime('now') WHERE"
+                " resolved_at IS NULL AND task_name=? AND run_id IS NOT NULL"
+                " AND run_id < ?", (task_name, run_id))
+            return cur.rowcount or 0
+    except Exception:                   # noqa: BLE001 — healing is a courtesy
+        return 0                        # never a reason for a clean run to fail
+
+
 def last_success(task_name: str, db_path: Optional[Path] = None) -> Optional[str]:
     """completed_at of the task's most recent completed run (catch-up helper)."""
     with db.connect(db_path) as conn:
@@ -265,13 +295,17 @@ def run_task(task_name: str, fn: Callable[[RunContext], Optional[dict]],
                 duration_ms = int((time.monotonic() - started) * 1000)
                 _finish_run(db_path, run_id, "completed", duration_ms,
                             metrics=metrics or {})
+                healed = _self_heal(db_path, task_name, run_id)
                 _log(task_name, f"run {run_id} completed in {duration_ms}ms"
-                     f" metrics={json.dumps(metrics or {})}")
+                     f" metrics={json.dumps(metrics or {})}"
+                     + (f" (resolved {healed} earlier anomalies)" if healed else ""))
                 return RunResult(run_id, "completed", metrics=metrics or {})
             except TaskSkip as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 _finish_run(db_path, run_id, "skipped_empty", duration_ms,
                             metrics={"skip_reason": str(exc)})
+                # a clean skip reached its source and found nothing: a clean run
+                _self_heal(db_path, task_name, run_id)
                 _log(task_name, f"run {run_id} skipped_empty: {exc}")
                 return RunResult(run_id, "skipped_empty")
             except _RETRYABLE as exc:
