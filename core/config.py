@@ -1466,6 +1466,13 @@ LINKEDIN_REQUIRED_FIELDS = {
 # plausible buyers (CONTEXT §2), counted from her first working session.
 LINKEDIN_COMMENTS_PER_DAY = 10
 LINKEDIN_POSTS_PER_WEEK = 3
+# The cold-proposal pace the running test was designed for (modules/upwork/
+# experiments.py T1: "about 25 cold proposals a week, top band first"). Today's
+# glance strip reads applied-this-week against it (2026-11-01). Not a quota —
+# the bar says how the test is being fed, which is the thing that was starving
+# it (17 sends in 3 weeks against 157 drafts an arm).
+UPWORK_PROPOSALS_PER_WEEK_PLAN = 25
+TODAY_DRAFTS_READY_TOPN = 5          # the strip on Today; the rest on Upwork › Jobs
 LINKEDIN_DAY0 = "2026-10-09"
 LINKEDIN_DAY90_CONVERSATIONS = 5
 # Today shows LinkedIn items found within this many days; older ones are

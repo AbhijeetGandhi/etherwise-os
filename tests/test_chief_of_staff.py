@@ -472,7 +472,7 @@ class TestRules(CoSCase):
                          (near_cap,))
         c = rules.rule_system(self.db_path, dt(hh=12))
         keys = {x["dedup_key"] for x in c}
-        self.assertIn("system:run:1", keys)
+        self.assertIn("system:task:upwork_scan", keys)      # keyed on the TASK since 2026-11-01
         self.assertTrue(any(k.startswith("system:spend:") for k in keys))
 
     def test_failure_a_later_run_recovered_from_is_not_a_card(self):
@@ -485,8 +485,23 @@ class TestRules(CoSCase):
                          " ('upwork_scan','2026-06-22T10:00:00','completed'),"
                          " ('cos_sweep','2026-06-22T11:00:00','failed')")
         keys = {x["dedup_key"] for x in rules.rule_system(self.db_path, dt(hh=12))}
-        self.assertNotIn("system:run:1", keys)   # healed by the 10:00 run
-        self.assertIn("system:run:3", keys)      # still broken -> still a card
+        self.assertNotIn("system:task:upwork_scan", keys)   # healed by the 10:00 run
+        self.assertIn("system:task:cos_sweep", keys)        # still broken -> still a card
+
+    def test_three_failures_of_one_task_are_one_card(self):
+        # an evening of no DNS failed upwork_hiring three times -> three
+        # identical cards on Today (2026-10-31). One card, saying three times.
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO runs (task_name,started_at,status,error) VALUES"
+                         " ('upwork_hiring','2026-06-22T07:05:00','failed','URLError'),"
+                         " ('upwork_hiring','2026-06-22T09:05:00','failed','URLError'),"
+                         " ('upwork_hiring','2026-06-22T11:05:00','failed','URLError')")
+        cards = [x for x in rules.rule_system(self.db_path, dt(hh=12))
+                 if x["dedup_key"].startswith("system:task:")]
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["title"], "Job failed 3 times: upwork_hiring")
+        self.assertEqual(cards[0]["payload"]["failures"], 3)
+        self.assertEqual(len(cards[0]["payload"]["run_ids"]), 3)
 
 
 # ── sweep: empty-skip + Opus-on-change ───────────────────────────────────────

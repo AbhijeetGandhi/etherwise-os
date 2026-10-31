@@ -487,6 +487,7 @@ def _needs_you(a: dict, day: str) -> dict:
     drafts, d_old = _fresh([c for c in a["cands"] if c["verdict"] == "Comment"])
     people = [p for p in a["people"] if p["next_action"] in ACT_NEXT and not p["dnc"]]
     today_n = sum(1 for c in a["comments"] if c["day"] == day)
+    r = _results(a["msgs"], day)
     return {
         "brainstorm": brainstorm, "drafts": drafts, "people": people,
         "older": {"brainstorm": b_old, "drafts": d_old},
@@ -494,6 +495,9 @@ def _needs_you(a: dict, day: str) -> dict:
         "total": len(brainstorm) + len(drafts) + len(people),
         "comments_today": today_n,
         "comments_target_day": config.LINKEDIN_COMMENTS_PER_DAY,
+        # the day-90 gate, for Today's glance strip (2026-11-01)
+        "buyer_conversations": r["buyer_conversations"],
+        "day90_target": r["target"], "days_left": r["days_left"],
     }
 
 

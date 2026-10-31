@@ -105,15 +105,14 @@ export async function render(root, ctx) {
     return;
   }
 
-  // The roster is an external hop (Airtable, 60s cached server-side). It must
-  // never be able to take down the ledger view it annotates.
-  let roster = null, rosterError = null;
-  try {
-    roster = await ctx.api("/api/clients/airtable");
-  } catch (e) {
-    if (e && e.unauthorized) throw e;
-    rosterError = String((e && e.message) || e);
-  }
+  // THE AIRTABLE ROSTER IS NO LONGER FETCHED HERE (2026-11-01, the cockpit
+  // audit). It was merged by exact name and the names did not line up: the
+  // Status column read "—" on nearly every row, and the external hop made the
+  // first load take ~10 s. config/clients.yaml is the roster; a client's
+  // status here is what the ledger says (paying / quiet / ended). The route
+  // stays for anything else that reads it; every roster branch below is
+  // guarded by `if (roster)` and simply does not draw.
+  const roster = null, rosterError = null;
   const rosterIndex = new Map();
   (roster ? roster.clients || [] : []).forEach((x) => {
     if (!rosterIndex.has(normName(x.name))) rosterIndex.set(normName(x.name), x);

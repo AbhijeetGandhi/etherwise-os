@@ -508,16 +508,17 @@ class TestUpworkConnects(UpworkTabCase):
 
 
 class TestUpworkRails(UpworkTabCase):
-    def test_the_briefs_rails_in_order_with_not_built_rows(self):
+    def test_the_briefs_rails_in_order_and_nothing_claims_to_be_unbuilt(self):
         keys = [r["key"] for r in self.out["rails"]["items"]]
         self.assertEqual(keys, ["scanner", "proposals_sync",
                                 "messages_sync", "offers_sync", "applied",
                                 "outcome_email", "clickup_push", "cards_sweep"])
+        # offers ride the heartbeat since 2026-08-26; the row said "not built"
+        # for two months after it was (the cockpit audit, 2026-11-01)
         offers = next(r for r in self.out["rails"]["items"] if r["key"] == "offers_sync")
-        self.assertFalse(offers["built"])
-        self.assertIsNone(offers["status"])
-        self.assertIn("0.5", offers["reason"])
-        self.assertEqual(self.out["rails"]["not_built"], ["offers_sync"])
+        self.assertTrue(offers["built"])
+        self.assertEqual(offers["task_name"], "upwork_pulse")
+        self.assertEqual(self.out["rails"]["not_built"], [])
 
     def test_a_rail_that_never_ran_is_down_and_the_strip_says_so(self):
         scanner = next(r for r in self.out["rails"]["items"] if r["key"] == "scanner")

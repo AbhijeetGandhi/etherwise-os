@@ -2733,6 +2733,20 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
             f"SELECT COUNT(*) FROM contracts WHERE upwork_status IN"
             f" ({cmarks})", _ACTIVE_CONTRACT).fetchone()[0]
         follow_ups_due = len(follow_ups)
+        # ── drafts ready to send (2026-11-01, his call on the starving A/B
+        # test): the five best hot jobs with a draft written and not applied,
+        # inside the fresh window — the same predicate as Upwork › Jobs ›
+        # Drafts to review, so the two cannot disagree. Copy + Open live on the
+        # row; he sends.
+        drafts_ready = [dict(r) for r in conn.execute(
+            f"SELECT j.id, j.title, j.score, j.icp_tier, j.job_url,"
+            f" j.draft_proposal, substr(j.first_scored_at,1,10) AS d "
+            + _drafts_waiting_sql()
+            + f" ORDER BY {_icp_rank} DESC, j.score DESC, j.first_scored_at DESC"
+            f" LIMIT ?", (_HOT, fresh_lo, config.TODAY_DRAFTS_READY_TOPN))]
+        drafts_ready_total = conn.execute(
+            "SELECT COUNT(*) " + _drafts_waiting_sql(),
+            (_HOT, fresh_lo)).fetchone()[0]
     finally:
         conn.close()
 
@@ -2851,11 +2865,14 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         "queue_auto_closed": _auto_closed, "clusters": clusters,
         "follow_ups": follow_ups,           # kept for back-compat / counts
         "backlog": backlog,
+        "drafts_ready": {"items": drafts_ready, "total": drafts_ready_total,
+                         "shown": len(drafts_ready)},
         "metrics": {
             "applied": {"today": applied_today, "week": applied_week,
                         "last_week": applied_last, "paused": paused,
                         "paused_since": paused_since, "note": applied_note,
-                        "contradiction": applied_contradiction},
+                        "contradiction": applied_contradiction,
+                        "target_week": config.UPWORK_PROPOSALS_PER_WEEK_PLAN},
             "active": {"proposals": active_props, "interviews": interviews,
                        "contracts": active_contracts},
             "queue_len": len(queue), "follow_ups_due": follow_ups_due,
@@ -2958,13 +2975,18 @@ _UPWORK_RAILS = (
     ("scanner", "Job feed (Upwork API)", "scanner"),
     ("proposals_sync", "Proposals sync", "upwork_sync"),
     ("messages_sync", "Messages sync", "upwork_inbox"),
-    ("offers_sync", "Offers sync", None),            # not built (0.5)
+    # offers + invitations ride the quarter-hour heartbeat since 2026-08-26;
+    # this row said "not built — Phase 0.5" for two months after it was (the
+    # cockpit audit, 2026-11-01)
+    ("offers_sync", "Offers & invitations (heartbeat)", "upwork_pulse"),
     ("applied", "Applied (connects rail)", "connects_rail"),
     ("outcome_email", "Outcome email", "upwork_outcomes"),
     ("clickup_push", "ClickUp push", None),          # derived from the scan
     ("cards_sweep", "Cards sweep", "cos_sweep"),
 )
-_UPWORK_NOT_BUILT = {"offers_sync": "not built — Phase 0.5 (offers ingestion)"}
+# nothing on the strip is unbuilt any more; the shape stays so a future rail
+# can be declared before it ships without lying about it
+_UPWORK_NOT_BUILT: dict = {}
 _UPWORK_STAGE_LABELS = {
     "fetched": "Fetched", "passed": "Passed the hard rules", "hot": "Hot",
     "applied": "Applied", "viewed": "Viewed by client",

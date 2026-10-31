@@ -158,19 +158,27 @@ export async function render(root, ctx) {
       el("span", "muted small", fr.last_compiled_at ? `compiled ${fmt.dateTime(fr.last_compiled_at)}` : "")]),
     el("p", "up-lede", brainWords),
   ]));
+  // FOUR VIEWS -> TWO (2026-11-01, his call in the cockpit audit). "What came
+  // in" was four stat cards — a whole click for one glance — and "Search
+  // facts" was one box. Both live on Ask now: the free search under the paid
+  // question, the four cards under an expander. An old ?view=camein|search
+  // link lands on Ask instead of a blank view.
   await subtabs(root, {
     section: "knowledge", ctx,
-    tabs: [{ id: "ask", label: "Ask" }, { id: "dossiers", label: "Dossiers" },
-      { id: "camein", label: "What came in" }, { id: "search", label: "Search facts" }],
+    tabs: [{ id: "ask", label: "Ask" }, { id: "dossiers", label: "Dossiers" }],
     badge: (id) => {
       if (id === "dossiers") return el("span", "n" + (stale ? " warn" : ""), stale ? `${stale} stale` : String(dossiers.length));
       return null;
     },
     views: {
-      ask: () => el("div", "stack", [askCard(d, ctx), freshnessLine(fr, dossiers)]),
+      ask: () => el("div", "stack", [
+        askCard(d, ctx),
+        searchCard(ctx),
+        freshnessLine(fr, dossiers),
+        expander("What came in — facts, sources, Fathom ingest, proof points",
+          (body) => { body.appendChild(statCards(d, dossiers, totals, ctx)); }),
+      ]),
       dossiers: () => el("div", "stack", dossierRegion(dossiers, fr, ctx)),
-      camein: () => el("div", "stack", [statCards(d, dossiers, totals, ctx)]),
-      search: () => el("div", "stack", [searchCard(ctx)]),
     },
   });
 }

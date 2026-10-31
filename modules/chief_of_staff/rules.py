@@ -455,20 +455,33 @@ def rule_system(db_path, now=None) -> List[dict]:
         # osascript timeouts put three "Job failed" cards on Today (plus two
         # Opus escalations about them) while the scan had been green for hours.
         # A card you cannot act on teaches you to ignore the board.
+        # ONE CARD PER TASK, not per failed run (2026-11-01): an evening of no
+        # DNS failed upwork_hiring three times and put three identical "Job
+        # failed: upwork_hiring" cards on Today. The card names the task, says
+        # how many times and since when, and carries every run id; its key is
+        # the task, so the next failure refreshes it instead of adding another.
         for r in conn.execute(
-            "SELECT f.id, f.task_name, f.started_at FROM runs f"
+            "SELECT f.task_name, COUNT(*) AS n, MIN(f.started_at) AS first_at,"
+            " MAX(f.started_at) AS last_at, MAX(f.id) AS last_id,"
+            " GROUP_CONCAT(f.id) AS run_ids, MAX(substr(f.error,1,160)) AS err"
+            " FROM runs f"
             " WHERE f.status='failed' AND f.started_at >= ?"
             " AND NOT EXISTS (SELECT 1 FROM runs ok WHERE ok.task_name=f.task_name"
             "   AND ok.status IN ('completed','skipped_empty')"
-            "   AND ok.started_at > f.started_at)",
+            "   AND ok.started_at > f.started_at)"
+            " GROUP BY f.task_name",
                 (_iso(fail_lo),)):
+            times = f" {r['n']} times" if r["n"] > 1 else ""
             out.append({
                 "source": "system", "dept": "system", "kind": "system",
-                "title": f"Job failed: {r['task_name']}",
-                "action": "Check the run log; re-run or fix.",
-                "due": None, "dedup_key": f"system:run:{r['id']}",
-                "payload": {"task": r["task_name"],
-                            "failed_at": r["started_at"]}})
+                "title": f"Job failed{times}: {r['task_name']}",
+                "action": (f"Last error: {r['err']}. " if r["err"] else "")
+                          + "Check the run log; re-run or fix.",
+                "due": None, "dedup_key": f"system:task:{r['task_name']}",
+                "payload": {"task": r["task_name"], "failures": r["n"],
+                            "first_failed_at": r["first_at"],
+                            "failed_at": r["last_at"], "run_id": r["last_id"],
+                            "run_ids": [int(x) for x in str(r["run_ids"]).split(",") if x]}})
         ist_date = nowdt.strftime("%Y-%m-%d")
         spent = conn.execute(
             "SELECT COALESCE(SUM(total_cost_usd),0) s FROM claude_usage"

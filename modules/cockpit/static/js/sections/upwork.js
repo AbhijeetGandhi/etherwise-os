@@ -52,7 +52,10 @@ const TABLE_PEEK = 12;                              // rows shown inline before 
 const TABS = [
   { id: "inbox", label: "Inbox" },
   { id: "jobs", label: "Jobs" },
-  { id: "health", label: "Health" },
+  // Health left this tab on 2026-11-01 (his call, the cockpit audit): it was
+  // Activity › Health rail-for-rail, and it still said "Offers rail — not
+  // built" two months after the heartbeat started reading offers. The header
+  // keeps its one-line verdict and links to the one health table.
 ];
 
 function remember(key, value) {
@@ -220,7 +223,7 @@ export async function render(root, ctx) {
   root.append(el("div", "up-head", [
     el("div", "hstack", [el("h2", "up-title", "Upwork"),
       el("span", "muted small", `as of ${fmt.dateShort(d.as_of)}`)]),
-    lede(s, d, (id) => switchTo(id)),
+    lede(s, d, (id) => switchTo(id), ctx),
   ]));
 
   const bar = el("div", { class: "subtabs", attrs: { role: "tablist" } });
@@ -240,7 +243,7 @@ export async function render(root, ctx) {
   const views = {
     inbox: () => inboxView(d, ctx),
     jobs: () => jobsView(d, ctx),
-    health: () => healthView(d, ctx),
+
   };
 
   async function switchTo(id) {
@@ -258,7 +261,7 @@ export async function render(root, ctx) {
 
 /* ── the sentence under the heading ───────────────────────────────────────── */
 
-function lede(s, d, go) {
+function lede(s, d, go, ctx) {
   const jump = (text, id) => el("button", { class: "linktext", type: "button", on: { click: () => go(id) } }, text);
   const people = s.people_waiting || 0;
   const parts = [];
@@ -271,9 +274,12 @@ function lede(s, d, go) {
     el("span", "muted", ` this week, ${fmt.num(s.applied_week)} applied, ${fmt.num(s.interviewing_week)} interview${s.interviewing_week === 1 ? "" : "s"} started`
       + (s.won_week ? `, ${s.won_week} contract${s.won_week === 1 ? "" : "s"} won` : "")));
   parts.push(el("span", "muted", " · "));
+  const toHealth = (text) => el("button", { class: "linktext", type: "button",
+    attrs: { title: "every rail, in Activity › Health" },
+    on: { click: () => ctx.navigate("activity", { view: "health" }) } }, text);
   parts.push(s.rails_attention
-    ? jump(`${s.rails_attention} rail${s.rails_attention === 1 ? "" : "s"} need${s.rails_attention === 1 ? "s" : ""} attention`, "health")
-    : jump("every rail is fine", "health"));
+    ? toHealth(`${s.rails_attention} rail${s.rails_attention === 1 ? "" : "s"} need${s.rails_attention === 1 ? "s" : ""} attention`)
+    : toHealth("every rail is fine"));
   return el("p", "up-lede", parts);
 }
 
@@ -284,9 +290,6 @@ function badge(id, d) {
     return n ? el("span", "n " + (s.replies_owed ? "hot" : ""), String(n)) : null;
   }
   if (id === "jobs") return s.hot_week != null ? el("span", "n", `${fmt.num(s.hot_week)} hot`) : null;
-  if (id === "health") {
-    return s.rails_attention ? el("span", "n warn", String(s.rails_attention)) : el("span", "n ok", "✓");
-  }
   return null;
 }
 
@@ -707,89 +710,4 @@ function connectsBlock(d, ctx, state) {
 
 // what each rail DOES, in the words he would use — the registry names the
 // task; this names the job
-const RAIL_WHAT = {
-  scanner: "pulls new jobs from the Upwork API every 15 minutes, scores them, writes the drafts",
-  proposals_sync: "your proposals, rooms and messages, every hour",
-  messages_sync: "who is waiting on you, at 10:15 and 19:15",
-  offers_sync: "offers you receive",
-  applied: "which jobs you applied to and what they cost, daily at 05:35",
-  outcome_email: "asks you what happened to last week's proposals, Sundays",
-  clickup_push: "one card per hot job, after every scan",
-  cards_sweep: "closes cards that are done, every 2 hours",
-};
-
-function agoWords(hours) {
-  if (hours == null) return null;
-  const h = Number(hours);
-  if (h < 1) return "under an hour ago";
-  if (h < 48) return `${Math.round(h)} h ago`;
-  return `${Math.round(h / 24)} days ago`;
-}
-
-function statusWords(r) {
-  if (r.built === false) return { cls: "off", text: "Not built yet", why: r.reason };
-  const st = r.status || "unknown";
-  if (st === "ok") return { cls: "ok", text: "OK", why: null };     // the run's metrics live in Activity
-  if (st === "stale") {
-    const expected = String(r.cadence || "").replace(/^fresh within /, "expected every ");
-    return { cls: "warn", text: "Late",
-      why: (r.age_hours != null ? `last ran ${agoWords(r.age_hours)}${expected ? ", " + expected : ""}` : "has not run when expected")
-        + (r.reason ? ` — ${r.reason}` : "") };
-  }
-  if (st === "degraded") return { cls: "warn", text: "Needs a look", why: r.reason || r.result || "ran, but the result is off" };
-  if (st === "down") return { cls: "bad", text: "Not running", why: r.reason || r.result || "no successful run" };
-  return { cls: "warn", text: st, why: r.reason || null };
-}
-
-function healthView(d, ctx) {
-  const rails = d.rails || {};
-  const items = rails.items || [];
-  const out = el("div", "stack up-view");
-  out.append(el("div", "secrow", [el("h3", "sec-title", "Is the machinery working?"),
-    el("span", "muted small", "every rail, in plain words")]));
-
-  const attention = items.filter((r) => r.built !== false && r.status && r.status !== "ok");
-  if (attention.length) {
-    out.append(notice("warn", [
-      el("b", null, `${attention.length} thing${attention.length === 1 ? "" : "s"} need${attention.length === 1 ? "s" : ""} a look: `),
-      attention.map((r) => `${r.label} — ${statusWords(r).why || statusWords(r).text}`).join(" · "),
-    ]));
-  } else {
-    out.append(notice("ok", "Every rail ran when it should and finished cleanly."));
-  }
-
-  const rows = el("div", "card flush");
-  const t = el("table", "rails-table");
-  t.appendChild(el("thead", null, el("tr", null, [el("th", null, "Rail"), el("th", null, "Last ran"), el("th", null, "Status"), el("th", null, "")])));
-  const body = el("tbody");
-  items.forEach((r) => {
-    const w = statusWords(r);
-    const when = r.started_at || r.last_success;
-    const lastCell = r.built === false ? el("span", "muted", "—")
-      : when ? el("div", "stack-1", [el("span", null, fmt.dateTimeShort(when)), el("span", "small muted", fmt.relative(when))])
-        : el("span", "muted", "never");
-    const name = el("button", { class: "linktext rail-name", type: "button",
-      attrs: { title: r.built === false ? (r.reason || "not built yet") : "open its last run in Activity" },
-      on: { click: () => {
-        if (r.built === false) { toast(r.reason || "not built yet"); return; }
-        if (r.run_id && r.day) ctx.navigate("activity", { day: r.day, run: String(r.run_id) });
-        else toast(`${r.label}: no run recorded yet`);
-      } } }, [el("span", "dot " + w.cls), r.label]);
-    const action = el("div", "hstack-tight");
-    if (r.rerun && r.task_name && r.built !== false) {
-      action.appendChild(runButton(ctx, d, r.task_name, "Run now",
-        { variant: attention.includes(r) ? "primary" : "ghost", quiet: true }));
-    }
-    body.appendChild(el("tr", attention.includes(r) ? "attn" : "", [
-      el("td", null, el("div", "stack-1", [name, el("span", "small muted", RAIL_WHAT[r.key] || r.why || "")])),
-      el("td", null, lastCell),
-      el("td", null, el("div", "stack-1", [el("span", "st " + w.cls, w.text), w.why ? el("span", "small muted", w.why) : null])),
-      el("td", "num", action),
-    ]));
-  });
-  t.appendChild(body);
-  rows.append(el("div", "tablewrap flush", t),
-    el("div", "card-foot muted small", "Click a rail to see its last run in Activity. “OK” means it ran on time and finished; “Late” means it has not run when expected; “Needs a look” means it ran but something in the result is off."));
-  out.append(rows);
-  return out;
-}
+// (healthView lived here until 2026-11-01 — see TABS)
