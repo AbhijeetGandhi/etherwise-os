@@ -543,8 +543,11 @@ class TestPipelineTab(unittest.TestCase):
         self.assertIn('api("/api/upwork/funnel")', src)
         for bad in ("fetch(", "innerHTML", "/send", "send_message"):
             self.assertNotIn(bad, src)
-        for view in ("flow", "scanner", "proposals", "talks", "after", "tests", "agents"):
+        # Agents folded into Flow and Leads added, 2026-11-01 (the cockpit audit)
+        for view in ("flow", "scanner", "proposals", "talks", "after", "leads", "tests"):
             self.assertIn(f'id: "{view}"', src)
+        self.assertNotIn('id: "agents"', src)
+        self.assertIn('api("/api/leads")', src)
         fn = (STATIC / "js" / "sections" / "upwork_funnel.js").read_text()
         self.assertIn("export function drillRows(", fn)
 

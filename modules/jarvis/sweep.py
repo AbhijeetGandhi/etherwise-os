@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core import config, db, registry, runner              # noqa: E402
-from modules.jarvis import events, gmail_rail, imap_rail, mapping   # noqa: E402
+from modules.jarvis import events, gmail_rail, imap_rail, leads, mapping   # noqa: E402
 from modules.upwork import room_link                       # noqa: E402
 from modules.jarvis import resweep                          # noqa: E402
 from modules.jarvis import sender_rules                     # noqa: E402
@@ -147,6 +147,8 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
         structural = {}
         still_held = []
 
+        leads_made = 0
+
         def _gate(ev):
             """The intent gate for the zero-LLM paths. Until 2026-10-18 these
             two branches went straight to set_queued, so `mapping.route`'s
@@ -157,7 +159,20 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
                 ev.get("author"), ev.get("subject"), protected=prot)
             return reason if dest == "file" else None
 
+        def _lead_shape(ev):
+            dest, shape = mapping.route_structural(ev.get("author"), ev.get("subject"))
+            return shape if dest == "lead" else None
+
         for ev in held:
+            # A WEBSITE-FORM LEAD IS A LEAD BEFORE IT IS ANYTHING ELSE
+            # (2026-11-01): it comes from our own relay address, so no
+            # registry match or domain echo can ever place it, and it used to
+            # wait on the board until dismissed. Its own table now.
+            if _lead_shape(ev):
+                leads.from_event(conn, ev, note="website form")
+                leads_made += 1
+                structural["website_lead"] = structural.get("website_lead", 0) + 1
+                continue
             cid = mapping.match_deterministic(reg, ev["author"])
             if cid:
                 events.set_mapped(conn, ev["id"], cid); mapped += 1
@@ -239,6 +254,20 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             # receipts, seat confirmations and contract notifications. The
             # intent is now decided in the same proposer call.
             dest = mapping.route(p["intent"], protected=prot, subject=subj)
+            if dest == "lead" and not pid:
+                # a prospect, not a client to map (2026-11-01): the leads
+                # table is its home; the event is filed under the lead id. A
+                # "lead" the proposer ALSO tied to a registry client is an
+                # existing relationship talking — that one still queues.
+                ev_row = conn.execute("SELECT * FROM events WHERE id=?", (eid,)).fetchone()
+                if ev_row:
+                    leads.from_event(conn, dict(ev_row), note=p.get("evidence"))
+                    leads_made += 1
+                    filed["lead"] = filed.get("lead", 0) + 1
+                    continue
+                dest = "review"
+            elif dest == "lead":
+                dest = "review"
             if dest != "review":
                 reason = (mapping.FILE_REASON.get(p["intent"], "noise:marketing")
                           if dest == "file" else "noise:marketing")
@@ -269,6 +298,7 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
     ctx.log(f"sweep: collected {len(collected)} (new {inserted}) -> mapped "
             f"{counts['mapped']} queued {counts['queued']} held {counts['held']} "
             f"excluded {counts['excluded']} (imap-no-signal {imap_excluded}) | "
+            f"leads {leads_made} | "
             f"proposer {len(proposals)} | imap inboxes {len(imap_new_cursors)} "
             f"skipped {len(imap_skipped)}")
     return {"collected": len(collected), "inserted": inserted,
@@ -279,6 +309,7 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             # paths, by shape — visible per run, so a gate that starts eating
             # real mail shows up as a number rather than as silence
             "filed_structural": structural,
+            "leads": leads_made,
             "proposer_calls": len(proposals),
             "imap_excluded_no_signal": imap_excluded,
             "filed_by_intent": filed,

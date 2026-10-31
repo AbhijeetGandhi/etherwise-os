@@ -1,8 +1,6 @@
 {
   "_note": "THE NEVER-ASK-TWICE STORE. Abhijeet, 2026-08-10: 'if you have sometimes question about some specific ones, you can always ask me, and then I give you the mapping for that, then you should in future never ask me for that same mapping again.'",
-
   "_contract": "Every time Abhijeet resolves an ambiguous sender, it is written here IMMEDIATELY — before the answer is used. This file is consulted FIRST, ahead of every other rule, so a question he has already answered can never reach him again. If a sender is in here, the queue never sees it.",
-
   "_format": {
     "<sender domain or full address, lowercase>": {
       "verdict": "<client_id | EXCLUDE>",
@@ -11,7 +9,6 @@
       "learned_from": "abhijeet | inferred"
     }
   },
-
   "mappings": {
     "chessbase.com": {
       "verdict": "EXCLUDE",
@@ -39,6 +36,13 @@
       "reason": "client; pays via Upwork, not Stripe",
       "note": "Stripe payments from Beglaubigt in Jun 2026 were PLATFORM TESTING, not revenue — Abhijeet 2026-08-10. Do not treat those as income.",
       "learned_on": "2026-08-10",
+      "learned_from": "abhijeet"
+    },
+    "gmail.com": {
+      "verdict": "EXCLUDE",
+      "reason": "internal:contractor-correspondence",
+      "note": "Aastha Sharma, our LinkedIn content partner (contractor) — her mail is ours to read, never a client attribution question (cockpit audit 2026-11-01)",
+      "learned_on": "2026-11-01",
       "learned_from": "abhijeet"
     }
   }

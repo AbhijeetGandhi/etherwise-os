@@ -2832,10 +2832,19 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         linkedin_block = {"total": 0,
                           "error": f"could not read the LinkedIn copy: {exc!r}"[:200]}
+    # ── New leads (2026-11-01) ───────────────────────────────────────────────
+    # the prospects the Review queue could never place; same wrapping rule
+    try:
+        from modules.cockpit import leads as _leads
+        leads_block = _leads.new_leads(db_path)
+    except Exception as exc:  # noqa: BLE001
+        leads_block = {"total": 0, "rows": [],
+                       "error": f"could not read leads: {exc!r}"[:200]}
     return {
         "sources": sources,
         "captures": captures,
         "linkedin": linkedin_block,
+        "leads": leads_block,
         "queue": queue, "queue_total": queue_total, "queue_more": queue_more,
         "queue_all": queue_all,
         "queue_hidden_no_provenance": _hidden_keys_n,

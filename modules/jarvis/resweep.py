@@ -52,7 +52,7 @@ import sqlite3
 from typing import Optional
 
 from core import config
-from modules.jarvis import events, mail_pipeline, mapping
+from modules.jarvis import events, leads, mail_pipeline, mapping
 from modules.jarvis import sender_rules as SR
 
 FINGERPRINT_KEY = "jarvis_rules_fingerprint"
@@ -180,6 +180,12 @@ def decide(row: dict, *, reg=None, rules: Optional[dict] = None,
     # Protection is honoured first, exactly as at the door.
     if not prot:
         dest, structural = mapping.route_structural(author, subject)
+        if dest == "lead":
+            # a website-form lead (2026-11-01): its own table, the event filed
+            # under the lead id. Never a mapping question.
+            return {"action": "lead", "rule": structural, "reason": "lead",
+                    "evidence": "a website-form inquiry — a lead, not a client"
+                                " to map"}
         if dest == "file":
             rule = (f"{structural}:{proposed}" if proposed else structural)
             return {"action": "exclude", "rule": rule, "reason": structural,
@@ -232,8 +238,14 @@ def decide(row: dict, *, reg=None, rules: Optional[dict] = None,
     rule, reason, verdict = v["rule"], v["reason"], v["verdict"]
 
     if verdict == SR.EXCLUDE:
-        if proposed:
-            # a proposal is a decision awaiting confirmation, never noise
+        # a proposal is a decision awaiting confirmation, never noise — with
+        # ONE exception (2026-11-01): a NAMED category in sender-rules.json is a
+        # human-curated list, not a shape rule, and it outranks a machine
+        # proposal. Hero Marketing's cold sequence sat on the board five times
+        # because the proposer had guessed "hero-marketing-agency" at 0.9 for a
+        # vendor selling to us; a structural rule (a bulk subdomain) still may
+        # not — the RECO x Etherwise invite is the standing proof of why.
+        if proposed and not rule.startswith("category:"):
             return {"action": "skip", "rule": "has-proposal",
                     "reason": f"already proposed {proposed}; a rule may not"
                               f" overrule a pending decision"}
@@ -275,8 +287,15 @@ def apply(conn: sqlite3.Connection, decisions: list) -> dict:
     """Write the plan. Excludes and proposals only; never a map."""
     excluded = proposed = 0
     by_rule: dict = {}
+    leads_made = 0
     for r, d in decisions:
-        if d["action"] == "exclude":
+        if d["action"] == "lead":
+            full = conn.execute("SELECT * FROM events WHERE id=?", (r["id"],)).fetchone()
+            if full:
+                leads.from_event(conn, dict(full), note="website form",
+                                 by=f"sender_rules:{d['rule']}")
+                leads_made += 1
+        elif d["action"] == "exclude":
             events.ignore(conn, r["id"], d["reason"],
                           by=f"sender_rules:{d['rule']}",
                           evidence=d.get("evidence"))
@@ -288,7 +307,8 @@ def apply(conn: sqlite3.Connection, decisions: list) -> dict:
         else:
             continue
         by_rule[d["rule"]] = by_rule.get(d["rule"], 0) + 1
-    return {"excluded": excluded, "proposed": proposed, "by_rule": by_rule}
+    return {"excluded": excluded, "proposed": proposed, "leads": leads_made,
+            "by_rule": by_rule}
 
 
 def run(conn: sqlite3.Connection, *, reg=None, rules: Optional[dict] = None,

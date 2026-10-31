@@ -169,7 +169,7 @@ def resolve(db_path, event_id: str, action: str, *, client_id: Optional[str] = N
             root: Optional[Path] = None, dossier_dir: Optional[Path] = None,
             now_iso: Optional[str] = None) -> dict:
     """action = assign(client_id) | create_alias(client_id) | ignore(reason)
-    | internal.
+    | internal | lead (2026-11-01: the prospect bucket).
 
     `evidence` is the deciding PHRASE, stored next to the bucket name on an
     ignore/internal (see events.ignore). A reason says which bucket the row went
@@ -181,6 +181,16 @@ def resolve(db_path, event_id: str, action: str, *, client_id: Optional[str] = N
         if not ev:
             return {"error": "unknown event", "event_id": event_id}
         ev = dict(ev)
+
+    if action == "lead":
+        # a prospect, not a client to map (2026-11-01): its own table, the
+        # event filed under the lead id. His one click says "this is someone
+        # who might buy", which is a different fact from "this is Acme".
+        from modules.jarvis import leads
+        with db.connect(db_path) as conn:
+            lead_id = leads.from_event(conn, ev, note=reason, by=by)
+        return {"ok": True, "action": action, "event_id": event_id,
+                "lead_id": lead_id, "exclude_reason": f"{leads.FILE_PREFIX}{lead_id}"}
 
     if action in ("ignore", "internal"):
         # 'internal' is deliberately its own action rather than ignore-with-text.

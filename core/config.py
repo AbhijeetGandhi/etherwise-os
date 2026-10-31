@@ -554,6 +554,11 @@ JARVIS_LOOM_KIND_HIGH = 0.80        # confidence >= HIGH -> provisional auto-map
 JARVIS_LOOM_KIND_MED = 0.50         # MED <= confidence < HIGH -> queue w/ evidence;
                                     # below MED (or unknown) -> exclude unattributable
 JARVIS_LOOM_CLASSIFY_MAX = 200      # per-run ceiling on Haiku classify calls
+# Queued FATHOM rows the nightly loom-classify run re-judges on the full
+# transcript (2026-11-01). The bridge queues on a participant list; without
+# this pass an interview or a personal call sat on the Review board until a
+# human dismissed it. Small: it is a drain, not a backfill.
+JARVIS_FATHOM_RECLASSIFY_MAX = 12
 JARVIS_LOOM_TRANSCRIPT_WORDS = 1500 # transcript truncated to first N words (signal
                                     # is front-loaded; caps cost + injection surface)
 JARVIS_LOOM_HEAL_ON_HIGH = True     # ABHIJEET'S CALL, MADE 2026-08-13 (was False).

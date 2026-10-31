@@ -201,7 +201,10 @@ def propose(ctx, ev, cand: list[dict], valid_ids: set) -> Optional[dict]:
 #   drop   — ordinary noise.
 INTENT_ROUTE = {
     "client_message":     "review",
-    "lead":               "review",
+    # a lead has its own table since 2026-11-01 (migration 046). The sweep
+    # creates the row and files the event under it; the Review board no
+    # longer carries prospects it cannot map.
+    "lead":               "lead",
     "relationship_event": "file",
     "account_notice":     "file",
     "ops_alert":          "file",
@@ -249,15 +252,48 @@ _CAL_VERB = re.compile(
     r"|cancelled event|canceled event|new time proposed"
     r"|this event has been (cancelled|canceled))\s*:", re.I)
 
+# A PLATFORM'S MONEY AND MEMBERSHIP NOTICES (2026-11-01). On 30 Oct fifteen of
+# the 73 queued rows were info@/payments@/invitations@app.globaltize.com —
+# "Your withdrawal of $135.00 is being processed", "You've been paid
+# $1,117.50 by Globaltize", "Receipt: $10.80 to abhijeet", "Globaltize invited
+# you to Globaltize Workforce" — each echoing a client domain at 0.95 and each
+# a fact that asks nothing. The sender is a role address AND the subject is a
+# money/membership verb; both have to hold, so a human writing from
+# info@theirco.com about a project is untouched.
+_PLATFORM_ROLE_SENDER = re.compile(
+    r"^(?:info|payments?|invitations?|billing|receipts?|no-?reply|notifications?"
+    r"|accounts?|team|hello|support)@", re.I)
+_PLATFORM_NOTICE_SUBJECT = re.compile(
+    r"^\s*(?:your\s+(?:withdrawal|payout|payment|transfer)\s+of\s*\$"
+    r"|you(?:'ve| have)\s+been\s+paid\b"
+    r"|receipt:\s*\$"
+    r"|.{1,60}?\s+paid\s+you\s+\$"
+    r"|.{1,60}?\s+invited\s+you\s+to\s+"
+    r"|invitation\s+to\s+join\s+)", re.I)
+# THE WEBSITE FORM (2026-11-01). The site's form relays through Resend as
+# "New inquiry from <Name> (<Company>)" / "New case study lead: <email>". That
+# is a LEAD by construction — never a mapping question, never noise.
+_WEBSITE_FORM_SENDER = re.compile(
+    r"^(?:onboarding@resend\.dev|forms?@etherwise\.io|website@etherwise\.io"
+    r"|noreply@etherwise\.io)$", re.I)
+_WEBSITE_FORM_SUBJECT = re.compile(
+    r"^\s*new\s+(?:inquiry|enquiry|lead|message|case study lead)\b", re.I)
+
 STRUCTURAL_FILE_REASON = {
     "upwork_notification": "filed:upwork-notification",
     "calendar_rsvp": "filed:calendar-rsvp",
+    "platform_notice": "filed:platform-notice",
 }
+# shapes that are a LEAD rather than a filing — route_structural returns
+# ("lead", shape) for these and the caller creates the leads row
+STRUCTURAL_LEAD_SHAPES = ("website_lead",)
 # read by resweep.rules_fingerprint: editing a shape here must re-open the
 # backlog, the same way editing sender-rules.json does. A gate whose changes
 # apply only to tomorrow's mail is how the board filled up the first time.
 STRUCTURAL_PATTERNS = (_UPWORK_ROOM_SENDER.pattern, _UPWORK_NOTIFY.pattern,
-                       _CAL_VERB.pattern)
+                       _CAL_VERB.pattern, _PLATFORM_ROLE_SENDER.pattern,
+                       _PLATFORM_NOTICE_SUBJECT.pattern,
+                       _WEBSITE_FORM_SENDER.pattern, _WEBSITE_FORM_SUBJECT.pattern)
 
 
 def structural_shape(author: Optional[str],
@@ -269,10 +305,19 @@ def structural_shape(author: Optional[str],
     evidence, on the path that exists precisely because it does not call one.
     """
     a, s = (author or "").strip(), (subject or "").strip()
-    if _UPWORK_ROOM_SENDER.match(a) and _UPWORK_NOTIFY.match(s):
+    # the From header may carry a display name: "Globaltize <info@app.…>"
+    addr = a
+    m = re.search(r"<([^<>\s]+@[^<>\s]+)>", a)
+    if m:
+        addr = m.group(1)
+    if _UPWORK_ROOM_SENDER.match(addr) and _UPWORK_NOTIFY.match(s):
         return "upwork_notification"
     if _CAL_VERB.match(s):
         return "calendar_rsvp"
+    if _WEBSITE_FORM_SENDER.match(addr) and _WEBSITE_FORM_SUBJECT.match(s):
+        return "website_lead"
+    if _PLATFORM_ROLE_SENDER.match(addr) and _PLATFORM_NOTICE_SUBJECT.match(s):
+        return "platform_notice"
     return None
 
 
@@ -290,6 +335,8 @@ def route_structural(author: Optional[str], subject: Optional[str], *,
     shape = structural_shape(author, subject)
     if shape is None:
         return "review", None
+    if shape in STRUCTURAL_LEAD_SHAPES:
+        return "lead", shape
     return "file", STRUCTURAL_FILE_REASON[shape]
 
 

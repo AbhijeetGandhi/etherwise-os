@@ -23,7 +23,7 @@ from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 from core import config
-from modules.cockpit import actions, data, lifecycle, linkedin, proposal_funnel
+from modules.cockpit import actions, data, leads, lifecycle, linkedin, proposal_funnel
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _CT = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
@@ -73,6 +73,9 @@ GET_ROUTES: dict = {
     # LinkedIn (2026-10-28): the engagement tracker's local copy, read-only.
     # No params; every figure ships with its rows, so the drill needs no route.
     "/api/linkedin": linkedin.linkedin,
+    # Leads (2026-11-01): the Review queue's missing bucket — Pipeline › Leads
+    # and Today's "New leads" line read this. No params.
+    "/api/leads": leads.leads,
     "/api/nudges": data.nudges,   # M4 Chief-of-Staff Nudge Queue
     # the capture box's poll target (?note_id=N): "is it a card yet, and if not
     # what did the classifier decide instead?" The classifying runs in a child
@@ -188,6 +191,7 @@ QUERY_PARAMS: dict = {
 
 POST_ROUTES: dict = {
     "/api/nudge": actions.nudge,
+    "/api/lead": leads.set_status,   # {id, status, note?} — the one write on Leads
     "/api/queue/resolve": actions.queue_resolve,  # assign|create_alias|ignore
     "/api/queue/batch": actions.queue_batch,      # the same, many at once
     # the thread backlog's own write path: dismiss|restore|assign|create_client.

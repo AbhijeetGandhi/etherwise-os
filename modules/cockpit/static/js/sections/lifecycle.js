@@ -38,7 +38,7 @@
 
 "use strict";
 
-import { el, append, clear, fmt, icon, pill, notice, emptyState, btn, extLink, table, copyText } from "../ui.js";
+import { el, append, clear, fmt, icon, pill, notice, emptyState, btn, extLink, table, copyText, expander, toast } from "../ui.js";
 import { openDrill } from "../drill.js";
 import { subtabs } from "../subtabs.js";
 import { renderFunnel, drillRows as proposalDrill } from "./upwork_funnel.js";
@@ -58,8 +58,13 @@ const TABS = [
   { id: "proposals", label: "Proposals" },
   { id: "talks", label: "Conversations" },
   { id: "after", label: "After the hire" },
+  // Leads (2026-11-01): the prospects who wrote in — website form, cold
+  // inbound, anyone the Review queue could never map to a client
+  { id: "leads", label: "Leads" },
   { id: "tests", label: "Tests" },
-  { id: "agents", label: "Agents" },
+  // Agents folded into Flow (2026-11-01, his call): the chips already sat at
+  // the bottom of Flow; the descriptions and the knowledge-base table live
+  // under an expander there. An old #/pipeline?view=agents link lands on Flow.
 ];
 
 // the scheduled jobs, in words (the screen never prints a task name)
@@ -161,7 +166,7 @@ function blockersBanner(L, ctx, opts = {}) {
     el("div", "lc-block-head", [icon("alert-triangle", { size: 16 }),
       el("b", null, bl.length === 1 ? "One thing is stopping part of the pipeline"
         : `${bl.length} things are stopping parts of the pipeline`),
-      opts.link ? el("span", "grow-right", linkBtn("the agents →", () => goTo(ctx, "agents"))) : null]),
+      null]),
     el("ul", "lc-block-list", bl.map((b) => {
       const names = who(b);
       const isCmd = /python3/.test(b.fix || "");
@@ -434,7 +439,8 @@ function afterStrip(D, L, fd, ctx) {
 function agentsStrip(L, ctx) {
   const ag = ((L.agents || {}).agents) || [];
   return el("div", "lc-agents-strip", ag.map((a) => el("button", {
-    class: "lc-agent-chip", type: "button", attrs: { title: a.does }, on: { click: () => goTo(ctx, "agents") },
+    class: "lc-agent-chip", type: "button", attrs: { title: a.does },
+    on: { click: (e) => { const x = e.currentTarget.closest(".lc-sec"); const b = x && x.querySelector(".expander-btn"); if (b && b.getAttribute("aria-expanded") !== "true") b.click(); } },
   }, [el("span", "dot " + (a.state === "working" ? "ok" : a.state === "off" ? "" : a.state === "failing" ? "warn" : "bad")),
     el("span", null, a.name), el("span", "muted small", STATE_WORDS[a.state] || a.state)])));
 }
@@ -469,8 +475,10 @@ function flowView(D, L, ctx, state) {
       section("After the hire", null, afterStrip(D, L, fd, ctx),
         { right: linkBtn("everyone, and the win-back list →", () => goTo(ctx, "after")) }),
       testsMini(L, ctx),
-      section("The agents", "each does one job; they share one knowledge base", agentsStrip(L, ctx),
-        { right: linkBtn("what each one does →", () => goTo(ctx, "agents")) }));
+      section("The agents", "each does one job; they share one knowledge base",
+        el("div", "stack", [agentsStrip(L, ctx),
+          expander("what each one does, and the knowledge base they share",
+            (body) => { body.appendChild(agentsDetail(D, L, ctx)); })])));
   }
   redraw();
   return out;
@@ -801,12 +809,11 @@ function agentCard(a) {
   ]);
 }
 
-function agentsView(D, L, ctx) {
+function agentsDetail(D, L, ctx) {
   const A = L.agents || {};
   const kb = L.kb || {};
   const gaps = kb.gaps || {};
-  return el("div", "stack lc-page", [
-    blockersBanner(L, ctx),
+  return el("div", "stack", [
     el("div", "lc-agent-grid", (A.agents || []).map(agentCard)),
     section("The knowledge base they share", "every agent reads and writes the same stores",
       el("div", "stack", [
@@ -849,7 +856,7 @@ export async function render(root, ctx) {
   await subtabs(root, {
     section: "pipeline", tabs: TABS, ctx, storageKey: "ew_cockpit_pipeline_view",
     badge: (id) => {
-      if (id === "agents") return nBlock ? el("span", "n warn", String(nBlock)) : el("span", "n ok", "✓");
+      if (id === "flow") return nBlock ? el("span", "n warn", String(nBlock)) : null;
       if (id === "tests") {
         const n = (L.tests || []).filter((t) => t.status === "running").length;
         return n ? el("span", "n", `${n} running`) : null;
@@ -862,8 +869,79 @@ export async function render(root, ctx) {
       proposals: async () => { const box = el("div"); await renderFunnel(box, mctx); return box; },
       talks: () => talksView(D, L, ctx, state),
       after: () => afterView(D, L, ctx, state),
+      leads: () => leadsView(ctx),
       tests: () => testsView(D, L),
-      agents: () => agentsView(D, L, ctx),
     },
   });
+}
+
+/* ══ Leads (2026-11-01) ═══════════════════════════════════════════════════ */
+
+const LEAD_TONE = { new: "warn", contacted: "info", call: "ok", proposal: "ok", client: "ok", no: "outline" };
+
+async function leadsView(ctx) {
+  const d = await ctx.api("/api/leads");
+  const out = el("div", "stack lc-page");
+  if (!d.built) {
+    out.appendChild(notice("warn", d.reason || "Leads are not set up yet."));
+    return out;
+  }
+  const by = d.by_status || {};
+  const words = d.words || {};
+  out.append(
+    el("p", "lc-lede", [
+      el("b", null, fmt.num(d.open)), ` open lead${d.open === 1 ? "" : "s"}`,
+      by.new ? [" · ", el("b", null, fmt.num(by.new)), " not answered yet"] : "",
+      ". A lead is someone who wrote in and is not a client yet — the website form, a cold",
+      " inbound, a Review row you marked Lead. You reply on the channel it came in on; this is",
+      " where it is tracked.",
+    ]),
+    el("div", "lc-agents-strip", (d.statuses || []).map((st) => el("span", "lc-agent-chip", [
+      pill(words[st] || st, LEAD_TONE[st]), el("span", "muted small", String(by[st] || 0))]))),
+  );
+  if (!(d.rows || []).length) {
+    out.appendChild(emptyState("No leads yet. The next website-form inquiry or Review row you mark"
+      + " as Lead lands here.", { icon: "inbox" }));
+    return out;
+  }
+  const rows = d.rows.map((r) => Object.assign({}, r));
+  const tbl = table({
+    rows,
+    wrapClass: "lc-table",
+    columns: [
+      { key: "first_seen_at", label: "Arrived",
+        render: (r) => el("span", "muted nowrap", fmt.dateShort(r.first_seen_at)) },
+      { key: "name", label: "Who",
+        render: (r) => el("div", "stack-1", [
+          el("b", null, r.name || r.email || "(no name)"),
+          el("span", "muted small", [r.company || "", r.company && r.email ? " · " : "", r.email || ""]),
+        ]) },
+      { key: "subject", label: "What they wrote",
+        render: (r) => el("div", "stack-1", [
+          el("span", null, r.subject || "—"),
+          r.snippet ? el("span", "muted small", r.snippet.slice(0, 160) + (r.snippet.length > 160 ? "…" : "")) : null,
+        ]) },
+      { key: "source", label: "Via", render: (r) => el("span", "muted small", (r.source || "").replace("_", " ")) },
+      { key: "status", label: "Status", render: (r) => statusPicker(ctx, r, d) },
+      { key: "permalink", label: "", render: (r) => (r.permalink ? extLink(r.permalink, "Open") : null) },
+    ],
+  });
+  out.appendChild(section("Every lead", "newest first; new ones on top", tbl));
+  return out;
+}
+
+function statusPicker(ctx, r, d) {
+  const sel = el("select", { class: "input sm", attrs: { "aria-label": `status of ${r.name || r.email || "lead"}` } },
+    (d.statuses || []).map((st) => el("option", { value: st, selected: st === r.status }, d.words[st] || st)));
+  sel.addEventListener("change", async () => {
+    sel.disabled = true;
+    try {
+      const res = await ctx.post("/api/lead", { id: r.id, status: sel.value });
+      if (res.error) { toast(res.error, true); sel.value = r.status; }
+      else { r.status = sel.value; toast(`${r.name || r.email || "Lead"}: ${d.words[sel.value] || sel.value}`); }
+    } catch (e) {
+      toast(String((e && e.message) || e), true); sel.value = r.status;
+    } finally { sel.disabled = false; }
+  });
+  return el("div", "hstack", [pill(d.words[r.status] || r.status, LEAD_TONE[r.status]), sel]);
 }

@@ -67,10 +67,28 @@ def main() -> int:
             return loom_classifier.reclassify_queued(
                 ctx, source_type=args.source_type, max_calls=args.max_calls,
                 transcript_words=args.transcript_words, dry_run=args.dry_run)
-        return loom_classifier.classify_unmapped(
+        out = loom_classifier.classify_unmapped(
             ctx, source_type=args.source_type, limit=args.limit,
             max_calls=args.max_calls, transcript_words=args.transcript_words,
             dry_run=args.dry_run)
+        # THE NIGHTLY DEFAULT ALSO JUDGES THE QUEUED FATHOM CALLS (2026-11-01).
+        # fathom_bridge queues a call on its participant list alone — the
+        # moment an external name is on it. This classifier then skipped the
+        # row for ever ("event already exists"), so seven "Impromptu Google
+        # Meet Meeting" interviews sat on the Review board with no client and
+        # 0.0 confidence, waiting for a human to say what a transcript read
+        # would have said. A bounded reclassify pass on the queued Fathom rows
+        # closes that gap each night; it reads the full transcript, which is
+        # strictly more evidence than the bridge had.
+        if args.source_type == "loom":
+            try:
+                out["fathom_queued"] = loom_classifier.reclassify_queued(
+                    ctx, source_type="fathom",
+                    max_calls=config.JARVIS_FATHOM_RECLASSIFY_MAX,
+                    dry_run=args.dry_run)
+            except Exception as exc:                      # noqa: BLE001
+                out["fathom_queued"] = {"error": repr(exc)[:200]}
+        return out
 
     result = runner.run_task("jarvis_loom_classify", task, module="system")
     print(json.dumps({"status": result.status, "metrics": result.metrics}))

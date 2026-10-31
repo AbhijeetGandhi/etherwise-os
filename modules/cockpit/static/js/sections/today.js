@@ -99,6 +99,7 @@ export async function render(root, ctx) {
     quickCapture(ctx),
     ...captured(d, ctx),
     ...groups(d, ctx),
+    ...leadsBlock(d.leads, ctx),
     ...linkedinBlock(d.linkedin, ctx),
     expander("More — hot leads waiting, the numbers at a glance, the latest brief", (body) => {
       body.append(...backlog(d, ctx), heading("At a glance", null, "h3"), atAGlance(d, m),
@@ -193,6 +194,39 @@ function groups(d, ctx) {
     out.push(el("p", "muted small", `${d.queue_auto_closed} card${d.queue_auto_closed === 1 ? "" : "s"} closed by themselves — a call or a reply settled them.`));
   }
   return out;
+}
+
+/* ── New leads (2026-11-01) ──────────────────────────────────────────────── */
+/*
+ * The prospects the Review queue could never place — the website form, a cold
+ * inbound he marked Lead. Listed while status is still "new"; the moment he
+ * marks one contacted on Pipeline › Leads it leaves this list. No card keys,
+ * no Done: the leads table is the state.
+ */
+function leadsBlock(ld, ctx) {
+  if (!ld || ld.error || !ld.total) return [];
+  const open = () => ctx.navigate("pipeline", { view: "leads" });
+  const items = (ld.rows || []).map((r) => el("div", "li-item", [
+    pill("New lead", "warn"),
+    el("div", "grow", [
+      el("div", null, [
+        r.permalink ? extLink(r.permalink, r.name || r.email || "(no name)") : el("b", null, r.name || r.email || "(no name)"),
+        el("span", "muted small", ` · ${[r.company, r.source && r.source.replace("_", " ")].filter(Boolean).join(" · ")}`),
+      ]),
+      el("div", "small muted", r.subject || ""),
+    ]),
+    el("span", "muted small", fmt.dateShort(r.first_seen_at)),
+  ]));
+  return [
+    heading("New leads", `— ${ld.total} · reply on the channel they used, then mark them on `, "h3"),
+    el("div", "card flush", [
+      el("div", "li-list", items),
+      el("div", "muted small li-foot", [
+        el("button", { class: "linktext", type: "button", on: { click: open } }, "Pipeline › Leads"),
+        ld.older ? ` · ${ld.older} older than ${ld.fresh_days} days not listed` : "",
+      ]),
+    ]),
+  ];
 }
 
 /* ── LinkedIn — needs you (2026-10-28) ───────────────────────────────────── */

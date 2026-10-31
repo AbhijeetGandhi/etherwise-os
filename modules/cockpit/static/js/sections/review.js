@@ -652,7 +652,15 @@ function eventBatchBar(sel, g, d, ctx) {
   ignore.title = "Exclude every selected event as 'not a client'. Writes"
     + " events.state='excluded' — permanent, and the registry is untouched.";
 
-  const controls = [select, assign, internal, ignore];
+  // "Lead" (2026-11-01): a prospect is neither a client to map nor noise. The
+  // row leaves this board for the leads table (Today › New leads, Pipeline ›
+  // Leads) and the event is filed under the lead id. No registry write.
+  const lead = btn("Lead", () => run("lead"), { sm: true });
+  lead.title = "File every selected event as a LEAD — a prospect who might buy."
+    + " It leaves this queue for Pipeline › Leads; nothing is sent, the registry"
+    + " is untouched.";
+
+  const controls = [select, assign, lead, internal, ignore];
   function lock(on) {
     busy = !!on;
     controls.forEach((n) => { n.disabled = !!on; });
@@ -711,7 +719,7 @@ function eventBatchBar(sel, g, d, ctx) {
 
   append(bar,
     el("span", "hstack-tight", [icon("list-checks", { size: 14, class: "muted" }), count]),
-    el("span", "grow"), select, assign, internal, ignore);
+    el("span", "grow"), select, assign, lead, internal, ignore);
   update();
   return bar;
 }
@@ -789,7 +797,7 @@ function eventRow(it, defaultClient, d, ctx, sel) {
   let busy = false;
   function lock(on) {
     busy = !!on;
-    [assign, internal, ignore, select].forEach((n) => { n.disabled = !!on; });
+    [assign, lead, internal, ignore, select].forEach((n) => { n.disabled = !!on; });
   }
   async function act(action, extra) {
     if (busy) return;
@@ -828,7 +836,12 @@ function eventRow(it, defaultClient, d, ctx, sel) {
   ignore.title = "Exclude this event as 'not a client'. Writes"
     + " events.state='excluded' — it will not come back. The registry is not touched.";
 
-  actions.append(select, assign, internal, ignore);
+  // a prospect (2026-11-01): leaves this queue for Pipeline › Leads
+  const lead = btn("Lead", () => act("lead"), { sm: true });
+  lead.title = "A prospect who might buy — not a client to map, not noise. Filed"
+    + " as a lead (Today › New leads, Pipeline › Leads). Nothing is sent.";
+
+  actions.append(select, assign, lead, internal, ignore);
   if (it.permalink) actions.appendChild(extLink(it.permalink, "Open", { class: "btn sm" }));
 
   wrap.appendChild(el("div", "q-row", [left, actions]));

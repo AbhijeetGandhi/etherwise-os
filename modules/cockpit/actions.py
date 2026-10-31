@@ -494,7 +494,7 @@ def nudge(db_path: Optional[Path], body: dict,
 # assign/create_alias write the registry via an AUDITED git commit (the only
 # registry write path); ignore excludes the event. All go through the approval
 # module so the cockpit process never touches clients.yaml directly.
-_QUEUE_ACTIONS = {"assign", "create_alias", "ignore", "internal"}
+_QUEUE_ACTIONS = {"assign", "create_alias", "ignore", "internal", "lead"}
 
 
 def queue_resolve(db_path, body: dict) -> dict:
