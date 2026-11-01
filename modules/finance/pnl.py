@@ -63,8 +63,22 @@ _RENT_PAYEES = ("RAKHI MUKESH BOHRA",                  # office rent
 # Not a substring: "JIO Post" is a postpaid mobile line from Oct 2025, a
 # different thing in a closed year, and "JIOMART" is a shop.
 _INTERNET_PAYEES = ("JIO", "MYJIO")
-_CONTRACTOR_PAYEES = ("HARSHIT SINGHAL", "ATHARVA AJAY BARAWKA")
-_EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE")
+# AASTHA SHARMA (2026-11-02): the LinkedIn work -- Rs 53,200 "Payment for
+# october" (8 Oct) and Rs 30,000 "Profile Optimization" (9 Oct), a payee with no
+# history. Asked which of October's unlisted spends were the company's, he
+# ticked her and nothing else. A contractor, so the payroll bucket, like the two
+# before her.
+_CONTRACTOR_PAYEES = ("HARSHIT SINGHAL", "ATHARVA AJAY BARAWKA", "AASTHA SHARMA")
+# DHAVAL R KHINVASARA and ARHAM TECHNOLOGY (2026-11-02) are both Jay. His
+# October pay went out as two lines to two accounts -- Rs 1,20,000 to Dhaval
+# (30 Oct) and Rs 1,08,000 to "Jay Pokharna" at AMDN0000103, which bounced
+# (AC01) and was re-sent on 1 Nov to Arham Technology at the same IFSC. Abhijeet:
+# "dhaval and arham are jay salary split up in two different account. his
+# salary is 2,40,000 in total other is tds cut." Both lines said "Salary oct",
+# so the narration already files them; they are named here so an un-narrated
+# line to either account cannot fall to a draw.
+_EMPLOYEE_PAYEES = ("JAY SUSHIL POKHARNA", "SHRUTI DEEPAK DHUMNE",
+                    "DHAVAL R KHINVASARA", "ARHAM TECHNOLOGY")
 # personal (non-business) counterparties: bank money EITHER direction is
 # personal, never revenue/opex. Dynatech was a private transfer Abhijeet sent
 # (-$11,140, correctly owner_draw) that was returned (+$10,550) — but the return
@@ -103,6 +117,14 @@ _PERSONAL_COUNTERPARTIES = ("DYNATECH", "PRASHANT JAWAHARLAL BHANDARI",
 _NONREVENUE_BANK_RE = _re.compile(
     r"FD INTEREST|/REV/|REF/POS|REF/VISAPOS|-CANCELLED|ONUS REFUND|MANDATE REFUND",
     _re.I)
+# A NEFT the receiving bank sent back (2026-10-30: Jay's Rs 1,08,000 "Salary
+# oct", wrong account number, returned the same day and re-sent on 1 Nov). The
+# importer gives the return the category of the debit it reverses when both are
+# in one statement (bank_xlsx.apply_return_categories), so a returned salary
+# is a positive PAYROLL row and the month nets to what actually left. This is
+# the backstop for a return whose debit is in an earlier statement: whatever
+# else it is, a bounced payment is not a client paying us.
+_RETURN_RE = _re.compile(r"^\s*NEFT RETURN/|TRANSACTION RETURNED", _re.I)
 _SALARY_MIN_BASE_MINOR = 100_000                       # $1,000 — salary-shaped floor
 # an Upwork 'Payment' row whose text names the instrument is the card/PayPal
 # settlement of a connects or membership invoice — the ARPayment leg as the
@@ -260,6 +282,11 @@ def bucket(row: dict) -> str:
             p in (row.get("description") or "").upper()
             for p in _PERSONAL_COUNTERPARTIES):
         return "owner_draw"
+    # a bounced payment coming back: the debit, undone -- payroll if the importer
+    # matched it to a salary, otherwise a draw; never revenue
+    if (row.get("source") or "") in BANK_SOURCES and \
+            _RETURN_RE.search(row.get("description") or ""):
+        return "payroll" if cat == "salary" else "owner_draw"
     # FD interest + expense refunds/reversals: bank credits that are not client
     # revenue -> owner_draw (excluded from the operating P&L)
     if (row.get("source") or "") in BANK_SOURCES and \

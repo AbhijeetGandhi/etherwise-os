@@ -317,6 +317,8 @@ class DoctorCase(unittest.TestCase):
                   "IFT/10171724864/PRITI BORA & CO /27883768/TDS July")
         self._tds(conn, "bank:6435ebd60cc8b361", -4300000, "2026-09-07",
                   "IFT/10171724864/PRITI BORA & CO /23388539/TDS august")
+        self._tds(conn, "bank:564a2575025b2b59", -4300000, "2026-10-06",
+                  "IFT/10171724864/PRITI BORA & CO /20500326/TDS september")
         pt.apply(conn)
 
     def test_payroll_tds_14_green_when_his_months_tie_to_the_bank(self):
@@ -373,6 +375,8 @@ class DoctorCase(unittest.TestCase):
                       "IFT/10171724864/PRITI BORA & CO /27883768/TDS July")
             self._tds(conn, "bank:6435ebd60cc8b361", -4300000, "2026-09-07",
                       "IFT/10171724864/PRITI BORA & CO /23388539/TDS august")
+            self._tds(conn, "bank:564a2575025b2b59", -4300000, "2026-10-06",
+                      "IFT/10171724864/PRITI BORA & CO /20500326/TDS september")
         c = [x for x in doctor.run(self.db_path).checks
              if x.invariant == "#14 payroll TDS"][0]
         self.assertEqual(c.status, "RED")
@@ -989,6 +993,45 @@ class TestBankXlsx(unittest.TestCase):
         self.assertEqual(out["meta"]["account_number"], "60606200234")
         self.assertEqual(out["meta"]["period_start"], "2026-05-01")
 
+    # 2026-10-30: Jay's Rs 1,08,000 "Salary oct" bounced (wrong account) and the
+    # bank credited it straight back. A credit with no other marker is `income`,
+    # so the return would have been October REVENUE and payroll would have
+    # carried a salary that never left. The return is the debit, undone.
+    RETURN_TXNS = [
+        ["30-Oct-2026", "30-Oct-2026", "NEFT/IDFB6303M3211855/Jay Pokharna/AMDN0000103/Salary oct",
+         "", "108000.00", "", "392000.00"],
+        ["30-Oct-2026", "30-Oct-2026", "NEFT RETURN/IDFB6303M3211855/INCORRECT ACCOUNT NUMBER (AC01)"
+         "/TRANSACTION RETURNED", "", "", "108000.00", "500000.00"],
+        ["01-Nov-2026", "01-Nov-2026", "NEFT/IDFB6305M3799872/Arham Technology/AMDN0000103/Salary oct",
+         "", "108000.00", "", "392000.00"],
+    ]
+
+    def test_a_returned_salary_is_a_positive_salary_row_not_income(self):
+        from modules.finance.importers import bank_xlsx
+        grid = [["ACCOUNT NUMBER", "60606200234"], ["CUSTOMER NAME", "ETHERWISE"],
+                ["STATEMENT PERIOD", "01-Oct-2026 TO 02-Nov-2026"]] + [[]] * 10
+        grid.append(self.HDR)
+        grid += self.RETURN_TXNS
+        grid.append(["Total", "216000.00", "108000.00"])
+        rows = bank_xlsx.parse(_make_idfc_xlsx(grid))["rows"]
+        by = {r["description"][:11]: r for r in rows}
+        ret = by["NEFT RETURN"]
+        self.assertEqual(ret["category"], "salary")
+        self.assertGreater(ret["amount_minor"], 0)
+        # the two salary debits are untouched, and payroll nets to one salary
+        self.assertEqual(sum(r["amount_minor"] for r in rows if r["category"] == "salary"),
+                         -10800000)
+        self.assertTrue(bank_xlsx.reconcile_running_balance(rows)["ok"])
+
+    def test_a_return_without_its_debit_keeps_its_own_category(self):
+        from modules.finance.importers import bank_xlsx
+        rows = [{"description": "NEFT RETURN/IDFBX/INCORRECT ACCOUNT NUMBER (AC01)/TRANSACTION RETURNED",
+                 "amount_minor": 100, "category": "income"}]
+        self.assertEqual(bank_xlsx.apply_return_categories(rows), 0)
+        self.assertEqual(rows[0]["category"], "income")     # pnl's backstop handles it
+        self.assertEqual(bank_xlsx.returned_ref("NEFT RETURN/IDFB6303M3211855/x"), "IDFB6303M3211855")
+        self.assertIsNone(bank_xlsx.returned_ref("NEFT/IDFB6303M3211855/Jay/AMDN/Salary oct"))
+
     def test_classification_buckets(self):
         from modules.finance.importers import bank_xlsx
         rows = bank_xlsx.parse(self._xlsx())["rows"]
@@ -1160,6 +1203,19 @@ class TestSalaryLines(unittest.TestCase):
             self.assertEqual(got, ["salary", "salary"])
             self.assertEqual(sl.rows_to_fix(conn), [])          # idempotent
 
+    def test_a_returned_salary_teaches_no_payee(self):
+        """The bank's reason sits where a person's name sits on every other
+        line; a returned salary is a positive `salary` row and must not make
+        "INCORRECT ACCOUNT NUMBER (AC01)" a payroll payee."""
+        from modules.finance import salary_lines as sl
+        with db.connect(self.db_path) as conn:
+            self._row(conn, "oct", -10800000, "2026-10-30",
+                      "NEFT/IDFB6303M3211855/Jay Pokharna/AMDN0000103/Salary oct", "salary")
+            self._row(conn, "ret", 10800000, "2026-10-30",
+                      "NEFT RETURN/IDFB6303M3211855/INCORRECT ACCOUNT NUMBER (AC01)"
+                      "/TRANSACTION RETURNED", "salary")
+            self.assertEqual(sl.payroll_payees(conn), {"JAY POKHARNA"})
+
     def test_a_line_that_says_what_it_is_is_left_alone(self):
         """His call: "read the line when it says something". Rs 1,25,000 to
         Ranjana reading "Cash withdraw" is a draw, and says so."""
@@ -1309,6 +1365,7 @@ class TestPayrollTax(unittest.TestCase):
     MAYJUN = "IFT/10171724864/PRITI BORA & CO /26482502/TDS may and june"
     JULY = "IFT/10171724864/PRITI BORA & CO /27883768/TDS July"
     AUGUST = "IFT/10171724864/PRITI BORA & CO /23388539/TDS august"
+    SEPTEMBER = "IFT/10171724864/PRITI BORA & CO /20500326/TDS september"
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -1336,6 +1393,8 @@ class TestPayrollTax(unittest.TestCase):
                     self.JULY, "0.0105")
         self._remit(conn, "bank:6435ebd60cc8b361", -4300000, "2026-09-07",
                     self.AUGUST, "0.01127")
+        self._remit(conn, "bank:564a2575025b2b59", -4300000, "2026-10-06",
+                    self.SEPTEMBER, "0.01127")
 
     # ── the booking rule ─────────────────────────────────────────────────────
 
@@ -1403,25 +1462,26 @@ class TestPayrollTax(unittest.TestCase):
         with db.connect(self.db_path) as conn:
             bad = pt.mismatches(conn)
         self.assertEqual(len(bad), len(pt.REMITTANCES))
-        self.assertEqual(len(bad), 4)                # Apr, May+Jun, Jul, Aug
+        self.assertEqual(len(bad), 5)                # Apr, May+Jun, Jul, Aug, Sep
         self.assertTrue(all("not in the ledger" in b["error"] for b in bad))
 
     def test_a_remittance_he_has_not_given_a_month_for_is_named(self):
         """The half that makes it self-running. "august you will see in the next
         statement" — when that statement lands, the ledger must ask him for the
         figure, not book a month's payroll on the day it cleared. It landed on
-        7 Sep and he gave the month; the next one it has to ask about is
-        September's, in October's statement."""
+        7 Sep and he gave the month; September's landed on 6 Oct and he gave
+        that one too (2026-11-02); the next one it has to ask about is
+        October's, in November's statement."""
         from modules.finance import payroll_tax as pt
         with db.connect(self.db_path) as conn:
             self._remit_all(conn)
             self.assertEqual(pt.uncovered(conn), [])
-            self._remit(conn, "bank:october-statement-tds", -3100000, "2026-10-07",
-                        "IFT/10171724864/PRITI BORA & CO /99999999/TDS September",
+            self._remit(conn, "bank:november-statement-tds", -3100000, "2026-11-06",
+                        "IFT/10171724864/PRITI BORA & CO /99999999/TDS October",
                         "0.0105")
             loose = pt.uncovered(conn)
         self.assertEqual([r["canonical_key"] for r in loose],
-                         ["bank:october-statement-tds"])
+                         ["bank:november-statement-tds"])
 
     def test_august_is_one_month_and_needs_neither_a_pin_nor_a_split(self):
         """Rs 43,000 on 7 Sep reads "TDS august". One month, named on the line:
@@ -1922,6 +1982,40 @@ class TestPnl(unittest.TestCase):
             {"category": "income", "source": "IDFC",
              "description": "IMPS/616221595127/VISAPAYMENTSLIM/HDFC0000240/6389/"
                             "RDAVostroFIRINWEnsureKYCAMLFEMAcompliance"}), "revenue")
+
+    def test_a_bounced_payment_coming_back_is_never_revenue(self):
+        """2026-10-30: Jay's salary returned by the receiving bank. Matched to
+        its debit by the importer it is a positive PAYROLL row; a return whose
+        debit sits in an earlier statement still cannot be a client paying."""
+        from modules.finance import pnl
+        ret = ("NEFT RETURN/IDFB6303M3211855/INCORRECT ACCOUNT NUMBER (AC01)"
+               "/TRANSACTION RETURNED")
+        self.assertEqual(pnl.bucket({"category": "salary", "source": "IDFC",
+                                     "amount_base_minor": 128500,
+                                     "description": ret}), "payroll")
+        self.assertEqual(pnl.bucket({"category": "income", "source": "IDFC",
+                                     "amount_base_minor": 128500,
+                                     "description": ret}), "owner_draw")
+
+    def test_his_2026_11_02_answers_on_october_payees(self):
+        """"dhaval and arham are jay salary split up in two different account"
+        -- an un-narrated line to either is Jay's pay; Aastha (the LinkedIn
+        work) is the one October spend he called the company's -> contractor."""
+        from modules.finance import pnl
+        idfc = lambda desc, base: {"category": "expense", "source": "IDFC",
+                                   "description": desc, "amount_base_minor": base}
+        self.assertEqual(pnl.bucket(idfc(
+            "NEFT/IDFB6303M3211324/DHAVAL R KHINVASARA/SRCB0000045", -143000)), "payroll")
+        self.assertEqual(pnl.bucket(idfc(
+            "NEFT/IDFB6305M3799872/Arham Technology/AMDN0000103", -128500)), "payroll")
+        self.assertEqual(pnl.bucket(idfc(
+            "NEFT/IDFB6281M7085148/AASTHA SHARMA/UTIB0000004/Payment for october",
+            -63300)), "payroll")
+        # the ones he did not tick stay where an unlisted bank spend lands
+        self.assertEqual(pnl.bucket(idfc(
+            "UPI/DR/665498907276/Ms TRUPT/sbin/2033910/UPI", -26800)), "owner_draw")
+        self.assertEqual(pnl.bucket(idfc(
+            "UPI/DR/627754111873/ashokgan/BKID/ashokga/UPI", -61700)), "owner_draw")
 
     def test_bank_spend_rules_2026_07(self):
         # Abhijeet's reclassification: opex = credit-card statement; bank spends

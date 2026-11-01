@@ -69,9 +69,13 @@ def payroll_payees(conn: sqlite3.Connection) -> set:
     point is that one narrated line is enough, for ever."""
     out = set()
     marks = ",".join("?" * len(BANK_SOURCES))
+    # debits only: a RETURNED salary is a positive `salary` row whose third
+    # slash-field is the bank's reason ("INCORRECT ACCOUNT NUMBER (AC01)"), not
+    # a person (2026-10-30, Jay's bounced Rs 1,08,000)
     for r in conn.execute(
             f"SELECT DISTINCT description d FROM transactions"
-            f" WHERE source IN ({marks}) AND category='salary'", BANK_SOURCES):
+            f" WHERE source IN ({marks}) AND category='salary'"
+            f" AND amount_minor < 0", BANK_SOURCES):
         name = payee(r["d"])
         if name:
             out.add(name)

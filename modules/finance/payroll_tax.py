@@ -64,6 +64,9 @@ MONTHLY_TDS = {
     "2026-06": 3290500,        # his split of the 7 Jul payment
     "2026-07": 3055500,        # remitted 6 Aug, Rs 30,555, "TDS July"
     "2026-08": 4300000,        # remitted 7 Sep, Rs 43,000, "TDS august"
+    "2026-09": 4300000,        # remitted 6 Oct, Rs 43,000, "TDS september" — asked
+                               # 2026-11-02 whether all of it was September's:
+                               # "Yes, all of it is September"
 }
 
 # The remittances that carry those months, so #14 can prove the table against the
@@ -74,6 +77,7 @@ REMITTANCES = {
     "bank:04607cb1178e7003": ("2026-05", "2026-06"),    # 7 Jul,  Rs 60,985
     "bank:1b70a0304700d50b": ("2026-07",),              # 6 Aug,  Rs 30,555
     "bank:6435ebd60cc8b361": ("2026-08",),              # 7 Sep,  Rs 43,000
+    "bank:564a2575025b2b59": ("2026-09",),              # 6 Oct,  Rs 43,000
 }
 
 

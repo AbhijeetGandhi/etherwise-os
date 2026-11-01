@@ -174,6 +174,47 @@ def _is_owner_cash_or_draw(desc: str) -> bool:
     return "ABHIJEET ASHOK GANDHI" in s or "ABHIJEET GANDHI" in s
 
 
+# A payment the receiving bank sent back. IDFC writes the credit as
+#   NEFT RETURN/<the original NEFT reference>/INCORRECT ACCOUNT NUMBER (AC01)/...
+# and the debit it reverses as NEFT/<that same reference>/<payee>/<ifsc>/<note>.
+# First seen 2026-10-30: Jay Pokharna's Rs 1,08,000 "Salary oct" bounced (a new
+# account, wrong number) and came back the same day; it went out again on 1 Nov
+# to the right account. Read as a credit with no other rule, the return is
+# `income` -> revenue: Rs 1,08,000 of October's top line that no client paid,
+# and a payroll month overstated by the same amount. The return IS the debit,
+# undone -- so it takes the debit's category (here `salary`, as a positive
+# payroll row) when that debit is in the same statement, and pnl keeps a
+# backstop for a return whose debit is not (see pnl._RETURN_RE): never revenue.
+_RETURN_RE = re.compile(r"^\s*NEFT RETURN/(?P<ref>[A-Z0-9]+)/", re.IGNORECASE)
+_NEFT_REF_RE = re.compile(r"^\s*(?:NEFT|IMPS|IFT)/(?P<ref>[A-Z0-9]+)/", re.IGNORECASE)
+
+
+def returned_ref(desc: str) -> Optional[str]:
+    """The reference of the NEFT this credit returns, or None."""
+    m = _RETURN_RE.match(desc or "")
+    return m.group("ref").upper() if m else None
+
+
+def apply_return_categories(rows: List[dict]) -> int:
+    """Give every NEFT-return credit the category of the debit it reverses, when
+    that debit is among `rows`. Returns how many were re-filed. Pure, in place."""
+    debit_cat = {}
+    for r in rows:
+        if (r.get("amount_minor") or 0) < 0:
+            m = _NEFT_REF_RE.match(r.get("description") or "")
+            if m:
+                debit_cat.setdefault(m.group("ref").upper(), r["category"])
+    changed = 0
+    for r in rows:
+        if (r.get("amount_minor") or 0) <= 0:
+            continue
+        ref = returned_ref(r.get("description") or "")
+        if ref and ref in debit_cat and r["category"] != debit_cat[ref]:
+            r["category"] = debit_cat[ref]
+            changed += 1
+    return changed
+
+
 def classify_category(desc: str, kind: str) -> str:
     """The v3 bucket for one IDFC row. Order mirrors v2's skip precedence.
 
@@ -316,6 +357,8 @@ def parse(path_or_bytes: Path | str | bytes) -> dict:
             "source_row": src_row,
             "key": ck,                       # reconcile label
         })
+
+    apply_return_categories(rows)        # a bounced NEFT is its debit, undone
 
     # Opening/closing for the account_balances tie-out (#1). Native order may be
     # oldest- or newest-first; derive both ends from the chain.
