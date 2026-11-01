@@ -148,20 +148,37 @@ class TestDbCheck(unittest.TestCase):
 
 
 class TestCalendar(unittest.TestCase):
+    """The check's behaviour, pinned on its own fixtures — the live lists in
+    config change whenever a reminder is cleared (all three 2026 items went
+    on 2026-11-02), and a test that read them broke each time."""
+    WATCH = (("2026-06-15", "Claim the credit"),)
+    DEPRECATION = {"claude-x": ("2026-08-15", "snapshot retires — review pin")}
+
+    def _checks(self, today):
+        with mock.patch.object(config, "CALENDAR_WATCH", self.WATCH), \
+             mock.patch.object(config, "DEPRECATION_WATCH", self.DEPRECATION):
+            return dc.check_calendar(today=today)
+
     def test_all_far_future_no_warns(self):
-        checks = dc.check_calendar(today="2026-05-01")
-        self.assertNotIn("WARN", statuses(checks))
-        self.assertNotIn("FAIL", statuses(checks))
+        checks = self._checks(today="2026-05-01")
+        self.assertEqual(statuses(checks), ["PASS", "PASS"])
 
     def test_within_week_warns(self):
-        checks = dc.check_calendar(today="2026-06-10")
+        checks = self._checks(today="2026-06-10")
         warns = [c for c in checks if c.status == "WARN"]
         self.assertTrue(any("credit" in c.detail.lower() for c in warns))
 
     def test_overdue_warns(self):
-        checks = dc.check_calendar(today="2026-09-01")
+        checks = self._checks(today="2026-09-01")
         warns = [c for c in checks if c.status == "WARN"]
         self.assertTrue(any("review pin" in c.detail for c in warns))
+
+    def test_the_live_lists_carry_nothing_overdue_today(self):
+        # The point of clearing the three stale reminders: doctor's calendar
+        # section must not WARN about the past. A future item is fine.
+        checks = dc.check_calendar()
+        self.assertFalse([c for c in checks if "OVERDUE" in c.detail],
+                         [c.detail for c in checks])
 
 
 class TestGuardrailsSelfTest(unittest.TestCase):
