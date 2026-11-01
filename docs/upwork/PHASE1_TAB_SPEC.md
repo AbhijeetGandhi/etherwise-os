@@ -1,9 +1,9 @@
 # PHASE1_TAB_SPEC.md — the Upwork tab, designed before it is built
 
-**Status:** BUILT, then REDESIGNED on Abhijeet's verdict — approved 2026-08-25 19:30 (with the §7 diff; hot bar → 20 the same minute); steps 1–3 `ce45a21` + `ec5de3d`, step 4 (the section) `7279345` at 23:20; **the shape as it is now is §11 (`a10b421`, 08-26 00:40) — §1 and §6 describe the first cut**; open items are the ◆ list in §10 · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
+**Status:** BUILT, then REDESIGNED on Abhijeet's verdict — approved 2026-08-25 19:30 (with the §7 diff; hot bar → 20 the same minute); steps 1–3 `34f26da` + `de02b3c`, step 4 (the section) `ff64a9d` at 23:20; **the shape as it is now is §11 (`c296b16`, 08-26 00:40) — §1 and §6 describe the first cut**; open items are the ◆ list in §10 · **Written:** 2026-08-25 19:05 IST (Upwork chat) ·
 **Builds on:** `UPWORK_BRIEF.md` (Phase 1, laws 1–7, decisions 5/6/9), `docs/upwork/CODEBASE_MAP.md`
 §5–§6, `codebase-maps/03_cockpit.md`. Every number in §0 was read from the live DB (read-only) at
-18:45 IST; every file:line was checked in the working tree at `39faf95`+.
+18:45 IST; every file:line was checked in the working tree at `a2eae17`+.
 
 The rule this document obeys (CLAUDE.md): design decisions get asked, not guessed. The four the
 code forced were asked and answered in chat at 18:55 IST; they are §0.1. Everything else here is
@@ -104,7 +104,7 @@ page behind one `expander` (ui.js:543) — collapsed by default, remembered per 
 | Old links | `ALIASES.pipeline = "upwork"` — a `#/pipeline` bookmark opens the tab, never a blank screen | `app.js:57` |
 | Icon | keep `trending-up` (exists in the sprite, `index.html`); ◆ a distinct Upwork glyph is a 20-line sprite addition if wanted | `index.html` |
 | Last-section memory | `localStorage.ew_cockpit_last_section` may hold `pipeline`; `byId()` falls back to Today today — the alias map is applied to the stored value too (one line in `boot()`) | `app.js:460` |
-| The old file | `sections/pipeline.js` keeps its charts and becomes the Analysis module: `export async function renderAnalysis(root, ctx)`. Its OWN funnel block, outcomes block, KPI strip, win-rate line and funnel-by-week table are REMOVED (they are the new tab's blocks now) — the file's header note already documents dropping dead blocks per brief §4; this is the same move. **As built (`7279345`):** `renderAnalysis` = `render(root, ctx, {analysisOnly: true})` — the heading, KPI strip, win-rate line, funnel and outcomes blocks are skipped; the **funnel-by-week and threads-by-status tables STAY in the fold** (deliberate deviation: they are history the cohort view does not show, and removing them would orphan the range bar they share) | `sections/pipeline.js` — funnel + outcomes blocks (~489–630); KPI strip, win-rate line, funnel-by-week and threads-by-status (~1078–1385) |
+| The old file | `sections/pipeline.js` keeps its charts and becomes the Analysis module: `export async function renderAnalysis(root, ctx)`. Its OWN funnel block, outcomes block, KPI strip, win-rate line and funnel-by-week table are REMOVED (they are the new tab's blocks now) — the file's header note already documents dropping dead blocks per brief §4; this is the same move. **As built (`ff64a9d`):** `renderAnalysis` = `render(root, ctx, {analysisOnly: true})` — the heading, KPI strip, win-rate line, funnel and outcomes blocks are skipped; the **funnel-by-week and threads-by-status tables STAY in the fold** (deliberate deviation: they are history the cohort view does not show, and removing them would orphan the range bar they share) | `sections/pipeline.js` — funnel + outcomes blocks (~489–630); KPI strip, win-rate line, funnel-by-week and threads-by-status (~1078–1385) |
 | Routes | `/api/pipeline`, `/api/pipeline/facts`, `/api/pipeline/rows` STAY (the Analysis charts read facts/rows; `test_cockpit.py` pins the `/api/pipeline` keys). `/api/upwork` + `/api/upwork/rows` are added | `server.py:33-70` |
 | State keys | `ew_cockpit_pipeline_filters` (the Analysis range bar) is kept as-is; new keys are `ew_cockpit_upwork_view` (`week`|`month`) and `ew_cockpit_upwork_analysis` (`open`|`closed`) | section |
 | Badge | none in Phase 1 — Today already carries the same cards; a second badge for the same work is noise. ◆ revisit if the tab becomes the primary screen | `app.js` |
@@ -495,11 +495,11 @@ The brief's next action 2 says the skeleton is built after 0.2. Nothing in this 
 queue builder and their tests can be built now with no UI risk, and the section + the Pipeline
 rename land when Abhijeet says go. Recommended order:
 
-1. DONE `ec5de3d` — reader + rows + tests (no UI)
-2. DONE `ec5de3d` — `_act_now_queue` extraction + the Loom-flag view flag (Today's queue
+1. DONE `de02b3c` — reader + rows + tests (no UI)
+2. DONE `de02b3c` — `_act_now_queue` extraction + the Loom-flag view flag (Today's queue
    pinned equal to the builder's output minus Loom flags); the RULE change parked (§5.2 ◆)
-3. DONE `ce45a21` — config diff (§7) applied by the chat on his approval; doctor green
-4. DONE `7279345` (2026-08-25 23:20) — `upwork.js` + Pipeline → Upwork rename + Analysis fold;
+3. DONE `34f26da` — config diff (§7) applied by the chat on his approval; doctor green
+4. DONE `ff64a9d` (2026-08-25 23:20) — `upwork.js` + Pipeline → Upwork rename + Analysis fold;
    `bin/cockpit reload` done; rendered headless (Playwright against the live snapshot: cards,
    week/month, drills, `#/pipeline` → the tab, the fold) — the chat's Chrome bridge cannot open
    127.0.0.1, so the in-browser check is Abhijeet's; screenshot sent to the chat. Suite 1,713 OK.
@@ -534,7 +534,7 @@ the 10 s busy timeout) — the scoring pass's run 3 died on it and its `runs` ro
 
 ---
 
-## 11. As redesigned (2026-08-26 00:40, `a10b421`) — this supersedes §1 and §6
+## 11. As redesigned (2026-08-26 00:40, `c296b16`) — this supersedes §1 and §6
 
 Abhijeet on the first cut (23:50): *"I don't like the UI at all. It is too complicated for me to
 understand anything … the part that I hate most is the client comms and how you represent it —
@@ -598,16 +598,16 @@ Not changed: the reader's funnel maths (§3), the drills and their parity tests,
 verdicts (§3.5), connects (§3.6), the card seam (§5) — the redesign is presentation plus the
 conversation builder; `needs_me` still ships for the tiles' counts.
 
-**Addendum 2026-08-26 04:12 (`7f7d710`) — Run now.** Every system has a button: Inbox "Check
+**Addendum 2026-08-26 04:12 (`21cd37a`) — Run now.** Every system has a button: Inbox "Check
 Upwork now" (`upwork_inbox`), Jobs "Scan for new jobs now" (`upwork_scan`), the connects strip
 "Update connects" (`upwork_connects`), each re-runnable Health rail "Run now". The kick is the
 allowlisted `/api/rerun`; the button polls `/api/upwork/run?task=` (`data.upwork_run_status`,
 refused outside `actions.RERUN_JOBS`) every 4 s until a NEW run has finished, then toasts the
 outcome in words and re-reads the tab on the same view; a run already in flight is waited for,
-never kickstarted over (a kickstart would kill it). After the flip (`534283d`) the Health table
+never kickstarted over (a kickstart would kill it). After the flip (`9310382`) the Health table
 has eight rails — the MCP-poll row is gone and the scanner reads "Upwork job feed (MCP)".
 
-**Addendum 2026-08-26 05:15 (`1c6e4d5`, `9d2102b`) — the email in the room, and stale drafts.**
+**Addendum 2026-08-26 05:15 (`2801385`, `6c7e080`) — the email in the room, and stale drafts.**
 The conversation carries `emails` (from `room_links`, migration 029): every mail the sweep
 linked to one of the person's rooms — `{id, at, sender, subject, body, link, state, thread_id}`,
 newest first. When the newest linked mail is newer than their newest Upwork message it becomes

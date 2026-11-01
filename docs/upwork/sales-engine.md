@@ -1,6 +1,6 @@
 # The sales engine: Upwork, from the job to the paying client and back
 
-*Design and state, 9 Oct 2026 (overnight build). Owner: Abhijeet. Built in commits `548588b` and `7810efc`; switched on 13:28 IST the same day (`f2c86e2`) after he renewed both Upwork sign-ins and the AI credit. Scanner change on his word: a 28+ card goes to the ICP list, 19–27 to Hot. Globaltize: the conversation reader skips them; everything else stays as it was (his call).*
+*Design and state, 9 Oct 2026 (overnight build). Owner: Abhijeet. Built in commits `d8d9e51` and `db5ec45`; switched on 13:28 IST the same day (`d9348d4`) after he renewed both Upwork sign-ins and the AI credit. Scanner change on his word: a 28+ card goes to the ICP list, 19–27 to Hot. Globaltize: the conversation reader skips them; everything else stays as it was (his call).*
 
 ## What he asked for
 

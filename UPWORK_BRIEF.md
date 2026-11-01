@@ -1,6 +1,6 @@
 # UPWORK_BRIEF.md — the Upwork system (boot file for Upwork sessions)
 
-**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`534283d`) · Phase 1 BUILT, REDESIGNED, with Run-now buttons · the overnight list of 26 Aug DONE — his review of the tabs pending · **use case A live** (`upwork_financials` 06:05 daily, `861b642` `1ed25ea`: ledger, tie-out, twins) · **use case C live — Phase 0.2** (`f231295` `0569cb1`: every proposal with a verdict, win rate 11.0 %) · next: 0.3 contracts (call 6), 0.5 offers, the Chrome connects rail's day · **Phase 2 Loop 1 STARTED 2026-10-08: the Funnel sub-tab** (`2bd5a71`; refresh, views rail, weekly runner + email next)
+**Owner:** Abhijeet · **Created:** 2026-08-25 · **Status:** Phase 0.1 FLIPPED 2026-08-26 03:46 (`9310382`) · Phase 1 BUILT, REDESIGNED, with Run-now buttons · the overnight list of 26 Aug DONE — his review of the tabs pending · **use case A live** (`upwork_financials` 06:05 daily, `21e71ba` `a494389`: ledger, tie-out, twins) · **use case C live — Phase 0.2** (`f1cc6d7` `1926b64`: every proposal with a verdict, win rate 11.0 %) · next: 0.3 contracts (call 6), 0.5 offers, the Chrome connects rail's day · **Phase 2 Loop 1 STARTED 2026-10-08: the Funnel sub-tab** (`a72cb79`; refresh, views rail, weekly runner + email next)
 
 **Session protocol:** a dedicated Upwork Cowork chat boots from THIS file (say "upwork
 session" or just work from an Upwork-dedicated chat — the workspace router points here).
@@ -31,8 +31,8 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   against the scraper's ~30/day. The feed is good; the VOLUME is the decision: at today's
   bands the flip triples drafts + ClickUp cards (+~$2/day against the $4 soft cap) for a
   band (16–21) he applied to twice in six weeks. **Hot bar moved to 20 at 20:00
-  (`ce45a21`)**. 0.1 built behind `config.JOB_FEED_PROVIDER` at 22:38 (`6b5543e`).
-- **FLIPPED 2026-08-26 03:46 IST (`534283d`, his "let's flip it now anyways"):** the job
+  (`34f26da`)**. 0.1 built behind `config.JOB_FEED_PROVIDER` at 22:38 (`39b14b5`).
+- **FLIPPED 2026-08-26 03:46 IST (`9310382`, his "let's flip it now anyways"):** the job
   feed is the Upwork API — `config.JOB_FEED_PROVIDER = "mcp"`, cut-off `MCP_CLAIM_SINCE` =
   the last Chrome scan (03:15 IST = `2026-08-25T21:45:00+00:00`); the shadow poller is
   booted out (plist in `launchd/retired/`, LaunchAgent removed, copy in
@@ -56,19 +56,19 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
   proposals table stale, win-rate wrong. Fix: `list_freelancer_proposals` (tasks #30–33).
   Also (found 2026-08-25, fixed same night — see Codebase findings 1): the hourly
   roomList pass was writing NULL telemetry into every proposal it touched.
-- **The Upwork tab is live** (2026-08-25 night, `ec5de3d` + `7279345`, redesigned
-  `a10b421`): digit 2 in the cockpit, `#/upwork` (`#/pipeline` aliases to it), four sub-tabs
+- **The Upwork tab is live** (2026-08-25 night, `de02b3c` + `ff64a9d`, redesigned
+  `c296b16`): digit 2 in the cockpit, `#/upwork` (`#/pipeline` aliases to it), four sub-tabs
   — **Inbox** (conversations as people, the row Today shares), **Jobs** (the flow, the job
   lists, connects), **Health** (rails in words), **Analysis** (the old charts). Reader
   `/api/upwork`, drills `/api/upwork/rows`. Spec: `docs/upwork/PHASE1_TAB_SPEC.md` (§11 =
   the shape as built). The Phase 2 digest slot is not drawn until Phase 2 exists.
-- **A prospect's email now reaches the Upwork room** (2026-08-26 05:15, `9d2102b`,
+- **A prospect's email now reaches the Upwork room** (2026-08-26 05:15, `6c7e080`,
   migration 029 `room_links`): a mail whose sender matches a room's counterparty by
   first name + surname initial (`modules/upwork/room_link.py`, no model call) is linked to
   the room, queued for Review instead of being excluded by the low-base-rate rule, shown
   on the Inbox row, and handed to the draft-writer. And a waiting draft older than the
   client's newest message (Upwork or linked mail) is redrafted at the next poll
-  (`1c6e4d5`). Both born of the David Séjourné draft that said "I don't see the email".
+  (`2801385`). Both born of the David Séjourné draft that said "I don't see the email".
 - **Codebase map** (2026-08-25): `docs/upwork/CODEBASE_MAP.md` + `docs/upwork/codebase-maps/`
   — rails, tables as they really are, verified findings, the tab recipe, the card seam,
   Phase 0–3 readiness. Read it before touching code in this chat.
@@ -114,7 +114,7 @@ tab — money lives on Money; connects appear as COUNTS here, their dollars stay
 Phase 0 output is the DATA SPINE. Every later phase reads it; nothing later is built until
 its spine row exists. 0.4's reply detection is also the auto-clear mechanism law #5 needs.
 
-### Phase 1 — The Upwork tab (visibility) — BUILT 2026-08-25 (`ec5de3d` reader, `7279345` section)
+### Phase 1 — The Upwork tab (visibility) — BUILT 2026-08-25 (`de02b3c` reader, `ff64a9d` section)
 As built: `docs/upwork/PHASE1_TAB_SPEC.md` is the record (cohort funnel, closure rule, the
 hot bar at `config.HOT_LEAD_THRESHOLD` = 20, "viewed" and "offer" drawn as unmeasured until
 0.2/0.4 give them a signal). The outline below is the original intent, kept for the diff:
@@ -140,7 +140,7 @@ Top-to-bottom, one screen by default:
   hook, INTERVIEW rate the substance. Monthly: a proposal-writing review with concrete
   edits to `skills/upwork-proposal-writer/` — versioned, so before/after is measurable.
   This is the finetuning: the skill is the model; its prompt is what trains.
-  **STARTED 2026-10-08 — the Funnel sub-tab (`2bd5a71`).** His ask: "applied to 100, 20
+  **STARTED 2026-10-08 — the Funnel sub-tab (`a72cb79`).** His ask: "applied to 100, 20
   opened, three replies, closed one — the percentage in every stage, then the breakdown
   (boosted, Loom, the first lines, the client) … proper funnel diagrams I can hover … AI
   analysis on top … a weekly runner and an email at the end of the week". His four answers
@@ -155,7 +155,7 @@ Top-to-bottom, one screen by default:
   proposals, 589 page reads), `/api/upwork/funnel`, `static/js/propfunnel.js` (pure,
   node-tested), `sections/upwork_funnel.js`. The data stops at 8 Oct until the refresh exists;
   the view says so when newer proposals are in the `proposals` table.
-  **Money fixed the same night (`6423bc2`, his read: "globaltize hired us from upwork but …
+  **Money fixed the same night (`c023497`, his read: "globaltize hired us from upwork but …
   pays us through wise … lot of agency transactions"):** a hire carries everything its client
   paid since, on every rail (his profile, the agency, Wise/Stripe/bank), one client however the
   ledger spells it (registry names/aliases); hires with no contract are found by their
@@ -260,7 +260,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
     (`feeds/shadow_poll.py:117-208`: the with-block opens before up to 25 network calls; the
     18:40 run held it 43 s against the 10 s busy timeout). The scoring pass's run 3 died on it
     (`database is locked`) and its `runs` row 7068 was stuck 'running' (marked failed by
-    hand 19:41 with his OK). **FIXED `6b5543e`** (22:38): the round is `feeds/mcp_search.py`
+    hand 19:41 with his OK). **FIXED `39b14b5`** (22:38): the round is `feeds/mcp_search.py`
     (network only); the poll is one short read → the round → one short write. The 22:40
     poll ran on it: completed, 40 s, lock held only for the write.
 15. (22:41) **The MCP enforces ~12 `find_jobs` requests/min sustained** ("Rate limit
@@ -272,14 +272,14 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 13. (19:05) **Hot jobs that miss the ClickUp push are never re-pushed**: 20 hot jobs from the
     08-23 batch sit `status='Drafted'`, no ClickUp id; every other hot job since 08-18 was
     carded in its own run. The 14 open Loom-flag cards are exactly those 20 (the rule's
-    `clickup_task_id IS NULL` predicate predates the live cutover). **FIXED `ce45a21`**
+    `clickup_task_id IS NULL` predicate predates the live cutover). **FIXED `34f26da`**
     (20:00): every scan also pushes rows scored within `config.CLICKUP_PUSH_RETRY_DAYS` that
     have no card; a failed create is a warn anomaly + metric, never a failed scan. Live at
     20:15: `clickup_pushed 28, clickup_retried 23, failed 0` — the 08-23 batch is carded.
 14. (19:10) **The Sunday outcome email never sends in live mode**: `outcome_capture.capture()`
     is `if ctx.shadow: record_shadow_write … else: ctx.require_live(…)` and `require_live`
     is only a guard (`runner.py:104`) — no send call exists. Setting `form_url` (0a) made the
-    links parse; nothing delivers them. **FIXED `ce45a21`** (20:00): the live branch sends
+    links parse; nothing delivers them. **FIXED `34f26da`** (20:00): the live branch sends
     via `notify.send_gmail`, a failed send fails the run (critical anomaly), one email per
     week. Still empty until 0.3: every run so far skipped on "no closed proposals" because
     `proposals.status` has no writer (finding 3). Doctor now says `upwork_outcomes STALE
@@ -291,7 +291,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
 - Whether ClickUp stays the action queue long-term or the tab absorbs it (decide AFTER the
   tab proves itself — not before).
 - ~~Threshold VALUES~~ DECIDED 19:30 (decision 11): **hot bar 16 → 20, Loom stays 22**
-  (`ce45a21`). The evidence that decided it, kept for the record:
+  (`34f26da`). The evidence that decided it, kept for the record:
   **(2026-08-25 19:25, live, since the rail began 07-13):** hard-rule
   survivors by band → applications: 22+ 732 → 33 · 20–21 124 → 0 · 18–19 130 → 1 · 16–17
   117 → 1 · 8–15 394 → 1. He applies at the Loom bar: 33 of 36 matched applications were 22+,
@@ -304,7 +304,7 @@ Full detail with file:line in `docs/upwork/CODEBASE_MAP.md` §3. Numbers are LIV
   The honest condition (flagged, open, not applied, ≤7 d) is **151 jobs right now** — as
   cards that would flood the tab AND the AM/PM brief's top-N (ranked by money at stake).
   The tab shows that population as a COUNT tile with a drill (`needs_me.loom_flags`,
-  `ec5de3d`). The card itself: (a) ICP-tier only (≈2/month, actionable), (b) retire the kind
+  `de02b3c`). The card itself: (a) ICP-tier only (≈2/month, actionable), (b) retire the kind
   and keep the tile, or (c) all 151. His answer (22:50): "keep it as is for now". Observed
   20:30 the same evening: the sweep decayed all 14 cards (nudges 1151–1164) the moment the
   20:15 retry carded their jobs — so with the rule as is, the card stream is dead by
@@ -430,8 +430,8 @@ the Upwork chat, write the answer back into this brief, and note who asked.
 
 ## Next actions
 0. DONE 2026-08-25 14:30 (Upwork chat, on Abhijeet's "do 1-4"): sync fix committed
-   (`42c9eaf`, live-verified: proposals NULL created_dt 10 → 0, contracts NULL title 59 → 5);
-   score-bands patch applied + committed (`39faf95`; test_score_bands 11, scan/doctor/
+   (`b724944`, live-verified: proposals NULL created_dt 10 → 0, contracts NULL title 59 → 5);
+   score-bands patch applied + committed (`a2eae17`; test_score_bands 11, scan/doctor/
    guardrails 87, cockpit pipeline/today/system/query-guard classes 68 — all green on the
    Mac's files). Git lock/tmp debris the device VM could not delete was moved to
    `var/_to_delete/` (safe to `rm -rf`).
@@ -450,7 +450,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    - `var/_to_delete/` debris removed (his approval, 15:20).
 0b. DONE 2026-08-25 15:50 (this chat, per his "ask me here" rule): BUILD_BRIEF entry written
    (top of file: the orientation, the sync bug, the bands, the invariant lift, the scorecard);
-   ClickUp list ids folded into `config.CLICKUP_LISTS` incl. `icp` (`bf13fbd`; the form_url
+   ClickUp list ids folded into `config.CLICKUP_LISTS` incl. `icp` (`9973708`; the form_url
    tests now use fixtures). Full suite on the Mac: **1,620 GREEN**.
 0c. ANSWERED: ClickUp ids → config (done); band labels on the tab = numbers AND names
    (`config.score_band_label()`, never typed in JS).
@@ -458,7 +458,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    29/33 (misses: 23, 23, 21 via best_matches; 24 via my_feed) · latency median +23 min
    (= the :15/:40 schedule offset) · MCP-only 363 jobs, 132 pass hard rules.
 0e. **Scoring pass (Abhijeet: "run scoring pass", 18:31 IST):** `scripts/mcp_shadow_score.py`
-   + migration 028 `mcp_shadow_scores` (`f83e0b8`) — the pass 027 reserved a NULL `score`
+   + migration 028 `mcp_shadow_scores` (`4682122`) — the pass 027 reserved a NULL `score`
    for. Two sets, same scorer as the live scan: A. 144 MCP-only hard-rule survivors,
    B. 81 jobs both feeds scored (drift = mcp − scraper). Writes only the shadow tables;
    9 runner chunks of ≤25 (`upwork_shadow_score_<n>`); projected $1.83. Re-runnable, skips
@@ -479,10 +479,10 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    closure rule, drills + parity tests, the health strip with a proposed `SOURCES` diff §7,
    the shared card builder, connects definitions, build order). Findings 12–14 came out of
    writing it. Approved 19:30 with the §7 diff (decision 11).
-0g. DONE 20:00 `ce45a21` — hot bar 20; `SOURCES` + `mcp_feed`/`upwork_inbox`/
+0g. DONE 20:00 `34f26da` — hot bar 20; `SOURCES` + `mcp_feed`/`upwork_inbox`/
    `upwork_outcomes`/`cos_sweep`, `RERUN_JOBS` ± ; push retry (finding 13); outcome email
    sends (finding 14); run 7068 failed. Suite 1,643 OK, doctor 62/0.
-0i. DONE 22:38 `6b5543e` (+ pacing, same evening) — **Phase 0.1 built, not flipped.**
+0i. DONE 22:38 `39b14b5` (+ pacing, same evening) — **Phase 0.1 built, not flipped.**
    `config.JOB_FEED_PROVIDER` ("chrome" today), `MCP_*` bounds moved to config,
    `MCP_CLAIM_SINCE` (his call: only posts created after the flip get claimed);
    `feeds/mcp_search.py` = the standing-query round, network-only, paced (finding 15);
@@ -498,14 +498,14 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    "viewed" stage is dropped or re-defined at 0.2. Live dry round at 22:41 (no writes):
    109 surfaced, 60 already in `scored_jobs`, 46 older than the cut, 3 new. 20 provider
    tests + 6 fixture tests; suite 1,703 → see 0i'. 
-0h. DONE 20:21 `ec5de3d` — **Phase 1 step 1 + the builder half of step 2**: `data.upwork()`
+0h. DONE 20:21 `de02b3c` — **Phase 1 step 1 + the builder half of step 2**: `data.upwork()`
    + `upwork_rows()` on `/api/upwork` + `/api/upwork/rows` (cohort funnel with closure,
    contracts-started line, rails strip, connects, needs-me from the shared
    `_act_now_queue()` extracted out of `today()`), 37 tests, suite 1,680 OK, cockpit
    reloaded and serving it (live: week 24 Aug so far — fetched 223 → passed 86 → hot 47 →
    applied 2 → interviewing 1 → won 0; contracts started 1, outside the funnel). The
    Loom-flag RULE change is parked as the ◆ under Open decisions.
-0j. DONE 23:20 `7279345` (his "let's build the UI then") — **Phase 1 step 4, the section.**
+0j. DONE 23:20 `ff64a9d` (his "let's build the UI then") — **Phase 1 step 4, the section.**
    `static/js/sections/upwork.js` (digit 2; `#/pipeline` and a remembered "pipeline"
    alias to it): Needs me now from the shared queue (replies + escalations before Loom
    flags, top 5 + expander; tiles: drafts waiting, Loom-worthy open, offers "—"), the cohort
@@ -522,7 +522,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    what is left of it is the ◆ list (Loom card meaning, a "viewed" signal at 0.2).
    He has to open `http://127.0.0.1:5051/#/upwork` himself — the chat's Chrome bridge
    refuses 127.0.0.1.
-0l. DONE 2026-08-26 04:12 `7f7d710` (his 04:00 ask: "a manual trigger button for every
+0l. DONE 2026-08-26 04:12 `21cd37a` (his 04:00 ask: "a manual trigger button for every
    system … run it instantly with a button click to get the latest") — **Run now on every
    system**: Inbox "Check Upwork now" (`upwork_inbox`), Jobs "Scan for new jobs now"
    (`upwork_scan`), the connects strip "Update connects" (`upwork_connects`), every
@@ -530,7 +530,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    the new `/api/upwork/run?task=` (`data.upwork_run_status`, RERUN_JOBS-allowlisted) every
    4 s until a NEW run has finished, says what happened in words and re-reads the tab; a
    run already in flight is waited for, never kickstarted over. 52 tests, suite 1,721 OK.
-0m. DONE 2026-08-26 04:52 `1c6e4d5` (his 04:48: "Run now … is not pulling the latest —
+0m. DONE 2026-08-26 04:52 `2801385` (his 04:48: "Run now … is not pulling the latest —
    look at the current inbox item"): the poll HAD read Nabil's 20:16 message; what it had
    not done was write a reply to it, because `poll_inbox` skipped every room that already
    held a pending draft ("no churn") — a draft from the 19th sat under a message from the
@@ -538,7 +538,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    the client's newest inbound message (Upwork, and since 0n a linked email) is
    superseded and the room redrafted; metric `drafts_refreshed`. Unparseable clocks keep
    the draft. +3 tests (test_m1b). Suite 1,724 OK.
-0n. DONE 2026-08-26 05:15 `9d2102b` (his 04:58: "he did send me an email on
+0n. DONE 2026-08-26 05:15 `6c7e080` (his 04:58: "he did send me an email on
    abhijeetgandhi01@gmail.com — do you not have access to it?"; his answer to the three
    options: **link it to the conversation and use it**). David Séjourné's brief (24 Aug
    19:08, "DNG: Workflow to create // clustering", the Drive folder) had been read by the
@@ -629,10 +629,10 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    Second run (10:26, run 7190, kicked through Run now): 42 scanned, 12 to the extractor,
    5 found (Jarrod's proposal due today; Dhanya's two zaps by Thursday / Friday; David's
    "review the brief and let him know" → due 28 Aug; one OTP promise already kept). After
-   the sweep, **six promise cards on Today** with Open on Upwork (`99f2eb8`: a dated Upwork
+   the sweep, **six promise cards on Today** with Open on Upwork (`cc73fe6`: a dated Upwork
    promise is carded by the Upwork branch too — named, with the room; its own date kept).
    Model spend for the day at 10:35: $1.08 of $4 over 107 calls.
-   **16:30 his answer to the ◆: "Reply-type promises only" → done (`861b642`).**
+   **16:30 his answer to the ◆: "Reply-type promises only" → done (`21e71ba`).**
    `promises.is_reply_type()` — let X know / get back / ping / reply / respond / revert /
    update X / keep X posted / send / share / forward / follow up / circle back / confirm /
    call X / message X / write back / inform / notify / check in / touch base / reach out
@@ -680,7 +680,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    wording ("9 in 10 sure"); (5) Brandi Jordan shows "no dossier yet" on Clients because
    the ledger's payer name and the registry's "The Cradle Company" differ — the same
    linkage gap the roster panel already lists.
-0k. DONE 2026-08-26 00:40 `a10b421` — **the tab REDESIGNED on his verdict** (23:50: "I don't
+0k. DONE 2026-08-26 00:40 `c296b16` — **the tab REDESIGNED on his verdict** (23:50: "I don't
    like the UI at all … too complicated for me to understand anything … the part that I
    hate most is the client comms and how you represent it — it all should be intuitive").
    Three mockups sent, four answers (decision 12), then built: **Inbox · Jobs · Health ·
@@ -701,10 +701,10 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    funnel bands are gone; spec §1/§6 now describe the OLD layout — §11 records the new.
    His verdict (00:55): **"I like the UI better now"** — and "I don't see anything in the
    inbox yet": it was empty because he had cleared every conversation at 23:33, and the
-   screen did not say so → `f670e5c`: the Inbox names what was cleared since yesterday
+   screen did not say so → `25a7881`: the Inbox names what was cleared since yesterday
    (`inbox.cleared`, from nudge_state + confirmed closures) and that each comes back the
    moment the person writes again. Suite 1,719 OK.
-1. **THE FLIP — DONE 2026-08-26 03:46 IST (`534283d`), on his "let's flip it now anyways so
+1. **THE FLIP — DONE 2026-08-26 03:46 IST (`9310382`), on his "let's flip it now anyways so
    in the morning when I wake up I can check how it went".** Sequence as the runbook: the
    03:40 poll allowed to finish → poller booted out + LaunchAgent removed (03:44) → patch
    applied → 147 targeted tests + full suite 1,719 OK + doctor 0 FAIL → cockpit reloaded →
@@ -788,7 +788,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    10–16 Aug week) where the CSV carries the PAYMENT date (08-26 for the same rows); the
    connects usage rows have NO label (DEBIT / REFUND_CREDIT, an instant, a `~02` job or
    null), and the Chrome rail's `event_date` is the UTC day of that instant.
-   **BUILT AND SCHEDULED (evening, `861b642`): `upwork_financials`, daily 06:05 IST.**
+   **BUILT AND SCHEDULED (evening, `21e71ba`): `upwork_financials`, daily 06:05 IST.**
    `orgs()` FL_AGENCY; `signed_minor` = the ledger's rule + "an explicitly negative MCP row
    stays negative"; a NEW row gets `type` the way the CSV importer types it
    (`CSV_TYPE_MAP`: Hourly → Hourly Earning, Membership Fee → Connect Purchase as the 83
@@ -821,7 +821,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    them as transfers (the CSV importer still holds its own — the rail inserts first from
    here on, so that hold no longer bites).
    **17:55 "what's next" → four answers: use case C next · run the `summary` call · both
-   ledger fixes · retire the GraphQL transactions pass** (`1ed25ea`):
+   ledger fixes · retire the GraphQL transactions pass** (`a494389`):
    · **Summary captured 17:57** (`tests/fixtures/mcp/financials_summary_personal.json`):
      per-client billed / earned / fee / tax + per-job lines, totals, `earnings_available`,
      decimal strings, by INVOICE date (Amanda 866.67 = the 2 + 9 + 16 Aug invoices; earned
@@ -855,7 +855,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    ◆ **For him — the Chrome connects rail.** After a few mornings of `connects.twins ==
    shadow_rows` in the run metrics, set `MCP_CONNECTS_SINCE` to a day and retire
    `io.etherwise.v3.upwork-connects` the same day — the last Chrome rail.
-6. **Use case C — proposals through the MCP (Phase 0.2) — BUILT 2026-08-26 18:25 (`f231295`),
+6. **Use case C — proposals through the MCP (Phase 0.2) — BUILT 2026-08-26 18:25 (`f1cc6d7`),
    his 17:55 "use case C next".** `modules/upwork/feeds/mcp_proposals.py`, run by the hourly
    `upwork_sync` at :45 in place of the scope-blocked GraphQL vendorProposals pass (that
    function stays as code, never activated). `list_freelancer_proposals list` filters ONE
@@ -905,7 +905,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    proposal the client declined; in the Withdrawn list one we withdrew; in the Archived list
    one that expired — is his to decide with both dimensions in front of him: migration 032
    (`proposals.mcp_list_status`, `upwork_status_label`, `mcp_listed_at`), the cursors reset
-   once so the 18:45 round re-reads everything and fills them (`f231295`). Volume: the
+   once so the 18:45 round re-reads everything and fills them (`f1cc6d7`). Volume: the
    backfill was ~100 reads twice; a quiet hour is 7.
    **The cross-tab after the 18:45 round (run 7243), list × Upwork's own status/label × our
    verdict — the whole table, 414 rows:**
@@ -926,7 +926,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    far is one Upwork's own status field states. **The 285 rows with no verdict or a stale
    Interview are his to map** (◆ below): the honest all-time win rate becomes ~42 of ~400
    (~11 %) instead of the May snapshot's 46 % of the rows that had rooms.
-   **19:05 his answers: "Expired / Lost as proposed" · "hourly is fine"** (`0569cb1`):
+   **19:05 his answers: "Expired / Lost as proposed" · "hourly is fine"** (`1926b64`):
    `config.MCP_PROPOSAL_LIST_MAP` — (list, own status) → verdict when Upwork's own status
    field writes none, and a closed job's list ends a live Interview: Submitted + job
    closed/gone/won by someone else → **Expired**; Invitation accepted + the same → **Lost**;
@@ -936,11 +936,11 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    **Lost 59 + Expired 230 written; the table now reads Won 42 · Lost 65 · Expired 255 ·
    Withdrawn 20 · Interview 3 · open (submitted) 29 — the cockpit's win rate 42 of 382
    decided = 11.0 %** (`/api/pipeline`; the line no longer calls itself an upper bound,
-   `0569cb1`). The hourly pass applies the map from here on. Nothing older than a week
+   `1926b64`). The hourly pass applies the map from here on. Nothing older than a week
    reaches the Sunday email (its 7-day window on `modified_dt`).
    ◆ 0.5 substrate: `Offered` proposals now land hourly with `upwork_status='Offered'` — an
    offer card is one rule away.
-7. **Use case D — contracts through the MCP (Phase 0.3) — BUILT 2026-08-26 19:28 (`4a4aee6`),
+7. **Use case D — contracts through the MCP (Phase 0.3) — BUILT 2026-08-26 19:28 (`bbccd1e`),
    his 19:18 "0.3 — contracts".** The agency org REFUSES `list_contracts search` ("you don't
    have access to this data" — the GraphQL's wall, one tool over); the personal org lists
    every contract he holds, the agency's included (Ioannis P 43406906, Brandi Jordan 44099615
@@ -966,7 +966,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    0 paused.** The proposals round the same hour: 6 nodes at the cursor boundaries, nothing
    new — and one false "disagreement": the 17 Aug Royan proposal sits in the Hired, Declined
    AND Withdrawn lists at once; the first list gave Expired, the Declined list wanted Lost.
-   A job-level list never argues with a verdict already given now (`896d3ec`) — only
+   A job-level list never argues with a verdict already given now (`5139c4d`) — only
    Upwork's own status field can.
    ◆ For him: read `get` for every active contract once (34 reads) and for each new one after
    — type, rate, job id, milestones (Money's "hours worked, not yet invoiced" is `timesheets`,
@@ -999,7 +999,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    of 16:53.
 
 8. **Use cases E + G + H — money in flight and the dashboard heartbeat — BUILT 2026-08-26
-   23:45 (`523dbe5` `5e74259` `7b0d773`), his 22:30 pick ("money in flight + offers",
+   23:45 (`22c48c8` `8fee56f` `1ce75b2`), his 22:30 pick ("money in flight + offers",
    "the dashboard heartbeat"; he explicitly did NOT pick the hiring side).**
    `upwork_pulse` (new task, :05/:20/:35/:50, `modules/upwork/feeds/mcp_pulse.py`) reads
    `get_freelancer_dashboard check` FIRST and fires a detail read only where a count is
@@ -1042,7 +1042,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    still marked ACTIVE (537 h/week committed on paper); the hiring side (client org).
 
 9. **Everything left on the MCP list, built — use case F, the last Chrome rail retired,
-   the hiring side, the contracts nobody closed (`295d5d0` `99c0105`, 2026-08-27
+   the hiring side, the contracts nobody closed (`131b9d2` `afa8b2d`, 2026-08-27
    00:00-02:00), on his "let's build out everything that's left to build" +
    "prioritize the messages first".**
 
@@ -1117,7 +1117,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
    ◆ **left for him:** the anomalies (he chose to leave 599-606 open); the 17 idle contracts
    are his to end on Upwork; `upwork_outcomes` stays STALE-warned until the 30 Aug run.
 
-10. **One person, several rooms (`b53d23d` `53e5d4b`, 2026-08-27 01:00-01:30), on his
+10. **One person, several rooms (`087bed0` `c91b076`, 2026-08-27 01:00-01:30), on his
     "if I'm talking with Tanya and we have an old chat, but now they send out a new
     contract and it starts the new chat, the context moves on to the new chat — but in the
     Today tab we are still seeing if my reply was pending on the old chat."**
@@ -1166,7 +1166,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     **THE OUTCOME EMAIL SENT FOR THE FIRST TIME EVER** at 01:11, because p42 gave the rail
     `catch_up` — the catch-up delivered week W34 (4 proposals) to contact@. Every item read
     "no form link — rails/REGISTRY.md form_url is missing", and the registry's form_url was
-    fine: it is the PROPOSAL that has no Airtable record. `53e5d4b` makes the email name the
+    fine: it is the PROPOSAL that has no Airtable record. `c91b076` makes the email name the
     repair that applies. ◆ **for him: 309 of his 382 closed proposals have no Airtable
     record** — every one imported through the MCP by use case C — so the weekly capture
     cannot ask about them at all until the mirror covers MCP-imported rows.
@@ -1177,7 +1177,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     day, closing tomorrow, payment expected Monday. (v3 has the contract filed `personal`;
     it marks agency from the ledger's evidence, so it corrects itself when the money lands.)
 
-11. **Two corrections from him, both right (`e24e2ae` `bc08740`, 2026-08-27 evening).**
+11. **Two corrections from him, both right (`9aab0b4` `b466489`, 2026-08-27 evening).**
 
     **(a) "mustafa just funded and released the 1500 milestone" — and v3 said $3,000 was still
     unfunded.** A forced re-read proved him right: milestone 2 is Paid, funded AND released,
@@ -1217,7 +1217,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
-- 2026-10-23 · **The crowd check (`0b146d1`).** His worry: "in the past 20 days or 25
+- 2026-10-23 · **The crowd check (`3e8ae55`).** His worry: "in the past 20 days or 25
   days ... we haven't gotten a single reply ... more than 95% of the proposals are not
   having been open", Upwork says the account is healthy, and was it the MCP, HubSpot,
   or speed? The diagnosis, from every proposal since March and Upwork read directly:
@@ -1244,7 +1244,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   catch_up, pulse) until it was applied - my ordering mistake, recorded so it is not
   repeated: apply a migration the moment it is written. First live recheck 03:45: 8
   cards read, 5 renamed, 2 he had already skipped left alone, 1 not found.
-- 2026-10-18 · **The scan runs every 15 minutes (`342ef00`).** His words: "can we do scann
+- 2026-10-18 · **The scan runs every 15 minutes (`cc9add5`).** His words: "can we do scann
   for job posts more frequently like every 15 or 30 minutes so that we can apply quickly".
   Put to him before building: hourly was our own margin under the API & MCP Terms §4.1
   line ("enumerate or continuously monitor"), and four times the searching moves toward
@@ -1262,7 +1262,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   a quiet quarter hour ends skipped_empty, which does not count as a success. Law 3 above
   now says the cadence is his.
 - 2026-10-18 · **Budget floors are firm again; a placeholder price is the only way past
-  (`83c74b2`).** His words: "if the budget mentioned by client less that 500$ fixed price
+  (`3b422f2`).** His words: "if the budget mentioned by client less that 500$ fixed price
   simply skip. unless in the proposla they have mentioned its a placehodler price / same
   for hourly we need 30$/hr to be in range they provided if not skip those." This reverses
   the 23 Sep exemption that let a platform in the title lift the floors. Measured over its
@@ -1277,7 +1277,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   ($200, $100, $50 fixed; $10/hr; $5-10/hr) wait on his word, and two low-budget cards
   marked applied / interview with no proposal on record (14zervyujfu, 14zervyuxc9) are
   left as they are.
-- 2026-10-14 · **Client spend was lost for 16 days (`5b97bb0`).** His question: why did
+- 2026-10-14 · **Client spend was lost for 16 days (`489144f`).** His question: why did
   "AI Specialist for Business Automation" (2110469361463140393) score 16? Skill fit 3 (no
   tool named, all-AI tags), budget 2 ($19-40/hr), and client quality 2 because the scorer
   read "no spend recorded" for a client with $65,990.74 spent, 33 hires and 5.0 stars.
@@ -1328,7 +1328,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
 - 2026-10-09 (13:15 IST) · **Back up; three agents switched on; 28+ to the ICP list.** He
   renewed both Upwork sign-ins (13:12/13:13) and added AI credit. His answers: "All three
   now" — the conversation reader, the win-back drafter and the progress email are
-  installed (`f2c86e2`; first runs 13:28: the email sent, five check-in drafts, the reader
+  installed (`d9348d4`; first runs 13:28: the email sent, five check-in drafts, the reader
   reading); the Sunday progress email stays its own email. Scanner: "28+ go into ICP and
   the rest go in hot leads" — `config.ICP_SCORE_MIN` (= the 28 Loom bar) routes a top-band
   card to the ICP list, 19–27 stays Hot, nothing is dropped. Globaltize: **keep as is** —
@@ -1336,7 +1336,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   the conversation reader skips them (his earlier answer). The read-only pull started
   13:29 (31 closed contracts added; the 97 conversations' messages coming in).
 - 2026-10-09 (overnight build) · **The sales engine, built from what was already stored**
-  (design and state: `docs/upwork/sales-engine.md`; `548588b`, `7810efc`). A top-level
+  (design and state: `docs/upwork/sales-engine.md`; `d8d9e51`, `db5ec45`). A top-level
   **Pipeline** tab (Flow · Scanner · Proposals · Conversations · After the hire · Tests ·
   Agents) on `/api/lifecycle` beside `/api/upwork/funnel`; the Upwork tab's Funnel and
   Analysis moved into it (old links redirect; `#/pipeline` is a tab again, no longer an
@@ -1373,7 +1373,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   (inside the existing outcome email); a test is called at **~40 per side + 7 days**, max 6
   weeks. Supersedes "tests detected after the fact only" (8 Oct): tests are planned and
   tagged at drafting; detection stays as the check. Celsius Herbs is one client
-  (`5ee01ef`).
+  (`9507744`).
 - 2026-10-08 (23:30 IST) · Hipp Health was referred by Alex Apfel of Horizons ABA. The
   seven nameless bank deposits ($721.37, Aug 2025 – Jun 2026) are Rasheed Khan's ("All 7
   are Rasheed"): booked row by row, never as a rule on the processor's pooled account.
@@ -1384,7 +1384,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   Mandiri unknown, "you can ignore". Declared origin beats the records, except a client a
   proposal of ours won.
 - 2026-10-08 (22:30 IST) · One client, one name everywhere: the client registry has the
-  last word on every ledger name (`abac85e`), on his "yes please merge them". Origin facts
+  last word on every ledger name (`95756ba`), on his "yes please merge them". Origin facts
   from him: Remote Office Australia is Diat Khan (an Upwork client); Mitosis Consulting came
   through a referral from Simyon Pinsky and is the only referral client — never Upwork money.
 - 2026-10-08 (21:35 IST) · Funnel money = everything a won client paid since, ON OR OFF
@@ -1392,7 +1392,7 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   and agency alike, identity through the client registry. A client counts as "found on
   Upwork" from the month of the first proposal, invitation, contract or Upwork payment.
   Open: apply the same registry merge on the Clients tab (it still splits Globaltize in three).
-- 2026-10-08 (evening) · Phase 2 Loop 1 started as the Funnel sub-tab (`2bd5a71`). His
+- 2026-10-08 (evening) · Phase 2 Loop 1 started as the Funnel sub-tab (`a72cb79`). His
   answers: Funnel inside the Upwork tab; dollars allowed on the Funnel view (connects spend
   and revenue per won client, from the ledger, doctor-gated), amending "no revenue on the
   tab" for this view; "opened" kept current by a daily Chrome rail on the Mac; tests detected
@@ -1413,37 +1413,37 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   `SCORE_STANDARD`, `SCORE_BANDS`, `score_band()`, `score_band_label()` in config; five readers
   bind config; `tests/test_score_bands.py` greps them.
 - 2026-08-25 14:30 · Abhijeet: "do 1-4 from your end" → the chat applied and committed the
-  patch (`39faf95`) and committed the sync fix + map + brief (`42c9eaf`) via the device shell;
+  patch (`a2eae17`) and committed the sync fix + map + brief (`b724944`) via the device shell;
   the DB write (snoozes) and `bin/cockpit reload` stay his (Mac-only by the standing caution
   / launchctl); form link left for a one-click verification.
 - 2026-08-25 18:31–19:25 · "run scoring pass" → migration 028 + `scripts/mcp_shadow_score.py`
-  (`f83e0b8`), pass run twice (lock collision, finding 12), results in 0e. "start with phase 1
+  (`4682122`), pass run twice (lock collision, finding 12), results in 0e. "start with phase 1
   in the meantime" → the four tab decisions (decision 10) and `docs/upwork/PHASE1_TAB_SPEC.md`.
   Findings 12–14 recorded. Threshold evidence tabled under Open decisions; the hot bar and
   the flip volume are one decision, his.
 - 2026-08-25 19:30–20:25 · "any questions or get started?" → four answers (decision 11) →
-  `ce45a21` (hot bar 20, rails registered, push retry, outcome email sends) and `ec5de3d`
+  `34f26da` (hot bar 20, rails registered, push retry, outcome email sends) and `de02b3c`
   (the Upwork reader, drills, shared card builder). The Loom-flag rule change he approved
   was measured before shipping (151 jobs → cards) and turned into a question instead.
 - 2026-08-25 20:40–22:50 · "what's next" → 0.1 first, one read-only MCP capture, only
-  post-flip posts at the flip, Loom card "keep as is for now". → `6b5543e` the provider
+  post-flip posts at the flip, Loom card "keep as is for now". → `39b14b5` the provider
   path (not flipped) + fixtures; the rate limit found by the dry round and paced the same
   evening. The flip is a checklist awaiting his go (Next actions 1).
 - 2026-08-25 23:00–23:25 · "I will be there at the 12:15 scan so we can flip it after, so
   let's build the UI then" → the flip is scheduled for 2026-08-26 after the 12:15 scan with
-  him present; the Phase 1 section built and committed tonight (`7279345`, 0j). Pipeline is
+  him present; the Phase 1 section built and committed tonight (`ff64a9d`, 0j). Pipeline is
   now the Upwork tab; its charts live in the Analysis fold.
 - 2026-08-25 23:50 – 08-26 00:40 · "I don't like the UI at all … too complicated … the
   part I hate most is the client comms" → three mockups, four answers (decision 12), the tab
   rebuilt as Inbox / Jobs / Health / Analysis with the conversation row shared with Today
-  (`a10b421`, 0k). Suite 1,718 OK. Cockpit reloaded; his eyes are the acceptance test.
-- 2026-08-26 03:45–04:20 · "let's flip it now anyways" → THE FLIP at 03:46 (`534283d`),
+  (`c296b16`, 0k). Suite 1,718 OK. Cockpit reloaded; his eyes are the acceptance test.
+- 2026-08-26 03:45–04:20 · "let's flip it now anyways" → THE FLIP at 03:46 (`9310382`),
   first MCP round 04:15 clean (Next actions 1). "add a manual trigger button for every
-  system" → Run now everywhere (`7f7d710`, 0l). Both watched to completion in the chat.
+  system" → Run now everywhere (`21cd37a`, 0l). Both watched to completion in the chat.
 - 2026-08-26 04:48–05:15 · "not pulling the latest" → a stale pending draft is redrafted
-  (`1c6e4d5`, 0m). "he did send me an email … do you not have access to it" → three
+  (`2801385`, 0m). "he did send me an email … do you not have access to it" → three
   options asked, his pick "link it to the conversation and use it" → `room_links`
-  (`9d2102b`, 0n): a deterministic name match, never a model guess; ambiguity links
+  (`6c7e080`, 0n): a deterministic name match, never a model guess; ambiguity links
   nothing; Review keeps seeing every linked mail. Second MCP round (05:15) clean.
 - 2026-08-26 05:20 · He goes to bed with an overnight list (this chat works alone; every
   design choice below is recorded as a note for him, not assumed silently): (a) a promise
@@ -1456,24 +1456,24 @@ the Upwork chat, write the answer back into this brief, and note who asked.
   from me or what?" → status (flip holds, DNS outage 12:15–13:15 self-healed, promises live,
   $1.65 spent) and three questions → "Yes — the three for transactions + connects" (the
   captures, 16:20), "Reply-type promises only" (0p), "Finish use case A — retire the CSV
-  import" (Next actions 5, `861b642`: the rail built and scheduled, migration 030, the twins
+  import" (Next actions 5, `21e71ba`: the rail built and scheduled, migration 030, the twins
   doctor check, connects in shadow). Config diff (SOURCES entry, `MCP_CONNECTS_SINCE`,
   comments) applied under his standing approval. Five ◆ decisions recorded under 5 (dates,
   withdrawals, two ledger readings, the summary call, the Chrome connects rail) — asked,
   not assumed.
 - 2026-08-26 17:55 · "ok so what's next now. do you need anything from me or what?" → four
   answers: **use case C (proposals, 0.2) next**; the `summary` capture (run 17:57); both
-  ledger bucket fixes; the GraphQL transactions pass retired. Built as `1ed25ea` (summary
+  ledger bucket fixes; the GraphQL transactions pass retired. Built as `a494389` (summary
   tie-out, migration 031; pnl rules; the importer's withdrawal hold lifted) before starting C.
-- 2026-08-26 18:25 · Use case C built (`f231295`, Next actions 6): the hourly sync lists every
+- 2026-08-26 18:25 · Use case C built (`f1cc6d7`, Next actions 6): the hourly sync lists every
   proposal by status through the MCP; decision 4's map writes Won / Lost / Withdrawn /
   Interview, never flips a terminal verdict; a proposal row counts as applied on the Jobs flow.
   First live round on his word.
 - 2026-08-26 19:05 · The cross-tab of the two rounds → "Expired / Lost as proposed" (the
   second half of decision 4's map, `MCP_PROPOSAL_LIST_MAP`) and "hourly is fine" (the
-  proposals pass stays at :45). `0569cb1`.
+  proposals pass stays at :45). `1926b64`.
 - 2026-08-26 19:18 · "what do you need from me?" → "0.3 — contracts through the MCP" and
   "flip the April row to Won" (done by hand with an audit row: Brandi Jordan / AI Automation
   Specialist, hired 15 Jul; Won is now 43). The agency org refused the contracts search; his
   "yes, page the personal org" → 4 reads, 34 active contracts, ONE TCC contract. Use case D
-  built (`4a4aee6`, Next actions 7).
+  built (`bbccd1e`, Next actions 7).

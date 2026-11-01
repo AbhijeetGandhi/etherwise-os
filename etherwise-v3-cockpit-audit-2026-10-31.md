@@ -4,8 +4,8 @@
 chat after walking all 33 cockpit views and reading the live DB (30 Oct 18:30 IST). Visual version: the Cowork
 artifact `cockpit-audit-2026-10-31`. Raw numbers: `outputs/audit/data-findings.md` in that session.
 
-**Status: BUILT 2026-11-01 overnight** (the ops chat itself, commits `ef3bc15` `f7c69f5` `788bce9` `38e4a52`
-`d2b4485` + batch F). Measured after: Today 45 → 14 cards · AM brief commitments 158 → 21 lines, grouped ·
+**Status: BUILT 2026-11-01 overnight** (the ops chat itself, commits `5eb2ca0` `beac02e` `e08c11f` `0a4acb0`
+`cd71806` + batch F). Measured after: Today 45 → 14 cards · AM brief commitments 158 → 21 lines, grouped ·
 Review 79 → 20 · anomalies 3,270 → 36 · 12 leads on day one · 31 launchd jobs (was 36). See BUILD_BRIEF.md for
 the entry and the four things left for him. Items 3.4 (Activity merge) was NOT built — he kept both views.
 
