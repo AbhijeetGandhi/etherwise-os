@@ -1,6 +1,6 @@
 # Remotual — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 31 client facts (31 trusted) from 3 sources._
+_Compiled 2026-11-01 05:18 IST · 32 client facts (32 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -10,6 +10,7 @@ _Compiled 2026-08-21 14:09 IST · 31 client facts (31 trusted) from 3 sources._
 
 ## The numbers
 
+- Contract: Mastermind of AI Automation — status CLOSED. [CONFIRMED · CRM:contracts/38155369]
 - Revenue to date (GROSS, billed): $24,952.63 across 28 revenue transactions (2024-08-27 → 2026-01-16) — Upwork $300.00, direct $24,652.63. [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
 - Revenue to date (NET, received after Upwork fees and tax): $24,914.23 — gross $24,952.63 less $30.00 Upwork service fees, $8.40 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 

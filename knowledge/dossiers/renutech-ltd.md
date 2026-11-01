@@ -1,6 +1,6 @@
 # Renutech Ltd — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 102 client facts (102 trusted) from 9 sources._
+_Compiled 2026-11-01 05:18 IST · 102 client facts (102 trusted) from 9 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

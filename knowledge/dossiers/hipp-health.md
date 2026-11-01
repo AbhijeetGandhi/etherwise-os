@@ -1,6 +1,6 @@
 # Hipp Health — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 191 client facts (186 trusted) from 19 sources._
+_Compiled 2026-11-01 05:18 IST · 191 client facts (186 trusted) from 19 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

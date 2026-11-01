@@ -1,6 +1,6 @@
 # Patrick Nesbitt — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 26 client facts (26 trusted) from 2 sources._
+_Compiled 2026-11-01 05:18 IST · 28 client facts (28 trusted) from 2 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -13,6 +13,8 @@ _Compiled 2026-08-21 14:09 IST · 26 client facts (26 trusted) from 2 sources._
 
 ## The numbers
 
+- Contract: AI & AUTOMATION SPECIALIST | Make.com | Airtable | API's | Attention to Detail — status CLOSED. [CONFIRMED · CRM:contracts/39523290]
+- Contract: AI & Automation Consulting — status CLOSED. [CONFIRMED · CRM:contracts/40248263]
 - Revenue to date (GROSS, billed): $1,976.32 across 10 revenue transactions (2025-01-26 → 2025-04-12). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
 - Revenue to date (NET, received after Upwork fees and tax): $1,585.82 — gross $1,976.32 less $183.33 refunded, $179.29 Upwork service fees, $27.88 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The Posadas hotel brand has a total of 196 hotels that could ultimately be impacted by the automation rollout. [CONFIRMED · fathom/48927603 @ 00:09:09 - 'The hotel has the whole brand, it has 196 hotels we can impact.']

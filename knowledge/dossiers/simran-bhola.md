@@ -1,6 +1,6 @@
 # Simran Bhola — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 38 client facts (38 trusted) from 3 sources._
+_Compiled 2026-11-01 05:18 IST · 39 client facts (39 trusted) from 4 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -14,6 +14,7 @@ _Compiled 2026-08-21 14:09 IST · 38 client facts (38 trusted) from 3 sources._
 
 - Abhijeet estimates the CRM integration will take a couple of hours to build, and the AI audio analysis component a couple of hours; overall, one day is more than enough per task once the front end is ready. [CONFIRMED · fathom/54780403 @ 00:13:02]
 - Approximately 6 audio sample files (2 per band: low, medium, high) of people saying 'I use SaaS' are needed to begin building and testing the AI analysis. [CONFIRMED · fathom/55718345 @ 00:07:13]
+- Contract: Voice Agent Expert (Elevenlabs conversational AI) — status CLOSED. [CONFIRMED · CRM:contracts/40205226]
 - Revenue to date (GROSS, billed): $10.00 across 1 revenue transaction (2025-04-18 → 2025-04-18). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
 - Revenue to date (NET, received after Upwork fees and tax): $8.99 — gross $10.00 less $1.00 Upwork service fees, $0.01 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - The client has 1.8 lakh (180,000) retailer stores in India. [CONFIRMED · fathom/54780403 @ 00:01:00]
@@ -71,3 +72,4 @@ _Compiled 2026-08-21 14:09 IST · 38 client facts (38 trusted) from 3 sources._
 - `crm/simran-bhola` · — · crm · CRM numbers — Simran Bhola
 - `fathom/54780403` · 2025-04-01 · fathom · Impromptu Zoom Meeting
 - `fathom/55718345` · 2025-04-06 · fathom · Impromptu Google Meet Meeting
+- `loom/43b897457b544489b24e6c7c882717db` · 2026-10-06 · loom · Manual Scoring Button Workflow Demo

@@ -1,8 +1,12 @@
 # Dr Rajiv Siotia — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 0 client facts (0 trusted) from 1 sources._
+_Compiled 2026-11-01 05:18 IST · 1 client facts (1 trusted) from 1 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
+
+## The numbers
+
+- Contract: Email Automation Using Make.com And Airtable — status ACTIVE. [CONFIRMED · CRM:contracts/39193235]
 
 ## Sources
 

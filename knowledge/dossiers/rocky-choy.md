@@ -1,13 +1,20 @@
 # Rocky Choy — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 19 client facts (19 trusted) from 2 sources._
+_Compiled 2026-11-01 05:18 IST · 106 client facts (106 trusted) from 28 sources · 101 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## Overview
 
 - Cross-client example: Abhijeet built and has been maintaining for ~6 months a complex Make scenario for a coaching business that uses Calendly, Airtable (as CRM), and Slack notifications, routing bookings to different team members across multiple calendars. Volume as of ~June 10 was around 2,025 bookings. [CONFIRMED · fathom/153768286 @ 00:11:56]
+- Each team member creates their own tickets in Airtable, assigns themselves as owner, and then sends to Amanda for review; there is no top-down ticket assignment process currently. [CONFIRMED · fathom/177314361 @ 00:11:33 – 00:11:52]
+- For staffing/recruitment client, built two platforms: a dashboard (dashboard.global.com) and a payment platform (GlobalTiesPay) [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:01:15 - 'we have actually built two platforms for them. So one is the dashboard.global.com']
+- Recruitment client uses HubSpot as their CRM [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:03:15 - 'So they use HubSpot as a CRM']
+- Sales dashboard UI has been implemented with feedback-based design updates to match existing tool design patterns [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:00:15 - 'I have implemented the UI feedback that you provided']
+- The client (Beglobic/Big Lab) is undergoing a CRM restructuring in HubSpot, aiming to properly link Company, Contact, and Deal objects so marketing campaigns and metrics are actionable. Previously only deals were being created; contacts were only added approximately two months ago and companies were rarely created. [CONFIRMED · fathom/182668031 @ 00:01:35 – 'this whole, as you can guess from the name, like the CRM restructuring, it's really like a restructure']
 - The client (Rocky/Richard) runs a photo company and is also a photographer. He uses Calendly as a booking system connected to Google Calendar via a Make scenario built from a template. [CONFIRMED · fathom/153768286 @ 00:03:59]
+- The client requires a HubSpot data cleanup and reconciliation project to correctly link contacts, companies, and deals — covering both historical records (backfill) and new incoming records going forward. [CONFIRMED · fathom/180491980 @ It's for all the deals because we have these contacts that we have to kind of assign to everything. So it's for the previous ones and now also for the new ones coming in.]
+- The client was previously tracking tasks manually in a spreadsheet with columns for task name, details, type, status, priority, and comments/questions for Amanda; the goal is to migrate this to Airtable. [CONFIRMED · fathom/177314361 @ 00:00:33 – 00:01:00]
 - The client's current Make scenario has a duplicate-booking bug: re-running the scenario creates double entries in Google Calendar, and edits in Calendly also result in duplicated events in Google Calendar. [CONFIRMED · fathom/153768286 @ 00:01:38]
 
 ## The numbers
@@ -15,36 +22,156 @@ _Compiled 2026-08-21 14:09 IST · 19 client facts (19 trusted) from 2 sources._
 - Abhijeet estimates the fix will take approximately 3–5 hours: ~2 hours to build and ~1–2 hours for testing edge cases. [CONFIRMED · fathom/153768286 @ 00:10:50]
 - Abhijeet states he has built more than 300 automations using Make over the past two years. [CONFIRMED · fathom/153768286 @ 00:14:44]
 - Abhijeet's hourly rate is $40/hour, putting the estimated project cost at approximately $200. [CONFIRMED · fathom/153768286 @ 00:11:19]
+- As of the call, HubSpot contains approximately 20,000 deals (one per product purchased). Contacts have only been created for roughly the last two months, covering approximately 20% of deals. Almost no Company objects exist in a structured way. [CONFIRMED · fathom/182668031 @ 00:05:13 – 'if there are 20,000 products purchased, let's say, we only have the information about, okay, these are the 20,000 products purchased']
+- Audio intro tool on dashboard platform has received more than 2,000 recordings [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:09:30 - 'there are already more than 2,000 recordings that have come in']
+- Contract: AI & AUTOMATION SPECIALIST | Make.com | Airtable | API's | Attention to Detail — status CLOSED. [CONFIRMED · CRM:contracts/39523290]
+- Contract: AI and Automation using make.com — status ACTIVE. [CONFIRMED · CRM:contracts/39523142]
+- Contract: AI automation architect(Airtable + make.com + Gohigh level + Evoto — status ACTIVE. [CONFIRMED · CRM:contracts/43986743]
+- Contract: Automate Proposal Creation in Canva using Make.com — status ACTIVE. [CONFIRMED · CRM:contracts/39606005]
+- Contract: Automation Expert make.com and monday — status CLOSED. [CONFIRMED · CRM:contracts/39756036]
+- Contract: Automation Expert to Build Lead Nurturing System Using Make.com, Vapi.ai, and Twilio SMS — status CLOSED. [CONFIRMED · CRM:contracts/38349356]
+- Contract: Automations & Systems | N8N, Make.com, GHL — status ACTIVE. [CONFIRMED · CRM:contracts/40800346]
+- Contract: Automations Developer — status CLOSED. [CONFIRMED · CRM:contracts/40293566]
+- Contract: Email Automation Using Make.com And Airtable — status ACTIVE. [CONFIRMED · CRM:contracts/39193235]
+- Contract: Make.com Automation Expert — status CLOSED. [CONFIRMED · CRM:contracts/41207650]
 - Contract: Make.com Expert Needed for Calendly → Google Calendar Integration — status CLOSED. [CONFIRMED · CRM:contracts/43941050]
-- Revenue to date (GROSS, billed): $309.00 across 2 revenue transactions (2026-07-03 → 2026-07-10). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $277.80 — gross $309.00 less $30.90 Upwork service fees, $0.30 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Contract: Make.com Expert Needed — AI-Powered Inbox Triage & Project Logging System — status ACTIVE. [CONFIRMED · CRM:contracts/43681034]
+- Contract: Make.com Workflow Specialist Needed for Training Creation — status ACTIVE. [CONFIRMED · CRM:contracts/38819558]
+- Contract: Make.com expert for scenario troubleshooting — status CLOSED. [CONFIRMED · CRM:contracts/40581936]
+- Contract: Make.com, GHL & API All-Rounder to build automations — status CLOSED. [CONFIRMED · CRM:contracts/40100566]
+- Contract: No-Code Automation Specialist (Make / n8n) — Ongoing Projects for Italian SMEs. — status CLOSED. [CONFIRMED · CRM:contracts/43157039]
+- Contract: Simplebookme connection with make - like Calendly — status CLOSED. [CONFIRMED · CRM:contracts/44362102]
+- Revenue to date (GROSS, billed): $38,674.98 across 122 revenue transactions (2024-09-15 → 2026-09-06). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $34,729.86 — gross $38,674.98 less $88.50 refunded, $3,854.54 Upwork service fees, $2.08 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## People
 
+- Amanda is the approver/reviewer role in the client's workflow; tasks are sent to her for review before deployment or before development begins. [CONFIRMED · fathom/177314361 @ 00:01:08 – 'I need her approval on maybe for deployment or I need some confirmation before I start my development']
+- Felix is responsible for fixing errors in the CRM structure/HOW document (HTML) and is expected to deliver an updated version shortly after this call. [CONFIRMED · fathom/181231474 @ 00:09:45 – 'Felix is fixing it now. I'll send you the newest one when we have it done.']
 - The client has a developer who is on holiday for one month, which is why he is seeking an external automation expert. [CONFIRMED · fathom/153768286 @ 00:02:19]
 - The client has freelance photographers he manually forwards bookings to; he does not yet have an automated flow to distribute bookings to freelancers. [CONFIRMED · fathom/153768286 @ 00:03:59]
+- The client user 'Div Singh' is logged into the Airtable interface as 'Dimenshi Chavan', indicating this may be a shared or alternate account credential. [CONFIRMED · fathom/177314361 @ 00:13:29 – 'you are signed in as Dimenshi Chavan']
 
 ## Architecture & systems
 
+- 'Incorporation Ongoing' stage is triggered when the customer pays for incorporation; 'Incorporation Completed' is triggered when the service has been fulfilled by the operations team. A 'Mature' sub-stage follows under certain conditions (not fully defined yet). [CONFIRMED · fathom/182668031 @ 00:12:05 – 'Incorporation ongoing is that when they pay for the incorporation... now we need to deliver the service']
+- A new Company Journey pipeline is being created in HubSpot specifically to track company-level lifecycle stages (MQL → SQL → Incorporation Ongoing → Incorporation Completed → Incorporation Completed Mature). This pipeline is separate from deal pipelines and is not affected by subsequent product purchases. [CONFIRMED · fathom/182668031 @ 00:04:48 – 'there is this company journey, like the new pipeline that we are creating, which is separately only for the company's status']
 - Abhijeet's approach: duplicate the client's existing Make scenario first, work on the copy, and request access to the Calendly booking link and Google Calendar account for testing. [CONFIRMED · fathom/153768286 @ 00:08:56]
+- Both parent companies and sub-companies (holding structure) can each have their own card in the Company Journey pipeline, depending on which legal entity is being incorporated. [CONFIRMED · fathom/182668031 @ 00:13:32 – 'if the sub company is being incorporated... that's the company that's going to be added here']
 - Calendly's unique event ID persists across all event state changes (created, rescheduled, deleted), making it a reliable identifier to look up and match events in Google Calendar. [CONFIRMED · fathom/153768286 @ 00:06:50]
+- Contact matching is required so that when a prospect from the MQL pipeline restarts their journey in the SQL pipeline (via a tool called 'Epiglaubic'/'Beglaubig'), they are linked to the same existing HubSpot contact rather than creating a duplicate. [CONFIRMED · fathom/181231474 @ 00:02:14 – 'if people start again at Epiglaubic for the qualified lead pipeline, that that's already in the same contact. That it's not the new one, that it's matched.']
+- Dashboard platform has separate dashboards for: recruitment team/recruiters, managers, hiring managers, sales team, revenue operations team, and marketing [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:05:45 - 'every team that this client has has their own dashboard and things to operate on']
+- Dashboard platform includes audio analysis capability to flag spam or missing information in recordings [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:09:45 - 'how many Flagged basically meaning that it is a spam, it does not have the right information']
+- Dashboard platform includes finance calculator for clients to finance payments [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:10:15 - 'there is Finance Calculator as well. So like if a client wants to finance their payments or anything like that']
+- Dashboard platform includes multi-step client onboarding form that automatically updates CRM records [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:07:30 - 'there is this client onboarding form that we have built...this is a multi-step process that is built out. And then that automatically updates the CRM and all the records']
+- Dashboard platform includes offer letter generator tool for automated offer letter creation and sending for signature [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:08:45 - 'another thing that I built recently is the offer letter generator...you can generate the offer letter and then offer letter you can send for the signature']
+- Dashboard platform includes payroll calculator tool that calculates payroll based on sales performance [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:06:30 - 'there is this payroll calculator, which basically based on the amount of sales that the client has done or the person has done, we calculate their payroll']
+- Deal objects represent individual product transactions (e.g. incorporation, business address). A single contact/company can have multiple deals. The deal pipeline is for sales team visibility and follow-up, not for company lifecycle tracking. [CONFIRMED · fathom/182668031 @ 00:02:55 – 'Deal is basically like, you can look at it as a one product transaction']
+- Decision made: the 'Products Interested' property will be moved from contact level to company level (and synced to deal level), because a single contact can be a founder of multiple companies and contact-level storage would cause data to be overwritten across company journeys. [CONFIRMED · fathom/181231474 @ 00:08:46 – 'we scrap it from contact level, we put it on a company and on deal level']
+- Each teammate has their own table within the Airtable base, and the dashboard has a per-user tab so each person can view only tasks assigned to them via a 'My Work' view. [CONFIRMED · fathom/177314361 @ 00:03:00 – 00:03:23]
+- For standard (non-holding) cases, the plan is to group contacts sharing the same email domain, create one HubSpot company per domain, and link all matching contacts and their deals to that company. [CONFIRMED · fathom/180491980 @ these are the five contacts who has emails that, you know, are the same company domain, maybe. And then we create just one company with that domain and, you know, link all those up.]
 - Key technical risk identified for the Calendly-to-Google Calendar integration: timezone mismatches across three systems (Calendly, Make, Google Calendar) when formatting datetime values. [CONFIRMED · fathom/153768286 @ 00:07:45]
+- Lead (company journey pipeline) and Deal are created in parallel at the qualified-lead stage: when a prospect starts the incorporation flow and submits their information, a Company, a Contact, and a Deal are all created simultaneously, and the Company enters the SQL stage of the company journey pipeline. [CONFIRMED · fathom/182668031 @ 00:11:52 – 'it's going to be the SQL to answer your question because now it's in the sales pipeline that they have built certain information']
+- Leads enter the MQL pipeline via a contact form; sales reps then manually create a new deal in the SQL pipeline when the prospect is ready to proceed. There are never direct purchases from the contact form. [CONFIRMED · fathom/181231474 @ 00:01:33 – 'that's the stream that comes in from the contact formula' / 00:02:00 – 'There's never a purchase from the contact formula']
+- Payment platform GlobalTiesPay built on top of WAP payment provider [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:11:00 - 'payment platform that we have built on top of the WAP, which is a payment provider of ours']
+- Payment platform includes identity verification, bank account management, payment tracking, and invoice management [CONFIRMED · https://www.loom.com/share/faa9af0f548842fb82d2feb625cd59d6 @ 0:11:30 - 'you can manage your bank account. You can verify your identity...You can look at the payments...you can look at the invoices']
 - Proposed fix for the client's Make scenario: add routers for three Calendly event types (created, cancelled, rescheduled), then check if the event already exists in Google Calendar using the Calendly event ID stored as metadata. If it exists, update it; if not, create a new event. [CONFIRMED · fathom/153768286 @ 00:04:35]
+- Proposed reconciliation logic: use Claude (AI) to parse Supabase exports and identify company, parent company, and sub-company relationships; then match records to HubSpot via email or company name; update existing HubSpot linkings or create new records and associations where missing. [CONFIRMED · fathom/180491980 @ maybe we can use Claude to identify like, you know, what could be a company, what could be a parent company, what could be sub companies... find the same records. What's inside of the HubSpot, either through email or company name. So if they exist, then we just update the linking. If they don't exist, then we create and then create the linkings.]
+- Sales dashboard contains Fireflies link (routes to call recording) and Deal Card link (routes to HubSpot) [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:01:35 - 'Fireflies takes you to the recording, Deal Card takes you to the HubSpot']
+- Sales dashboard design uses variable-width blocks rather than full-screen layout to prevent customer content from becoming multiline and hard to read [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:00:30 - 'this block is not full screen...the customer content inside of it becomes like very multiline']
+- Target HubSpot data model: Company (one-to-many Contacts), Company (one-to-many Deals), Contact (one-to-many Deals), and for holding structures a parent Company linked to a sub-Company (e.g. Alphabet → Google analogy). All four entity types must be created and linked on every new purchase event. [CONFIRMED · fathom/182668031 @ 00:04:26 – 'we want all these entities like company to be created, contact to be created, a company needs to be linked with the contact, company needs to be linked with the deal']
+- The 'Incorporation Ongoing' stage begins at purchase and ends when stamp capital (money) is paid. 'Completed' follows payment. 'Mature' is reached roughly a month after completion. Upsell stages do not change the Company Journey stage. [CONFIRMED · fathom/181231474 @ 00:04:38 – 'after purchase, it's not completed yet because there's still a registration' / 00:04:47 – 'once the stamp capital, the money is paid, then it comes into completed']
+- The Airtable setup separates a data layer (tables) from a UI/interface layer (dashboard); users operate only through the interface to avoid breaking the UI if table structure changes. [CONFIRMED · fathom/177314361 @ 00:09:14 – 'the main goal of this is that you never have to touch the data layer']
+- The client is implementing a 'Company Journey' lead pipeline in HubSpot with the following stages: MQL → Sales Qualified Lead → Incorporation Ongoing → Completed → Mature → Disqualified. [CONFIRMED · fathom/181231474 @ 00:03:55 – 00:05:06 – Lynn describes each stage from MQL through disqualified]
+- The client uses HubSpot CRM with a marketing qualified lead (MQL) pipeline and a sales qualified lead (SQL) pipeline as separate deal pipelines. [CONFIRMED · fathom/181231474 @ 00:01:22 – 'we have in the deal pipeline, we have the marketing qualified lead pipeline']
+- The client's HubSpot data model requires: holding companies stored as parent companies with child/operating companies beneath them, company-to-contact associations, contact-level properties, and deal-to-contact linkages. The parent/child holding company relationship structure is not yet built in the current Make.com automation. [CONFIRMED · fathom/180491980 @ Holdings for holding companies stored as a parent company and operating into the store. We can have multiple child-like examples... right now, as far as I know, through Make.com, we are not maintaining any of those relationships.]
+- The task-management automation requires two critical columns that must not be altered: 'Owner' (assignee) and 'Workflow Status'. Workflow Status values include at minimum: To-Do, In Progress, In Review, and a release/published status. [CONFIRMED · fathom/177314361 @ 00:06:04 – 00:08:59]
+- When a deal is created for a company, the 'Products Interested' values stored on the company object will be synced to the deal so salespeople can see them directly on the deal record. [CONFIRMED · fathom/181231474 @ 00:08:48 – 'if we put product interested on company and then every time a deal is created for that company, those products get synced up']
+- When a task's Workflow Status is set to 'In Review' (send for review), it automatically surfaces in Amanda's work tab for approval; if Amanda requests changes, the task automatically reverts to 'In Progress' and feedback appears on the ticket. [CONFIRMED · fathom/177314361 @ 00:07:51 – 00:08:30]
 
 ## Stack & tools
 
+- Live automations are built in Make.com and HubSpot native workflows. The source of truth for historical data is Supabase, from which property values will be read during the backfill. [CONFIRMED · fathom/182668031 @ 00:06:16 – 'the live automation that we have in make.com or let's say workflows in HubSpot']
+- Sales dashboard includes status filters, sales rep selection filters, creation-time filters, score filters (deposit), and date filters [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:01:00 - 'you have all the filters in here, like the status...you can select...time it was created...score filter...date as well']
+- Slack message integration for sales dashboard updated with new format; currently sending to testing channel before routing to sales calls scoring channel [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:01:50 - 'I've updated the Slack message...it's still sending to the testing, um, channel...then...starts sending it to the sales calls, um, scoring channel']
+- Supabase holds all historical transactional data for the client and is the source used to populate HubSpot properties during the backfill exercise. [CONFIRMED · fathom/182668031 @ 00:15:47 – 'from the Superbase, basically, because Superbase has all the data']
+- The agency uses Airtable as a standard task-management and workflow platform rolled out to each new teammate as an initial setup. [CONFIRMED · fathom/177314361 @ 00:15:19 – 'this will be a very initial setup, obviously, which we do for every teammate']
+- The client has a Supabase database that contains richer relationship data (contacts, companies, parent/child company structures) beyond what is currently reflected in HubSpot. [CONFIRMED · fathom/180491980 @ if those details are maintained inside of the super base, which I believe they are because just because I've seen some exports and there is a lot more details]
+- The client is using Notion as the working documentation hub, with screenshots and CRM structure documentation stored there. HTML/markdown deliverables are to be added into Notion. [CONFIRMED · fathom/181231474 @ 00:12:42 – 'the Notion, like we have the screenshots in there' / 00:13:30 – 'put the action plan maybe in to the notion']
+- The client uses HubSpot CRM and has a Superbase (Supabase) export available for reference. The Superbase export covers 2026 data only and is acknowledged to be not 100% accurate. [CONFIRMED · fathom/181231474 @ 00:12:03 – 'You have also still access to HubSpot and the Superbase experts' / 00:12:28 – 'the Superbase export was just for 2026. So they might not be quite accurate.']
+- The client uses Make.com for CRM automation into HubSpot. Make.com operations were fixed and stabilized around April (implied 2025/2026), and data quality in HubSpot prior to that fix is considered poor. [CONFIRMED · fathom/180491980 @ we started make operations, we fixed around like April. So I know there is data previous to that, that is like, you know, in HubSpot, the quality is not good.]
 - The client's current automation stack for this project is Make (formerly Integromat), Calendly, and Google Calendar only — no additional CRM or data storage is required. [CONFIRMED · fathom/153768286 @ 00:13:43]
+- The client's task-tracking system is built on Airtable, with a UI layer (marketing dashboard) sitting on top of the Airtable data layer so that users never directly interact with the underlying tables. [CONFIRMED · fathom/177314361 @ 00:02:57]
+
+## Timeline
+
+- Completion target for the full migration (backfill + live automation update) is within approximately one week from the time of this call. [CONFIRMED · fathom/182668031 @ 00:00:56 – 'how do we complete it within a week plus?']
+- Deposit referred feature is complete and live on main dev server, pending deployment to main [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:03:05 - 'this is done and...is live on the main dev server']
+- Meeting RSVP status feature merged to staging yesterday, merged to main/production today and is now live [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:02:45 - 'Yesterday it was merged to staging and then today it is merged to main branch...officially live on the production branch now']
+- Recommended interview question feature is in progress with Jay and expected to be ready early next week [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:03:50 - 'this is already in progress...something that Jay is, is taking on, so this would be ready early next week']
+- Sales dashboard PR to be raised and deployed to staging, then main branch [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:02:25 - 'I will raise a PR now, um, and then...it would be live on the staging and then eventually on the main']
+- Spear rocket feature is complete; pending items to be processed within next few minutes [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:03:15 - 'this one is done as well...we'll just let you know once all the pending ones are processed']
+- The Supabase export scope agreed upon is all of 2026 data, as Make.com automation was stabilized around April 2026 and data quality post-stabilization is considered reliable enough for reconciliation. [CONFIRMED · fathom/180491980 @ Maybe let's just do like, you know, last six months or maybe like all the data for 2026... that export for whole 2026 would give us the good idea of what's already in HubSpot and what's not.]
+- The migration plan has two phases: (1) backfill all 2026 historical data into the new HubSpot structure, then (2) update all live Make.com automations and HubSpot workflows so that new incoming data conforms to the same architecture going forward. [CONFIRMED · fathom/182668031 @ 00:06:12 – 'first we do like the backfill of all the data. And the second stage is like the live automation... we update all those']
+- The target scope for the data backfill is all 2026 data held in Supabase. The backfill serves as both a proof-of-concept for the new architecture and a one-time data migration to structure historical records. [CONFIRMED · fathom/182668031 @ 00:06:12 – 'the main goal of this whole thing is that for the whole 2026 data, which we have from the super base, we make sure that the HubSpot architecture is set up in that way']
 
 ## Commitments
 
 - Abhijeet will test the scenario independently first, then conduct a joint test with the client before going live with real customers. [CONFIRMED · fathom/153768286 @ 00:10:05]
+- Automate Firefly sales call link feature starting Monday; developer has existing session context from similar sales call dashboard ticket allowing quick completion [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:04:00 - 'this is something that I would start working on...it is very close to the current ticket that I worked for...I think I can finish it quickly...I'll pick it up on Monday']
+- Lynn (client side) committed to exporting full 2026 Supabase data and sending it to Abhijeet, who will then analyze it to develop reconciliation logic and follow up via message before the next call. [CONFIRMED · fathom/180491980 @ I'll get the experts from super base out and I'll send them to you... once I have that for the next, I'll just, you know, go through the data and just try and find if I can come up with any logic to do this reconciliation and yeah, I'll just drop your message and then we can chat again.]
+- Offloaded template generator approach to be reviewed on Monday before finalization and completion within next couple of days [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:03:35 - 'Maybe on Monday, let's quickly go through the approach before we finalize this...finish it within the next couple of days']
+- Offloaded template generator awaiting UI sample from client for team review before Monday implementation planning [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:03:30 - 'we are waiting for, you know, you to provide the UI sample...once that is finalized, just send me that']
+- Once Felix delivers the updated HTML for the HOW document, the agency will prepare a detailed implementation/action plan (as HTML or markdown) and add it to Notion, targeted for delivery by end of that day. [CONFIRMED · fathom/181231474 @ 00:13:13 – 'I'll just prepare like HTML and then put that in notion or like a markdown file or something I'll get that by the end of the day']
+- Plan to turn off make.com automation for sales dashboard to prevent duplicate reports when new bot starts sending messages [CONFIRMED · https://www.loom.com/share/24af5b4215c64184983adfbf4f09b469 @ 0:02:10 - 'I'm thinking that we turn off the make.com automation that we have...that would be then, you know, double reports']
+- The agency committed to setting up Div Singh's personal Airtable table and replicating their existing task columns by end of day the following day, based on a Google Sheet the client agreed to share. [CONFIRMED · fathom/177314361 @ 00:14:02 – 00:14:21]
+- The agency's stated ongoing offer to this client is to identify repetitive workflow steps that could be automated (e.g. pulling data between tools, sending scheduled emails) and build automations to free the client for higher-impact work. [CONFIRMED · fathom/177314361 @ 00:15:27 – 00:16:06]
 - The client intends to evaluate at least one other developer before making a hiring decision, and will inform Abhijeet of the outcome. [CONFIRMED · fathom/153768286 @ 00:15:49]
 
 ## Notable quotes
 
 - Client on automation demand: 'It's a good business, automation, I think. It's a never-ending story.' [CONFIRMED · fathom/153768286 @ 00:15:22]
 
+## Other
+
+- A detailed implementation plan document exists (including an HTML file shared on the day of the call) covering: new HubSpot properties per object, property sources from Supabase, object-to-object link types, and phased build steps. [CONFIRMED · fathom/182668031 @ 00:15:14 – 'if you go into the implementation plan here, you would find everything in here... I shared one more plan today, the HTML file']
+- Client products sold include company incorporation and business address services, sold primarily to companies (not individual consumers). Upsell campaigns are run at the company level, not the deal level. [CONFIRMED · fathom/182668031 @ 00:07:52 – 'we can always upsell to a company, not to a product purchase']
+
+## Open promises
+
+_From call transcripts; `who` says whose it is. Not the Today tab's list — this is everything still open for this client, including the team's._
+
+**Ours (Abhijeet)**
+
+- Get the automation/scenario sorted today (2026-10-05) · due 2026-10-05
+
 ## Sources
 
 - `crm/rocky-choy` · — · crm · CRM numbers — Rocky Choy
 - `fathom/153768286` · 2026-06-10 · fathom · Impromptu Zoom Meeting
+- `fathom/177314361` · 2026-08-27 · fathom · Impromptu Google Meet Meeting
+- `email/1a04335a345349cf` · 2026-08-27 · email · Still hitting a wall mid-build? 🎨
+- `loom/24af5b4215c64184983adfbf4f09b469` · 2026-08-28 · loom · Sales Dashboard Updates and Deployment Status
+- `email/1a0581e6a30864d2` · 2026-08-31 · email · We're listening — take our survey and help us prioritize 🌟🔠
+- `email/1a0675104fcf15e7` · 2026-09-03 · email · Who's on stage at Waves '26 🎤 and how to shape what Make builds next
+- `fathom/180491980` · 2026-09-07 · fathom · Impromptu Google Meet Meeting
+- `fathom/181231474` · 2026-09-09 · fathom · Impromptu Google Meet Meeting
+- `loom/51041f1e7de04ad08bbf0d05a9aaa10c` · 2026-09-09 · loom · Airtable and Make Automations for Purchase Orders
+- `email/1a08fb9f443107fd` · 2026-09-11 · email · Build Make automations inside ChatGPT 🤖 plus Custom Roles and AI models
+- `email/1a0a000923f82f2c` · 2026-09-14 · email · Maia in action, MCP vs. API, and what’s next 🤖🚀
+- `fathom/182668031` · 2026-09-14 · fathom · Impromptu Google Meet Meeting
+- `email/1a0afc8bae78d7ce` · 2026-09-17 · email · 12 sessions. 3 stages. 1 city. See what's waiting for you in Prague 🟪
+- `loom/ff004f4984dd4690985b04d445fecd2c` · 2026-09-29 · loom · Building 223+ Automations for Healthcare Client
+- `loom/faa9af0f548842fb82d2feb625cd59d6` · 2026-10-05 · loom · Custom Web SaaS Development Client Walkthrough
+- `email/1a11bb80e60dca79` · 2026-10-08 · email · Hear Make’s next chapter first 🚀 plus Maia for AI Agents and new AI models
+- `email/1a11c1d8437fa104` · 2026-10-08 · email · 🎓 Master the skills to create anything
+- `email/1a12b8c0117e5615` · 2026-10-11 · email · 🎓 Unlock the Power of Automation with Make Academy!
+- `email/1a1301b08d39df21` · 2026-10-12 · email · Build an AI hiring pipeline live 🎙️ plus scenario of the month and Meta replay
+- `loom/dc36d9ea7e974083a7e625601cacf099` · 2026-10-12 · loom · AI Scenario Issues and Manual Editing Problems
+- `email/1a13ac6c8318af07` · 2026-10-14 · email · Get your last-minute ticket for Waves ‘26 🎟️
+- `email/1a14f988a6395fbe` · 2026-10-18 · email · 🎓 Ready to Unlock Your Potential? Start Your Automation Journey Today!
+- `email/1a15426348dfb8d5` · 2026-10-19 · email · Waves ’26 comes to your screen tomorrow 🎥 plus Claude MCP and a live build
+- `loom/6e9d9c753c584e8ea25d24090e8aeb5e` · 2026-10-22 · loom · Videos | Library | Loom - 22 October 2026
+- `email/1a1689592b02080f` · 2026-10-23 · email · The keynote that named AI’s biggest blind spot 🧊
+- `loom/677c2f8abbb34fc3a32e4f8fe2833543` · 2026-10-25 · loom · Upwork Job Application, AI Automation Architecture
+- `email/1a178aeaf9418f6a` · 2026-10-26 · email · Invoices in seconds, better LinkedIn leads, and our newest announcements ✨

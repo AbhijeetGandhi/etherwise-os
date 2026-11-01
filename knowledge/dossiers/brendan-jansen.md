@@ -1,6 +1,6 @@
 # Brendan Jansen — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 37 client facts (37 trusted) from 3 sources._
+_Compiled 2026-11-01 05:17 IST · 37 client facts (37 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

@@ -1,6 +1,6 @@
 # Sunil Paul — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 107 client facts (107 trusted) from 8 sources._
+_Compiled 2026-11-01 05:18 IST · 108 client facts (108 trusted) from 8 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -19,6 +19,7 @@ _Compiled 2026-08-21 14:09 IST · 107 client facts (107 trusted) from 8 sources.
 
 - Abhijeet can commit approximately 10–12 hours per week; the client's near-term ceiling is around 20 hours per week but 10 hours per week is preferred initially. [CONFIRMED · fathom/60769759 @ 00:04:18]
 - Abhijeet estimates 4–5 hours to set up the entire current scope of the gratitude chain workflow. [CONFIRMED · fathom/61317495 @ 00:14:16 – 00:14:22]
+- Contract: Voice Platform Automation – No-Code / Low-Code Contractor — status ACTIVE. [CONFIRMED · CRM:contracts/40492460]
 - Current platform costs are effectively zero as the project is operating on free credits. [CONFIRMED · fathom/62084384 @ 00:06:21]
 - Make.com free plan limits active scenarios to 2 at a time; the client needs to upgrade to a Core (paid) plan to keep all scenarios active simultaneously. [CONFIRMED · fathom/61813233 @ 00:01:00 – 00:01:18]
 - Revenue to date (GROSS, billed): $845.67 across 3 revenue transactions (2025-05-11 → 2025-06-01). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]

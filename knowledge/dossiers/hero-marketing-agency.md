@@ -1,6 +1,6 @@
 # Hero Marketing Agency — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 68 client facts (68 trusted) from 7 sources · 28 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-01 05:18 IST · 68 client facts (68 trusted) from 7 sources · 28 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -24,8 +24,8 @@ _Compiled 2026-08-21 14:09 IST · 68 client facts (68 trusted) from 7 sources ·
 - Client's monday.com board has more than 200 columns [CONFIRMED · https://www.loom.com/share/25bc6b1e8b5743bfa533dd98e5425b9e @ they have a very, like, you know, complicated boards that we have set up, with more than 200 columns in each board]
 - Contract: Hero GHL landing pages — status ACTIVE. [CONFIRMED · CRM:contracts/43184286]
 - Joshua has two client testimonial videos completed and is working on a third. [CONFIRMED · fathom/138207143 @ I just downloaded. I have two testimonials done and I'm about to start on a third one.]
-- Revenue to date (GROSS, billed): $950.00 across 3 revenue transactions (2026-04-14 → 2026-06-07). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $1,054.05 — gross $950.00 less $105.00 Upwork service fees, $0.95 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $1,060.00 across 4 revenue transactions (2026-04-14 → 2026-09-14). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $1,152.94 — gross $1,060.00 less $94.00 Upwork service fees, $1.06 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 
 ## People
 

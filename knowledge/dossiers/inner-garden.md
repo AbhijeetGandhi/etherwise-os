@@ -1,11 +1,13 @@
 # inner.garden — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 2 client facts (2 trusted) from 1 sources._
+_Compiled 2026-11-01 05:18 IST · 4 client facts (4 trusted) from 1 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
 ## The numbers
 
+- Contract: Node / Next / React / Tailwind journal platform — status CLOSED. [CONFIRMED · CRM:contracts/37683592]
+- Contract: OpenAI script — status CLOSED. [CONFIRMED · CRM:contracts/37182507]
 - Revenue to date (GROSS, billed): $4,250.00 across 18 revenue transactions (2024-05-29 → 2025-02-21). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
 - Revenue to date (NET, received after Upwork fees and tax): $3,712.25 — gross $4,250.00 less $425.00 Upwork service fees, $112.75 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 

@@ -1,6 +1,6 @@
 # Endura Solutions — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 128 client facts (128 trusted) from 15 sources · 84 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-01 05:18 IST · 129 client facts (129 trusted) from 15 sources · 84 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -30,6 +30,7 @@ _Compiled 2026-08-21 14:09 IST · 128 client facts (128 trusted) from 15 sources
 
 - Abhijeet Gandhi estimated the Pipedrive/Lend Capital integration at 3–4 hours of work and quoted $100–$150 fixed price. [CONFIRMED · fathom/53091368 @ 00:11:39 – 'three to four hours for the complete automation. So it would be somewhere around $100 to $150']
 - Abhijeet Gandhi quoted approximately $50 (fixed price) for the Carbon Group email folder-routing automation. [CONFIRMED · fathom/53091368 @ 00:09:27 – 'for this type of email automation, it could be as low as somewhere around $50']
+- Contract: Email Automation, Monday and outlook calendar — status CLOSED. [CONFIRMED · CRM:contracts/40523785]
 - Contract: Make.com, GHL & API All-Rounder to build automations — status CLOSED. [CONFIRMED · CRM:contracts/40100566]
 - Contract: Pipedrive backend work — status ACTIVE. [CONFIRMED · CRM:contracts/40496773]
 - Revenue to date (GROSS, billed): $438.67 across 3 revenue transactions (2025-04-17 → 2025-10-12). [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]

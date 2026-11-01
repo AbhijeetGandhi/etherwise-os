@@ -1,6 +1,6 @@
 # NETFLY — Dossier
 
-_Compiled 2026-08-21 14:09 IST · 619 client facts (608 trusted) from 50 sources · 65 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-01 05:18 IST · 619 client facts (608 trusted) from 50 sources · 65 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -649,6 +649,20 @@ _Compiled 2026-08-21 14:09 IST · 619 client facts (608 trusted) from 50 sources
 - Web calls were incorrectly triggering contact updates in GoHighLevel automation because search queries were empty (no phone number provided), causing the system to update the most recently modified contact instead of the intended one [CONFIRMED · https://www.loom.com/share/b235ad0b2ed243c4a978bd29a8cdb788 @ when we search for the contact in inside of the go-high level, uhh, you can see the query string is empty because we don't have any phone number]
 - A new client is mentioned who wants work done; described as an Airtable client who wants 'no work' (likely no-code/low-code work). [_INFERRED_ · fathom/148259350 @ 00:10:18]
 - A potential issue identified: the 'other' categorization (when outcome is unclear) may be causing some leads to be incorrectly added to the opportunity log; this logic may need revision. [_INFERRED_ · https://www.loom.com/share/729affbeb4054c8cbcc569bc4ace7089 @ 3:45 - 3:55 'I think that could be the reason that you know some of the leaders are getting added to the to the go ahead. So let me know if we should keep it that way or do we want to change any logic regarding that.']
+
+## Open promises
+
+_From call transcripts; `who` says whose it is. Not the Today tab's list — this is everything still open for this client, including the team's._
+
+**Theirs (awaiting the client)**
+
+- Share the signings Google Sheet with Abhijeet/Etherwise as editor
+- Forward the Smart Advocate email (with endpoint, API documentation, and credentials) to Etherwise
+- Review the initial prompt shared for call analysis and provide notes/comments for adjustments
+- Review the updated Airtable edits and reply with the list of clients to onboard first
+- Share Kixi admin credentials via LastPass
+- Share the names of all client folders in Zapier with Abhijeet
+- Share Google sheets for Gibson Hill, Campion Law, and Casino Law Firm so they can be onboarded into the system
 
 ## Sources
 
