@@ -25,9 +25,11 @@ class TheRoutingTableIsComplete(unittest.TestCase):
         for i in mapping.INTENTS:
             self.assertIn(i, mapping.INTENT_ROUTE, i)
 
-    def test_destinations_are_only_the_three(self):
+    def test_destinations_are_only_the_four(self):
+        # 'lead' joined on 2026-11-01: a prospect's row goes to the leads table
+        # (migration 046) and the event is filed under it — not review, not noise
         self.assertEqual(set(mapping.INTENT_ROUTE.values()),
-                         {"review", "file", "drop"})
+                         {"review", "file", "drop", "lead"})
 
     def test_every_filed_intent_has_a_reason_prefix(self):
         """Filed is not deleted — it must land under a reason you can query."""
@@ -45,7 +47,10 @@ class TheRoutingTableIsComplete(unittest.TestCase):
 class WhereThingsGo(unittest.TestCase):
     def test_a_person_reaches_him(self):
         self.assertEqual(mapping.route("client_message"), "review")
-        self.assertEqual(mapping.route("lead"), "review")
+        # a lead reaches him too — on Today's "New leads" line and Pipeline ›
+        # Leads, through its own table, instead of sitting in a mapping queue
+        self.assertEqual(mapping.route("lead"), "lead")
+        self.assertEqual(mapping.route("lead", protected=True), "review")
 
     def test_notifications_are_filed_not_asked_about(self):
         """'Ryan Stomberg hired you for' reports a fact. 'Your ClickUp Plan

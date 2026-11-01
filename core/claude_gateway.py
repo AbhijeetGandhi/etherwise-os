@@ -292,6 +292,21 @@ def _log_usage(db_path: Optional[Path], called_at: str, ist_date: str,
              cost_usd, duration_ms, 0, stop_reason, error))
 
 
+def per_run_cap(task_name: Optional[str]) -> float:
+    """The per-run USD kill-switch for this task: a per-task override in
+    config.PER_RUN_MAX_USD_BY_TASK, else the global PER_RUN_MAX_USD.
+    Matched on the task name or any prefix of it ('upwork_scan' also covers
+    'upwork_scan_jobs'), longest prefix wins."""
+    by_task = getattr(config, "PER_RUN_MAX_USD_BY_TASK", {}) or {}
+    name = task_name or ""
+    best, best_len = None, -1
+    for k, v in by_task.items():
+        if name == k or name.startswith(k):
+            if len(k) > best_len:
+                best, best_len = float(v), len(k)
+    return best if best is not None else float(config.PER_RUN_MAX_USD)
+
+
 def _check_ceilings(db_path: Optional[Path], task_name: str,
                     ist_date: str) -> None:
     spent_today = _daily_spend(db_path, ist_date)
@@ -331,10 +346,10 @@ def _check_ceilings(db_path: Optional[Path], task_name: str,
             {"ist_date": month, "month": month,
              "spent_usd": round(spent_month, 2),
              "limit_usd": config.MONTHLY_SOFT_LIMIT_USD})
-    if _run_spent_usd >= config.PER_RUN_MAX_USD:
+    cap = per_run_cap(task_name)
+    if _run_spent_usd >= cap:
         raise ClaudeBudgetExceeded(
-            f"per-run cap: ${_run_spent_usd:.2f} >= "
-            f"${config.PER_RUN_MAX_USD:.2f}", scope="per_run")
+            f"per-run cap: ${_run_spent_usd:.2f} >= ${cap:.2f}", scope="per_run")
 
 
 # ── the door ──────────────────────────────────────────────────────────────────
@@ -380,7 +395,7 @@ def call(task_name: str, model_key: str, user_content: Any,
             if not isinstance(user_content, str):
                 raise GatewayError("credit route requires str user_content")
             remaining = round(
-                max(0.01, config.PER_RUN_MAX_USD - _run_spent_usd), 4)
+                max(0.01, per_run_cap(task_name) - _run_spent_usd), 4)
             try:
                 resp = _credit_transport(model, user_content, system, schema,
                                          remaining)

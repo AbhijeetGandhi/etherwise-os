@@ -183,13 +183,17 @@ class TheTenThatMustSurviveTests(Base):
     ignore' rule buries all of it."""
 
     SURVIVORS = ("evt:email:panda1", "evt:email:checkr1", "evt:email:checkr2",
-                 "evt:email:lead1", "evt:email:cold1")
+                 "evt:email:cold1")
 
     def test_none_of_them_is_excluded(self):
         self.seed()
         self.run_resweep()
         for eid in self.SURVIVORS:
             self.assertNotEqual(self.state_of(eid)["state"], "excluded", eid)
+        # the contact-form lead survives too — in the leads table (2026-11-01),
+        # filed under its lead id rather than left in a mapping queue
+        row = self.state_of("evt:email:lead1")
+        self.assertTrue((row["exclude_reason"] or "").startswith("filed:lead:"), row)
 
     def test_the_signed_agreement_is_proposed_to_its_client(self):
         self.seed()
@@ -206,11 +210,20 @@ class TheTenThatMustSurviveTests(Base):
         self.assertEqual(row["state"], "queued")
         self.assertIsNone(row["proposed_client_id"])
 
-    def test_the_contact_form_lead_is_untouched(self):
-        # same sender as 43 swept ops alerts — the rule cannot key on it
+    def test_the_contact_form_lead_becomes_a_lead(self):
+        # same sender as 43 swept ops alerts — the rule cannot key on the
+        # address alone. Since 2026-11-01 the form's SUBJECT shape makes it a
+        # LEAD: a row in `leads` with the person read off the form, the event
+        # filed under it. Never excluded as noise, never left as a question.
         self.seed()
         self.run_resweep()
-        self.assertEqual(self.state_of("evt:email:lead1")["state"], "queued")
+        row = self.state_of("evt:email:lead1")
+        self.assertTrue((row["exclude_reason"] or "").startswith("filed:lead:"), row)
+        with db.connect(self.dbp) as conn:
+            lead = conn.execute("SELECT name, company, email, source FROM leads"
+                                " WHERE event_id='evt:email:lead1'").fetchone()
+        self.assertEqual(tuple(lead), ("Nick Esquivel", "Globaltize",
+                                       "nick@globaltize.com", "website_form"))
 
 
 class OpsAlertTests(Base):
@@ -227,8 +240,11 @@ class OpsAlertTests(Base):
         address instead of the subject, this fails and the lead is lost."""
         self.seed()
         self.run_resweep()
-        self.assertEqual(self.state_of("evt:email:ops1")["state"], "excluded")
-        self.assertEqual(self.state_of("evt:email:lead1")["state"], "queued")
+        ops = self.state_of("evt:email:ops1")
+        self.assertEqual(ops["state"], "excluded")
+        self.assertIn("self-noise", ops["exclude_reason"])
+        lead = self.state_of("evt:email:lead1")
+        self.assertTrue((lead["exclude_reason"] or "").startswith("filed:lead:"), lead)
 
 
 class FingerprintTests(Base):
@@ -371,7 +387,7 @@ class PlanShapeTests(Base):
                                 learned=self.learned)
         self.assertTrue(plan)
         for _r, d in plan:
-            self.assertIn(d["action"], ("skip", "exclude", "propose", "keep"))
+            self.assertIn(d["action"], ("skip", "exclude", "propose", "keep", "lead"))
             self.assertTrue(d["rule"] and d["reason"])
 
     def test_a_row_with_no_sender_is_left_to_the_content_classifiers(self):

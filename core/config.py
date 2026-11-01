@@ -82,6 +82,13 @@ DAILY_SOFT_LIMIT_USD = 4.00                       # warning
 DAILY_HARD_LIMIT_USD = 8.00                       # ClaudeBudgetExceeded
 MONTHLY_SOFT_LIMIT_USD = 80.00                    # month-to-date WARN (Abhijeet's ~$100/mo target, 2026-07-01); non-blocking anomaly, not a hard cap. THE binding constraint now — the daily caps above are burst headroom, this is the budget.
 PER_RUN_MAX_USD = 0.50                            # single invocation kill-switch
+# Per-task overrides (2026-11-01, the cockpit audit). The scanner is the one
+# rail with a real workload per run — a round that scores and drafts a heavy
+# quarter-hour hit the $0.50 cap AFTER scoring and BEFORE carding on 157 of
+# 696 runs in a week (22.6%): the spend was made and the hot jobs were not
+# carded, so the next round repeated it. $0.75 fits the heavy rounds the
+# measurements show; the daily ceiling is unchanged and still the real brake.
+PER_RUN_MAX_USD_BY_TASK = {"upwork_scan": 0.75}
 PER_RUN_MAX_TOOL_CALLS = 40                       # NemoClaw lesson: die in-run, not at daily cap
 PER_RUN_MAX_OUTPUT_TOKENS = 8_000
 # Budget-contention guard (2026-06-22): the revenue-engine Upwork pipeline gets
