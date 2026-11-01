@@ -117,6 +117,49 @@ class TestBuildPaygRequest(GatewayTestCase):
             self.assertNotIn(banned, req)
         self.assertEqual(req["stop_sequences"], ["END"])  # non-banned extras pass
 
+    # Haiku 5.5 (the classify pin since 2026-11-02) thinks before it answers
+    # unless told how hard to try, and the thinking spends max_tokens. The
+    # gateway pins low effort and floors max_tokens so the 150-token intent
+    # call cannot end inside a thinking block with no text.
+    def test_adaptive_model_gets_low_effort_and_a_max_tokens_floor(self):
+        model = config.ADAPTIVE_THINKING_MODELS[0]
+        req = gw.build_payg_request(model=model, system=None, user_content="x",
+                                    max_tokens=150, schema=SCHEMA)
+        self.assertEqual(req["max_tokens"], config.ADAPTIVE_MIN_MAX_TOKENS)
+        self.assertEqual(req["output_config"]["effort"],
+                         config.ADAPTIVE_EFFORT_DEFAULT)
+        # the schema still rides in the same output_config
+        self.assertEqual(req["output_config"]["format"],
+                         {"type": "json_schema", "schema": SCHEMA})
+        self.assertNotIn("thinking", req)   # adaptive is the API default
+
+    def test_adaptive_floor_never_lowers_a_bigger_ask(self):
+        model = config.ADAPTIVE_THINKING_MODELS[0]
+        req = gw.build_payg_request(model=model, system=None, user_content="x",
+                                    max_tokens=config.ADAPTIVE_MIN_MAX_TOKENS + 1)
+        self.assertEqual(req["max_tokens"], config.ADAPTIVE_MIN_MAX_TOKENS + 1)
+
+    def test_callers_explicit_effort_wins(self):
+        model = config.ADAPTIVE_THINKING_MODELS[0]
+        req = gw.build_payg_request(
+            model=model, system=None, user_content="x", max_tokens=100,
+            extra={"output_config": {"effort": "high"}})
+        self.assertEqual(req["output_config"]["effort"], "high")
+
+    def test_non_adaptive_models_are_untouched(self):
+        req = gw.build_payg_request(model="claude-sonnet-4-6", system=None,
+                                    user_content="x", max_tokens=150)
+        self.assertEqual(req["max_tokens"], 150)
+        self.assertNotIn("output_config", req)
+
+    def test_the_classify_pin_is_an_adaptive_model_with_pricing(self):
+        pin = config.MODELS["classify"]
+        self.assertIn(pin, config.ADAPTIVE_THINKING_MODELS)
+        self.assertIn(pin, config.PRICING)
+        for chain in config.MODEL_FALLBACKS.values():
+            for m in chain:
+                self.assertIn(m, config.PRICING)
+
 
 class TestBuildCreditCmd(GatewayTestCase):
     def test_flags_and_env_scrub(self):
@@ -352,13 +395,13 @@ class TestModelOverride(GatewayTestCase):
     config.MODEL_FALLBACKS, so model strings still live only in config."""
 
     def test_override_replaces_resolved_model(self):
+        fallback = config.MODEL_FALLBACKS["claude-sonnet-4-6"][0]
         with mock.patch.object(gw, "_payg_transport",
                                return_value=fake_response()) as t:
-            result = self.call(model_override="claude-haiku-4-5-20251001")
-        self.assertEqual(t.call_args[0][0]["model"], "claude-haiku-4-5-20251001")
-        self.assertEqual(result.model, "claude-haiku-4-5-20251001")
-        self.assertEqual(self.usage_rows()[0]["model"],
-                         "claude-haiku-4-5-20251001")
+            result = self.call(model_override=fallback)
+        self.assertEqual(t.call_args[0][0]["model"], fallback)
+        self.assertEqual(result.model, fallback)
+        self.assertEqual(self.usage_rows()[0]["model"], fallback)
 
     def test_override_must_have_pricing(self):
         with self.assertRaises(gw.GatewayError):

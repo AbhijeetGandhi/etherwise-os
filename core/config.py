@@ -37,11 +37,16 @@ CREDENTIALS_DIR = Path(os.environ.get("ETHERWISE_CREDENTIALS", V2_ROOT / ".crede
 V2_DB_PATH = V2_ROOT / "etherwise.db"                # import + shadow-diff source
 
 # ── Models (pinned snapshots — see claude-platform-research-2026-06.md §1) ───
-# Dateless IDs are FIXED since the 4.6 generation; Haiku pinned by date.
-# Deprecation watch: Haiku 4.5 → review by 2026-08-15 (retires not before Oct 15).
+# Dateless IDs are FIXED since the 4.6 generation. Haiku moved from the dated
+# 4.5 snapshot to claude-haiku-5-5 on 2026-11-02 (Abhijeet: "switch now" — the
+# 4.5 pin was 2.5 months past its review date and could retire any day). 5.5
+# facts from the platform docs, read 2026-11-02: released 2026-10-07, retirement
+# not sooner than 2027-10-07, adaptive thinking ON by default (steered with
+# output_config.effort — see ADAPTIVE_THINKING_MODELS below), the same text
+# counts ~30% more tokens than on 4.5, and it is 10x cheaper per input token.
 MODELS = {
     "scoring":   "claude-sonnet-4-6",            # LOCKED (M1 design, 2026-06-12): Sonnet regardless of eval — revenue-engine quality over savings; eval is calibration-only
-    "classify":  "claude-haiku-4-5-20251001",    # thread/commitment/note classification
+    "classify":  "claude-haiku-5-5",             # thread/commitment/note/loom classification
     "drafting":  "claude-sonnet-4-6",            # proposals, follow-ups, briefs
     "extract":   "claude-sonnet-4-6",            # Jarvis EXTRACT reader (§4.3 stage 3). Pins the CURRENT Sonnet; the "Sonnet 5" of architecture §5 has no verified id/pricing yet — swap this one line when it does (calendar item, ~Sept 1)
     "reasoning": "claude-opus-4-8",              # CoS sweeps (on fire), weekly retro
@@ -49,15 +54,27 @@ MODELS = {
 }
 MODEL_FALLBACKS = {                               # runner failover chains (OpenClaw pattern)
     "claude-opus-4-8": ["claude-sonnet-4-6"],
-    "claude-sonnet-4-6": ["claude-haiku-4-5-20251001"],
+    "claude-sonnet-4-6": ["claude-haiku-5-5"],
 }
 FORBIDDEN_SAMPLING_PARAMS = ("temperature", "top_p", "top_k")   # 4.7+ reject these
 STRUCTURED_OUTPUT_UNSUPPORTED = ("claude-fable-5", "claude-mythos-5")
+# Adaptive-thinking models think before they answer unless told how hard to
+# try, and the thinking counts against max_tokens. Every classify call is
+# "schema in, small JSON out" — poll_inbox's intent call asks for 150 tokens —
+# so on these models the gateway pins effort LOW (the model may skip thinking
+# entirely) and floors max_tokens, so a call can never end inside the thinking
+# block with no text and a confusing "invalid JSON". An explicit
+# extra={"output_config": {"effort": ...}} from a caller still wins.
+ADAPTIVE_THINKING_MODELS = ("claude-haiku-5-5",)
+ADAPTIVE_EFFORT_DEFAULT = "low"
+ADAPTIVE_MIN_MAX_TOKENS = 2048
 
 # ── Billing (decision #3 + pre-flight timeline) ──────────────────────────────
 # "credit"  = subscription-authenticated Agent SDK / claude -p  (claimable from 2026-06-15)
 # "payg"    = ANTHROPIC_API_KEY on the Messages API (uncapped fallback)
-BILLING_DEFAULT_ROUTE = os.environ.get("ETHERWISE_BILLING", "payg")  # flip to "credit" on June 15
+# The credit opt-in was never claimed; payg IS the route. The standing "flip on
+# June 15" doctor reminder was cleared 2026-11-02 (Abhijeet: done or moot).
+BILLING_DEFAULT_ROUTE = os.environ.get("ETHERWISE_BILLING", "payg")
 BILLING_FALLBACK_TO_PAYG = True                   # on credit exhaustion / auth failure
 
 # ── Budget ceilings ──────────────────────────────────────────────────────────
@@ -100,12 +117,16 @@ BUDGET_PRIORITY_PREFIXES = ("upwork_", "scan_jobs", "poll_inbox")
 # ── Claude API (gateway) ─────────────────────────────────────────────────────
 # $/MTok: (input, output, cache_read, cache_write_1h)
 # Source: claude-platform-research-2026-06 §1 + claude-api skill (verified 2026-06).
-# Cache write 1h = 2x input.
+# Cache write 1h = 2x input. Haiku 5.5 row from the platform docs (2026-11-02):
+# these are its rates for prompts up to 100K tokens; above that every rate is
+# 5x. No classify prompt comes within an order of magnitude of 100K, so the
+# ledger prices the low tier. (The 4.5 row left with the pin — nothing routes
+# to it, and the ledger stores cost_usd per call, so old rows keep their cost.)
 PRICING = {
     "claude-fable-5":            (10.0, 50.0, 1.00, 20.0),
     "claude-opus-4-8":           ( 5.0, 25.0, 0.50, 10.0),
     "claude-sonnet-4-6":         ( 3.0, 15.0, 0.30,  6.0),
-    "claude-haiku-4-5-20251001": ( 1.0,  5.0, 0.10,  2.0),
+    "claude-haiku-5-5":          ( 0.10, 0.50, 0.01, 0.20),
 }
 CACHE_TTL = "1h"              # prompt-cache TTL (architecture §4)
 CLAUDE_TIMEOUT_SECONDS = 120  # per-call HTTP timeout
@@ -117,17 +138,15 @@ RUNNER_BACKOFF_BASE_SECONDS = 30  # 30s -> 60s between retries
 RUNNER_STAGGER_MAX_SECONDS = 120  # hash(task) % N sleep at top-of-hour
 
 # ── Deprecation + platform calendar (doctor watches these) ───────────────────
+# Cleared 2026-11-02 (Abhijeet: "clear all three"): the 06-15 credit opt-in,
+# the 06-22 Fable window and the 08-15 Haiku 4.5 review had printed OVERDUE
+# in doctor for 78–139 days. Add an item here only with a date someone will
+# act on; doctor WARNs from 7 days out and never stops until the line goes.
 DEPRECATION_WATCH = {
-    "claude-haiku-4-5-20251001":
-        ("2026-08-15", "dated snapshot retires not before 2026-10-15"
-         " — review pin"),
+    "claude-haiku-5-5":
+        ("2027-08-01", "retirement not sooner than 2027-10-07 — review pin"),
 }
-CALENDAR_WATCH = (
-    ("2026-06-15", "Claim Agent SDK credit (one-time opt-in, Max account);"
-     " flip ETHERWISE_BILLING=credit"),
-    ("2026-06-22", "Fable-included window ends — architect sessions move to"
-     " Opus 4.8 or usage credits"),
-)
+CALENDAR_WATCH = ()
 
 # ── Shadow mode (pre-flight §9) ──────────────────────────────────────────────
 # True ⇒ external writes (Airtable / ClickUp / email / Upwork drafts) are
@@ -1480,7 +1499,7 @@ LINKEDIN_POSTS_PER_WEEK = 3
 # it (17 sends in 3 weeks against 157 drafts an arm).
 UPWORK_PROPOSALS_PER_WEEK_PLAN = 25
 TODAY_DRAFTS_READY_TOPN = 5          # the strip on Today; the rest on Upwork › Jobs
-LINKEDIN_DAY0 = "2026-10-09"
+LINKEDIN_DAY0 = "2026-10-09"         # Aastha's first tracked day; Abhijeet confirmed it as day 0 on 2026-11-02
 LINKEDIN_DAY90_CONVERSATIONS = 5
 # Today shows LinkedIn items found within this many days; older ones are
 # counted, not listed — a LinkedIn post is cold within days.

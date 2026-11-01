@@ -113,6 +113,15 @@ def build_payg_request(model: str, system: Optional[str], user_content: Any,
     if extra:
         request.update({k: v for k, v in extra.items()
                         if k not in config.FORBIDDEN_SAMPLING_PARAMS})
+    if model in config.ADAPTIVE_THINKING_MODELS:
+        # Adaptive thinking is on by default and spends max_tokens before the
+        # text; a 150-token intent call could end inside the thinking block.
+        # Low effort lets the model skip thinking on a classify prompt; the
+        # floor keeps the answer reachable. A caller's explicit effort wins.
+        request["max_tokens"] = max(request["max_tokens"],
+                                    config.ADAPTIVE_MIN_MAX_TOKENS)
+        oc = request.setdefault("output_config", {})
+        oc.setdefault("effort", config.ADAPTIVE_EFFORT_DEFAULT)
     return request
 
 
@@ -431,8 +440,12 @@ def call(task_name: str, model_key: str, user_content: Any,
         try:
             parsed = json.loads(resp["text"])
         except json.JSONDecodeError as exc:
+            # stop_reason is the diagnosis: "max_tokens" = the answer was cut
+            # (or never started, on a thinking model); "refusal" = declined.
             raise GatewayError(
-                f"schema call returned invalid JSON: {resp['text'][:200]!r}"
+                f"schema call returned invalid JSON"
+                f" (stop_reason={resp.get('stop_reason')!r}):"
+                f" {resp['text'][:200]!r}"
             ) from exc
 
     return GatewayResult(text=resp["text"], parsed=parsed, model=model,

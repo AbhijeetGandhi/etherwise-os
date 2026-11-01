@@ -248,12 +248,13 @@ class TestClaudeCall(RunnerTestCase):
 
     def test_failover_to_fallback_model_after_exhausting_primary(self):
         attempts = []
+        fallback = config.MODEL_FALLBACKS[config.MODELS["scoring"]][0]
 
         def fake_call(**kw):
             attempts.append(kw.get("model_override"))
             if len(attempts) <= config.RUNNER_MAX_ATTEMPTS:
                 raise gw.TransientAPIError("overloaded")
-            return self._result(model="claude-haiku-4-5-20251001")
+            return self._result(model=fallback)
 
         sleeps = []
         with mock.patch.object(gw, "call", side_effect=fake_call):
@@ -263,9 +264,8 @@ class TestClaudeCall(RunnerTestCase):
         # primary (override None) tried MAX times, then first fallback
         self.assertEqual(attempts[:config.RUNNER_MAX_ATTEMPTS],
                          [None] * config.RUNNER_MAX_ATTEMPTS)
-        self.assertEqual(attempts[config.RUNNER_MAX_ATTEMPTS],
-                         "claude-haiku-4-5-20251001")
-        self.assertEqual(result.model, "claude-haiku-4-5-20251001")
+        self.assertEqual(attempts[config.RUNNER_MAX_ATTEMPTS], fallback)
+        self.assertEqual(result.model, fallback)
 
     def test_chain_exhausted_raises_last_transient(self):
         primary = config.MODELS["scoring"]
