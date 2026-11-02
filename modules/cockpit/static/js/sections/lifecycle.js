@@ -49,7 +49,9 @@ export const meta = { title: "Pipeline", hint: "Upwork as the sales engine, end 
 const STATE_KEY = "ew_cockpit_lifecycle_state";
 const F = () => window.EW_PROPFUNNEL;
 const PROPOSAL_URL = "https://www.upwork.com/nx/proposals/";
-const ROOM_URL = "https://www.upwork.com/nx/messages/rooms/";
+// /ab/, not /nx/: the /nx/ spelling is a 404 on Upwork (2026-11-02, "open room
+// button leads to invalid page"). Mirrors data.ROOM_URL — keep them identical.
+const ROOM_URL = "https://www.upwork.com/ab/messages/rooms/";
 const PEEK = 10;
 
 const TABS = [

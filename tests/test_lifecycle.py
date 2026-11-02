@@ -577,5 +577,26 @@ class TestPipelineTab(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, f"{rel}: {r.stderr[:400]}")
 
 
+class OneRoomUrl(unittest.TestCase):
+    """"open room button leads to invalid page in upwork" (2026-11-02). Three
+    spellings had grown; /nx/messages/rooms/ is a 404 on Upwork, /ab/ is the
+    conversation (checked in his Chrome; Upwork's own mail links /ab/). One
+    constant in Python, mirrored verbatim by lifecycle.js."""
+    PREFIX = "https://www.upwork.com/ab/messages/rooms/"
+
+    def test_python_builders_share_the_spelling(self):
+        from modules.cockpit import data
+        self.assertEqual(data.ROOM_URL, self.PREFIX + "{tid}")
+        self.assertEqual(data._UPWORK_ROOM_URL.format("room_x"), self.PREFIX + "room_x")
+        self.assertEqual(data.ROOM_URL.format(tid="room_x"), self.PREFIX + "room_x")
+
+    def test_the_js_mirror_is_identical(self):
+        js = (STATIC / "js/sections/lifecycle.js").read_text()
+        self.assertIn(f'const ROOM_URL = "{self.PREFIX}";', js)
+        for rel in ("js/sections/lifecycle.js", "js/sections/review.js",
+                    "js/sections/today.js", "js/sections/upwork.js"):
+            self.assertNotIn("/nx/messages/rooms/", (STATIC / rel).read_text(), rel)
+
+
 if __name__ == "__main__":
     unittest.main()

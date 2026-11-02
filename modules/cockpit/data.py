@@ -378,7 +378,14 @@ def _rerun_jobs() -> list:
         return []
 
 
-ROOM_URL = "https://www.upwork.com/messages/rooms/{tid}/"
+# THE room URL (2026-11-02). Three spellings had grown: this one, which
+# redirects; "/nx/messages/rooms/" on Review and Pipeline, which 404s
+# ("open room button leads to invalid page" — checked in his Chrome: /nx/ is
+# Upwork's "Looking for something?" page, /ab/ is the conversation); and the
+# JS copy in lifecycle.js. Upwork's own notification mail links /ab/messages/
+# rooms/<room> (12 of 12 in the event corpus, newest 9 Oct). One constant,
+# reused by the review-thread builder below and mirrored by lifecycle.js.
+ROOM_URL = "https://www.upwork.com/ab/messages/rooms/{tid}"
 _TERMINAL_PROP = ("Won", "Lost", "Expired", "Withdrawn", "Skipped")
 _DECIDED_PROP = ("Won", "Lost", "Expired", "Withdrawn")   # win-rate denominator
 _ACTIVE_CONTRACT = ("ACTIVE", "PENDING")
@@ -4753,7 +4760,7 @@ def queue(db_path: Optional[Path] = None) -> dict:
 # the row. Dismissed threads are counted and drillable on the screen, so the
 # decision is reversible and never silently swallows work.
 _REVIEW_THREAD_PREFIX = "review:thread:"
-_UPWORK_ROOM_URL = "https://www.upwork.com/nx/messages/rooms/{}"
+_UPWORK_ROOM_URL = ROOM_URL.replace("{tid}", "{}")      # one spelling — see ROOM_URL
 _REVIEW_EXCERPT = 400
 _OWNER_UPWORK_USER_ID = "1647672547786633216"   # matches knowledge.clients
 _REVIEW_HINT_MIN_LEN = 6      # below this an alnum key is a coincidence
