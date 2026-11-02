@@ -1,6 +1,6 @@
 # Optimize IS — Dossier
 
-_Compiled 2026-11-02 05:16 IST · 19 client facts (19 trusted) from 3 sources._
+_Compiled 2026-11-02T08:40:57.466660+00:00 · 19 client facts (19 trusted) from 4 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -46,3 +46,4 @@ _Compiled 2026-11-02 05:16 IST · 19 client facts (19 trusted) from 3 sources._
 - `crm/optimize-is` · — · crm · CRM numbers — Optimize IS
 - `fathom/152038994` · 2026-06-03 · fathom · Impromptu Google Meet Meeting
 - `email/19f8fa76af6df725` · 2026-07-23 · email · Accept your invitation to join shared calendar: ‘Abhijeet Gandhi’
+- `loom/ee490879b30c4bb7b3799e2da8571621` · 2026-09-29 · loom · Service Warranty End to End Pipeline Walkthrough

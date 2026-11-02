@@ -1,6 +1,6 @@
 # Mustafa Ahmed — Dossier
 
-_Compiled 2026-11-02 05:16 IST · 163 client facts (161 trusted) from 13 sources · 1 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-02T08:41:54.723897+00:00 · 163 client facts (161 trusted) from 14 sources · 1 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -218,5 +218,6 @@ _From call transcripts; `who` says whose it is. Not the Today tab's list — thi
 - `fathom/170225462` · 2026-08-04 · fathom · Impromptu Zoom Meeting
 - `fathom/175791782` · 2026-08-21 · fathom · Impromptu Zoom Meeting
 - `loom/0b189d61e7ba4df1ab57c14dc17cb74a` · 2026-08-26 · loom · AI Chat Workflow for Procedure Lead Capture
+- `loom/092af61b9fb747feb19d4be7302ce414` · 2026-08-26 · loom · Live Demo of AI Chat Lead Capture
 - `fathom/184675898` · 2026-09-18 · fathom · Impromptu Google Meet Meeting
 - `fathom/193290812` · 2026-10-15 · fathom · Impromptu Google Meet Meeting

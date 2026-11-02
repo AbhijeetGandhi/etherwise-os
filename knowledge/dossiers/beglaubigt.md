@@ -1,6 +1,6 @@
 # Beglaubigt — Dossier
 
-_Compiled 2026-11-02 05:16 IST · 997 client facts (991 trusted) from 105 sources · 26 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-02T08:42:13.717751+00:00 · 997 client facts (991 trusted) from 106 sources · 26 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -1170,6 +1170,7 @@ _From call transcripts; `who` says whose it is. Not the Today tab's list — thi
 - `fathom/185646584` · 2026-09-22 · fathom · Impromptu Google Meet Meeting
 - `fathom/186570990` · 2026-09-24 · fathom · Impromptu Google Meet Meeting
 - `fathom/186579275` · 2026-09-24 · fathom · Impromptu Google Meet Meeting
+- `loom/60f918c4d8d54d589587335bb45e30a7` · 2026-09-28 · loom · Hubspot email campaign setup
 - `email/1a0ec77e03fac696` · 2026-09-29 · email · Invitation: Lynn/Ioannis/Abhi @ Tue 29 Sept 2026 8:30pm - 8:45pm (IST) (contact@etherwise.io)
 - `email/1a0ed2f33fa72c87` · 2026-09-29 · email · Updated invitation: Lynn/Ioannis/Abhi @ Tue 29 Sept 2026 10:30pm - 10:45pm (IST) (contact@etherwise.io)
 - `email/1a12d00836ecc6fd` · 2026-10-11 · email · Accepted: Firma Alignment @ Mon 12 Oct 2026 5:15pm - 5:40pm (IST) (contact@etherwise.io)

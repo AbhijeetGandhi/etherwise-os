@@ -1,6 +1,6 @@
 # Dhanya Sangolli — Dossier
 
-_Compiled 2026-11-02 05:16 IST · 56 client facts (56 trusted) from 5 sources · 2 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-02T08:41:27.829780+00:00 · 56 client facts (56 trusted) from 6 sources · 2 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -101,5 +101,6 @@ _From call transcripts; `who` says whose it is. Not the Today tab's list — thi
 - `crm/dhanya-sangolli` · — · crm · CRM numbers — Dhanya Sangolli
 - `fathom/159234042` · 2026-06-29 · fathom · Impromptu Zoom Meeting
 - `fathom/159881752` · 2026-07-01 · fathom · Impromptu Zoom Meeting
+- `loom/60ec2471db8044abb33f0433535a21e0` · 2026-08-27 · loom · Weekly Automation: Winton Coach Analysis to Table
 - `fathom/177622263` · 2026-08-27 · fathom · Impromptu Google Meet Meeting
 - `fathom/180087171` · 2026-09-04 · fathom · Vinton Automation

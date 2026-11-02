@@ -1,6 +1,6 @@
 # Globaltize LLC — Dossier
 
-_Compiled 2026-11-02 05:16 IST · 114 client facts (114 trusted) from 23 sources · 16 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-02T08:42:22.649972+00:00 · 114 client facts (114 trusted) from 24 sources · 16 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -190,5 +190,6 @@ _From call transcripts; `who` says whose it is. Not the Today tab's list — thi
 - `fathom/180239350` · 2026-09-04 · fathom · Impromptu Google Meet Meeting
 - `fathom/189816904` · 2026-10-05 · fathom · Impromptu Google Meet Meeting
 - `fathom/191495491` · 2026-10-09 · fathom · Impromptu Google Meet Meeting
+- `loom/1b77c36c0e7341358dc0f10be1920a08` · 2026-10-24 · loom · New Candidate Database Search, Scoring, Admin
 - `fathom/196965355` · 2026-10-27 · fathom · Impromptu Google Meet Meeting
 - `fathom/197478052` · 2026-10-28 · fathom · Impromptu Google Meet Meeting
