@@ -202,5 +202,51 @@ class PitchesAreFiledNotReviewed(unittest.TestCase):
         self.assertIn("vendor_pitch", mapping._SYSTEM)
 
 
+class APersonIsNeverFiledAsAMachine(unittest.TestCase):
+    """Kevin Pelgone (kpelgone@ceoworks.org, a client's data analyst) wrote ~40
+    times from 27 Aug: "the Thursday emails did not go out, can you confirm the
+    configuration". The proposer called it ops_alert and filed it; nobody saw
+    it. A machine intent from a sender with a person's local part is the model
+    contradicting the From line, and the From line wins (2026-11-02)."""
+
+    def test_a_named_person_called_ops_alert_reaches_him(self):
+        for intent in mapping.MACHINE_INTENTS:
+            self.assertEqual(mapping.route(intent, author="kpelgone@ceoworks.org"),
+                             "review", intent)
+            self.assertEqual(mapping.route(intent, author="Kevin Pelgone <kpelgone@ceoworks.org>"),
+                             "review", intent)
+
+    def test_machine_mail_from_a_machine_is_still_filed(self):
+        for author in ("alerts@make.com", "donotreply@upwork.com",
+                       "noreply@airtable.com", "notifications@clickup.com",
+                       "room_1f5d0e3d4bb2e1c2d26c98246c99fe9c@email.upwork.com",
+                       "calendar-notification@google.com", "billing@stripe.com",
+                       "mailer-daemon@googlemail.com",
+                       "scenario-alerts@mail.make.com",
+                       "kevin@upwork.com"):          # a platform's own domain
+            for intent in mapping.MACHINE_INTENTS:
+                self.assertEqual(mapping.route(intent, author=author), "file",
+                                 (author, intent))
+
+    def test_the_rule_is_scoped_to_machine_intents(self):
+        # a person's pitch is still filed; a person's marketing is still dropped
+        self.assertEqual(mapping.route("talent_pitch", author="terry@gmail.com"), "file")
+        self.assertEqual(mapping.route("marketing", author="jane@vendor.io"), "drop")
+        # and with no author known, the old behaviour stands
+        self.assertEqual(mapping.route("ops_alert"), "file")
+
+    def test_role_sender_detection(self):
+        self.assertTrue(mapping.is_role_sender("no-reply@accounts.google.com"))
+        self.assertTrue(mapping.is_role_sender("support@mail.vapi.ai"))
+        self.assertTrue(mapping.is_role_sender("info@app.globaltize.com"))
+        self.assertFalse(mapping.is_role_sender("kpelgone@ceoworks.org"))
+        self.assertFalse(mapping.is_role_sender("chris.cave@adelye.com"))
+        self.assertFalse(mapping.is_role_sender(None))
+
+    def test_the_prompt_tells_the_model_the_same_thing(self):
+        self.assertIn("MACHINE-GENERATED", mapping._SYSTEM)
+        self.assertIn("did not go out", mapping._SYSTEM)
+
+
 if __name__ == "__main__":
     unittest.main()

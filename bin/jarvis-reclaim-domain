@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""A domain the registry has just learned reclaims the rows filed before it was
+known.
+
+Why (2026-11-02). Abhijeet assigned dsangolli@ceoworks.org to Dhanya Sangolli
+on the Review board, which taught the registry `ceoworks.org`. Her colleague
+Kevin Pelgone (kpelgone@ceoworks.org) had by then written ~40 times since 27
+August — "the Thursday emails did not go out, can you confirm the
+configuration", "Emails Not Deploying" — and, with no registry match and a
+personal inbox's no-client-signal rule, the proposer had filed almost all of
+it as ops_alert / account_notice / noise. A registry fact learned today is true
+of the mail that arrived before it: those rows are hers, and the KB, the
+commitment reader and the dossier should see them.
+
+What it does: for every event whose sender is on <domain> and whose state is
+excluded / queued / held, set state='mapped', client_id=<the domain's client>,
+resolved_by='registry:<domain>', and write one audit_log row carrying the old
+state and reason. Never a row Abhijeet decided himself
+(`events.is_human_decision`), never a row already mapped, never a different
+domain. The client comes from the registry — the script does not take one, so
+it cannot be pointed at the wrong client. Dry run by default; `--apply` writes.
+
+Usage:
+  PYTHONPATH=. python3 bin/jarvis-reclaim-domain ceoworks.org [--apply]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db, registry                       # noqa: E402
+from modules.jarvis import events                            # noqa: E402
+
+STATES = ("excluded", "queued", "held")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("domain")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--note", default="", help="his words / the reason, kept in audit_log")
+    args = ap.parse_args()
+    domain = args.domain.strip().lower().lstrip("@")
+
+    reg = registry.load()
+    cid = reg.match_email(f"probe@{domain}")
+    if not cid:
+        print(json.dumps({"abort": f"{domain} is not registered to any client — "
+                                   "Assign a row on Review (or edit clients.yaml) first"}))
+        return 1
+    if "@" not in domain and domain in registry.SHARED_SENDER_DOMAINS:
+        print(json.dumps({"abort": f"{domain} is a shared platform domain — nobody's to reclaim"}))
+        return 1
+
+    marks = ",".join("?" * len(STATES))
+    with db.connect(config.DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT id, state, exclude_reason, resolved_by, author, subject, ts"
+            f" FROM events WHERE lower(author) LIKE ? AND state IN ({marks})"
+            f" ORDER BY ts", (f"%@{domain}", *STATES))]
+    take, skip = [], []
+    for r in rows:
+        if events.is_human_decision(r.get("resolved_by")):
+            skip.append((r["id"], "his own decision"))
+        else:
+            take.append(r)
+    was = Counter((r["state"], r.get("exclude_reason")) for r in take)
+    report = {"mode": "APPLY" if args.apply else "DRY-RUN", "domain": domain,
+              "client": cid, "client_name": reg.by_id[cid]["name"],
+              "reclaim": len(take), "skipped_his_decisions": len(skip),
+              "was": {f"{s}:{x or ''}": n for (s, x), n in was.most_common()},
+              "window": (take[0]["ts"][:10], take[-1]["ts"][:10]) if take else None}
+    if args.apply and take:
+        note = (f"registry learned {domain} -> {cid} on 2026-11-02 (his Assign on Review);"
+                f" reclaimed by bin/jarvis-reclaim-domain. {args.note}").strip()
+        with db.connect(config.DB_PATH) as conn:
+            for r in take:
+                conn.execute(
+                    "UPDATE events SET state='mapped', client_id=?, resolved_by=?,"
+                    " resolved_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
+                    (cid, f"registry:{domain}", r["id"]))
+                conn.execute(
+                    "INSERT INTO audit_log (actor, entity, entity_id, field, old_value,"
+                    " new_value, source, note) VALUES ('agent:ops-chat','events',?,"
+                    " 'state',?,?,'sqlite',?)",
+                    (r["id"], f"{r['state']}:{r.get('exclude_reason') or ''}",
+                     f"mapped:{cid}", note))
+            report["now_mapped"] = conn.execute(
+                "SELECT COUNT(*) FROM events WHERE lower(author) LIKE ? AND state='mapped'"
+                " AND client_id=?", (f"%@{domain}", cid)).fetchone()[0]
+    print(json.dumps(report, indent=1, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

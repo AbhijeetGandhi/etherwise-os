@@ -49,8 +49,19 @@ def _resweep_metrics(rs: dict) -> dict:
             "resweep_fingerprint": rs.get("fingerprint")}
 
 
+def is_low_base_rate_event(ev: dict) -> bool:
+    """Was this row collected from a low-base-rate IMAP inbox? The sweep knows
+    for the rows it just collected; for a row from an earlier run (the backlog,
+    a re-proposal) the inbox is in raw_ref ('imap/<inbox>/<uid>'). contact@
+    rows carry no imap prefix and are never low-base-rate."""
+    ref = (ev.get("raw_ref") or "")
+    if not ref.startswith("imap/"):
+        return False
+    return ref.split("/", 2)[1] in set(config.JARVIS_IMAP_LOW_BASE_RATE_INBOXES)
+
+
 def apply_proposal(conn, eid: str, p: dict, *, low: bool, protected: bool,
-                   subject, min_conf: float) -> str:
+                   subject, min_conf: float, author=None) -> str:
     """Write one proposer verdict to its event. Returns where it went:
     'lead' | 'filed' | 'imap-excluded' | 'queued'. One function so the sweep
     and `bin/jarvis-repropose` cannot route the same verdict two ways.
@@ -61,7 +72,8 @@ def apply_proposal(conn, eid: str, p: dict, *, low: bool, protected: bool,
     the board filled with renewals, receipts, seat confirmations and contract
     notifications. The intent is decided in the same proposer call."""
     pid, conf = p["proposed_client_id"], p["confidence"]
-    dest = mapping.route(p["intent"], protected=protected, subject=subject)
+    dest = mapping.route(p["intent"], protected=protected, subject=subject,
+                         author=author)
     if dest == "lead" and not pid:
         # a prospect, not a client to map (2026-11-01): the leads table is its
         # home; the event is filed under the lead id. A "lead" the proposer
@@ -91,6 +103,52 @@ def apply_proposal(conn, eid: str, p: dict, *, low: bool, protected: bool,
         return "imap-excluded"
     events.set_queued(conn, eid, pid, conf, p["evidence"])
     return "queued"
+
+
+def drain_backlog(ctx, reg, *, dbp, budget: int, cand=None, valid=None,
+                  min_conf=None) -> dict:
+    """Take held rows from EARLIER sweeps to the proposer, newest first, within
+    `budget`, and route each verdict through `apply_proposal`.
+
+    THE BACKLOG (2026-11-02). "The rest stay held for the next sweep" was
+    written three times and implemented never: `held_for_run` only ever saw the
+    current run's rows, so a proposer call that failed, or a row past the cap,
+    stayed held for good — 52 of them, back to 27 Aug, rendered on the Review
+    board as questions for him ("pick the client yourself"). New mail keeps
+    first claim on the budget; whatever is left comes here, and the empty runs
+    (no new mail) spend the whole budget here, so a quiet inbox cannot leave
+    the backlog standing. Returns the two metrics every run now carries:
+    backlog_proposed (taken to the proposer this run) and backlog_remaining
+    (still held after it — 0 is the steady state; a number that only grows
+    means the proposer itself is failing)."""
+    if cand is None:
+        cand, valid = mapping.candidates(reg), set(reg.ids())
+    if min_conf is None:
+        min_conf = config.JARVIS_IMAP_QUEUE_MIN_CONFIDENCE
+    with db.connect(dbp) as conn:
+        backlog = [dict(r) for r in events.held_backlog(
+            conn, exclude_run=ctx.run_id, limit=budget)]
+    proposals = []
+    for ev in backlog:
+        prot = bool(sender_rules.transactional_reason(ev.get("author") or ""))
+        proposals.append((ev, mapping.propose(ctx, ev, cand, valid), prot))
+    outcomes: dict = {}
+    with db.connect(dbp) as conn:
+        for ev, p, prot in proposals:
+            if p is None:
+                outcomes["held"] = outcomes.get("held", 0) + 1
+                continue                      # proposer failed -> stays held
+            out = apply_proposal(conn, ev["id"], p, low=is_low_base_rate_event(ev),
+                                 protected=prot, subject=ev.get("subject"),
+                                 min_conf=min_conf, author=ev.get("author"))
+            outcomes[out] = outcomes.get(out, 0) + 1
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE state='held'").fetchone()[0]
+    if backlog:
+        ctx.log(f"sweep backlog: proposed {len(backlog)} earlier-run held rows ->"
+                f" {outcomes}; {remaining} still held")
+    return {"backlog_proposed": len(backlog), "backlog_outcomes": outcomes,
+            "backlog_remaining": remaining}
 
 
 def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
@@ -161,7 +219,12 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             low_base_rate_ids.update(e["id"] for e in evs)
 
     if not collected:
-        if rs.get("changed"):
+        # No new mail is not "nothing to do": the held backlog (rows an
+        # earlier sweep collected and never classified) drains on the empty
+        # runs too, or a quiet inbox would leave it standing for ever.
+        drained = drain_backlog(ctx, reg, dbp=dbp,
+                                budget=config.JARVIS_SWEEP_MAX_PROPOSALS)
+        if rs.get("changed") or drained["backlog_proposed"]:
             # A re-sweep that cleared 43 rows off the Review board is not an
             # empty run, and TaskSkip throws the metrics away (runner records
             # only skip_reason). Report it instead, so the work shows up in the
@@ -171,7 +234,7 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             return {"collected": 0, "inserted": 0, "resweep_only": True,
                     "mapped": counts["mapped"], "queued": counts["queued"],
                     "held": counts["held"], "excluded": counts["excluded"],
-                    "reconciled": True, **_resweep_metrics(rs)}
+                    "reconciled": True, **drained, **_resweep_metrics(rs)}
         raise runner.TaskSkip("no new mail since cursor")
 
     # 2. STORE (deterministic) ─────────────────────────────────────────────────
@@ -274,24 +337,27 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
     still_held.sort(key=lambda ev: ev["id"] in low_base_rate_ids)
     min_conf = config.JARVIS_IMAP_QUEUE_MIN_CONFIDENCE
     cand, valid = mapping.candidates(reg), set(reg.ids())
+    budget = config.JARVIS_SWEEP_MAX_PROPOSALS
+    this_run = still_held[:budget]
     proposals = []
-    for ev in still_held[: config.JARVIS_SWEEP_MAX_PROPOSALS]:
+    for ev in this_run:
         # a transactional sender's mail is never routed by intent — see
         # mapping.route. Carried alongside the proposal so the write loop does
         # not have to re-derive it.
         prot = bool(sender_rules.transactional_reason(ev.get("author") or ""))
         proposals.append((ev["id"], ev["id"] in low_base_rate_ids,
                           mapping.propose(ctx, ev, cand, valid), prot,
-                          ev.get("subject")))
+                          ev.get("subject"), ev.get("author")))
 
     with db.connect(dbp) as conn:
         queued = imap_excluded = 0
         filed: dict = {}
-        for eid, low, p, prot, subj in proposals:
+        for eid, low, p, prot, subj, author in proposals:
             if p is None:
                 continue                          # proposer failed -> stays held
             outcome = apply_proposal(conn, eid, p, low=low, protected=prot,
-                                     subject=subj, min_conf=min_conf)
+                                     subject=subj, min_conf=min_conf,
+                                     author=author)
             if outcome == "lead":
                 leads_made += 1
                 filed["lead"] = filed.get("lead", 0) + 1
@@ -302,6 +368,10 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             elif outcome == "queued":
                 queued += 1
         counts = events.counts_by_state(conn, ctx.run_id)
+
+    # 3c. THE BACKLOG, with whatever budget this run's own mail left ──────────
+    drained = drain_backlog(ctx, reg, dbp=dbp, budget=budget - len(this_run),
+                            cand=cand, valid=valid, min_conf=min_conf)
 
     # 4. RECONCILE ─────────────────────────────────────────────────────────────
     parts = counts["mapped"] + counts["queued"] + counts["held"] + counts["excluded"]
@@ -324,7 +394,8 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
             # real mail shows up as a number rather than as silence
             "filed_structural": structural,
             "leads": leads_made,
-            "proposer_calls": len(proposals),
+            "proposer_calls": len(proposals) + drained["backlog_proposed"],
+            **drained,
             "imap_excluded_no_signal": imap_excluded,
             "filed_by_intent": filed,
             "imap_inboxes": len(imap_new_cursors), "imap_skipped": imap_skipped,

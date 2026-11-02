@@ -34,17 +34,6 @@ from modules.jarvis import events, mapping, sender_rules, sweep   # noqa: E402
 TASK_NAME = "jarvis_repropose"
 
 
-def _is_low_base_rate(ev: dict) -> bool:
-    """Same rule as the sweep: mail collected from a low-base-rate IMAP inbox
-    queues only on a positive client signal. The inbox is in raw_ref
-    ('imap/<inbox>/<uid>'); contact@ rows carry no imap prefix."""
-    ref = ev.get("raw_ref") or ""
-    if not ref.startswith("imap/"):
-        return False
-    inbox = ref.split("/", 2)[1]
-    return inbox in set(config.JARVIS_IMAP_LOW_BASE_RATE_INBOXES)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("ids", nargs="*", help="event ids (evt:email:…)")
@@ -112,9 +101,10 @@ def main() -> int:
                         " proposal_evidence=?, updated_at=datetime('now') WHERE id=?",
                         (p["proposed_client_id"], p["confidence"], p["evidence"], ev["id"]))
                     outcome = sweep.apply_proposal(
-                        conn, ev["id"], p, low=_is_low_base_rate(ev),
+                        conn, ev["id"], p, low=sweep.is_low_base_rate_event(ev),
                         protected=bool(sender_rules.transactional_reason(ev.get("author") or "")),
-                        subject=ev.get("subject"), min_conf=min_conf)
+                        subject=ev.get("subject"), min_conf=min_conf,
+                        author=ev.get("author"))
                     row = conn.execute("SELECT state, exclude_reason FROM events WHERE id=?",
                                        (ev["id"],)).fetchone()
                 line["outcome"] = outcome

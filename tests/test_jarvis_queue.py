@@ -79,6 +79,16 @@ class RegistryWriteTests(unittest.TestCase):
         self.assertEqual(approve.learned_pattern("Jane Doe"),
                          ("aliases", "Jane Doe"))
 
+    def test_learned_pattern_never_claims_a_shared_platform_domain(self):
+        """Three Assign clicks on 'X sent you a message' rows had written
+        email.upwork.com under three clients by 2026-11-02 — lines the registry
+        ignores with a warning. The full address names one room; learn that."""
+        self.assertEqual(
+            approve.learned_pattern("room_1f5d0e3d4bb2e1c2d26c98246c99fe9c@email.upwork.com"),
+            ("emails", "room_1f5d0e3d4bb2e1c2d26c98246c99fe9c@email.upwork.com"))
+        self.assertEqual(approve.learned_pattern("alerts@make.com"),
+                         ("emails", "alerts@make.com"))
+
 
 class GitCommitTests(unittest.TestCase):
     def test_audited_commit(self):

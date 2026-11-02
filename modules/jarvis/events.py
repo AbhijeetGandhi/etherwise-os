@@ -100,6 +100,22 @@ def held_for_run(conn: sqlite3.Connection, run_id: Optional[int]) -> list[sqlite
         " ORDER BY ts", (run_id,)).fetchall()
 
 
+def held_backlog(conn: sqlite3.Connection, exclude_run: Optional[int],
+                 limit: int) -> list[sqlite3.Row]:
+    """Held events from EARLIER sweeps, newest first — the ones every docstring
+    said would be picked up "by the next sweep" and never were, because
+    `held_for_run` scopes to the run that collected them (2026-11-02: 52 rows,
+    the oldest from 27 Aug, sat on the Review board as "pick the client
+    yourself"; a proposer call that failed or fell outside the per-sweep cap
+    left its row held for good). Newest first because recent mail is the mail
+    that can still matter; the stale tail drains behind it."""
+    if limit <= 0:
+        return []
+    return conn.execute(
+        "SELECT * FROM events WHERE state='held' AND sweep_run_id IS NOT ?"
+        " ORDER BY ts DESC LIMIT ?", (exclude_run, limit)).fetchall()
+
+
 def counts_by_state(conn: sqlite3.Connection,
                     run_id: Optional[int] = None) -> dict:
     q = "SELECT state, COUNT(*) n FROM events"

@@ -10,6 +10,7 @@ import base64
 import tempfile
 import types
 import unittest
+from unittest import mock as _mock
 from pathlib import Path
 
 from core import config, db, registry
@@ -475,6 +476,63 @@ class ImapLowBaseRateTests(SweepTests):
         r = self._state(f"evt:email:{INBOX_STEM}:det1")
         self.assertEqual((r["state"], r["client_id"]), ("mapped", "adelye"))
         self.assertEqual(ctx.claude_calls, [])       # no LLM for a deterministic hit
+
+
+class TheHeldBacklogDrains(SweepTests):
+    """2026-11-02: 52 rows an earlier sweep collected and never classified sat
+    on Review as "pick the client yourself" — `held_for_run` only ever saw the
+    current run's rows. A later sweep now takes them to the proposer, newest
+    first, with whatever budget its own mail leaves, and on an empty run with
+    the whole budget."""
+
+    def _hold(self, conn, eid, run_id, ts, author="bob@realco.com"):
+        events.store_event(conn, {
+            "id": eid, "source": "email", "native_id": eid, "ts": ts,
+            "author": author, "subject": "Quick question", "state": "held",
+            "text": "Can you help with Make?"}, run_id)
+
+    def test_an_empty_run_spends_its_budget_on_the_backlog(self):
+        with db.connect(self.dbp) as conn:
+            self._hold(conn, "evt:email:old1", 11, "2026-10-09T00:00:00+00:00")
+            self._hold(conn, "evt:email:old2", 11, "2026-10-10T00:00:00+00:00")
+        metrics, ctx, _ = self._run({})          # nothing new in the inbox
+        self.assertEqual(metrics["backlog_proposed"], 2)
+        self.assertEqual(metrics["backlog_remaining"], 0)
+        self.assertEqual(len(ctx.claude_calls), 2)
+        with db.connect(self.dbp) as conn:
+            states = {r[0]: r[1] for r in conn.execute(
+                "SELECT id, state FROM events WHERE id LIKE 'evt:email:old%'")}
+        self.assertEqual(set(states.values()), {"queued"})   # FakeCtx proposes adelye
+
+    def test_new_mail_keeps_first_claim_on_the_budget(self):
+        with db.connect(self.dbp) as conn:
+            for i in range(3):
+                self._hold(conn, f"evt:email:old{i}", 11, f"2026-10-0{i+1}T00:00:00+00:00")
+        with _mock.patch.object(config, "JARVIS_SWEEP_MAX_PROPOSALS", 3):
+            metrics, ctx, _ = self._run(MSGS)    # m3 + m4 need the proposer
+        self.assertEqual(metrics["backlog_proposed"], 1)       # 3 - 2 = 1 left over
+        self.assertEqual(metrics["backlog_remaining"], 2)
+        self.assertEqual(metrics["proposer_calls"], 3)
+        self.assertTrue(metrics["reconciled"])                 # this run's counts untouched
+        with db.connect(self.dbp) as conn:
+            taken = conn.execute("SELECT id FROM events WHERE id LIKE 'evt:email:old%'"
+                                 " AND state='queued'").fetchall()
+        self.assertEqual([r[0] for r in taken], ["evt:email:old2"])   # newest first
+
+    def test_a_failed_proposer_call_leaves_the_row_held_for_next_time(self):
+        with db.connect(self.dbp) as conn:
+            self._hold(conn, "evt:email:old1", 11, "2026-10-09T00:00:00+00:00")
+        ctx = FakeCtx(self.dbp)
+        ctx.claude = lambda **kw: (_ for _ in ()).throw(RuntimeError("budget"))
+        out = sweep.drain_backlog(ctx, self.reg, dbp=self.dbp, budget=5)
+        self.assertEqual(out["backlog_outcomes"], {"held": 1})
+        self.assertEqual(out["backlog_remaining"], 1)
+
+    def test_low_base_rate_is_read_off_the_row_for_a_backlog_event(self):
+        inbox = config.JARVIS_IMAP_LOW_BASE_RATE_INBOXES[0]
+        self.assertTrue(sweep.is_low_base_rate_event({"raw_ref": f"imap/{inbox}/123"}))
+        self.assertFalse(sweep.is_low_base_rate_event({"raw_ref": "email/abc"}))
+        self.assertFalse(sweep.is_low_base_rate_event({"raw_ref": None}))
 
 
 class ApplyProposalIsTheOneRoutingPath(unittest.TestCase):

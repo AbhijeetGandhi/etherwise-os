@@ -43,6 +43,22 @@ class Shapes(unittest.TestCase):
             self.assertEqual(mapping.route_structural(author, subj),
                              ("file", "filed:platform-notice"), subj)
 
+    def test_upworks_own_account_mail_is_filed(self):
+        """2026-11-02, from the held backlog he found on Review: the platform
+        reporting a fact about HIS account, off donotreply@upwork.com."""
+        for subj in ("Your payments are available early.",
+                     "Payment Received - Thank You!",
+                     "Visa was updated on Abhijeet Gandhi",
+                     "We received a request to reset your password",
+                     "Your new password is set"):
+            self.assertEqual(mapping.structural_shape("donotreply@upwork.com", subj),
+                             "platform_notice", subj)
+        # a meeting or a message off the same address still takes the normal path
+        for subj in ("You rescheduled the meeting with Randy B.", "Meeting with Randy",
+                     "Mustafa A. sent you a message"):
+            self.assertNotEqual(mapping.structural_shape("donotreply@upwork.com", subj),
+                                "platform_notice", subj)
+
     def test_a_person_on_a_role_address_still_reaches_review(self):
         self.assertIsNone(mapping.structural_shape("info@acmeclinic.com",
                                                    "Re: the intake automation"))

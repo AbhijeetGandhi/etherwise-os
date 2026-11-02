@@ -601,12 +601,13 @@ function heldCard(d, ctx) {
     el("div", "hstack", [
       selectAll(sel, `select all ${d.held_total} held events`),
       icon("clock", { size: 15, class: "muted" }),
-      el("strong", null, "Awaiting proposal (held)"),
+      el("strong", null, "Not yet classified (held)"),
       pill(fmt.num(d.held_total), "outline"),
     ]),
     el("div", "muted small",
-      "Collected, no confident proposal yet — assign now or exclude. Most of"
-      + " this is bank, airline and vendor mail: select all, Ignore, done."),
+      "Collected but not yet through the classifier — these are not questions"
+      + " for you. The sweep takes up to 40 a run (twice a day), newest first,"
+      + " and files or queues each one. Act on one here only if it cannot wait."),
   ]));
   box.appendChild(eventBatchBar(sel, { proposed_client_id: null, count: d.held_total },
     d, ctx));

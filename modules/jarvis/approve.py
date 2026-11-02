@@ -60,7 +60,14 @@ def learned_pattern(author: str) -> Optional[tuple[str, str]]:
         return None
     if "@" in a:
         dom = a.rsplit("@", 1)[-1].lower()
-        return ("emails", a.lower()) if dom in _FREEMAIL else ("emails", dom)
+        # A shared platform domain is nobody's to claim (registry refuses it at
+        # load and warns). Three Assign clicks on "X sent you a message" rows
+        # had written `email.upwork.com` under three different clients by
+        # 2026-11-02 — three ignored lines and three warnings. Learn the full
+        # address on such a domain, as for freemail: it names one room.
+        if dom in _FREEMAIL or dom in registry.SHARED_SENDER_DOMAINS:
+            return ("emails", a.lower())
+        return ("emails", dom)
     return ("aliases", a)
 
 
