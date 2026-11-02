@@ -234,21 +234,18 @@ function hotDrill(L, title, rows, subtitle) {
   });
 }
 
-/** the funnel: Hot jobs found → Proposals sent → Opened → Wrote back → Hired.
-    A shape, not a row of boxes (Abhijeet, 2026-11-02: "I would always prefer a
-    diagram over a lot of text with boxes"). Each band drills to its rows; the
-    drops on the gaps open the "why" underneath. */
+/** the funnel: Proposals sent → Opened → Wrote back → Hired. The hot jobs the
+    scanner found are the dashed row ABOVE it, not a band — 404 against 27
+    made every other band a sliver ("you don't need number of hot jobs found
+    because that makes other funnel irrelevant", 2026-11-02). Each band
+    drills to its rows; the drops open the "why" underneath. */
 function stripBlock(D, L, fd, ctx, drops) {
   const st = fd.st;
   const scanLate = fd.scanSince && (!fd.b.lo || fd.scanSince > fd.b.lo);
   const stages = [
-    { label: "Hot jobs found", short: "the hot jobs", n: fd.hot.length,
-      sub: [el("b", null, fmt.num(fd.read)), " jobs read"
-        + (scanLate ? `, since ${fmt.dateShort(fd.scanSince)} (when the scanner started)` : "")],
-      onClick: () => hotDrill(L, "Hot jobs the scanner found", fd.hot,
-        `score ${(L.scanner || {}).hot_at} or more, in this period; the ones with a proposal are marked`) },
     { label: "Proposals sent", short: "those sent", n: st[0].n,
-      sub: fd.inv.length ? `+${fmt.num(fd.inv.length)} invitations accepted` : null,
+      sub: [el("b", null, pct(rate(fd.hotApplied.length, fd.hot.length))), " of the hot jobs got one",
+        fd.inv.length ? ` · +${fmt.num(fd.inv.length)} invitations accepted` : ""],
       onClick: () => proposalDrill("Proposals sent", st[0].rows, { subtitle: "cold proposals in this period" }) },
     { label: "Opened", short: "those opened", n: st[1].n,
       onClick: () => proposalDrill("Opened by the client", st[1].rows,
@@ -260,7 +257,13 @@ function stripBlock(D, L, fd, ctx, drops) {
       onClick: () => proposalDrill("Became a client", st[3].rows.concat(fd.invHired),
         { subtitle: "cold proposals and accepted invitations that became clients" }) },
   ];
-  return funnel(stages, { drops, title: "From job to client" });
+  // drops[0] is hot job → proposal: it goes ABOVE the first band; the rest
+  // sit on the gaps between bands
+  const before = drops && drops[0] ? Object.assign({}, drops[0], {
+    label: `of the ${fmt.num(fd.hot.length)} hot jobs the scanner found (${fmt.num(fd.read)} read`
+      + `${scanLate ? `, since ${fmt.dateShort(fd.scanSince)}` : ""}) got no proposal`,
+  }) : null;
+  return funnel(stages, { before, drops: (drops || []).slice(1), title: "From job to client" });
 }
 
 /** best and worst group of a split by the rate at one step (step 1 = opened

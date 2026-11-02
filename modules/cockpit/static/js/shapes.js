@@ -52,99 +52,62 @@ function pctText(p) {
  *           `short` is how THIS stage is named by the one below it
  *           ("27 · 6.7% of the hot jobs"); default "the step above".
  *   opts:   { drops?: [{ label, n?, onClick? }]  one per GAP (stages.length - 1),
- *             compact?: bool, floor = 0.06, height?: px per band,
- *             title?: string (sr-only summary prefix) }
+ *             before?: { label, n?, onClick? }   a drop row ABOVE the first band
+ *             compact?: bool, title?: string }
  *
- * Layout: [drops column] [funnel svg] [stage column]. Each stage row is one
- * band tall, so the labels line up with the shape without any measuring. The
- * drops sit on the gap between two bands and say what fell out there.
+ * THE LOOK IS THE OLD SCANNER FUNNEL'S, ON PURPOSE (Abhijeet, 2026-11-02 22:40:
+ * "the UI is shit for the funnel, prev one was very simple cool"): one row per
+ * band — the label, the count and the step % on a line, a plain left-aligned
+ * bar under it whose width is the count against the top band, a dashed row
+ * between bands for what fell out. Linear scale: the bar IS the proportion.
+ * The SVG trapezoid version lived for three hours.
  */
 export function funnel(stages, opts = {}) {
-  const H = opts.height || (opts.compact ? 44 : 64);
-  const floor = opts.floor == null ? 0.06 : opts.floor;
   const n0 = Math.max(1, ...stages.map((s) => +s.n || 0));
-  const W = 320, PADX = 6;
-  const widths = stages.map((s) => {
-    const n = Math.max(0, +s.n || 0);
-    const r = Math.sqrt(n / n0);
-    return (W - 2 * PADX) * Math.max(floor, r);
-  });
-  const total = H * stages.length;
-  const pic = svg("svg", {
-    class: "fun-svg", viewBox: `0 0 ${W} ${total}`, width: "100%", height: total,
-    preserveAspectRatio: "none", "aria-hidden": "true", focusable: "false",
-  });
+  const stack = el("div", "funnel" + (opts.compact ? " compact" : ""));
+  const dropRow = (d) => {
+    if (!d) return null;
+    const body = [el("span", "fd-arrow", "↓"),
+      el("span", "grow", [d.n != null ? el("b", null, fmt.num(d.n)) : null, d.n != null ? " " : "", d.label]),
+      d.onClick ? el("span", null, d.cta || "why →") : null];
+    return d.onClick
+      ? el("button", { class: "funnel-drop", type: "button", on: { click: d.onClick },
+          attrs: { title: d.title || "what we know about this drop" } }, body)
+      : el("div", "funnel-drop", body);
+  };
+  append(stack, dropRow(opts.before));
+  const drops = opts.drops || [];
   stages.forEach((s, i) => {
-    const wTop = widths[i];
-    // each band is its own trapezoid: it tapers towards the next band's width
-    // but never below ~45% of its own, so a 404 → 2 step reads as a drop at
-    // the boundary rather than a knife-edge inside one band (the Leads ladder,
-    // 12 → 0, drew a flat triangle otherwise). Classic funnel charts do this.
-    const next = i + 1 < stages.length ? widths[i + 1] : Math.max(widths[i] * 0.72, (W - 2 * PADX) * floor);
-    const wBot = Math.max(next, wTop * 0.45);
-    const y0 = i * H + 2, y1 = (i + 1) * H - 2;
-    const x0 = (W - wTop) / 2, x1 = (W + wTop) / 2;
-    const x2 = (W + wBot) / 2, x3 = (W - wBot) / 2;
+    const n = Math.max(0, +s.n || 0);
+    const prev = i ? +stages[i - 1].n : null;
+    const conv = i ? pctOf(n, prev) : null;
     const last = i === stages.length - 1;
     const tone = s.tone || (last ? "good" : null);
-    const g = svg("g", { class: "fun-band" + (tone ? " " + tone : "") + (+s.n ? "" : " zero"),
-      "data-i": i });
-    g.appendChild(svg("polygon", {
-      points: `${x0},${y0} ${x1},${y0} ${x2},${y1} ${x3},${y1}`,
-      style: `opacity:${(1 - i * (0.5 / Math.max(1, stages.length - 1))).toFixed(2)}`,
-    }));
-    // no text inside the SVG: it is stretched to the column (preserveAspectRatio
-    // none) so the bands line up with the stage rows exactly, and stretched
-    // glyphs would be ugly. The figures sit in the stage column beside each band.
-    pic.appendChild(g);
+    const w = Math.max(0.6, (100 * n) / n0);
+    const barProps = {
+      class: "funnel-bar" + (tone ? " " + tone : "") + (n ? "" : " zero"),
+      style: { width: w + "%", opacity: String(Math.max(0.55, 1 - i * 0.08)) },
+      attrs: { title: s.note || `${s.label}: ${fmt.num(n)}${s.onClick ? " — click for the rows" : ""}` },
+    };
+    const bar = s.onClick
+      ? el("button", Object.assign(barProps, { type: "button", on: { click: s.onClick } }),
+          el("span", "sr-only", `show the ${fmt.num(n)} rows behind ${s.label}`))
+      : el("div", barProps);
+    append(stack, el("div", "funnel-step", [
+      el("div", "funnel-head", [
+        el("span", "lbl", s.label),
+        el("span", "num", fmt.num(n)),
+        conv != null ? el("span", { class: "small " + (conv < 50 ? "neg" : "muted") },
+          `${pctText(conv)} of ${stages[i - 1].short || "the step above"}`) : null,
+        s.sub ? el("span", "muted small", s.sub) : null,
+      ]),
+      bar,
+    ]));
+    if (!last) append(stack, dropRow(drops[i]));
   });
-
-  const stageCol = el("div", "fun-stages", stages.map((s, i) => {
-    const prev = i ? +stages[i - 1].n : null;
-    const conv = i ? pctOf(+s.n || 0, prev) : null;
-    const body = [
-      el("div", "fun-l", s.label),
-      el("div", "fun-v", [fmt.num(s.n),
-        conv != null ? el("span", "fun-conv", ` · ${pctText(conv)} of ${stages[i - 1].short || "the step above"}`) : null]),
-      s.sub ? el("div", "fun-s", s.sub) : null,
-    ];
-    const props = { class: "fun-stage" + (+s.n ? "" : " dim"), style: { height: H + "px" } };
-    if (s.onClick) {
-      return el("button", Object.assign(props, { type: "button", on: { click: s.onClick },
-        attrs: { title: s.note || `${s.label}: ${fmt.num(s.n)} — click for the rows` } }), body);
-    }
-    return el("div", props, body);
-  }));
-
-  const drops = opts.drops || [];
-  const dropCol = el("div", "fun-drops", stages.map((s, i) => {
-    const d = drops[i];                        // the gap BELOW band i
-    const cell = el("div", "fun-drop-cell", null);
-    cell.style.height = H + "px";
-    if (d && i < stages.length - 1) {
-      const txt = [d.n != null ? el("b", null, fmt.num(d.n)) : null, d.n != null ? " " : "", d.label];
-      cell.appendChild(d.onClick
-        ? el("button", { class: "fun-drop", type: "button", on: { click: d.onClick },
-            attrs: { title: d.title || "what we know about this drop" } }, txt)
-        : el("div", "fun-drop", txt));
-    }
-    return cell;
-  }));
-
-  // hover sync: a stage row lights its band
-  const root = el("div", "fun" + (opts.compact ? " compact" : "") + (drops.length ? "" : " no-drops"));
-  append(root, drops.length ? dropCol : null, el("div", "fun-pic", pic), stageCol);
-  root.addEventListener("mouseover", (e) => {
-    const st = e.target.closest(".fun-stage");
-    if (!st) return;
-    const i = Array.prototype.indexOf.call(stageCol.children, st);
-    pic.querySelectorAll(".fun-band").forEach((b, j) => b.classList.toggle("hot", i === j));
-  });
-  root.addEventListener("mouseleave", () => pic.querySelectorAll(".fun-band").forEach((b) => b.classList.remove("hot")));
-  // accessible summary of the shape, once
-  root.appendChild(el("p", "sr-only", (opts.title ? opts.title + ": " : "")
+  stack.appendChild(el("p", "sr-only", (opts.title ? opts.title + ": " : "")
     + stages.map((s) => `${s.label} ${fmt.num(s.n)}`).join(" → ")));
-  return root;
+  return stack;
 }
 
 /* ── RING (a share of a target) ───────────────────────────────────────────── */
