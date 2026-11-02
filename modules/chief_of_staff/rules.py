@@ -395,7 +395,7 @@ def rule_upwork_waiting(db_path, now=None) -> List[dict]:
             invites = list(conn.execute(
                 "SELECT id, job_title, client_name, created_dt FROM upwork_invitations"
                 " WHERE seen_at IS NULL AND COALESCE(state,'pending') NOT IN"
-                " ('declined', 'expired', 'withdrawn')"))
+                " ('declined', 'expired', 'withdrawn', 'applied', 'resolved')"))
         except Exception:                       # noqa: BLE001 — pre-033 DB
             invites = []
         for r in invites:

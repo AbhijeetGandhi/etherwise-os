@@ -168,6 +168,38 @@ def upsert_invitation(conn: sqlite3.Connection, raw: dict) -> str:
     return "inserted"
 
 
+INVITATION_OPEN_STATES = ("pending", "PENDING", "active", "ACTIVE")
+INVITATION_DONE_STATES = ("declined", "expired", "withdrawn", "applied", "resolved")
+
+
+def resolve_absent_invitations(conn: sqlite3.Connection, present_ids: set) -> int:
+    """Mark every still-open invitation that Upwork's pending list no longer
+    carries: `applied` if a proposal exists for its job, else `resolved`.
+    Returns how many rows changed. Never touches a row already in a done
+    state, and never runs when the pending list could not be read (the
+    caller gates on the dashboard count)."""
+    rows = conn.execute(
+        "SELECT id, job_id FROM upwork_invitations"
+        " WHERE COALESCE(state, 'pending') NOT IN (%s)" % ",".join("?" * len(INVITATION_DONE_STATES)),
+        INVITATION_DONE_STATES).fetchall()
+    n = 0
+    for r in rows:
+        if r["id"] in present_ids:
+            continue
+        applied = False
+        if r["job_id"]:
+            try:
+                applied = conn.execute(
+                    "SELECT 1 FROM proposals WHERE marketplace_job_id=? LIMIT 1",
+                    (r["job_id"],)).fetchone() is not None
+            except sqlite3.OperationalError:          # pre-002 schema in a test db
+                applied = False
+        conn.execute("UPDATE upwork_invitations SET state=?, updated_at=datetime('now')"
+                     " WHERE id=?", ("applied" if applied else "resolved", r["id"]))
+        n += 1
+    return n
+
+
 # ── the pass ─────────────────────────────────────────────────────────────────
 
 ROOMS_SWEEP_CURSOR = "upwork_rooms_hour"
@@ -236,6 +268,20 @@ def run(ctx, session_factory=None) -> dict:
         for raw in invitations:
             r = upsert_invitation(conn, raw)
             mi[r] = mi.get(r, 0) + 1
+        # THE OTHER HALF (2026-11-02): Upwork only lists PENDING invitations,
+        # so a row here stayed "pending" for ever once he had answered or
+        # declined, and its Today card stayed with it until he pressed Done.
+        # Abhijeet: "most of the times I reply to them or decline; if I do
+        # you should be able to remove those automatically." When the
+        # dashboard count is known (an int, 0 included) the pending list is
+        # authoritative: every open row not in it has been dealt with —
+        # `applied` when a proposal exists for its job, else `resolved`
+        # (declined or expired; Upwork does not say which). The rule skips
+        # both and the COS sweep clears the card on its next pass.
+        if pulse.get("invitations") is not None:
+            mi["resolved"] = resolve_absent_invitations(
+                conn, {str(raw.get("id") or raw.get("invitation_uid")) for raw in invitations
+                       if raw.get("id") or raw.get("invitation_uid")})
         metrics["invitations"] = mi
     # Use case F rides the same heartbeat and the same session: the room list is
     # ONE call and it is the only thing that can tell us a reply landed. Failing

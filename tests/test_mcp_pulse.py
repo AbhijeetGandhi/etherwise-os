@@ -194,7 +194,7 @@ class TestHeartbeat(Case):
                            "jobPosting": {"id": "job9", "title": "Airtable rescue"},
                            "client": {"name": "New Client Co"}}]}})
         m = mp.run(_Ctx(self.db_path), session_factory=lambda: s)
-        self.assertEqual(m["invitations"], {"seen": 1, "inserted": 1})
+        self.assertEqual(m["invitations"], {"seen": 1, "inserted": 1, "resolved": 0})
         r = self.rows("SELECT * FROM upwork_invitations")[0]
         self.assertEqual((r["id"], r["job_id"], r["job_title"], r["client_name"], r["state"]),
                          ("inv1", "job9", "Airtable rescue", "New Client Co", "pending"))
@@ -205,6 +205,54 @@ class TestHeartbeat(Case):
         with db.connect(self.db_path) as conn:
             conn.execute("UPDATE upwork_invitations SET seen_at=datetime('now')")
         self.assertEqual(rules.rule_upwork_waiting(self.db_path), [])
+
+    def test_an_answered_invitation_leaves_the_board_on_its_own(self):
+        """Abhijeet, 2026-11-02: "most of the times I reply to them or decline;
+        if I do you should be able to remove those automatically." Upwork lists
+        only PENDING invitations, so one he has dealt with simply stops
+        appearing — the pulse reads that absence and marks the row applied
+        (a proposal exists for its job) or resolved, and the rule drops the
+        card. A row Upwork still lists is untouched."""
+        dash = {"data": {"offers": {"count": 0}, "invitations": {"count": 1},
+                         "messages": {"unread_in_preview": 0, "rooms": []},
+                         "connects": {"balance": {"connectsBalance": 10}}}}
+        two = {"invitations": [
+            {"id": "inv1", "status": "pending", "createdDateTime": "2026-10-30T18:00:00Z",
+             "jobPosting": {"id": "job1", "title": "AI Automation Expert"}, "client": {"name": "A"}},
+            {"id": "inv2", "status": "pending", "createdDateTime": "2026-10-30T18:00:00Z",
+             "jobPosting": {"id": "job2", "title": "Social media automation"}, "client": {"name": "B"}},
+            {"id": "inv3", "status": "pending", "createdDateTime": "2026-10-30T18:00:00Z",
+             "jobPosting": {"id": "job3", "title": "Workflow expert"}, "client": {"name": "C"}}]}
+        dash3 = {"data": dict(dash["data"], invitations={"count": 3})}
+        s = _Session({("get_freelancer_dashboard", "check"): dash3,
+                      ("list_freelancer_proposals", "invitations"): two})
+        mp.run(_Ctx(self.db_path), session_factory=lambda: s)
+        self.assertEqual(len(rules.rule_upwork_waiting(self.db_path)), 3)
+        # he applied to job1 and declined job2; job3 is still pending on Upwork
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO proposals (id, marketplace_job_id, job_title) VALUES ('p1','job1','x')")
+        later = {"invitations": [two["invitations"][2]]}
+        s2 = _Session({("get_freelancer_dashboard", "check"): dash,
+                       ("list_freelancer_proposals", "invitations"): later})
+        m = mp.run(_Ctx(self.db_path), session_factory=lambda: s2)
+        self.assertEqual(m["invitations"]["resolved"], 2)
+        states = {r["id"]: r["state"] for r in self.rows("SELECT id, state FROM upwork_invitations")}
+        self.assertEqual(states, {"inv1": "applied", "inv2": "resolved", "inv3": "pending"})
+        self.assertEqual([c["payload"]["invitation_id"] for c in rules.rule_upwork_waiting(self.db_path)],
+                         ["inv3"])
+
+    def test_an_unreadable_pending_list_resolves_nothing(self):
+        # the dashboard block missing => count None => the absence means
+        # nothing, and every open row stays exactly as it was
+        dash = {"data": {"offers": {"count": 0}, "messages": {"unread_in_preview": 0, "rooms": []},
+                         "connects": {"balance": {"connectsBalance": 10}}}}
+        with db.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO upwork_invitations (id, job_id, job_title, state, created_dt)"
+                         " VALUES ('inv9', 'job9', 'Old one', 'pending', '2026-10-01T00:00:00Z')")
+        s = _Session({("get_freelancer_dashboard", "check"): dash})
+        m = mp.run(_Ctx(self.db_path), session_factory=lambda: s)
+        self.assertNotIn("resolved", m["invitations"])
+        self.assertEqual(self.rows("SELECT state FROM upwork_invitations")[0]["state"], "pending")
 
     def test_a_dead_session_is_an_anomaly_not_a_failed_run(self):
         import socket
