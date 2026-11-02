@@ -1,6 +1,6 @@
 # Simran Bhola — Dossier
 
-_Compiled 2026-11-01 05:18 IST · 39 client facts (39 trusted) from 4 sources._
+_Compiled 2026-11-02 05:16 IST · 45 client facts (45 trusted) from 4 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -27,17 +27,21 @@ _Compiled 2026-11-01 05:18 IST · 39 client facts (39 trusted) from 4 sources._
 
 ## Architecture & systems
 
+- A new manual scoring button was built; clicking it opens a pop-up where a user can submit a Firefly call recording link or upload the transcript file exported from the call recording page. [CONFIRMED · https://www.loom.com/share/43b897457b544489b24e6c7c882717db @ So that's the button, on clicking on it, you see this pop-up]
 - An error/fallback screen is displayed if the user is not holding the mic correctly or there is a mic issue. [CONFIRMED · fathom/55718345 @ 00:02:22]
 - Based on the score band, a discount code is generated for the user (e.g., a score of 32 in the low band qualifies for a 20% discount), which the retailer then applies manually as there is no integrated retailer system. [CONFIRMED · fathom/55718345 @ 00:09:37]
 - CRM integration plan: form submissions (name, age, gender, chemist code) will flow into the CRM so the client can see real-time dashboards — e.g., how many users scanned per retailer code — on a weekly or monthly basis. [CONFIRMED · fathom/54780403 @ 00:04:32]
 - Chemist codes map to individual retailer outlets; the CRM will track metrics per outlet such as how many people tried the tool, scores achieved, and discounts offered. [CONFIRMED · fathom/55718345 @ 00:09:06]
 - Data fields to be passed from frontend to CRM include: name, phone number, OTP verified status (yes/no), chemist code, gender, and age. [CONFIRMED · fathom/55718345 @ 00:08:40]
+- Each call scored through the manual button is added to a table where the score and full breakdown can be reviewed later, and the scored recording can be opened from the button. [CONFIRMED · https://www.loom.com/share/43b897457b544489b24e6c7c882717db @ whatever you score using this button, it also gets added to this table]
 - Each retailer/chemist is assigned a unique chemist code. Territory sales managers inform retailers of their code. When a customer scans the QR code and fills out the form, they enter the chemist code so scans can be attributed to specific retailers. [CONFIRMED · fathom/54780403 @ 00:03:26]
 - Phone number OTP verification is handled via MSG 9.1, and chemist codes (each representing one retailer outlet) are mapped at the backend during CRM integration. [CONFIRMED · fathom/55718345 @ 00:00:00]
 - Project 1: QR codes placed at pilot retailer stores direct users to a lung-health assessment landing page. Users say 'Ayu Ses' (a phrase) for as long as possible; duration is analyzed by AI to score lung health as low, medium, or high. A discount code (10–15% depending on score) is then shown. [CONFIRMED · fathom/54780403 @ 00:02:01]
 - Project 2: After checkout from a product landing page, customers can book a free consultation with one of three in-house lung health experts via Cal.com integration. A WhatsApp reminder (via Bik.ai) will be sent immediately upon booking and again one day / half a day before the session. [CONFIRMED · fathom/54780403 @ 00:10:00]
+- The Mr. Miyagi bot is currently turned off in the scoring flow; once the flow moves to production it will be activated and will send messages to Slack. [CONFIRMED · https://www.loom.com/share/43b897457b544489b24e6c7c882717db @ Now currently I have kept the Mr. Miyagi bot off. Once it moves to production, it will be activated and will start sending the messages to Slack.]
 - The form/UI is custom coded; when a user clicks 'start recording', instructions are shown, an animation plays, the user says 'I use SaaS' for as long as possible, and results are returned as a score on a bar/threshold scale. [CONFIRMED · fathom/55718345 @ 00:01:18]
 - The key integration challenge identified is the data transfer format between frontend and backend: the frontend developer needs to provide input JSON schema (audio file/data) and expected output JSON schema (score and any other fields) to Abhijeet. [CONFIRMED · fathom/55718345 @ 00:03:31]
+- The manual scoring flow was tested with a Firefly call recording link, and it returned a score of 19 out of 20 with a score breakdown for the call. [CONFIRMED · https://www.loom.com/share/43b897457b544489b24e6c7c882717db @ It gave it 19 out of 20. And for the breakdown of the score and the call.]
 - Three different result screens/reports are displayed depending on which band the score falls in: low, medium, or high. [CONFIRMED · fathom/55718345 @ 00:02:02]
 
 ## Stack & tools
@@ -62,6 +66,8 @@ _Compiled 2026-11-01 05:18 IST · 39 client facts (39 trusted) from 4 sources._
 - Simran Bhola will share with Abhijeet after the call: Make.com account details, OpenAI key, audio file samples (approx. 2 per band, 6 total), and frontend developer's questions/requirements on input/output JSON format. [CONFIRMED · fathom/55718345 @ 00:05:13]
 - Simran indicated the front-end designer received the full user-flow brief the day before this call; front-end development is expected to take at least one week before integration work can begin. [CONFIRMED · fathom/54780403 @ 00:16:32]
 - Simran offered to commit to both projects simultaneously, suggesting a collective price across both could be discussed. [CONFIRMED · fathom/54780403 @ 00:18:24]
+- The client was asked to send additional specific call links to be tested through the manual scoring flow. [CONFIRMED · https://www.loom.com/share/43b897457b544489b24e6c7c882717db @ if you want some other specific calls to be tested through this flow, you can send me the links]
+- The developer planned further thorough testing of the manual scoring button the following day, then move the button/flow to production. [CONFIRMED · https://www.loom.com/share/43b897457b544489b24e6c7c882717db @ tomorrow after further thorough testing, I will move this flower. Or the button to production]
 
 ## Notable quotes
 

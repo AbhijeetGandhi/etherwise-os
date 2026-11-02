@@ -1,6 +1,6 @@
 # Vitaliy Kahanets — Dossier
 
-_Compiled 2026-11-01 05:18 IST · 33 client facts (33 trusted) from 3 sources._
+_Compiled 2026-11-02 05:16 IST · 33 client facts (33 trusted) from 3 sources._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 

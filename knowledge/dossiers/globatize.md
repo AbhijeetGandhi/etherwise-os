@@ -1,6 +1,6 @@
 # Globaltize LLC — Dossier
 
-_Compiled 2026-11-01 05:18 IST · 114 client facts (114 trusted) from 23 sources · 16 agency/other-client facts routed to proof-points._
+_Compiled 2026-11-02 05:16 IST · 114 client facts (114 trusted) from 23 sources · 16 agency/other-client facts routed to proof-points._
 
 > Every line is cited. Confidence: **CONFIRMED** / **CROSS-VERIFIED** are client-facing; _INFERRED_ is internal-only.
 
@@ -16,8 +16,8 @@ _Compiled 2026-11-01 05:18 IST · 114 client facts (114 trusted) from 23 sources
 - During onboarding demo testing, a $5 payment amount (totalling $805 including the base amount) was chosen as the example payment figure. [CONFIRMED · fathom/196965355 @ 00:05:01 – 'Let's just do the $5 one. it would be $805']
 - Nick had previously sent $200 and approximately $2,000+ to the platform wallet balance for testing purposes; a $5 test transaction was proposed for the production wallet feature test. [CONFIRMED · fathom/196965355 @ 00:13:31 – 'I sent $200 and then I sent the exact amount I owe you, like 2000 something. So it was in our wallet balance... Maybe I can send like $5 and then we can test the rest']
 - On a $10 transaction where the client was charged $10.80, the contractor initially received $10.12 due to a calculation bug; this has since been fixed. [CONFIRMED · fathom/189816904 @ the client had to pay $10.80, and now the fixed card processing fee... they actually received $10.12, which I have now fixed]
-- Revenue to date (GROSS, billed): $11,415.80 across 9 revenue transactions (2026-08-30 → 2026-10-19) — Upwork $1,400.00, direct $10,015.80. [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
-- Revenue to date (NET, received after Upwork fees and tax): $11,204.40 — gross $11,415.80 less $210.00 Upwork service fees, $1.40 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
+- Revenue to date (GROSS, billed): $13,489.16 across 10 revenue transactions (2026-08-30 → 2026-10-30) — Upwork $1,400.00, direct $12,089.16. [CONFIRMED · CRM:transactions[pnl_bucket=revenue]]
+- Revenue to date (NET, received after Upwork fees and tax): $13,277.76 — gross $13,489.16 less $210.00 Upwork service fees, $1.40 tax withheld (GST/WHT). [CONFIRMED · CRM:transactions[pnl_bucket=revenue+refund+platform_fee+tax]]
 - WAP charges approximately $2 per transaction but FX rates are acceptable for higher transaction amounts. [CONFIRMED · fathom/191495491 @ The FX rates weren't a lot either. I noticed that if you do higher amounts, like despite it charging $2, it's not really terrible.]
 - Woff (payment processor) charges a fixed card processing fee of approximately $0.30, resulting in the contractor receiving less than the billed amount on small transactions. On a $2 client charge, the contractor received only $1.74. [CONFIRMED · fathom/189816904 @ the client had to pay $2.16, but like what the contractor received was just $1.74 because they have this fixed car processing fee that is like 30 cents]
 - Woff fees are approximately 5% or $0.38 minimum. The minimum payment amount for a contractor to receive the full intended amount (e.g., $6) is approximately $6.70. [CONFIRMED · fathom/189816904 @ it's like 5% or 0.3438, like, you know, the minimum fee... the payment needs to be at least of, what we call it, like $6.7]
