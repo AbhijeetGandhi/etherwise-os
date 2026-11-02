@@ -49,6 +49,50 @@ def _resweep_metrics(rs: dict) -> dict:
             "resweep_fingerprint": rs.get("fingerprint")}
 
 
+def apply_proposal(conn, eid: str, p: dict, *, low: bool, protected: bool,
+                   subject, min_conf: float) -> str:
+    """Write one proposer verdict to its event. Returns where it went:
+    'lead' | 'filed' | 'imap-excluded' | 'queued'. One function so the sweep
+    and `bin/jarvis-repropose` cannot route the same verdict two ways.
+
+    ROUTE BY INTENT, not by the absence of a client id. Until 2026-08-20 every
+    proposal that was not excluded here landed on the board, so "I cannot
+    attribute this" and "a person must see this" were the same outcome — and
+    the board filled with renewals, receipts, seat confirmations and contract
+    notifications. The intent is decided in the same proposer call."""
+    pid, conf = p["proposed_client_id"], p["confidence"]
+    dest = mapping.route(p["intent"], protected=protected, subject=subject)
+    if dest == "lead" and not pid:
+        # a prospect, not a client to map (2026-11-01): the leads table is its
+        # home; the event is filed under the lead id. A "lead" the proposer
+        # ALSO tied to a registry client is an existing relationship talking —
+        # that one still queues.
+        ev_row = conn.execute("SELECT * FROM events WHERE id=?", (eid,)).fetchone()
+        if ev_row:
+            leads.from_event(conn, dict(ev_row), note=p.get("evidence"))
+            return "lead"
+        dest = "review"
+    elif dest == "lead":
+        dest = "review"
+    if dest != "review":
+        reason = (mapping.FILE_REASON.get(p["intent"], "noise:marketing")
+                  if dest == "file" else "noise:marketing")
+        if pid and dest == "file":
+            reason = f"{reason}:{pid}"      # whose it was, kept
+        events.set_excluded(conn, eid, reason)
+        return "filed"
+    # A low-base-rate inbox queues ONLY on a positive client signal (a proposer
+    # id naming a registry client at >= min_conf). No signal => EXCLUDED, never
+    # queued (keeps the queue from filling with personal / finance-alert
+    # noise). contact@ keeps its original behaviour: even a null proposal
+    # queues for human triage.
+    if low and not (pid is not None and conf >= min_conf):
+        events.set_excluded(conn, eid, "imap-low-base-rate:no-client-signal")
+        return "imap-excluded"
+    events.set_queued(conn, eid, pid, conf, p["evidence"])
+    return "queued"
+
+
 def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
               meta_fn=gmail_rail._meta, full_fn=gmail_rail._full,
               imap_inboxes=(), imap_collect=imap_rail.collect, reg=None) -> dict:
@@ -246,47 +290,17 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
         for eid, low, p, prot, subj in proposals:
             if p is None:
                 continue                          # proposer failed -> stays held
-            pid, conf = p["proposed_client_id"], p["confidence"]
-            # ROUTE BY INTENT, not by the absence of a client id. Until
-            # 2026-08-20 every proposal that was not excluded here landed on the
-            # board, so "I cannot attribute this" and "a person must see this"
-            # were the same outcome — and the board filled with renewals,
-            # receipts, seat confirmations and contract notifications. The
-            # intent is now decided in the same proposer call.
-            dest = mapping.route(p["intent"], protected=prot, subject=subj)
-            if dest == "lead" and not pid:
-                # a prospect, not a client to map (2026-11-01): the leads
-                # table is its home; the event is filed under the lead id. A
-                # "lead" the proposer ALSO tied to a registry client is an
-                # existing relationship talking — that one still queues.
-                ev_row = conn.execute("SELECT * FROM events WHERE id=?", (eid,)).fetchone()
-                if ev_row:
-                    leads.from_event(conn, dict(ev_row), note=p.get("evidence"))
-                    leads_made += 1
-                    filed["lead"] = filed.get("lead", 0) + 1
-                    continue
-                dest = "review"
-            elif dest == "lead":
-                dest = "review"
-            if dest != "review":
-                reason = (mapping.FILE_REASON.get(p["intent"], "noise:marketing")
-                          if dest == "file" else "noise:marketing")
-                if pid and dest == "file":
-                    reason = f"{reason}:{pid}"      # whose it was, kept
-                events.set_excluded(conn, eid, reason)
+            outcome = apply_proposal(conn, eid, p, low=low, protected=prot,
+                                     subject=subj, min_conf=min_conf)
+            if outcome == "lead":
+                leads_made += 1
+                filed["lead"] = filed.get("lead", 0) + 1
+            elif outcome == "filed":
                 filed[p["intent"]] = filed.get(p["intent"], 0) + 1
-                continue
-            # A low-base-rate inbox queues ONLY on a positive client signal (a
-            # proposer id naming a registry client at >= min_conf). No signal =>
-            # EXCLUDED, never queued (keeps the queue from filling with personal /
-            # finance-alert noise). contact@ keeps its original behaviour: even a
-            # null proposal queues for human triage.
-            if low and not (pid is not None and conf >= min_conf):
-                events.set_excluded(conn, eid, "imap-low-base-rate:no-client-signal")
+            elif outcome == "imap-excluded":
                 imap_excluded += 1
-                continue
-            events.set_queued(conn, eid, pid, conf, p["evidence"])
-            queued += 1
+            elif outcome == "queued":
+                queued += 1
         counts = events.counts_by_state(conn, ctx.run_id)
 
     # 4. RECONCILE ─────────────────────────────────────────────────────────────

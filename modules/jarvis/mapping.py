@@ -45,7 +45,19 @@ INTENTS = (
                             # credits, API token, seat confirmation, security
     "ops_alert",            # an automation / scenario / job failed
     "marketing",            # campaign, newsletter, webinar, product launch
+    # 2026-11-02, Abhijeet on a Review row: "this is one clearly asking for
+    # work in the emails how is this for client review? or assigned to horizons
+    # aba". Terry Benjamin, a freelancer offering overflow capacity, had been
+    # proposed to Horizons ABA at 0.85 because his pitch cites our Horizons
+    # case study. The vocabulary had no slot for "someone wants something FROM
+    # us", so a human-written pitch could only be a client_message, and the
+    # prompt never said that a client an email merely names is not the client
+    # it concerns. Two intents, both filed (findable, off the board), and a
+    # pitch concerns no client whatever name it drops (see propose()).
+    "talent_pitch",         # a person offering to work for/with us
+    "vendor_pitch",         # a company or agent selling to us / asking of us
 )
+PITCH_INTENTS = ("talent_pitch", "vendor_pitch")
 
 PROPOSAL_SCHEMA = {
     "type": "object",
@@ -68,14 +80,28 @@ _SYSTEM = (
     "most plausibly concerns, or null if none fits or you are unsure. Output ONLY "
     "JSON matching the schema. `confidence` is 0.0-1.0. `evidence` is one short "
     "phrase naming the signal you used (a domain, a person, a company mention). "
-    "Do not invent a client id that is not in the candidate list.\n\n"
+    "Do not invent a client id that is not in the candidate list. The client an "
+    "email concerns is the party the sender IS, writes on behalf of, or is "
+    "transacting with. A client the email merely NAMES — as an example, a case "
+    "study, a portfolio item, a reference, a comparison, 'your work for X' — is "
+    "NOT that client: someone pitching us while citing our Horizons ABA case "
+    "study concerns no client, so propose null.\n\n"
     "Also classify `intent` — WHAT KIND of message this is. This is a separate "
     "judgement from the client id and must not be inferred from it: most "
     "messages have no client and still are not questions for a human.\n"
     "  client_message     — a PERSON at a client or prospect wrote to us, or "
     "replied to us. A real human on the other side.\n"
-    "  lead               — a new inbound opportunity from someone who is not "
-    "yet a client: an enquiry, an invitation to interview, a contact form.\n"
+    "  lead               — a new inbound opportunity from someone who wants US "
+    "to do work for THEM and is not yet a client: an enquiry, an invitation to "
+    "interview, a contact form asking for a build or a quote.\n"
+    "  talent_pitch       — a PERSON offering to work for or with us: a "
+    "freelancer or contractor offering capacity, a paid trial or a scoped part "
+    "of a build, a job seeker, a résumé or portfolio. They want work FROM us; "
+    "they are not buying anything.\n"
+    "  vendor_pitch       — a company or agent selling TO us or asking "
+    "something of us, written personally rather than as a campaign: an agency "
+    "or tool pitching its service, a recruiter offering candidates, a "
+    "partnership, affiliate, guest-post, backlink or lead-gen approach.\n"
     "  relationship_event — an automated PLATFORM notification about an "
     "engagement that already exists: hired, offer, contract started / updated / "
     "rate changed / restarted, a meeting scheduled, a recording ready, 'you have "
@@ -92,7 +118,8 @@ _SYSTEM = (
     "when it is sent by a named human at a vendor.\n"
     "When two could fit, prefer the more specific: an invoice from a client's "
     "billing system is still account_notice; a webinar invite from a client's "
-    "marketing list is still marketing."
+    "marketing list is still marketing; a freelancer's follow-up to their own "
+    "earlier pitch is still talent_pitch even when the subject says 'Re:'."
 )
 
 TEXT_CAP = 2000     # cap body chars sent to the proposer (cost + injection surface)
@@ -186,9 +213,19 @@ def propose(ctx, ev, cand: list[dict], valid_ids: set) -> Optional[dict]:
         # front of Abhijeet": over-filing is the failure mode that loses a
         # client, over-asking is the one that wastes a minute.
         intent = "client_message"
-    return {"proposed_client_id": pid, "confidence": max(0.0, min(1.0, conf)),
-            "evidence": str(parsed.get("evidence") or "")[:300],
-            "intent": intent}
+    note = parsed.get("proposal_note")
+    if intent in PITCH_INTENTS and pid is not None:
+        # A pitch concerns no client, whatever name it drops. Left in, the id
+        # would ride into the filed reason ("filed:talent-pitch:horizons-aba")
+        # and a stranger's sales mail would sit in a client's history.
+        note = f"pitch-concerns-no-client:{pid}"
+        pid = None
+    out = {"proposed_client_id": pid, "confidence": max(0.0, min(1.0, conf)),
+           "evidence": str(parsed.get("evidence") or "")[:300],
+           "intent": intent}
+    if note:
+        out["proposal_note"] = note
+    return out
 
 
 # ── where each intent goes ───────────────────────────────────────────────────
@@ -209,11 +246,17 @@ INTENT_ROUTE = {
     "account_notice":     "file",
     "ops_alert":          "file",
     "marketing":          "drop",
+    # filed, not dropped: the day he hires, "everyone who asked to work with
+    # us" is one query on exclude_reason; a vendor he later buys from is too.
+    "talent_pitch":       "file",
+    "vendor_pitch":       "file",
 }
 FILE_REASON = {
     "relationship_event": "filed:relationship-event",
     "account_notice":     "filed:account-notice",
     "ops_alert":          "ops-alert:proposer",
+    "talent_pitch":       "filed:talent-pitch",
+    "vendor_pitch":       "filed:vendor-pitch",
 }
 
 

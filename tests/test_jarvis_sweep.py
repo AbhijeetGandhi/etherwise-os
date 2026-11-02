@@ -477,5 +477,68 @@ class ImapLowBaseRateTests(SweepTests):
         self.assertEqual(ctx.claude_calls, [])       # no LLM for a deterministic hit
 
 
+class ApplyProposalIsTheOneRoutingPath(unittest.TestCase):
+    """`sweep.apply_proposal` writes a proposer verdict for the sweep AND for
+    `bin/jarvis-repropose`, so a re-run verdict cannot land anywhere a fresh
+    one could not. Pinned on the four outcomes, with the 2026-11-02 case:
+    Terry Benjamin's pitch, re-proposed as talent_pitch, is filed under
+    its own reason with no client suffix."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dbp = Path(self.tmp.name) / "t.db"
+        db.migrate(self.dbp)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _event(self, conn, eid, author="ttbenjamin12345@gmail.com",
+               subject="Re: Paid automation implementation capacity"):
+        events.store_event(conn, {
+            "id": eid, "source": "email", "native_id": eid, "ts": "2026-10-27T11:24:05+00:00",
+            "author": author, "subject": subject, "state": "held",
+            "text": "From: Terry\n\nwould you consider an independent engineer"}, 7)
+
+    def _apply(self, p, *, low=False, protected=False, eid="evt:email:terry"):
+        with db.connect(self.dbp) as conn:
+            self._event(conn, eid)
+            out = sweep.apply_proposal(conn, eid, p, low=low, protected=protected,
+                                       subject="Re: Paid automation implementation capacity",
+                                       min_conf=0.7)
+            row = conn.execute("SELECT state, exclude_reason, proposed_client_id"
+                               " FROM events WHERE id=?", (eid,)).fetchone()
+        return out, dict(row)
+
+    def test_a_pitch_is_filed_under_its_reason_with_no_client(self):
+        out, row = self._apply({"proposed_client_id": None, "confidence": 0.9,
+                                "evidence": "freelancer offering capacity",
+                                "intent": "talent_pitch"})
+        self.assertEqual(out, "filed")
+        self.assertEqual(row["state"], "excluded")
+        self.assertEqual(row["exclude_reason"], "filed:talent-pitch")
+
+    def test_a_filed_intent_with_a_client_keeps_whose_it_was(self):
+        out, row = self._apply({"proposed_client_id": "adelye", "confidence": 0.9,
+                                "evidence": "Adelye's ClickUp plan renewal",
+                                "intent": "account_notice"})
+        self.assertEqual((out, row["exclude_reason"]), ("filed", "filed:account-notice:adelye"))
+
+    def test_a_person_queues_and_a_low_base_rate_inbox_needs_a_signal(self):
+        out, row = self._apply({"proposed_client_id": None, "confidence": 0.3,
+                                "evidence": "", "intent": "client_message"})
+        self.assertEqual((out, row["state"]), ("queued", "queued"))
+        out, row = self._apply({"proposed_client_id": None, "confidence": 0.3,
+                                "evidence": "", "intent": "client_message"},
+                               low=True, eid="evt:email:terry2")
+        self.assertEqual((out, row["exclude_reason"]),
+                         ("imap-excluded", "imap-low-base-rate:no-client-signal"))
+
+    def test_a_lead_with_no_client_becomes_a_lead_row(self):
+        out, row = self._apply({"proposed_client_id": None, "confidence": 0.8,
+                                "evidence": "asks for a quote", "intent": "lead"})
+        self.assertEqual(out, "lead")
+        self.assertTrue(row["exclude_reason"].startswith("filed:lead:"), row)
+
+
 if __name__ == "__main__":
     unittest.main()

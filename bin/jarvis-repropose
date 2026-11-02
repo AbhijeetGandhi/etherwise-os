@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Run the proposer again on named Review rows, with today's prompt.
+
+Why this exists (2026-11-02). A row on the Review board — Terry Benjamin, a
+freelancer offering overflow capacity — had been proposed to Horizons ABA at
+0.85 because his pitch cites our Horizons case study. The fix is a prompt rule
+and two intents (mapping.py), but a prompt rule is not retroactive on its own:
+the verdict is stored on the row, and the sweep only proposes for rows it
+collected itself (`events.held_for_run`). This re-runs the proposer on the rows
+you name and routes the new verdict through the SAME function the sweep uses
+(`sweep.apply_proposal`), so a re-proposal cannot land anywhere a fresh one
+could not.
+
+What it never touches: a row Abhijeet decided himself (`resolved_by` is a human
+decision), or a row that is not queued/held. Dry run by default; `--apply`
+writes. Cost: one Haiku classify call per row.
+
+Usage:
+  PYTHONPATH=. python3 bin/jarvis-repropose evt:email:1a17d1a6ff54d9b4 [...]
+  PYTHONPATH=. python3 bin/jarvis-repropose --queued-email          # every queued email row
+  ... --apply
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db, registry, runner                 # noqa: E402
+from modules.jarvis import events, mapping, sender_rules, sweep   # noqa: E402
+
+TASK_NAME = "jarvis_repropose"
+
+
+def _is_low_base_rate(ev: dict) -> bool:
+    """Same rule as the sweep: mail collected from a low-base-rate IMAP inbox
+    queues only on a positive client signal. The inbox is in raw_ref
+    ('imap/<inbox>/<uid>'); contact@ rows carry no imap prefix."""
+    ref = ev.get("raw_ref") or ""
+    if not ref.startswith("imap/"):
+        return False
+    inbox = ref.split("/", 2)[1]
+    return inbox in set(config.JARVIS_IMAP_LOW_BASE_RATE_INBOXES)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("ids", nargs="*", help="event ids (evt:email:…)")
+    ap.add_argument("--queued-email", action="store_true",
+                    help="every email row currently queued on the board")
+    ap.add_argument("--apply", action="store_true", help="write the new verdicts")
+    args = ap.parse_args()
+    if not args.ids and not args.queued_email:
+        ap.error("name event ids or pass --queued-email")
+
+    def task(ctx):
+        reg = registry.load()
+        cand, valid = mapping.candidates(reg), set(reg.ids())
+        min_conf = config.JARVIS_IMAP_QUEUE_MIN_CONFIDENCE
+        with db.connect(ctx.db_path or config.DB_PATH) as conn:
+            if args.queued_email:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT * FROM events WHERE state='queued' AND source='email'"
+                    " ORDER BY ts")]
+            else:
+                marks = ",".join("?" * len(args.ids))
+                rows = [dict(r) for r in conn.execute(
+                    f"SELECT * FROM events WHERE id IN ({marks})", args.ids)]
+        found = {r["id"] for r in rows}
+        report = {"mode": "APPLY" if args.apply else "DRY-RUN", "rows": [],
+                  "missing": [i for i in args.ids if i not in found]}
+        for ev in rows:
+            line = {"id": ev["id"], "author": ev.get("author"),
+                    "subject": (ev.get("subject") or "")[:60],
+                    "was": {"state": ev["state"], "client": ev.get("proposed_client_id"),
+                            "conf": ev.get("proposal_confidence")}}
+            if events.is_human_decision(ev.get("resolved_by")):
+                line["skipped"] = "his own decision — never re-opened"
+                report["rows"].append(line)
+                continue
+            if ev["state"] not in ("queued", "held"):
+                line["skipped"] = f"state {ev['state']} — only queued/held rows are re-proposed"
+                report["rows"].append(line)
+                continue
+            if (ev.get("proposal_evidence") or "").startswith("matches Upwork room"):
+                # Not a proposer verdict: the room-link rule attributed this row
+                # from a conversation the model cannot see. A bare re-run would
+                # only know less (first dry run, 2026-11-02: Dhanya Sangolli's
+                # two rows fell from 0.9 to "no match" for exactly that reason).
+                line["skipped"] = "attributed by the Upwork-room link, not the proposer — kept"
+                report["rows"].append(line)
+                continue
+            p = mapping.propose(ctx, ev, cand, valid)
+            if p is None:
+                line["skipped"] = "proposer failed — row left as it was"
+                report["rows"].append(line)
+                continue
+            line["now"] = {"intent": p["intent"], "client": p["proposed_client_id"],
+                           "conf": p["confidence"], "evidence": p["evidence"],
+                           "note": p.get("proposal_note")}
+            if args.apply:
+                with db.connect(ctx.db_path or config.DB_PATH) as conn:
+                    outcome = sweep.apply_proposal(
+                        conn, ev["id"], p, low=_is_low_base_rate(ev),
+                        protected=bool(sender_rules.transactional_reason(ev.get("author") or "")),
+                        subject=ev.get("subject"), min_conf=min_conf)
+                    row = conn.execute("SELECT state, exclude_reason FROM events WHERE id=?",
+                                       (ev["id"],)).fetchone()
+                line["outcome"] = outcome
+                line["state_after"] = dict(row) if row else None
+            report["rows"].append(line)
+        ctx.log(json.dumps(report, default=str))
+        print(json.dumps(report, indent=1, default=str))
+        return {"rows": len(rows), "applied": int(args.apply),
+                "re_proposed": sum(1 for r in report["rows"] if "now" in r),
+                "moved": sum(1 for r in report["rows"]
+                             if r.get("outcome") not in (None, "queued"))}
+
+    res = runner.run_task(TASK_NAME, task, module="system")
+    return 0 if res.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

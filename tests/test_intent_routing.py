@@ -158,6 +158,49 @@ class ProposerOutputIsSanitised(unittest.TestCase):
                              "intent": "client_message"})
         self.assertIsNone(got["proposed_client_id"])
 
+    def test_a_pitch_concerns_no_client_whatever_name_it_drops(self):
+        """Terry Benjamin, 2026-10-27: a freelancer offering overflow capacity,
+        citing our Horizons ABA case study -> proposed to horizons-aba at 0.85.
+        Abhijeet: "this is one clearly asking for work ... how is this for
+        client review? or assigned to horizons aba". The id is nulled so the
+        filed reason cannot carry a client, and the note says what was dropped."""
+        for intent in mapping.PITCH_INTENTS:
+            got = self._propose({"proposed_client_id": "c1", "confidence": 0.85,
+                                 "evidence": "Horizons ABA case mentioned as reference",
+                                 "intent": intent})
+            self.assertIsNone(got["proposed_client_id"], intent)
+            self.assertEqual(got["proposal_note"], "pitch-concerns-no-client:c1")
+            self.assertEqual(got["intent"], intent)
+        # a client_message naming a client keeps it — the guard is pitch-only
+        got = self._propose({"proposed_client_id": "c1", "confidence": 0.9,
+                             "evidence": "e", "intent": "client_message"})
+        self.assertEqual(got["proposed_client_id"], "c1")
+
+
+class PitchesAreFiledNotReviewed(unittest.TestCase):
+    """Someone who wants something FROM us — work, a sale, a backlink — is not a
+    question for Abhijeet and is not a client's thread. Filed, so the day he
+    hires, 'everyone who asked to work with us' is one query."""
+
+    def test_both_pitch_intents_file_under_their_own_reason(self):
+        self.assertEqual(mapping.route("talent_pitch"), "file")
+        self.assertEqual(mapping.route("vendor_pitch"), "file")
+        self.assertEqual(mapping.FILE_REASON["talent_pitch"], "filed:talent-pitch")
+        self.assertEqual(mapping.FILE_REASON["vendor_pitch"], "filed:vendor-pitch")
+
+    def test_a_pitch_s_own_follow_up_is_still_filed(self):
+        # "Re: Paid automation implementation capacity" is Terry replying to
+        # Terry. The reply override protects against DROPPING a thread; filing
+        # keeps it findable, so the override does not apply.
+        self.assertEqual(mapping.route("talent_pitch",
+                                       subject="Re: Paid automation implementation capacity"),
+                         "file")
+
+    def test_the_prompt_says_a_cited_client_is_not_the_client(self):
+        self.assertIn("merely NAMES", mapping._SYSTEM)
+        self.assertIn("talent_pitch", mapping._SYSTEM)
+        self.assertIn("vendor_pitch", mapping._SYSTEM)
+
 
 if __name__ == "__main__":
     unittest.main()
