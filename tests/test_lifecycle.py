@@ -538,7 +538,7 @@ class TestPipelineTab(unittest.TestCase):
     def test_the_section_reads_two_routes_imports_the_house_and_never_sends(self):
         src = (STATIC / "js" / "sections" / "lifecycle.js").read_text()
         self.assertEqual(set(re.findall(r'from "([^"]+)"', src)),
-                         {"../ui.js", "../drill.js", "../subtabs.js", "./upwork_funnel.js", "./pipeline.js"})
+                         {"../ui.js", "../drill.js", "../subtabs.js", "../shapes.js", "./upwork_funnel.js", "./pipeline.js"})
         self.assertIn('api("/api/lifecycle")', src)
         self.assertIn('api("/api/upwork/funnel")', src)
         for bad in ("fetch(", "innerHTML", "/send", "send_message"):

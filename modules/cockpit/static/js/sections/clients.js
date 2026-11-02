@@ -171,12 +171,15 @@ export async function render(root, ctx) {
       return out;
     }
     const sorted = list.slice().sort((a, b) => String(b.last || "").localeCompare(String(a.last || "")));
-    sorted.forEach((c) => out.appendChild(clientRow(c, why)));
+    // the bar under each row is paid-to-date against the biggest payer IN THIS
+    // LIST, so the eye ranks the list before reading a figure (2026-11-02)
+    const top = Math.max(1, ...list.map((c) => Number(c.revenue_usd) || 0));
+    sorted.forEach((c) => out.appendChild(clientRow(c, why, top)));
     out.appendChild(el("p", "muted small foot", footnote));
     return out;
   }
 
-  function clientRow(c, why) {
+  function clientRow(c, why, top = 1) {
     const initials = String(c.name || "?").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase();
     const dz = dossierIndex.get(normName(c.name));
     const m = matchRoster(c, rosterIndex);
@@ -204,8 +207,10 @@ export async function render(root, ctx) {
         else { host.style.display = "none"; clear(host); }
       }, { sm: true, variant: "primary", icon: "book-open" }) : null,
     ]);
+    const share = el("span", { class: "li-bar cl-bar", attrs: { title: `${fmt.usd(c.revenue_usd)} to date` } },
+      el("i", { style: { width: Math.max(1, (100 * (Number(c.revenue_usd) || 0)) / top) + "%" } }));
     return el("div", "row client-row", [
-      el("div", "in", [el("div", "avatar", initials), el("div", null, [el("div", "t", c.name), desc]), actions]),
+      el("div", "in", [el("div", "avatar", initials), el("div", "cl-main", [el("div", "t", c.name), desc, share]), actions]),
       host,
     ]);
   }

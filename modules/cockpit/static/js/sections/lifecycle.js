@@ -41,6 +41,7 @@
 import { el, append, clear, fmt, icon, pill, notice, emptyState, btn, extLink, table, copyText, expander, toast } from "../ui.js";
 import { openDrill } from "../drill.js";
 import { subtabs } from "../subtabs.js";
+import { funnel, bands } from "../shapes.js";
 import { renderFunnel, drillRows as proposalDrill } from "./upwork_funnel.js";
 import { renderAnalysis } from "./pipeline.js";
 
@@ -233,44 +234,33 @@ function hotDrill(L, title, rows, subtitle) {
   });
 }
 
-/** the strip: Found → Applied → Opened → Wrote back → Hired */
-function stripBlock(D, L, fd, ctx) {
+/** the funnel: Hot jobs found → Proposals sent → Opened → Wrote back → Hired.
+    A shape, not a row of boxes (Abhijeet, 2026-11-02: "I would always prefer a
+    diagram over a lot of text with boxes"). Each band drills to its rows; the
+    drops on the gaps open the "why" underneath. */
+function stripBlock(D, L, fd, ctx, drops) {
   const st = fd.st;
-  const top = Math.max(1, fd.hot.length);
   const scanLate = fd.scanSince && (!fd.b.lo || fd.scanSince > fd.b.lo);
-  const tiles = [
-    { l: "Hot jobs found", v: fd.hot.length,
-      s: [el("b", null, fmt.num(fd.read)), " jobs read"
+  const stages = [
+    { label: "Hot jobs found", short: "the hot jobs", n: fd.hot.length,
+      sub: [el("b", null, fmt.num(fd.read)), " jobs read"
         + (scanLate ? `, since ${fmt.dateShort(fd.scanSince)} (when the scanner started)` : "")],
-      go: () => hotDrill(L, "Hot jobs the scanner found", fd.hot,
+      onClick: () => hotDrill(L, "Hot jobs the scanner found", fd.hot,
         `score ${(L.scanner || {}).hot_at} or more, in this period; the ones with a proposal are marked`) },
-    { l: "Proposals sent", v: st[0].n,
-      s: [el("b", null, pct(rate(fd.hotApplied.length, fd.hot.length))), " of the hot jobs got one",
-        fd.inv.length ? ` · +${fmt.num(fd.inv.length)} invitations accepted` : ""],
-      go: () => proposalDrill("Proposals sent", st[0].rows, { subtitle: "cold proposals in this period" }) },
-    { l: "Opened", v: st[1].n, s: [el("b", null, pct(st[1].ofPrev)), " of those sent"],
-      go: () => proposalDrill("Opened by the client", st[1].rows,
+    { label: "Proposals sent", short: "those sent", n: st[0].n,
+      sub: fd.inv.length ? `+${fmt.num(fd.inv.length)} invitations accepted` : null,
+      onClick: () => proposalDrill("Proposals sent", st[0].rows, { subtitle: "cold proposals in this period" }) },
+    { label: "Opened", short: "those opened", n: st[1].n,
+      onClick: () => proposalDrill("Opened by the client", st[1].rows,
         { subtitle: "Upwork records the open, or the client wrote back" }) },
-    { l: "Wrote back", v: st[2].n, s: [el("b", null, pct(st[2].ofPrev)), " of those opened"],
-      go: () => talksDrill(D, L, "The client wrote back", st[2].rows) },
-    { l: "Hired you", v: st[3].n,
-      s: [el("b", null, pct(st[3].ofPrev)), " of those who wrote back",
-        fd.invHired.length ? ` · +${fmt.num(fd.invHired.length)} from invitations` : ""],
-      go: () => proposalDrill("Became a client", st[3].rows.concat(fd.invHired),
+    { label: "Wrote back", short: "those who wrote back", n: st[2].n,
+      onClick: () => talksDrill(D, L, "The client wrote back", st[2].rows) },
+    { label: "Hired you", n: st[3].n,
+      sub: fd.invHired.length ? `+${fmt.num(fd.invHired.length)} from invitations` : null,
+      onClick: () => proposalDrill("Became a client", st[3].rows.concat(fd.invHired),
         { subtitle: "cold proposals and accepted invitations that became clients" }) },
   ];
-  const flow = el("div", { class: "flow lc-flow", style: { gridTemplateColumns: `repeat(${tiles.length}, 1fr)` } });
-  tiles.forEach((t, i) => {
-    flow.appendChild(el("button", {
-      class: "stage" + (t.v ? "" : " dim"), type: "button",
-      attrs: { title: `${t.l}: ${fmt.num(t.v)} — click for the rows` }, on: { click: t.go },
-    }, [
-      el("div", "l", t.l), el("div", "v", fmt.num(t.v)), el("div", "s", t.s),
-      el("div", "bar", el("i", { style: { width: Math.max(1.5, (100 * t.v) / top) + "%" } })),
-      i < tiles.length - 1 ? el("span", "arrow", "›") : null,
-    ]));
-  });
-  return flow;
+  return funnel(stages, { drops, title: "From job to client" });
 }
 
 /** best and worst group of a split by the rate at one step (step 1 = opened
@@ -310,25 +300,18 @@ function compareWords(k, n, K, N) {
   return n < F().FEW || N - n < F().FEW ? "too few to tell yet" : "no real difference yet";
 }
 
-function dropCard(title, big, lines, foot) {
-  return el("div", "lc-drop", [
-    el("div", "lc-drop-t", title),
-    el("div", "lc-drop-big", big),
-    el("ul", "lc-drop-lines", lines.filter(Boolean)),
-    foot ? el("div", "lc-drop-foot", foot) : null,
-  ]);
-}
-
-function dropsBlock(D, L, fd, ctx) {
+/** one drop = { gap, n, label, lines, foot }: the gap it sits on (0 = below the
+    first band), what fell out there, and what we know about why. */
+function dropsData(D, L, fd, ctx) {
   const st = fd.st;
-  const cards = [];
+  const out = [];
 
   // 1. hot job → proposal: did we apply where the scanner pointed, and did it pay off
   const repOf = (rows) => rows.filter((r) => r.rep === 1).length;
   const kH = repOf(fd.onHot), kAll = repOf(fd.cold);
-  cards.push(dropCard("Hot job → proposal",
-    [el("b", null, fmt.num(fd.hot.length - fd.hotApplied.length)), " hot jobs got no proposal"],
-    [
+  out.push({ gap: 0, n: fd.hot.length - fd.hotApplied.length, label: "hot jobs got no proposal",
+    title: "Hot job → proposal",
+    lines: [
       el("li", null, ["You applied on ", el("b", null, pct(rate(fd.hotApplied.length, fd.hot.length))),
         " of the jobs the scanner flagged."]),
       fd.notFlagged.length ? el("li", null, [
@@ -341,26 +324,24 @@ function dropsBlock(D, L, fd, ctx) {
         el("b", null, pct(rate(kAll - kH, fd.notFlagged.length))), ` on the others (${fmt.num(fd.notFlagged.length)}): `
         + compareWords(kH, fd.onHot.length, kAll, fd.cold.length) + "."]) : null,
     ],
-    [linkBtn("the hot jobs with no proposal", () => hotDrill(L, "Hot jobs with no proposal",
+    foot: [linkBtn("the hot jobs with no proposal", () => hotDrill(L, "Hot jobs with no proposal",
       fd.hot.filter((h) => !h.pid), "flagged hot in this period; nobody applied")),
-    " · ", linkBtn("the scanner's charts →", () => goTo(ctx, "scanner"))]));
+    " · ", linkBtn("the scanner's charts →", () => goTo(ctx, "scanner"))] });
 
   // 2. sent → opened
   const speed = bestWorst(fd.cold, "speed", 1), pile = bestWorst(fd.cold, "pile", 1);
-  cards.push(dropCard("Sent → opened",
-    [el("b", null, fmt.num(st[0].n - st[1].n)), " never opened"],
-    [bwLine(speed, "Opened", "speed"), bwLine(pile, "Opened", "pile"),
+  out.push({ gap: 1, n: st[0].n - st[1].n, label: "never opened", title: "Sent → opened",
+    lines: [bwLine(speed, "Opened", "speed"), bwLine(pile, "Opened", "pile"),
       !speed && !pile ? el("li", "muted", "Too few proposals in this period to say what moves the open.") : null],
-    linkBtn("break it down on Proposals →", () => goTo(ctx, "proposals"))));
+    foot: linkBtn("break it down on Proposals →", () => goTo(ctx, "proposals")) });
 
   // 3. opened → wrote back
   const opening = bestWorst(st[1].rows, "opening", 2);
   const t1 = (L.tests || []).find((t) => t.status === "running");
-  cards.push(dropCard("Opened → wrote back",
-    [el("b", null, fmt.num(st[1].n - st[2].n)), " opened and did not write back"],
-    [bwLine(opening, "Written back", "opening"),
+  out.push({ gap: 2, n: st[1].n - st[2].n, label: "opened, did not write back", title: "Opened → wrote back",
+    lines: [bwLine(opening, "Written back", "opening"),
       !opening ? el("li", "muted", "Too few opened proposals in this period to compare the first lines.") : null,
-      t1 ? el("li", null, ["Being tested now: ", linkBtn(t1.title, () => goTo(ctx, "tests"))]) : null]));
+      t1 ? el("li", null, ["Being tested now: ", linkBtn(t1.title, () => goTo(ctx, "tests"))]) : null] });
 
   // 4. wrote back → hired: the question he asked by name
   const lost = st[2].rows.filter((r) => r.hired !== 1);
@@ -376,9 +357,8 @@ function dropsBlock(D, L, fd, ctx) {
   const reasons = {};
   lost.forEach((r) => { const c = codes[r.id]; if (c && c.lost && c.lost !== "not_lost") reasons[c.lost] = (reasons[c.lost] || 0) + 1; });
   const topReasons = Object.entries(reasons).sort((a, c) => c[1] - a[1]).slice(0, 3);
-  cards.push(dropCard("Wrote back → hired",
-    [el("b", null, fmt.num(lost.length)), " wrote back and did not hire you"],
-    [
+  out.push({ gap: 3, n: lost.length, label: "wrote back, did not hire", title: "Wrote back → hired",
+    lines: [
       lost.length ? el("li", null, ["Upwork says: ", ["hired_other", "interviewed", "nobody", "unknown"]
         .filter((k) => did[k]).map((k) => `${(DID[k] || "not known").toLowerCase()} ${fmt.num(did[k])}`).join(", ") + "."]) : null,
       lost.length ? el("li", null, [`In the messages: you wrote last in ${fmt.num(lastUs)} (they went quiet), they wrote last in `,
@@ -389,9 +369,28 @@ function dropsBlock(D, L, fd, ctx) {
           topReasons.length ? ": " + topReasons.map(([k, n]) => `${LOST[k] || k} ${n}`).join(", ") + "." : "."]
         : `The conversation reader has not read these yet (${readerWhy(L)}).`) : null,
     ],
-    linkBtn("see each conversation →", () => goTo(ctx, "talks"))));
+    foot: linkBtn("see each conversation →", () => goTo(ctx, "talks")) });
 
-  return el("div", "lc-drops", cards);
+  return out;
+}
+
+/** the "why" under the funnel: one expander per drop, opened by its drop on the
+    shape. The four cards of text this replaces are the thing he asked to lose. */
+function dropsWhy(drops) {
+  const nodes = drops.map((d) => expander(
+    [el("b", null, fmt.num(d.n)), ` ${d.label}`, el("span", "muted", ` — ${d.title.toLowerCase()}`)],
+    (body) => { append(body, el("ul", "lc-drop-lines", d.lines.filter(Boolean)),
+      d.foot ? el("div", "lc-drop-foot", d.foot) : null); },
+    { class: "lc-why" }));
+  drops.forEach((d, i) => { d.node = nodes[i]; });
+  return el("div", "lc-whys", nodes);
+}
+
+function openWhy(d) {
+  const b = d.node && d.node.querySelector(".expander-btn");
+  if (!b) return;
+  if (b.getAttribute("aria-expanded") !== "true") b.click();
+  d.node.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function readerWhy(L) {
@@ -407,7 +406,9 @@ function codeIndex(L) {
   return out;
 }
 
-/** after the hire, in the period: new clients, money in, paying now, stopped, came back, win-back */
+/** after the hire, in the period — drawn as parts of a whole: who is paying,
+    who stopped, who came back, who is new; the money in and the win-back list
+    beside it. */
 function afterStrip(D, L, fd, ctx) {
   const C = L.clients || {};
   if (C.blocked) return notice("warn", "Who is paying is held back: " + (C.reason || "the finance doctor is RED") + ".");
@@ -419,22 +420,24 @@ function afterStrip(D, L, fd, ctx) {
   const stopped = rows.filter((r) => r.stage === "stopped" && inB(r.last_paid, b));
   const back = rows.filter((r) => (r.returns || []).some((x) => inB(x.on, b)));
   const wb = ((C.winback || {}).top) || [];
-  const item = (k, v, sub, go) => el(go ? "button" : "div", go
-    ? { class: "strip-item", type: "button", on: { click: go } } : "strip-item",
-    [el("span", "k", k), el("span", "v", v), sub ? el("span", "muted small", sub) : null]);
-  return el("div", "strip lc-after", [
-    item("New clients", fmt.num(fresh.length), "found on Upwork, first paid in this period",
-      () => clientsDrill(L, "New clients in this period", fresh)),
-    item("Money in", inc ? fmt.usd(inc.total) : "—", "from every client found on Upwork",
-      inc ? () => goTo(ctx, "proposals") : null),
-    item("Paying now", fmt.num(paying.length), `paid in the last ${(C.rules || {}).paying_days} days`,
-      () => clientsDrill(L, "Paying now", paying)),
-    item("Stopped", fmt.num(stopped.length), "last paid in this period",
-      () => clientsDrill(L, "Stopped paying in this period", stopped)),
-    item("Came back", fmt.num(back.length), "paid again after a long gap",
-      () => clientsDrill(L, "Came back in this period", back)),
-    item("Worth a check-in", fmt.num(wb.length), "past clients, ranked",
-      () => goTo(ctx, "after")),
+  return el("div", "lc-after2", [
+    bands([
+      { label: "Paying now", n: paying.length, tone: "good", sub: `paid in the last ${(C.rules || {}).paying_days} days`,
+        onClick: () => clientsDrill(L, "Paying now", paying) },
+      { label: "New this period", n: fresh.length, tone: "info", sub: "found on Upwork, first paid now",
+        onClick: () => clientsDrill(L, "New clients in this period", fresh) },
+      { label: "Came back", n: back.length, tone: "warn", sub: "paid again after a long gap",
+        onClick: () => clientsDrill(L, "Came back in this period", back) },
+      { label: "Stopped", n: stopped.length, tone: "bad", sub: "last paid in this period",
+        onClick: () => clientsDrill(L, "Stopped paying in this period", stopped) },
+    ], { title: "clients found on Upwork, by where they stand" }),
+    el("div", "lc-after-side", [
+      el("div", "lc-after-kpi", [el("span", "k", "Money in"), el("span", "v", inc ? fmt.usd(inc.total) : "—"),
+        el("span", "muted small", "from every client found on Upwork, this period")]),
+      el("button", { class: "lc-after-kpi", type: "button", on: { click: () => goTo(ctx, "after") } }, [
+        el("span", "k", "Worth a check-in"), el("span", "v", fmt.num(wb.length)),
+        el("span", "muted small", "past clients, ranked — the win-back list →")]),
+    ]),
   ]);
 }
 
@@ -472,8 +475,14 @@ function flowView(D, L, ctx, state) {
         st[1].n === 1 ? " was opened, " : " were opened, ", el("b", null, fmt.num(st[2].n)),
         " wrote back and ", el("b", null, fmt.num(st[3].n)), " hired you.",
         (L.clients || {}).blocked ? "" : ` ${plural(paying, "client is", "clients are")} paying now.`]),
-      section("From job to client", "click any step for the rows behind it", stripBlock(D, L, fd, ctx)),
-      section("Where they drop, and what we know about why", null, dropsBlock(D, L, fd, ctx)),
+      (() => {
+        const drops = dropsData(D, L, fd, ctx);
+        const why = dropsWhy(drops);
+        const gaps = drops.map((d) => ({ n: d.n, label: d.label, onClick: () => openWhy(d),
+          title: "what we know about this drop — opens below" }));
+        return section("From job to client", "a step opens its rows; a drop opens what we know about it",
+          el("div", "stack", [stripBlock(D, L, fd, ctx, gaps), why]));
+      })(),
       section("After the hire", null, afterStrip(D, L, fd, ctx),
         { right: linkBtn("everyone, and the win-back list →", () => goTo(ctx, "after")) }),
       testsMini(L, ctx),
@@ -898,8 +907,24 @@ async function leadsView(ctx) {
       " inbound, a Review row you marked Lead. You reply on the channel it came in on; this is",
       " where it is tracked.",
     ]),
-    el("div", "lc-agents-strip", (d.statuses || []).map((st) => el("span", "lc-agent-chip", [
-      pill(words[st] || st, LEAD_TONE[st]), el("span", "muted small", String(by[st] || 0))]))),
+    // the lead ladder as a funnel (2026-11-02): new → contacted → call booked →
+    // proposal sent → became a client; "not a fit" is the side exit, said beside it
+    (() => {
+      const ladder = (d.statuses || []).filter((st) => st !== "no");
+      const cum = ladder.map((_, i) => ladder.slice(i).reduce((n, k) => n + (by[k] || 0), 0));
+      const stages = ladder.map((st, i) => ({
+        label: words[st] || st, n: cum[i], short: (words[st] || st).toLowerCase(),
+        sub: cum[i] !== (by[st] || 0) ? `${fmt.num(by[st] || 0)} here now` : null,
+        tone: st === "client" ? "good" : null,
+      }));
+      return el("div", "stack-1", [
+        funnel(stages, { compact: true, title: "Leads, how far each got" }),
+        el("div", "muted small", [
+          "A lead counts in every step it has reached, so the shape narrows as leads move on. ",
+          by.no ? [el("b", null, fmt.num(by.no)), ` marked not a fit.`] : "None marked not a fit yet.",
+        ]),
+      ]);
+    })(),
   );
   if (!(d.rows || []).length) {
     out.appendChild(emptyState("No leads yet. The next website-form inquiry or Review row you mark"

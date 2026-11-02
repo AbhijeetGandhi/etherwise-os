@@ -367,7 +367,7 @@ class TestUpworkReader(UpworkTabCase):
         self.assertEqual(by["Nina N"]["upwork_status"], "Archived")
         self.assertEqual(by["Nina N"]["job_id"], J[9])
         self.assertEqual(by["Nina N"]["cohort"], "this")
-        self.assertTrue(by["Paula P"]["url"].endswith("room_pr7/"))
+        self.assertTrue(by["Paula P"]["url"].endswith("/ab/messages/rooms/room_pr7"))
         self.assertEqual(self.out["funnel"]["week"]["interviews_started"]["total"], 5)
         # the month view: the same five (all in August)
         self.assertEqual(self.stage("month", "interviewed")["n"], 5)
@@ -802,7 +802,7 @@ class TestUpworkSection(unittest.TestCase):
         # Funnel and Analysis moved to the Pipeline tab (2026-10-09), so the
         # Upwork tab no longer imports their renderers
         self.assertEqual(set(imports), {"../ui.js", "../drill.js", "./today.js",
-                                        "../conversation.js"})
+                                        "../conversation.js", "../shapes.js"})
         self.assertNotIn("/send", src)
         self.assertNotIn("fetch(", src)                        # ctx.api / ctx.post only
         self.assertIn('ctx.api("/api/upwork")', src)

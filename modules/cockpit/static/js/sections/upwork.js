@@ -37,6 +37,7 @@ import {
   el, append, clear, fmt, icon, pill, emptyState, notice, toast, qstr, expander, btn,
   extLink, table, kpi,
 } from "../ui.js";
+import { funnel } from "../shapes.js";
 import { openDrill } from "../drill.js";
 import { queueCard } from "./today.js";
 import { conversationRow } from "../conversation.js";
@@ -566,43 +567,55 @@ function flowBlock(d, ctx, state, redraw) {
     el("div", "right", [seg, runButton(ctx, d, "upwork_scan", "Scan for new jobs now")]),
   ]);
 
-  const flow = el("div", { class: "flow", style: { gridTemplateColumns: `repeat(${stages.length}, 1fr)` } });
-  const fetched = stageN(f, "fetched") || 0;
+  // A FUNNEL, not a row of boxes (Abhijeet, 2026-11-02). Each band drills to
+  // its rows; the drops on the gaps say what fell out between two steps.
   const labels = { fetched: "Fetched", passed: "Passed the rules", hot: `Hot (score ${d.bands && d.bands.hot_cut != null ? d.bands.hot_cut + "+" : ""})`, applied: "Applied", interviewed: "Interviewing", won: "Won" };
   const prevWord = { passed: "fetched", hot: "passed", applied: "hot", interviewed: "applied", won: "interviewing" };
+  const shortOf = { fetched: "fetched", passed: "those that passed", hot: "the hot ones", applied: "those applied to", interviewed: "interviews" };
   // the last two tiles count what HAPPENED this period, from wherever it came
   // (an invite, a repeat client, a hire on a new posting) — the split says so
   const happened = { interviewed: "started talking", won: "contracts started" };
-  stages.forEach((s, i) => {
+  const dropWord = { passed: "failed the rules", hot: "scored below the hot bar", applied: "hot, not applied to",
+    interviewed: "applied, no interview yet", won: "interviewing, no contract yet" };
+  const funStages = stages.map((s) => {
     let sub;
     if (s.k === "fetched") sub = [`new jobs seen this ${noun}`];
     else if (happened[s.k]) {
       const words = sourceWords(s.sources, noun);
       sub = s.n ? [words.join(" · ") || `${happened[s.k]} this ${noun}`] : [`none this ${noun} yet`];
-    } else sub = stageSub(s, prevWord[s.k], f) || [""];
-    const pct = fetched ? Math.max(1.5, (100 * (s.n || 0)) / fetched) : 0;
+    } else {
+      // the funnel already prints "N · x% of <step above>"; keep only the
+      // "usually" comparison here so the same figure is not said twice
+      const op = s.of_prev || {}, bl = s.baseline || {};
+      if (bl.pct != null && op.pct != null) {
+        sub = [`usually ${Math.round(bl.pct)}%`];
+        if (s.signal && s.delta_pp != null && Math.abs(s.delta_pp) >= 1) {
+          sub.push(el("span", s.delta_pp > 0 ? "pos" : "neg", s.delta_pp > 0 ? " ▲" : " ▼"));
+        }
+      } else if (bl.n_den === 0 && bl.covered_since === null) sub = [el("span", "muted", "no history yet")];
+    }
     const isPeople = s.k === "interviewed";
     const isContracts = s.k === "won";
-    const card = el("button", {
-      class: "stage" + (s.k === "won" && !s.n ? " dim" : ""), type: "button",
-      attrs: { title: `${labels[s.k] || s.label}: ${fmt.num(s.n)} — click for ${isPeople ? "who" : isContracts ? "which" : "the jobs"}` },
-      on: { click: () => openRows(ctx, `${labels[s.k] || s.label} — ${period.label || key}`,
+    return {
+      label: labels[s.k] || s.label, short: shortOf[s.k], n: s.n, sub,
+      tone: s.k === "won" ? "good" : null,
+      note: `${labels[s.k] || s.label}: ${fmt.num(s.n)} — click for ${isPeople ? "who" : isContracts ? "which" : "the jobs"}`,
+      onClick: () => openRows(ctx, `${labels[s.k] || s.label} — ${period.label || key}`,
         Object.assign({ stage: s.k }, periodParam),
         isPeople ? peopleCols(noun) : isContracts ? contractCols(noun) : s.k === "applied" ? OUTCOME_COLS : JOB_COLS,
         isPeople ? { subtitle: `people who started talking to us this ${noun}, and where each came from`, time: (r) => r.d }
           : isContracts ? { subtitle: `contracts that started this ${noun}, and where each came from`, time: (r) => r.d }
             : { subtitle: `jobs fetched this ${noun} that reached "${labels[s.k] || s.label}"`,
               facets: [{ label: "band", allLabel: "All bands", of: (r) => r.band },
-                { label: "feed", allLabel: "All feeds", of: (r) => r.feed_source }] }) },
-    }, [
-      el("div", "l", labels[s.k] || s.label),
-      el("div", "v", fmt.num(s.n)),
-      el("div", "s", sub),
-      el("div", "bar", el("i", { style: { width: pct + "%" } })),
-      i < stages.length - 1 ? el("span", "arrow", "›") : null,
-    ]);
-    flow.appendChild(card);
+                { label: "feed", allLabel: "All feeds", of: (r) => r.feed_source }] }),
+    };
   });
+  const drops = stages.slice(1).map((s, i) => {
+    const prev = stages[i];
+    const n = Math.max(0, (prev.n || 0) - (s.n || 0));
+    return { n, label: dropWord[s.k] || `did not reach ${labels[s.k] || s.label}` };
+  });
+  const flow = funnel(funStages, { drops, title: `This ${noun}'s jobs` });
 
   const blocks = [head, flow];
 

@@ -44,6 +44,7 @@ import {
   linkNum, extLink, emptyState, notice, expander, toast, copyText,
 } from "../ui.js";
 import { openDrill } from "../drill.js";
+import { rings } from "../shapes.js";
 // ONE conversation row for both screens (Upwork brief, 2026-08-25 night):
 // a follow-up / owed-reply card renders as a person with their last message,
 // the draft and one state word — here and on Upwork › Inbox alike.
@@ -120,38 +121,24 @@ export async function render(root, ctx) {
  * set, so the bar means something; "—" when a figure is not measured.
  */
 function glanceStrip(d, m) {
+  // Four rings, not four boxes (Abhijeet, 2026-11-02): each is a share of a
+  // target, and a ring says "how far along" before you read a digit. The
+  // figure and the target stay in the DOM text; `—` when a source is gated.
   const rev = m.revenue || {}, a = m.applied || {}, li = d.linkedin || {};
-  const pct = (n, of) => (n == null || !of ? null : Math.min(100, Math.round(100 * n / of)));
   const haveRev = rev.mtd_usd != null;
-  const cards = [
-    metricCard({
-      label: "Revenue this month",
-      value: haveRev ? el("span", null, [fmt.usd(rev.mtd_usd), el("small", null, " / " + dash(rev.target_usd, fmt.usd))]) : "—",
-      unmeasured: !haveRev, bar: haveRev ? pct(rev.mtd_usd, rev.target_usd) : null,
-      note: haveRev ? `${fmt.pct(rev.pct)} of target` : "finance read is gated — see Money",
-    }),
-    metricCard({
-      label: "Proposals this week",
-      value: a.paused ? "paused" : el("span", null, [dash(a.week, fmt.num), el("small", null, ` / ${a.target_week || "—"}`)]),
-      unmeasured: a.paused || a.week == null, bar: a.paused ? null : pct(a.week, a.target_week),
-      note: a.paused ? a.note : `${a.today || 0} today · ${a.last_week || 0} last week · the test needs ${a.target_week || 25} a week`,
-    }),
-    metricCard({
-      label: "Comments today",
-      value: li.comments_target_day != null
-        ? el("span", null, [fmt.num(li.comments_today || 0), el("small", null, ` / ${li.comments_target_day}`)]) : "—",
-      unmeasured: li.comments_target_day == null, bar: pct(li.comments_today || 0, li.comments_target_day),
-      note: li.comments_target_day != null ? "LinkedIn · your 10-a-day" : "LinkedIn copy not synced yet",
-    }),
-    metricCard({
-      label: "Buyer conversations",
-      value: li.day90_target != null
-        ? el("span", null, [fmt.num(li.buyer_conversations || 0), el("small", null, ` / ${li.day90_target}`)]) : "—",
-      unmeasured: li.day90_target == null, bar: pct(li.buyer_conversations || 0, li.day90_target),
-      note: li.days_left != null ? `the day-90 gate · ${li.days_left} days left` : "LinkedIn copy not synced yet",
-    }),
-  ];
-  return el("div", "grid-4", cards);
+  const usdK = (v) => (v >= 1000 ? "$" + (Math.round(v / 100) / 10) + "k" : fmt.usd(v));
+  return rings([
+    { label: "Revenue this month", value: haveRev ? rev.mtd_usd : 0, target: haveRev ? rev.target_usd : null,
+      format: usdK, tone: haveRev ? null : "bad",
+      note: haveRev ? `${fmt.pct(rev.pct)} of the $${Math.round((rev.target_usd || 0) / 1000)}k target` : "finance read is gated — see Money" },
+    { label: "Proposals this week", value: a.paused ? 0 : (a.week || 0), target: a.paused ? null : (a.target_week || 25),
+      tone: a.paused ? "bad" : null,
+      note: a.paused ? a.note : [`${a.today || 0} today · ${a.last_week || 0} last week · the test needs `, el("b", null, a.target_week || 25), " a week"] },
+    { label: "Comments today", value: li.comments_today || 0, target: li.comments_target_day,
+      note: li.comments_target_day != null ? "LinkedIn · your 10-a-day" : "LinkedIn copy not synced yet" },
+    { label: "Buyer conversations", value: li.buyer_conversations || 0, target: li.day90_target,
+      note: li.days_left != null ? [`the day-90 gate · `, el("b", null, `${li.days_left} days`), " left"] : "LinkedIn copy not synced yet" },
+  ]);
 }
 
 /* ── drafts ready to send (2026-11-01) ───────────────────────────────────── */

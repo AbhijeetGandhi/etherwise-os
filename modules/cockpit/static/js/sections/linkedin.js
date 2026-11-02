@@ -25,6 +25,7 @@ import {
 } from "../ui.js";
 import { openDrill } from "../drill.js";
 import { chart, axes } from "../charts.js";
+import { funnel as funnelShape, ring, rings, hbars, runway } from "../shapes.js";
 
 export const meta = { title: "LinkedIn", hint: "the second channel — paying clients, not followers" };
 
@@ -192,36 +193,35 @@ function results(r) {
   };
   const typeLine = Object.entries(r.by_type || {}).map(([t, v]) => `${v.sent} ${t.toLowerCase()}${v.sent === 1 ? "" : "s"}`).join(" · ");
 
+  // The gate as a shape (2026-11-02): where we are on the 90 days, and how
+  // many of the five conversations are in — then the ladder a conversation
+  // climbs, as a funnel. Every figure still drills.
   return el("div", "stack", [
-    heading("Results", `— day ${r.day_n} of 90 · the gate is ${r.target} buyer conversations by ${fmt.date(r.day90)}`, "h3"),
-    el("div", "grid-4", [
-      kpi({
-        label: "Buyer conversations", value: `${r.buyer_conversations} of ${r.target}`,
-        sub: r.buyer_conversations ? `${r.days_left} days left`
-          : `${r.days_left} days left · ${r.note || "none marked yet"}`,
+    heading("Results", `— the gate is ${r.target} buyer conversations by ${fmt.date(r.day90)}`, "h3"),
+    el("div", "li-gate", [
+      ring({ label: "Buyer conversations", value: r.buyer_conversations, target: r.target, size: 88,
+        note: r.buyer_conversations ? `${r.days_left} days left` : [`${r.days_left} days left · `, r.note || "none marked yet"],
         onClick: () => drill("Buyer conversations", r.rows.buyer, messageCols, {
           note: "A message whose 'Buyer conversation' box is ticked: a founder, COO or ops leader describing a real problem.",
-          empty: "None ticked yet. When a reply is from a plausible buyer with a real problem, tick 'Buyer conversation' on the message in Airtable." }),
-      }),
-      kpi({
-        label: "Messages sent", value: fmt.num(r.messages),
+          empty: "None ticked yet. When a reply is from a plausible buyer with a real problem, tick 'Buyer conversation' on the message in Airtable." }) }),
+      runway({ label: "The 90 days", at: r.day_n, of: 90, sub: `from ${fmt.date(r.day0)}`,
+        marks: [{ at: 30, label: "day 30" }, { at: 60, label: "day 60" }, { at: 90, label: `gate · ${fmt.dateShort(r.day90)}` }],
+        note: "Comments first, DMs only after a reply — the conversations are expected to come late in the window." }),
+    ]),
+    funnelShape([
+      { label: "Messages sent", short: "messages", n: r.messages,
         sub: r.messages ? `${r.replied} replied${typeLine ? " · " + typeLine : ""}` : "no DMs or requests yet",
         onClick: () => drill("Every message", r.rows.messages, messageCols, {
-          empty: "No DMs or connection requests yet. Aastha's rule: DM only after 2+ comments and a reply." }),
-      }),
-      kpi({
-        label: "Calls booked", value: fmt.num(r.calls_booked),
-        sub: r.calls_booked ? "from LinkedIn messages" : "none yet",
-        onClick: () => drill("Calls booked", r.rows.calls, messageCols),
-      }),
-      kpi({
-        label: "Leads → clients",
-        value: `${sumB("Lead")} · ${sumB("Proposal sent")} · ${sumB("Client")}`,
-        sub: `leads · proposals · clients — ${attrib()}`,
+          empty: "No DMs or connection requests yet. Aastha's rule: DM only after 2+ comments and a reply." }) },
+      { label: "Replied", short: "replies", n: r.replied, onClick: () => drill("Every message", r.rows.messages, messageCols) },
+      { label: "Calls booked", short: "calls", n: r.calls_booked, sub: r.calls_booked ? "from LinkedIn messages" : "none yet",
+        onClick: () => drill("Calls booked", r.rows.calls, messageCols) },
+      { label: "Leads", short: "leads", n: sumB("Lead"),
         onClick: () => drill("Became a lead or more", r.rows.messages.filter((m) => m.became), messageCols, {
-          empty: "No conversation has become a lead yet. Set 'Became' and 'CRM name' on the message when one does." }),
-      }),
-    ]),
+          empty: "No conversation has become a lead yet. Set 'Became' and 'CRM name' on the message when one does." }) },
+      { label: "Proposals sent", short: "proposals", n: sumB("Proposal sent") },
+      { label: "Clients", n: sumB("Client"), tone: "good", sub: attrib() },
+    ], { compact: true, title: "From a message to a client" }),
   ]);
 }
 
@@ -229,19 +229,24 @@ function results(r) {
 
 function pace(p) {
   const c = card(null, null);
-  append(c, el("div", "grid-4", [
-    kpi({ label: "Comments today", value: `${p.comments_today} of ${p.comments_target_day}`,
-      sub: "target 10 a day (28 Oct)",
-      onClick: () => drill("Comments today", p.rows.comments_today, commentCols) }),
-    kpi({ label: "Comments, last 7 days", value: `${p.comments_7d} of ${p.comments_target_7d}`,
-      sub: `${p.days_at_target_7d} of 7 days at target`,
-      onClick: () => drill("Comments in the last 7 days", p.rows.comments_7d, commentCols) }),
-    kpi({ label: "Posts this week", value: `${p.posts_this_week} of ${p.posts_target_week}`,
-      sub: `week of ${fmt.dateShort(p.week_of)} · Aastha's scope is 3–4`,
-      onClick: () => drill("Posts this week", p.rows.posts_this_week, postCols) }),
-    kpi({ label: "Posts, last 4 weeks",
-      value: p.posts_by_week.map((w) => w.posts).join(" · "),
-      sub: "oldest → this week" }),
+  append(c, el("div", "li-pace", [
+    rings([
+      { label: "Comments today", value: p.comments_today, target: p.comments_target_day,
+        note: "target 10 a day (28 Oct)",
+        onClick: () => drill("Comments today", p.rows.comments_today, commentCols) },
+      { label: "Comments, last 7 days", value: p.comments_7d, target: p.comments_target_7d,
+        note: [el("b", null, `${p.days_at_target_7d} of 7`), " days at target"],
+        onClick: () => drill("Comments in the last 7 days", p.rows.comments_7d, commentCols) },
+      { label: "Posts this week", value: p.posts_this_week, target: p.posts_target_week,
+        note: `week of ${fmt.dateShort(p.week_of)} · Aastha's scope is 3–4`,
+        onClick: () => drill("Posts this week", p.rows.posts_this_week, postCols) },
+    ]),
+    el("div", "li-weeks", [
+      el("div", "ring-l", "Posts, last 4 weeks"),
+      hbars(p.posts_by_week.map((w, i, all) => ({
+        label: i === all.length - 1 ? "this week" : `week of ${fmt.dateShort(w.week_of)}`, n: w.posts,
+        tone: w.posts >= p.posts_target_week ? "good" : null })), { max: Math.max(p.posts_target_week, ...p.posts_by_week.map((w) => w.posts)) }),
+    ]),
   ]));
   const host = el("div");
   append(c, host);
@@ -268,7 +273,6 @@ function pace(p) {
 /* ── 3. commenting funnel ─────────────────────────────────────────────────── */
 
 function funnel(f) {
-  const step = (label, n, onClick, sub) => kpi({ label, value: fmt.num(n), sub, onClick });
   const v = f.by_verdict || {};
   const verdictLine = el("div", "li-verdicts", Object.keys(v).map((k) => el("span", null, [
     pill(k, VERDICT_TONE[k]), " ",
@@ -287,15 +291,18 @@ function funnel(f) {
   ];
   return el("div", "stack", [
     heading("Commenting funnel", "— every post considered, what we did, what came back", "h3"),
-    el("div", "grid-4", [
-      step("Posts considered", f.candidates, () => drill("Every post considered", f.rows.candidates, candidateCols, { wide: true })),
-      step("Comments posted", f.commented, () => drill("Every comment", f.rows.comments, commentCols, { wide: true })),
-      step("Author replied", f.author_replied,
-        () => drill("Comments the author replied to", f.rows.replied, commentCols, { wide: true }),
-        f.reply_rate == null ? null : `${fmt.pct(f.reply_rate, 0)} of comments`),
-      step("Author liked", f.author_liked, () => drill("Comments the author liked", f.rows.liked, commentCols),
-        f.liked_note ? "not filled in yet?" : null),
-    ]),
+    funnelShape([
+      { label: "Posts considered", short: "posts considered", n: f.candidates,
+        onClick: () => drill("Every post considered", f.rows.candidates, candidateCols, { wide: true }) },
+      { label: "Comments posted", short: "comments", n: f.commented,
+        onClick: () => drill("Every comment", f.rows.comments, commentCols, { wide: true }) },
+      { label: "Author replied", short: "replies", n: f.author_replied,
+        onClick: () => drill("Comments the author replied to", f.rows.replied, commentCols, { wide: true }) },
+      { label: "Author liked", n: f.author_liked, tone: "good", sub: f.liked_note ? "not filled in yet?" : null,
+        onClick: () => drill("Comments the author liked", f.rows.liked, commentCols) },
+    ], { compact: true, title: "Commenting funnel",
+      drops: [{ n: Math.max(0, f.candidates - f.commented), label: "skipped or still to revisit" },
+        { n: Math.max(0, f.commented - f.author_replied), label: "no reply from the author" }] }),
     card(null, el("div", "stack-2", [
       verdictLine,
       el("div", "small", timing),
@@ -313,20 +320,30 @@ function relationships(r) {
   const stageRows = Object.entries(r.by_stage).map(([stage, n]) => ({ stage, n }));
   const segRows = Object.entries(r.by_segment).map(([segment, n]) => ({ segment, n }));
   const nextRows = Object.entries(r.by_next_action).map(([next, n]) => ({ next, n }));
-  const cnt = (rows, key, prefix, title) => ({
-    key: "n", label: "People", num: true,
-    render: (x) => (x.n ? linkNum(x.n, () => drill(`${title}: ${x[key]}`, r.rows[prefix + x[key]] || [], peopleCols, { wide: true }),
-      { label: `${title} ${x[key]}` }) : el("span", "muted", "0")),
-  });
   const fit = Object.entries(r.by_icp).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ");
   const conn = Object.entries(r.by_connection).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ");
   return el("div", "stack", [
     heading("Relationships", `— ${r.people} people watched · fit: ${fit} · ${conn}`, "h3"),
-    el("div", "grid-2", [
-      card("By stage", table({ rows: stageRows, columns: [{ key: "stage", label: "Stage" }, cnt(stageRows, "stage", "stage:", "Stage")] }), { class: "flush" }),
+    el("div", "grid-2 li-rel", [
+      card("By stage — the ladder a person climbs", (() => {
+        // the exits (paused, not a fit) are not rungs: they come off the ladder
+        // and are said beside it, so "not a fit" cannot read as the green goal
+        const isExit = (x) => /paused|not a fit|lost|closed/i.test(x.stage);
+        const ladder = stageRows.filter((x) => !isExit(x)), exits = stageRows.filter(isExit);
+        const stageDrill = (x) => (x.n ? () => drill(`Stage: ${x.stage}`, r.rows["stage:" + x.stage] || [], peopleCols, { wide: true }) : null);
+        return el("div", "stack-2", [
+          funnelShape(ladder.map((x) => ({ label: x.stage, short: x.stage.toLowerCase(), n: x.n,
+            tone: /client/i.test(x.stage) ? "good" : null, onClick: stageDrill(x) })),
+            { compact: true, floor: 0.08, title: "People by stage" }),
+          exits.length ? el("div", "muted small", ["Off the ladder: ", exits.map((x, i) => [i ? " · " : "",
+            x.n ? linkNum(x.n, stageDrill(x), { label: `people ${x.stage}` }) : el("b", null, "0"), ` ${x.stage.toLowerCase()}`])]) : null,
+        ]);
+      })()),
       el("div", "stack", [
-        card("By segment", table({ rows: segRows, columns: [{ key: "segment", label: "Segment" }, cnt(segRows, "segment", "segment:", "Segment")] }), { class: "flush" }),
-        card("Next action (Aastha's rule, from the tracker)", table({ rows: nextRows, columns: [{ key: "next", label: "Next action" }, cnt(nextRows, "next", "next:", "Next action")] }), { class: "flush" }),
+        card("By segment", hbars(segRows.map((x) => ({ label: x.segment, n: x.n,
+          onClick: x.n ? () => drill(`Segment: ${x.segment}`, r.rows["segment:" + x.segment] || [], peopleCols, { wide: true }) : null })))),
+        card("Next action (Aastha's rule, from the tracker)", hbars(nextRows.map((x) => ({ label: x.next, n: x.n,
+          onClick: x.n ? () => drill(`Next action: ${x.next}`, r.rows["next:" + x.next] || [], peopleCols, { wide: true }) : null })))),
       ]),
     ]),
     r.unchecked_7d

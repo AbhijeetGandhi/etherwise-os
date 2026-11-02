@@ -67,6 +67,7 @@ import {
 import { openDrill, cols } from "../drill.js";
 import { subtabs } from "../subtabs.js";
 import { chart, axes } from "../charts.js";
+import { bands } from "../shapes.js";
 import { bootToken } from "../app.js";           // raw-body upload needs the token
 
 export const meta = { title: "Money", hint: "every figure explains itself, to the cent" };
@@ -659,6 +660,25 @@ export async function render(root, ctx) {
       left >= 0 ? "pos" : "neg"),
     ]);
 
+    // WHERE THE MONTH'S MONEY WENT, as parts of a whole (2026-11-02): what came
+    // in, split into what stayed and what each cost took. The three cells above
+    // keep their words; this is the shape of the same figures.
+    const went = [
+      { label: "Left", n: Math.max(0, left), tone: "good",
+        onClick: () => drillTx({ title: `Left — ${rl}`, buckets: OPERATING_ALL, ranged: true }) },
+      { label: "Fees", n: Math.abs(fee), tone: "warn",
+        onClick: () => drillTx({ title: `Upwork and Wise fees — ${rl}`, buckets: ["platform_fee"], ranged: true, sortAmount: true }) },
+      { label: "Taxes", n: Math.abs(tax), tone: "info",
+        onClick: () => drillTx({ title: `Taxes withheld — ${rl}`, buckets: ["tax"], ranged: true, sortAmount: true }) },
+      { label: "Payroll", n: Math.abs(pay), tone: "bad",
+        onClick: () => drillTx({ title: `Payroll — ${rl}`, buckets: ["payroll"], ranged: true, sortAmount: true }) },
+      { label: "Tools", n: Math.abs(opx),
+        onClick: () => drillTx({ title: `Tools and subscriptions — ${rl}`, buckets: ["opex"], ranged: true, sortAmount: true }) },
+    ];
+    const wentBar = cameIn > 0
+      ? bands(went, { title: `what the ${fmt.usd(cameIn)} that came in became`, format: fmt.usd, minPct: 2 })
+      : null;
+
     // where it came from — one line per payer, biggest first
     const byWho = new Map();
     scoped.filter((x) => x.b === "revenue" || x.b === "refund").forEach((x) => {
@@ -683,9 +703,10 @@ export async function render(root, ctx) {
       // the same canonical client it grouped by.
       on: { click: () => drillTx({ title: `${g.who} — ${rl}`, buckets: ["revenue", "refund"],
         ranged: true, who: g.who, subtitle: "every payment from this client" }) },
-    }, [el("div", null, [g.who, el("span", "sub",
+    }, [el("div", "li-main", [g.who, el("span", "sub",
       `${[...g.src].map(srcWords).join(", ")} · ${g.n === 1 ? "1 payment" : g.n + " payments"}`
-      + ` · last ${fmt.dateShort(g.last)}`)]),
+      + ` · last ${fmt.dateShort(g.last)}`),
+      el("span", "li-bar", el("i", { style: { width: Math.max(1, (100 * Math.max(0, g.usd)) / Math.max(1, whoRows[0].usd)) + "%" } }))]),
     el("span", "amt", fmt.usd(g.usd))])));
     if (whoRows.length > 8) fromList.appendChild(el("div", "li muted", `…and ${whoRows.length - 8} more`));
     if (!whoRows.length) fromList.appendChild(el("div", "li muted", "nothing came in"));
@@ -699,7 +720,9 @@ export async function render(root, ctx) {
       const v = byB(b);
       costList.appendChild(el("button", { class: "li", type: "button",
         on: { click: () => drillTx({ title: `${label} — ${rl}`, buckets: [b], ranged: true, sortAmount: true }) } },
-      [el("div", null, [label, el("span", "sub", sub)]), el("span", "amt" + (v ? " neg" : ""), v ? fmt.usd(v) : "—")]));
+      [el("div", "li-main", [label, el("span", "sub", sub),
+        el("span", "li-bar neg", el("i", { style: { width: (v ? Math.max(1.5, (100 * Math.abs(v)) / Math.max(1, Math.abs(costs), cameIn)) : 0) + "%" } }))]),
+      el("span", "amt" + (v ? " neg" : ""), v ? fmt.usd(v) : "—")]));
     });
     if (draws) {
       costList.appendChild(el("button", { class: "li", type: "button",
@@ -718,7 +741,7 @@ export async function render(root, ctx) {
     return [
       el("div", "secrow", [el("h3", "sec-title", period),
         el("span", "muted small", isThis && d.as_of ? `through ${fmt.dateShort(d.as_of)}` : "")]),
-      flow, two, ...waitingBlock(),
+      flow, wentBar, two, ...waitingBlock(),
       el("p", "muted small foot", "Every number is a button — click it for the transactions behind it. Money moving between your own accounts is never counted."),
     ];
   }
