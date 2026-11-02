@@ -564,6 +564,19 @@ def sync(ctx, client_factory=UpworkClient, lookback_days: int = 14,
     # (queries.TRANSACTION_HISTORY), config.ACE_IDS and upsert_transaction
     # stay: the MCP rail is the writer, this pass is the record of why.
     metrics["transactions"] = {"retired": "upwork_financials (MCP) since 2026-08-26"}
+
+    # THE CLICKUP CARDS, READ BACK (2026-11-02): a draft is "ready to send"
+    # only while its card is still `new` on his board. Rides this hourly sync
+    # (and "Fetch latest"); a ClickUp hiccup is logged, never a failed sync.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(config.V3_ROOT / "scripts"))
+        import clickup_push as _cp                                  # noqa: E402
+        from modules.upwork import card_status as _cards
+        metrics["cards"] = _cards.sync(ctx, dbp, req=_cp.req, token=_cp.token)
+    except (Exception, SystemExit) as exc:     # token() sys.exits when unset
+        ctx.log(f"cards pass FAILED: {exc!r}")
+        metrics["cards"] = {"status": "error", "error": repr(exc)[:160]}
     return metrics
 
 

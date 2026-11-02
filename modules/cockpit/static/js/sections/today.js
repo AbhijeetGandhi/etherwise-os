@@ -171,7 +171,9 @@ function draftsStrip(d, ctx) {
         j.icp_tier === "icp" ? "icp" : "outline"),
       el("div", "grow", [
         el("div", null, [j.job_url ? extLink(j.job_url, j.title || j.id) : (j.title || j.id),
-          el("span", "muted small", ` · score ${j.score} · scored ${fmt.dateShort(j.d)}`)]),
+          el("span", "muted small", ` · score ${j.score} · scored ${fmt.dateShort(j.d)}`
+            + (j.bucket ? ` · card in ${j.bucket}` : "")),
+          j.clickup_task_url ? el("span", "small", [" · ", extLink(j.clickup_task_url, "card")]) : null]),
         el("div", "small muted", short(j.draft_proposal, 180)),
       ]),
       el("div", "hstack-tight", [copy, j.job_url ? extLink(j.job_url, "Open job", { class: "btn sm" }) : null]),
@@ -184,6 +186,10 @@ function draftsStrip(d, ctx) {
       el("div", "muted small li-foot", [
         el("button", { class: "linktext", type: "button",
           on: { click: () => ctx.navigate("upwork", { view: "jobs" }) } }, "all drafts on Upwork › Jobs"),
+        // 2026-11-02: his board is the truth — a card he skips, applies from
+        // or moves to Low Priority leaves this list on the next hourly sync
+        // or on Fetch latest (modules/upwork/card_status.py)
+        " · skip or move the card in ClickUp and it leaves here on the next sync",
       ]),
     ]),
   ];

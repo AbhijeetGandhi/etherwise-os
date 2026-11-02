@@ -144,7 +144,12 @@ const JOB_COLS = [
   { key: "has_draft", label: "Draft",
     render: (r) => yes(r.has_draft || r.draft_word_count, r.draft_word_count ? `${fmt.num(r.draft_word_count)} words` : "written") },
   { key: "clickup_task_url", label: "Card",
-    render: (r) => (r.clickup_task_url ? extLink(r.clickup_task_url, "ClickUp") : el("span", "muted", "—")) },
+    // the card's LIVE status + list, read back hourly (2026-11-02); an unread
+    // card shows the link alone
+    render: (r) => (r.clickup_task_url
+      ? el("span", null, [extLink(r.clickup_task_url, "ClickUp"),
+          r.card_status ? el("span", "muted small", ` · ${r.card_status}${r.bucket ? " · " + r.bucket : ""}`) : null])
+      : el("span", "muted", "—")) },
   { key: "applied_raw", label: "Applied",
     render: (r) => (r.applied_on ? el("span", "pos", fmt.dateShort(r.applied_on))
       : r.applied_raw ? el("span", "pos", "yes")

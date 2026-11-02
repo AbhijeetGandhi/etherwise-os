@@ -2750,15 +2750,24 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         # inside the fresh window — the same predicate as Upwork › Jobs ›
         # Drafts to review, so the two cannot disagree. Copy + Open live on the
         # row; he sends.
+        # Today's five also skip a card he moved to Low Priority — moving it
+        # there is his "not now"; the full list on Upwork › Jobs keeps them
+        # with the bucket shown
+        low_list = config.CLICKUP_LISTS.get("low")
         drafts_ready = [dict(r) for r in conn.execute(
             f"SELECT j.id, j.title, j.score, j.icp_tier, j.job_url,"
-            f" j.draft_proposal, substr(j.first_scored_at,1,10) AS d "
+            f" j.draft_proposal, j.clickup_task_url, j.card_list_id, j.card_checked_at,"
+            f" substr(j.first_scored_at,1,10) AS d "
             + _drafts_waiting_sql()
+            + " AND COALESCE(j.card_list_id, '') != ?"
             + f" ORDER BY {_icp_rank} DESC, j.score DESC, j.first_scored_at DESC"
-            f" LIMIT ?", (_HOT, fresh_lo, config.TODAY_DRAFTS_READY_TOPN))]
+            f" LIMIT ?", (_HOT, fresh_lo, low_list or "", config.TODAY_DRAFTS_READY_TOPN))]
+        for _r in drafts_ready:
+            _r["bucket"] = _card_bucket(_r.get("card_list_id"))
         drafts_ready_total = conn.execute(
-            "SELECT COUNT(*) " + _drafts_waiting_sql(),
-            (_HOT, fresh_lo)).fetchone()[0]
+            "SELECT COUNT(*) " + _drafts_waiting_sql()
+            + " AND COALESCE(j.card_list_id, '') != ?",
+            (_HOT, fresh_lo, low_list or "")).fetchone()[0]
     finally:
         conn.close()
 
@@ -3577,16 +3586,32 @@ def _loom_flags_sql() -> str:
         "  AND h.job_id = j.id)")
 
 
+_BUCKET_WORDS = {"icp": "ICP / Prime", "hot": "Hot", "standard": "Standard",
+                 "low": "Low Priority", "invites": "Invites"}
+
+
+def _card_bucket(list_id) -> Optional[str]:
+    """The ClickUp list a card sits in NOW, in his words (None = card unread)."""
+    for name, lid in config.CLICKUP_LISTS.items():
+        if lid == list_id:
+            return _BUCKET_WORDS.get(name, name)
+    return None
+
+
 def _drafts_waiting_sql() -> tuple:
     """The 'drafts ready for review' predicate (spec §5.2): hot, a draft on
     the row, not applied per the rail, scored inside the fresh window. Today's
     'fresh' backlog (today_rows which=fresh) is the superset — hot and fresh,
     drafted or not, applied or not; this is the subset a review can act on."""
+    # ... and its ClickUp card still `new` (2026-11-02): a card he skipped,
+    # applied from, or that expired is not a draft to send, whatever the
+    # applied rail has seen so far. An unread card (NULL) counts as new.
     return (
         "FROM scored_jobs j WHERE j.score >= ? AND j.draft_proposal IS NOT NULL"
         " AND substr(j.first_scored_at,1,10) >= ? AND NOT EXISTS"
         " (SELECT 1 FROM connects_history h WHERE h.kind='applied'"
-        "  AND h.job_id = j.id)")
+        "  AND h.job_id = j.id)"
+        " AND COALESCE(j.card_status, 'new') = 'new'")
 
 
 def _upwork_needs_me(db_path, conn, day: str) -> dict:
@@ -3903,10 +3928,12 @@ def upwork_rows(db_path: Optional[Path] = None, *,
                 " j.hourly_min, j.hourly_max, j.client_country,"
                 " j.client_total_spent, j.client_hires, j.total_applicants,"
                 " j.clickup_task_id IS NOT NULL AS carded, 1 AS has_draft,"
+                " j.card_status, j.card_list_id, j.card_checked_at,"
                 " substr(j.first_scored_at,1,10) AS d " + sql +
                 " ORDER BY j.score DESC, j.first_scored_at DESC LIMIT 300", args)]
             for row in rows:
                 row["band"] = config.score_band(row["score"])
+                row["bucket"] = _card_bucket(row.get("card_list_id"))
             total = conn.execute("SELECT COUNT(*) " + sql, args).fetchone()[0]
     finally:
         conn.close()

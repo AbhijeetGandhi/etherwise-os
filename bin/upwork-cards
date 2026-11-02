@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Read the ClickUp cards back into scored_jobs — the pass upwork_sync runs
+hourly, on its own, with a chosen batch size (the one-off backfill on
+2026-11-02 read 670 cards; the hourly run reads 60).
+
+Usage: PYTHONPATH=. python3 bin/upwork-cards [--limit N]
+Reads only. Never writes to ClickUp.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+from core import config, runner                       # noqa: E402
+from modules.upwork import card_status                # noqa: E402
+import clickup_push                                   # noqa: E402
+
+TASK_NAME = "upwork_cards"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--limit", type=int, default=card_status.PER_RUN)
+    args = ap.parse_args()
+
+    def task(ctx):
+        return card_status.sync(ctx, ctx.db_path or config.DB_PATH, req=clickup_push.req,
+                                token=clickup_push.token, limit=args.limit)
+
+    res = runner.run_task(TASK_NAME, task, module="upwork")
+    print(res.status, res.metrics if hasattr(res, "metrics") else "")
+    return 0 if res.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
