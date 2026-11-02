@@ -1411,3 +1411,7 @@ button.lc-after-kpi:hover { background: var(--accent); }
 .client-row .cl-main { min-width: 0; flex: 1; }
 .client-row .cl-bar { display: block; height: 4px; border-radius: 2px; background: var(--muted); margin-top: 8px; max-width: 320px; overflow: hidden; }
 .client-row .cl-bar i { display: block; height: 100%; background: var(--chart-3); border-radius: 2px; }
+
+/* Today (2026-11-02): the "as read at … · Fetch latest" line over the rings */
+.glance-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.runchain .runbtn-status:empty { display: none; }

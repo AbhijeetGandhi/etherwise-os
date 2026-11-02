@@ -92,8 +92,12 @@ _SYSTEM = (
     "  client_message     — a PERSON at a client or prospect wrote to us, or "
     "replied to us. A real human on the other side.\n"
     "  lead               — a new inbound opportunity from someone who wants US "
-    "to do work for THEM and is not yet a client: an enquiry, an invitation to "
-    "interview, a contact form asking for a build or a quote.\n"
+    "to do work for THEM and is not yet a client: an enquiry describing their "
+    "own problem or project, an invitation to interview, a contact form asking "
+    "for a build, a call or a quote. NOT a lead: anyone describing their own "
+    "product or service and asking whether we need it (vendor_pitch), anyone "
+    "offering to work for us (talent_pitch), a newsletter or campaign "
+    "(marketing), or a bare download notice with no message.\n"
     "  talent_pitch       — a PERSON offering to work for or with us: a "
     "freelancer or contractor offering capacity, a paid trial or a scoped part "
     "of a build, a job seeker, a résumé or portfolio. They want work FROM us; "
@@ -332,30 +336,46 @@ _PLATFORM_NOTICE_SUBJECT = re.compile(
     r"|(?:visa|mastercard|master\s+card|amex|card)\s+was\s+(?:updated|added|removed)\b"
     r"|we\s+received\s+a\s+request\s+to\s+reset\s+your\s+password\b"
     r"|your\s+(?:new\s+)?password\s+(?:is\s+set|was\s+(?:changed|reset))\b)", re.I)
-# THE WEBSITE FORM (2026-11-01). The site's form relays through Resend as
-# "New inquiry from <Name> (<Company>)" / "New case study lead: <email>". That
-# is a LEAD by construction — never a mapping question, never noise.
+# THE WEBSITE FORM (2026-11-01, reworked 2026-11-02). The site relays through
+# Resend as "New inquiry from <Name> (<Company>)" with a Message, or "New case
+# study lead: <email>" with no message at all — a case-study DOWNLOAD.
+# The 1 Nov version made both a lead by construction. Abhijeet, 2 Nov: "lead is
+# only when someone seems like a lead … promotional email are looking like
+# lead and also people asking that they provide this service are also being
+# marked as lead." Of the 12 leads that rule made, one was a buyer (David
+# Séjourné's brief); the rest were vendors pitching, a freelance writer asking
+# for work, two case-study downloads (one his own teammate's). So:
+#   · a download is FILED (filed:website-download) — a name to follow up on
+#     elsewhere, not someone asking for work;
+#   · an inquiry WITH a message is recognised here but routed to the proposer
+#     like any other mail, so the intent gate reads the message: `lead` makes
+#     the leads row, `talent_pitch` / `vendor_pitch` / `marketing` file it.
 _WEBSITE_FORM_SENDER = re.compile(
     r"^(?:onboarding@resend\.dev|forms?@etherwise\.io|website@etherwise\.io"
     r"|noreply@etherwise\.io)$", re.I)
 _WEBSITE_FORM_SUBJECT = re.compile(
-    r"^\s*new\s+(?:inquiry|enquiry|lead|message|case study lead)\b", re.I)
+    r"^\s*new\s+(?:inquiry|enquiry|lead|message)\b(?!\s*:)", re.I)
+_WEBSITE_DOWNLOAD_SUBJECT = re.compile(
+    r"^\s*new\s+(?:case[- ]study|download|guide|playbook|resource)\s+(?:lead|download)\b", re.I)
 
 STRUCTURAL_FILE_REASON = {
     "upwork_notification": "filed:upwork-notification",
     "calendar_rsvp": "filed:calendar-rsvp",
     "platform_notice": "filed:platform-notice",
+    "website_download": "filed:website-download",
 }
-# shapes that are a LEAD rather than a filing — route_structural returns
-# ("lead", shape) for these and the caller creates the leads row
-STRUCTURAL_LEAD_SHAPES = ("website_lead",)
+# shapes that are recognised but NOT decided here: route_structural returns
+# ("review", shape) so the proposer's intent gate reads the message
+STRUCTURAL_ASK_SHAPES = ("website_lead",)
+STRUCTURAL_LEAD_SHAPES = ()          # nothing is a lead by shape any more
 # read by resweep.rules_fingerprint: editing a shape here must re-open the
 # backlog, the same way editing sender-rules.json does. A gate whose changes
 # apply only to tomorrow's mail is how the board filled up the first time.
 STRUCTURAL_PATTERNS = (_UPWORK_ROOM_SENDER.pattern, _UPWORK_NOTIFY.pattern,
                        _CAL_VERB.pattern, _PLATFORM_ROLE_SENDER.pattern,
                        _PLATFORM_NOTICE_SUBJECT.pattern,
-                       _WEBSITE_FORM_SENDER.pattern, _WEBSITE_FORM_SUBJECT.pattern)
+                       _WEBSITE_FORM_SENDER.pattern, _WEBSITE_FORM_SUBJECT.pattern,
+                       _WEBSITE_DOWNLOAD_SUBJECT.pattern)
 
 
 def structural_shape(author: Optional[str],
@@ -376,6 +396,8 @@ def structural_shape(author: Optional[str],
         return "upwork_notification"
     if _CAL_VERB.match(s):
         return "calendar_rsvp"
+    if _WEBSITE_FORM_SENDER.match(addr) and _WEBSITE_DOWNLOAD_SUBJECT.match(s):
+        return "website_download"
     if _WEBSITE_FORM_SENDER.match(addr) and _WEBSITE_FORM_SUBJECT.match(s):
         return "website_lead"
     if _PLATFORM_ROLE_SENDER.match(addr) and _PLATFORM_NOTICE_SUBJECT.match(s):
@@ -397,6 +419,8 @@ def route_structural(author: Optional[str], subject: Optional[str], *,
     shape = structural_shape(author, subject)
     if shape is None:
         return "review", None
+    if shape in STRUCTURAL_ASK_SHAPES:
+        return "review", shape          # recognised; the proposer reads it
     if shape in STRUCTURAL_LEAD_SHAPES:
         return "lead", shape
     return "file", STRUCTURAL_FILE_REASON[shape]

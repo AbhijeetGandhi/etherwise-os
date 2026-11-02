@@ -68,19 +68,31 @@ class Shapes(unittest.TestCase):
         self.assertIsNone(mapping.structural_shape("nick@globaltize.com",
                                                    "Receipt: $10.80 to abhijeet"))
 
-    def test_the_website_form_is_a_lead_by_shape(self):
+    def test_the_website_form_is_recognised_but_the_proposer_decides(self):
+        """2026-11-02: the 1 Nov rule made every form post a lead; 11 of the 12
+        were vendors, a writer asking for work, and two case-study downloads.
+        An inquiry WITH a message is recognised and handed to the proposer's
+        intent gate (lead vs pitch); a download notice is filed."""
         self.assertEqual(mapping.structural_shape(
             "onboarding@resend.dev", "New inquiry from Hannah Melotto (Melotto Group)"),
             "website_lead")
         self.assertEqual(mapping.route_structural(
             "onboarding@resend.dev", "New inquiry from Hannah Melotto (Melotto Group)"),
-            ("lead", "website_lead"))
+            ("review", "website_lead"))
         self.assertEqual(mapping.structural_shape(
             "onboarding@resend.dev", "New case study lead: jay@etherwise.io (Work)"),
-            "website_lead")
+            "website_download")
+        self.assertEqual(mapping.route_structural(
+            "onboarding@resend.dev", "New case study lead: jay@etherwise.io (Work)"),
+            ("file", "filed:website-download"))
+        self.assertEqual(mapping.STRUCTURAL_LEAD_SHAPES, ())    # nothing is a lead by shape
         # Resend relays other things too; only the form's subjects are leads
         self.assertIsNone(mapping.structural_shape("onboarding@resend.dev",
                                                    "Your domain is verified"))
+
+    def test_the_prompt_says_what_a_lead_is_not(self):
+        for phrase in ("wants US", "NOT a lead", "vendor_pitch", "talent_pitch", "download notice"):
+            self.assertIn(phrase, mapping._SYSTEM)
 
     def test_the_lead_intent_routes_to_the_leads_table(self):
         self.assertEqual(mapping.route("lead"), "lead")
@@ -148,11 +160,13 @@ class Table(unittest.TestCase):
         self.assertEqual(d["open"], 1)
         self.assertEqual(d["rows"][0]["company"], "Boostjet")
 
-    def test_the_resweep_lands_the_form_lead_retroactively(self):
+    def test_the_resweep_leaves_the_form_inquiry_to_the_proposer(self):
+        # 2026-11-02: a rule may not make a lead out of a message it has not
+        # read — the resweep keeps the row for the proposer's intent gate
         with db.connect(self.db_path) as conn:
             out = resweep.run(conn, reg=None)
-        self.assertEqual(out["leads"], 1)
-        self.assertEqual(self._ev("evt:email:form1")["state"], "excluded")
+        self.assertEqual(out["leads"], 0)
+        self.assertNotEqual(self._ev("evt:email:form1")["state"], "excluded")
         self.assertEqual(self._ev("evt:email:cold1")["state"], "queued")   # a sender rule's call
 
     def test_today_and_the_status_write(self):

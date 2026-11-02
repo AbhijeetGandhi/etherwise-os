@@ -802,7 +802,7 @@ class TestUpworkSection(unittest.TestCase):
         # Funnel and Analysis moved to the Pipeline tab (2026-10-09), so the
         # Upwork tab no longer imports their renderers
         self.assertEqual(set(imports), {"../ui.js", "../drill.js", "./today.js",
-                                        "../conversation.js", "../shapes.js"})
+                                        "../conversation.js", "../shapes.js", "../runs.js"})
         self.assertNotIn("/send", src)
         self.assertNotIn("fetch(", src)                        # ctx.api / ctx.post only
         self.assertIn('ctx.api("/api/upwork")', src)

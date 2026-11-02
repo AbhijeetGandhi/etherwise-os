@@ -2647,6 +2647,7 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
     day = today or _ist_today()
     paused, paused_since = _applications_paused(day)
     pause_conflict_n = 0
+    applied_read_at = None
     rail_applied_week = 0
     conn = _ro(db_path)
     try:
@@ -2718,6 +2719,10 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
         applied_week = rail["week"]
         applied_last = rail["last_week"]
         rail_applied_week = applied_week
+        _ra = conn.execute(
+            "SELECT started_at FROM runs WHERE task_name='upwork_financials'"
+            " AND status IN ('completed','skipped_empty') ORDER BY id DESC LIMIT 1").fetchone()
+        applied_read_at = _ra["started_at"] if _ra else None
         # proposals-sourced week count — NOT rendered; used only to detect and
         # explain the feed's blindness (it only sees client-answered submissions;
         # the vendorProposals scope was declined, so submitted-no-reply
@@ -2879,7 +2884,13 @@ def today(db_path: Optional[Path] = None, today: Optional[str] = None) -> dict:
                         "last_week": applied_last, "paused": paused,
                         "paused_since": paused_since, "note": applied_note,
                         "contradiction": applied_contradiction,
-                        "target_week": config.UPWORK_PROPOSALS_PER_WEEK_PLAN},
+                        "target_week": config.UPWORK_PROPOSALS_PER_WEEK_PLAN,
+                        # when Upwork was last READ for these figures — the
+                        # applied count is connects_history, filled by
+                        # upwork_financials (06:05 daily unless he presses
+                        # "Fetch latest"); said on the tile so a 0 after lunch
+                        # reads as "not read yet", not "nothing sent"
+                        "read_at": applied_read_at},
             "active": {"proposals": active_props, "interviews": interviews,
                        "contracts": active_contracts},
             "queue_len": len(queue), "follow_ups_due": follow_ups_due,

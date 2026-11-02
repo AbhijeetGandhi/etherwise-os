@@ -190,10 +190,10 @@ class TheTenThatMustSurviveTests(Base):
         self.run_resweep()
         for eid in self.SURVIVORS:
             self.assertNotEqual(self.state_of(eid)["state"], "excluded", eid)
-        # the contact-form lead survives too — in the leads table (2026-11-01),
-        # filed under its lead id rather than left in a mapping queue
+        # the contact-form inquiry survives too — never excluded by a rule; the
+        # proposer's intent gate decides lead vs pitch (2026-11-02)
         row = self.state_of("evt:email:lead1")
-        self.assertTrue((row["exclude_reason"] or "").startswith("filed:lead:"), row)
+        self.assertNotEqual(row["state"], "excluded", row)
 
     def test_the_signed_agreement_is_proposed_to_its_client(self):
         self.seed()
@@ -210,21 +210,19 @@ class TheTenThatMustSurviveTests(Base):
         self.assertEqual(row["state"], "queued")
         self.assertIsNone(row["proposed_client_id"])
 
-    def test_the_contact_form_lead_becomes_a_lead(self):
+    def test_the_contact_form_inquiry_is_kept_for_the_proposer(self):
         # same sender as 43 swept ops alerts — the rule cannot key on the
-        # address alone. Since 2026-11-01 the form's SUBJECT shape makes it a
-        # LEAD: a row in `leads` with the person read off the form, the event
-        # filed under it. Never excluded as noise, never left as a question.
+        # address alone. 1 Nov made the form's SUBJECT shape a lead outright;
+        # 2 Nov (11 of 12 were pitches or downloads) the shape is recognised
+        # and the row is KEPT for the proposer, whose intent gate reads the
+        # message. Never excluded as noise.
         self.seed()
         self.run_resweep()
         row = self.state_of("evt:email:lead1")
-        self.assertTrue((row["exclude_reason"] or "").startswith("filed:lead:"), row)
+        self.assertNotEqual(row["state"], "excluded", row)
         with db.connect(self.dbp) as conn:
-            lead = conn.execute("SELECT name, company, email, source FROM leads"
-                                " WHERE event_id='evt:email:lead1'").fetchone()
-        self.assertEqual(tuple(lead), ("Nick Esquivel", "Globaltize",
-                                       "nick@globaltize.com", "website_form"))
-
+            n = conn.execute("SELECT COUNT(*) FROM leads WHERE event_id='evt:email:lead1'").fetchone()[0]
+        self.assertEqual(n, 0)
 
 class OpsAlertTests(Base):
     def test_his_own_ops_alerts_are_self_noise_not_client_mail(self):
@@ -244,7 +242,8 @@ class OpsAlertTests(Base):
         self.assertEqual(ops["state"], "excluded")
         self.assertIn("self-noise", ops["exclude_reason"])
         lead = self.state_of("evt:email:lead1")
-        self.assertTrue((lead["exclude_reason"] or "").startswith("filed:lead:"), lead)
+        # 2026-11-02: not excluded, not a lead by shape — kept for the proposer
+        self.assertNotEqual(lead["state"], "excluded", lead)
 
 
 class FingerprintTests(Base):

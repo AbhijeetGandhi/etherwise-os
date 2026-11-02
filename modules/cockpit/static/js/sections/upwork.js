@@ -38,6 +38,7 @@ import {
   extLink, table, kpi,
 } from "../ui.js";
 import { funnel } from "../shapes.js";
+import { runChain, UPWORK_FETCH_CHAIN } from "../runs.js";
 import { openDrill } from "../drill.js";
 import { queueCard } from "./today.js";
 import { conversationRow } from "../conversation.js";
@@ -223,7 +224,9 @@ export async function render(root, ctx) {
 
   root.append(el("div", "up-head", [
     el("div", "hstack", [el("h2", "up-title", "Upwork"),
-      el("span", "muted small", `as of ${fmt.dateShort(d.as_of)}`)]),
+      el("span", "muted small", `as of ${fmt.dateShort(d.as_of)}`),
+      // "Fetch latest" (2026-11-02): every Upwork reader, in order, then refresh
+      el("span", "right", runChain(ctx, UPWORK_FETCH_CHAIN, "Fetch latest from Upwork"))]),
     lede(s, d, (id) => switchTo(id), ctx),
   ]));
 

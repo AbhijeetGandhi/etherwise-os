@@ -226,24 +226,40 @@ function healthView(sys, ctx, attention) {
   } else {
     out.push(el("div", "srcline ok", [icon("circle-check", { size: 15 }), el("div", "grow", "Every system has run on time.")]));
   }
+  // Two tables, not one (Abhijeet, 2026-11-02: "all the systems that I can't
+  // trigger manually should have a separate section and the ones I can
+  // trigger should be separate"). The split is the SERVER's rerun allowlist —
+  // the same fact the Run now button already obeyed — so the two cannot
+  // disagree. Within each, anything not OK floats to the top.
   const rows = srcs.slice().sort((a, b) => (a.status === "ok") - (b.status === "ok"));
-  const tbl = el("table", "rails-table");
-  tbl.appendChild(el("thead", null, el("tr", null, ["System", "What it does", "Last ran", "Status", ""].map((h) => el("th", null, h)))));
-  const tb = el("tbody");
-  rows.forEach((s) => {
-    const [word, tone, why] = statusWords(s);
-    const canRun = s.task_name && rerun.has(s.task_name);
-    tb.appendChild(el("tr", tone === "ok" ? "" : "attn", [
-      el("td", null, [el("i", "dot " + tone), el("b", null, s.label)]),
-      el("td", "muted small", s.why || ""),
-      el("td", null, s.last_success ? [fmt.dateTime(s.last_success), el("span", "muted small", ` · ${AGO(s.age_hours)}`)] : el("span", "muted", "never")),
-      el("td", null, [el("span", "st " + tone, word), why ? el("span", "muted small", ` ${why}`) : null]),
-      el("td", "right", canRun ? runButton(ctx, {}, s.task_name, "Run now", { quiet: true, variant: "ghost" }) : el("span", "muted small", s.manual ? "fed by hand" : "")),
-    ]));
-  });
-  tbl.appendChild(tb);
-  out.push(el("div", "card flush up-table", tbl));
+  const canRunNow = rows.filter((s) => s.task_name && rerun.has(s.task_name));
+  const scheduledOnly = rows.filter((s) => !(s.task_name && rerun.has(s.task_name)));
+  const railTable = (list, withRun) => {
+    const tbl = el("table", "rails-table");
+    tbl.appendChild(el("thead", null, el("tr", null, ["System", "What it does", "Last ran", "Status", withRun ? "" : "Runs"].map((h) => el("th", null, h)))));
+    const tb = el("tbody");
+    list.forEach((s) => {
+      const [word, tone, why] = statusWords(s);
+      const every = s.max_age_hours == null ? "" : s.max_age_hours >= 48 ? `every ${Math.round(s.max_age_hours / 24)} days` : `every ${s.max_age_hours} h`;
+      tb.appendChild(el("tr", tone === "ok" ? "" : "attn", [
+        el("td", null, [el("i", "dot " + tone), el("b", null, s.label)]),
+        el("td", "muted small", s.why || ""),
+        el("td", null, s.last_success ? [fmt.dateTime(s.last_success), el("span", "muted small", ` · ${AGO(s.age_hours)}`)] : el("span", "muted", "never")),
+        el("td", null, [el("span", "st " + tone, word), why ? el("span", "muted small", ` ${why}`) : null]),
+        el("td", "right", withRun
+          ? runButton(ctx, {}, s.task_name, "Run now", { quiet: true, variant: "ghost" })
+          : el("span", "muted small", s.manual ? "fed by hand" : every ? `on its own, ${every}` : "on its own")),
+      ]));
+    });
+    tbl.appendChild(tb);
+    return el("div", "card flush up-table", tbl);
+  };
+  const nOff = (list) => list.filter((s) => s.status !== "ok").length;
+  out.push(heading("You can run these now", `— ${canRunNow.length} systems${nOff(canRunNow) ? ` · ${nOff(canRunNow)} need a look` : " · all fine"}`, "h3"));
+  out.push(railTable(canRunNow, true));
   out.push(el("p", "muted small foot", "Run now starts the system and waits for it to finish, then says what happened. Nothing on this page sends anything to a client."));
+  out.push(heading("These run on their own", `— ${scheduledOnly.length} systems${nOff(scheduledOnly) ? ` · ${nOff(scheduledOnly)} need a look` : " · all fine"} · launchd starts them; a kick from here is not allowed for them (they send, or they are the cockpit itself)`, "h3"));
+  out.push(railTable(scheduledOnly, false));
   out.push(heading("The machine itself", null, "h3"));
   out.push(healthCards(sys));
   const an = sys.anomalies || {};

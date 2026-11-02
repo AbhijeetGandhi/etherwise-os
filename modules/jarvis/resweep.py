@@ -181,11 +181,16 @@ def decide(row: dict, *, reg=None, rules: Optional[dict] = None,
     if not prot:
         dest, structural = mapping.route_structural(author, subject)
         if dest == "lead":
-            # a website-form lead (2026-11-01): its own table, the event filed
-            # under the lead id. Never a mapping question.
+            # (no shape does this since 2026-11-02 — a website inquiry goes
+            # through the proposer's intent gate; kept for the day one does)
             return {"action": "lead", "rule": structural, "reason": "lead",
                     "evidence": "a website-form inquiry — a lead, not a client"
                                 " to map"}
+        if dest == "review" and structural == "website_lead":
+            # a website inquiry with a message: the proposer decides whether
+            # it is a buyer or a pitch — a rule may not (2026-11-02)
+            return {"action": "keep", "rule": structural,
+                    "reason": "a website inquiry — the proposer reads the message"}
         if dest == "file":
             rule = (f"{structural}:{proposed}" if proposed else structural)
             return {"action": "exclude", "rule": rule, "reason": structural,

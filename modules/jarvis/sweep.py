@@ -266,19 +266,24 @@ def run_sweep(ctx, *, token_fn=ep.access_token, list_fn=gmail_rail._list,
                 ev.get("author"), ev.get("subject"), protected=prot)
             return reason if dest == "file" else None
 
-        def _lead_shape(ev):
-            dest, shape = mapping.route_structural(ev.get("author"), ev.get("subject"))
-            return shape if dest == "lead" else None
+        def _shape(ev):
+            return mapping.route_structural(ev.get("author"), ev.get("subject"))
 
         for ev in held:
-            # A WEBSITE-FORM LEAD IS A LEAD BEFORE IT IS ANYTHING ELSE
-            # (2026-11-01): it comes from our own relay address, so no
-            # registry match or domain echo can ever place it, and it used to
-            # wait on the board until dismissed. Its own table now.
-            if _lead_shape(ev):
+            # THE WEBSITE FORM (2026-11-01, reworked 2026-11-02): a download
+            # notice is filed here; an inquiry with a message falls through
+            # to the proposer, whose intent gate reads it — `lead` makes the
+            # row, a pitch is filed. (The 1 Nov rule made every form post a
+            # lead; 11 of 12 were vendors, a writer, or downloads.)
+            dest, shape = _shape(ev)
+            if dest == "file" and shape == "filed:website-download":
+                events.set_excluded(conn, ev["id"], shape)
+                structural["website_download"] = structural.get("website_download", 0) + 1
+                continue
+            if dest == "lead":                       # no shape does this today
                 leads.from_event(conn, ev, note="website form")
                 leads_made += 1
-                structural["website_lead"] = structural.get("website_lead", 0) + 1
+                structural[shape] = structural.get(shape, 0) + 1
                 continue
             cid = mapping.match_deterministic(reg, ev["author"])
             if cid:

@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Re-judge the open leads with today's intent gate.
+
+Why (2026-11-02). Abhijeet: "lead is only when someone seems like a lead …
+promotional email are looking like lead and also people asking that they
+provide this service are also being marked as lead." The 1 Nov rule made every
+website-form post a lead and the proposer, with no pitch vocabulary, called cold
+vendor mail "a new inbound opportunity". Of the 12 rows that made, one was a
+buyer. The prompt now has `talent_pitch` / `vendor_pitch` and a lead is a BUYER
+(mapping._SYSTEM); this applies that reading to the rows that already exist.
+
+For every lead still `new` (anything he has moved — contacted, call, proposal,
+client, no — is his and is never touched):
+  · a case-study DOWNLOAD (the subject says so, there is no message) → status
+    'no', "a download, not an inquiry"; the event is re-filed website-download;
+  · the proposer says talent_pitch / vendor_pitch / marketing → status 'no'
+    with the intent and its evidence in the note; the event is re-filed under
+    that intent so it stays findable;
+  · the proposer says lead → kept, the evidence written to the note;
+  · anything else (client_message, a failed call) → kept, note says "unsure",
+    because over-filing is the failure that loses a client.
+One audit_log row per changed lead. Dry run by default; --apply writes.
+
+Usage: PYTHONPATH=. python3 bin/leads-rejudge [--apply]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from core import config, db, registry, runner                 # noqa: E402
+from modules.jarvis import leads, mapping                      # noqa: E402
+
+TASK_NAME = "leads_rejudge"
+DROP = set(mapping.PITCH_INTENTS) | {"marketing"}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    args = ap.parse_args()
+
+    def task(ctx):
+        reg = registry.load()
+        cand, valid = mapping.candidates(reg), set(reg.ids())
+        with db.connect(ctx.db_path or config.DB_PATH) as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT l.*, e.author ev_author, e.subject ev_subject, e.text ev_text"
+                " FROM leads l LEFT JOIN events e ON e.id = l.event_id"
+                " WHERE l.status = 'new' ORDER BY l.id")]
+        report = {"mode": "APPLY" if args.apply else "DRY-RUN", "rows": []}
+        for L in rows:
+            line = {"lead": L["id"], "who": L.get("email") or L.get("name"), "subject": (L.get("subject") or "")[:60]}
+            shape = mapping.structural_shape(L.get("ev_author") or "", L.get("ev_subject") or "")
+            verdict = None
+            if shape == "website_download":
+                verdict = ("no", "website_download", "a case-study download, not an inquiry",
+                           "filed:website-download")
+            elif L.get("ev_text"):
+                ev = {"id": L["event_id"], "author": L.get("ev_author"),
+                      "subject": L.get("ev_subject"), "text": L.get("ev_text")}
+                p = mapping.propose(ctx, ev, cand, valid)
+                if p is None:
+                    verdict = ("keep", "proposer-failed", "unsure — the proposer call failed", None)
+                elif p["intent"] in DROP:
+                    reason = mapping.FILE_REASON.get(p["intent"], "noise:marketing")
+                    verdict = ("no", p["intent"], p["evidence"], reason)
+                elif p["intent"] == "lead":
+                    verdict = ("keep", "lead", p["evidence"], None)
+                else:
+                    verdict = ("keep", p["intent"], f"unsure — read as {p['intent']}: {p['evidence']}", None)
+            else:
+                verdict = ("keep", "no-text", "unsure — no message text stored", None)
+            status, kind, why, file_reason = verdict
+            line.update({"verdict": status, "read_as": kind, "why": why})
+            report["rows"].append(line)
+            if not args.apply:
+                continue
+            note = f"re-judged 2026-11-02 — {kind}: {why}"
+            with db.connect(ctx.db_path or config.DB_PATH) as conn:
+                if status == "no":
+                    leads.set_status(conn, L["id"], "no", note)
+                    if file_reason and L.get("event_id"):
+                        conn.execute("UPDATE events SET exclude_reason=?, updated_at=datetime('now')"
+                                     " WHERE id=? AND state='excluded'", (file_reason, L["event_id"]))
+                    conn.execute(
+                        "INSERT INTO audit_log (actor, entity, entity_id, field, old_value, new_value,"
+                        " source, note) VALUES ('agent:ops-chat','leads',?,'status','new','no','sqlite',?)",
+                        (str(L["id"]), note))
+                else:
+                    conn.execute("UPDATE leads SET note=COALESCE(note,'') || CASE WHEN COALESCE(note,'')='' THEN '' ELSE ' · ' END || ?,"
+                                 " updated_at=datetime('now') WHERE id=?", (note, L["id"]))
+        print(json.dumps(report, indent=1, default=str))
+        return {"leads": len(rows), "applied": int(args.apply),
+                "dropped": sum(1 for r in report["rows"] if r["verdict"] == "no"),
+                "kept": sum(1 for r in report["rows"] if r["verdict"] == "keep")}
+
+    res = runner.run_task(TASK_NAME, task, module="system")
+    return 0 if res.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

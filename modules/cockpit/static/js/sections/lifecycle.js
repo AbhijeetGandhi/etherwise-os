@@ -931,9 +931,15 @@ async function leadsView(ctx) {
       + " as Lead lands here.", { icon: "inbox" }));
     return out;
   }
-  const rows = d.rows.map((r) => Object.assign({}, r));
-  const tbl = table({
-    rows,
+  // open leads in the table; the ones marked "not a fit" (11 of the first 12
+  // were vendors, a writer, downloads — 2026-11-02) sit under an expander
+  // with the reason, so a wrong call can be reopened without them crowding
+  // the page
+  const all = d.rows.map((r) => Object.assign({}, r));
+  const rows = all.filter((r) => r.status !== "no");
+  const notFit = all.filter((r) => r.status === "no");
+  const mkTable = (list) => table({
+    rows: list,
     wrapClass: "lc-table",
     columns: [
       { key: "first_seen_at", label: "Arrived",
@@ -949,11 +955,17 @@ async function leadsView(ctx) {
           r.snippet ? el("span", "muted small", r.snippet.slice(0, 160) + (r.snippet.length > 160 ? "…" : "")) : null,
         ]) },
       { key: "source", label: "Via", render: (r) => el("span", "muted small", (r.source || "").replace("_", " ")) },
-      { key: "status", label: "Status", render: (r) => statusPicker(ctx, r, d) },
+      { key: "status", label: "Status", render: (r) => el("div", "stack-1", [statusPicker(ctx, r, d),
+        r.status === "no" && r.note ? el("span", "muted small", r.note.slice(0, 140)) : null]) },
       { key: "permalink", label: "", render: (r) => (r.permalink ? extLink(r.permalink, "Open") : null) },
     ],
   });
-  out.appendChild(section("Every lead", "newest first; new ones on top", tbl));
+  out.appendChild(section("Open leads", "newest first; new ones on top",
+    rows.length ? mkTable(rows) : emptyState("No open leads right now.", { icon: "circle-check" })));
+  if (notFit.length) {
+    out.appendChild(expander(`${fmt.num(notFit.length)} marked not a fit — vendors pitching, people asking for work, downloads`,
+      (body) => { body.appendChild(mkTable(notFit)); }));
+  }
   return out;
 }
 

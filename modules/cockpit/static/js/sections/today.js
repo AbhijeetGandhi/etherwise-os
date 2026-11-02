@@ -45,6 +45,7 @@ import {
 } from "../ui.js";
 import { openDrill } from "../drill.js";
 import { rings } from "../shapes.js";
+import { runChain, UPWORK_FETCH_CHAIN } from "../runs.js";
 // ONE conversation row for both screens (Upwork brief, 2026-08-25 night):
 // a follow-up / owed-reply card renders as a person with their last message,
 // the draft and one state word — here and on Upwork › Inbox alike.
@@ -99,7 +100,7 @@ export async function render(root, ctx) {
     healthLine(d.sources || {}),
     // the four numbers he asked to SEE, as bars, before anything that asks
     // for a decision (2026-11-01). They used to sit under "More".
-    glanceStrip(d, m),
+    glanceStrip(d, m, ctx),
     quickCapture(ctx),
     ...captured(d, ctx),
     ...groups(d, ctx),
@@ -120,14 +121,17 @@ export async function render(root, ctx) {
  * conversations against the day-90 gate of 5. Each is a fraction of a goal he
  * set, so the bar means something; "—" when a figure is not measured.
  */
-function glanceStrip(d, m) {
+function glanceStrip(d, m, ctx) {
   // Four rings, not four boxes (Abhijeet, 2026-11-02): each is a share of a
   // target, and a ring says "how far along" before you read a digit. The
   // figure and the target stay in the DOM text; `—` when a source is gated.
+  // "Fetch latest" beside them (same day): the applied count is read from
+  // Upwork once a day at 06:05, so two proposals sent after lunch read 0
+  // until tomorrow — the button runs the Upwork readers now and refreshes.
   const rev = m.revenue || {}, a = m.applied || {}, li = d.linkedin || {};
   const haveRev = rev.mtd_usd != null;
   const usdK = (v) => (v >= 1000 ? "$" + (Math.round(v / 100) / 10) + "k" : fmt.usd(v));
-  return rings([
+  const strip = rings([
     { label: "Revenue this month", value: haveRev ? rev.mtd_usd : 0, target: haveRev ? rev.target_usd : null,
       format: usdK, tone: haveRev ? null : "bad",
       note: haveRev ? `${fmt.pct(rev.pct)} of the $${Math.round((rev.target_usd || 0) / 1000)}k target` : "finance read is gated — see Money" },
@@ -138,6 +142,14 @@ function glanceStrip(d, m) {
       note: li.comments_target_day != null ? "LinkedIn · your 10-a-day" : "LinkedIn copy not synced yet" },
     { label: "Buyer conversations", value: li.buyer_conversations || 0, target: li.day90_target,
       note: li.days_left != null ? [`the day-90 gate · `, el("b", null, `${li.days_left} days`), " left"] : "LinkedIn copy not synced yet" },
+  ]);
+  if (!ctx) return strip;
+  return el("div", "stack-1", [
+    el("div", "glance-head", [
+      el("span", "muted small", `Upwork figures as read at ${a.read_at ? fmt.dateTime(a.read_at) : "the last pass"}`),
+      runChain(ctx, UPWORK_FETCH_CHAIN, "Fetch latest from Upwork", { variant: "ghost" }),
+    ]),
+    strip,
   ]);
 }
 
