@@ -102,6 +102,15 @@ def main() -> int:
                            "note": p.get("proposal_note")}
             if args.apply:
                 with db.connect(ctx.db_path or config.DB_PATH) as conn:
+                    # the stored proposal must be the verdict that routed the
+                    # row: set_excluded leaves proposed_client_id alone (it
+                    # keeps provenance for a sweep's own filing), so a re-run
+                    # that nulls the client has to overwrite the old one here or
+                    # a stranger's pitch keeps a client's id on it for ever
+                    conn.execute(
+                        "UPDATE events SET proposed_client_id=?, proposal_confidence=?,"
+                        " proposal_evidence=?, updated_at=datetime('now') WHERE id=?",
+                        (p["proposed_client_id"], p["confidence"], p["evidence"], ev["id"]))
                     outcome = sweep.apply_proposal(
                         conn, ev["id"], p, low=_is_low_base_rate(ev),
                         protected=bool(sender_rules.transactional_reason(ev.get("author") or "")),
