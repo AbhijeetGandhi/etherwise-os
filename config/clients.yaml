@@ -55,6 +55,8 @@ clients:
     billing:
       canonical: Amanda Thomas
     scope_notes: "Upwork contract 44145310 (Airtable Configuration and Automation, HOURLY, ACTIVE from 2026-07-23). 41 messages, live. Not yet in the transaction ledger — the Upwork rail's newest row is 2026-06-03, so $0 here means NOT MEASURED, never no money."
+    emails:
+      - revmargroup.com
   -
     id: amine-hjiaj
     name: Amine Hjiaj
