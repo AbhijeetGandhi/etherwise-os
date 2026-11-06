@@ -364,6 +364,8 @@ clients:
     clickup: homestyling
     billing:
       canonical: Homestyling
+    emails:
+      - room_bb5051cfe2fee40a6ae0e3f64da25cb6@email.upwork.com
   -
     id: horizons-aba
     name: Horizons ABA
