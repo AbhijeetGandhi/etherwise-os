@@ -1006,6 +1006,19 @@ SOURCES = (
      "why": "the only source of Wise revenue and fees now that the CSV export"
             " is retired; stale means the P&L silently stops at the last email"
             " it managed to read"},
+    # Globaltize pays through the platform we built them (2026-11-06); the
+    # "You've been paid" mail on contact@ is the ONLY record of that revenue
+    # until the bank statement a month later — and the statement is the
+    # settlement, not the sale. Same burden as Wise mail: stale means the top
+    # line silently stops at the last mail read. Daily 06:10 IST + grace.
+    {"key": "globaltize_mail", "label": "Globaltize mail -> ledger (income + withdrawals)",
+     "task_name": "finance_globaltize_mail", "max_age_hours": 30,
+     "degrade_kinds": ("globaltize_mail_empty_window", "globaltize_landing_ambiguous"),
+     "critical": True, "backs": "money",
+     "launchd_label": "io.etherwise.v3.finance-globaltize-mail", "catch_up": True,
+     "why": "the only source of Globaltize revenue now that they pay through their"
+            " own platform; the bank credit that follows is the settlement and is"
+            " paired, never counted"},
     {"key": "upwork_sync", "label": "Upwork sync",
      "task_name": "upwork_sync", "max_age_hours": 3,     # hourly at :45
      # the MCP proposals pass inside the sync failing is a degraded sync, not

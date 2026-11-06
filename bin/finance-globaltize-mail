@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Globaltize Workforce payment mails (contact@, Gmail API, read-only) -> ledger.
+
+    PYTHONPATH=. python3 bin/finance-globaltize-mail --dry-run     # report, write nothing
+    PYTHONPATH=. python3 bin/finance-globaltize-mail --days 60     # widen the window
+    PYTHONPATH=. python3 bin/finance-globaltize-mail
+
+Books every "You've been paid" as Globaltize revenue (USD) and every withdrawal
+as a transfer out of the wallet, then pairs each withdrawal with the row where
+its money LANDED (the IDFC RDA credit, or the Wise "Whop Inc / GLOBALTIZE"
+arrival) and makes that row a transfer_in — so the money counts once. Prints
+what is still in flight. See modules/finance/globaltize_mail.py for the model.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db, runner                          # noqa: E402
+from modules.finance import globaltize_mail as gm            # noqa: E402
+from modules.knowledge import email_poll as ep               # noqa: E402
+
+TASK_NAME = "finance_globaltize_mail"
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _ist_date(occurred: str) -> str:
+    try:
+        return datetime.fromisoformat(occurred.replace("Z", "+00:00")).astimezone(IST).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return (occurred or "")[:10]
+
+
+def fetch(days: int, *, _list=ep._list, _get=ep._get, _token=ep.access_token) -> list:
+    """Every Globaltize mail in the window as (subject, text, mail_date, id)."""
+    tok = _token()                                  # contact@ — the OAuth token on file
+    q = f"from:{gm.SENDER} newer_than:{days}d"
+    out, page_token, pages = [], None, 0
+    while pages < ep.PAGE_CAP:
+        pages += 1
+        page = _list(tok, q, page_token)
+        for ref in (page.get("messages") or []):
+            parsed = ep.parse_email(_get(tok, ref["id"]))
+            out.append((parsed["title"], parsed["text"], _ist_date(parsed["occurred_dt"]), ref["id"]))
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+    return out
+
+
+def _collect_and_commit(ctx, args) -> dict:
+    mails = fetch(args.days)
+    print(f"globaltize emails in last {args.days}d: {len(mails)}")
+    rows, paid, wds, incomplete, other = [], [], [], [], 0
+    for subj, text, day, mid in mails:
+        p = gm.parse(subj, text)
+        if p is None:
+            other += 1
+            continue
+        if p.get("incomplete"):
+            incomplete.append((subj, p.get("have")))
+            continue
+        if p["kind"] == "paid":
+            paid.append(p)
+            rows.append(gm.income_row(p))
+        else:
+            wds.append(p)
+            rows.extend(gm.withdrawal_rows(p, mail_date=day))
+    print(f"parsed {len(paid)} payments, {len(wds)} withdrawals -> {len(rows)} ledger rows"
+          f" ({other} other mails ignored)")
+    if incomplete:
+        print(f"!! {len(incomplete)} money mails did not fully parse (template change?):"
+              f" {incomplete[:5]}")
+
+    with db.connect(ctx.db_path or config.DB_PATH) as conn:
+        if args.dry_run:
+            new = [r for r in rows if not conn.execute(
+                "SELECT 1 FROM transactions WHERE canonical_key=?", (r["canonical_key"],)).fetchone()]
+            print(f"DRY RUN — would insert {len(new)}, {len(rows) - len(new)} already in the ledger")
+            for r in new:
+                print(f"   + {r['creation_dt']} {r['canonical_key']:38} {r['amount_minor'] / 100:>10,.2f}"
+                      f" {r['currency']}  {r['category']}")
+            out = {"inserted": 0, "already_present": len(rows) - len(new)}
+        else:
+            out = gm.commit(conn, rows)
+            print(f"ledger: inserted {out['inserted']}, already present {out['already_present']}")
+        pairing = gm.pair_landings(conn, apply=not args.dry_run)
+        if not args.dry_run:
+            conn.commit()
+    for p in pairing["paired"]:
+        print(f"   = {p['withdrawal']} landed as {p['landing']} on {p['landing_date']}"
+              f" (was {p['was']}; now transfer_in)" + ("  [dry run]" if args.dry_run else ""))
+    for a in pairing["ambiguous"]:
+        print(f"   ? {a['withdrawal']}: {len(a['candidates'])} rows could be its landing — not paired")
+    for f in pairing["in_flight"]:
+        print(f"   ~ {f['date']} {f['amount_minor'] / 100:>10,.2f} USD to {f['to']} — not landed in the ledger yet")
+
+    if incomplete:
+        ctx.anomaly("globaltize_mail_unparsed", "critical",
+                    {"count": len(incomplete), "sample": incomplete[:5],
+                     "note": "Globaltize email template may have changed — their revenue"
+                             " stops reaching the ledger until the parser is re-pointed"})
+    if pairing["ambiguous"]:
+        ctx.anomaly("globaltize_landing_ambiguous", "warn",
+                    {"rows": pairing["ambiguous"][:5],
+                     "note": "two bank credits fit one withdrawal — name the right one by hand"})
+    if not mails:
+        ctx.anomaly("globaltize_mail_empty_window", "warn",
+                    {"days": args.days, "note": "no Globaltize emails found at all — notifications"
+                                               " off, filtered, or the search broke"})
+    return {"emails": len(mails), "payments": len(paid), "withdrawals": len(wds),
+            "incomplete": len(incomplete), "inserted": out["inserted"],
+            "already_present": out["already_present"], "paired": len(pairing["paired"]),
+            "in_flight": len(pairing["in_flight"]), "ambiguous": len(pairing["ambiguous"]),
+            "dry_run": bool(args.dry_run)}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--days", type=int, default=45)
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+    # local ledger only + a read-only Gmail query: nothing for the shadow gate
+    result = runner.run_task(TASK_NAME, lambda ctx: _collect_and_commit(ctx, args),
+                             module="system")
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

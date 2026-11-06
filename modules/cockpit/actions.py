@@ -74,6 +74,9 @@ RERUN_JOBS = {
     "linkedin_sync": "io.etherwise.v3.linkedin-sync",
     "finance_stripe": "io.etherwise.v3.finance-stripe",
     "finance_wise_mail": "io.etherwise.v3.finance-wise-mail",
+    # Globaltize's payment mails off contact@ (2026-11-06): a read-only Gmail
+    # query, canonical keys on every row — safe to kick after a payment lands
+    "finance_globaltize_mail": "io.etherwise.v3.finance-globaltize-mail",
     "finance_upwork_weekly": "io.etherwise.v3.finance-upwork-weekly",
     # the MCP ledger read (2026-08-26, use case A): read-only on Upwork, the
     # upsert dedups on the canonical key — safe to kick any time.

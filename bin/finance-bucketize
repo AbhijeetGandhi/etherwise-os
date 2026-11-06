@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
 from modules.finance import pnl, accrual, bank_splits, payroll_tax, salary_lines  # noqa: E402
+from modules.finance import globaltize_mail  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
 
@@ -60,6 +61,17 @@ def run(apply: bool) -> dict:
                   else {"written": len(bank_splits.rows_to_write(conn)), "keys": []})
         splits_bad = len(bank_splits.problems(conn))
 
+    # AND the landing of a Globaltize withdrawal (2026-11-06). The wallet's own
+    # ledger (bin/finance-globaltize-mail) books the "You've been paid" mail as
+    # the revenue; the bank reads the IMPS credit that follows as income, because
+    # the RDA rail is income by rule. Pairing it here, after every import, is
+    # what keeps the month from counting that money twice between the statement
+    # upload and the rail's next run (finance doctor #16 would be RED meanwhile).
+    with db.connect(config.DB_PATH) as conn:
+        landings = globaltize_mail.pair_landings(conn, apply=apply)
+        if apply:
+            conn.commit()
+
     changed = 0
     counts = Counter()
     with db.connect(config.DB_PATH) as conn:
@@ -94,7 +106,9 @@ def run(apply: bool) -> dict:
             "tds_split_rows": tds["written"],
             "tds_unreconciled": tds_bad,
             "bank_split_rows": splits["written"],
-            "bank_split_problems": splits_bad}
+            "bank_split_problems": splits_bad,
+            "globaltize_landings_paired": len(landings["paired"]),
+            "globaltize_in_flight": len(landings["in_flight"])}
 
 
 def main() -> int:

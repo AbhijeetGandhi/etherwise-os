@@ -301,7 +301,7 @@ def existing_income(conn, a: dict, paid_date: str):
     if a.get("reference"):
         row = conn.execute(
             "SELECT canonical_key, source FROM transactions"
-            " WHERE category='income' AND description LIKE ?"
+            " WHERE category IN ('income','transfer_in') AND description LIKE ?"
             "   AND amount_minor=? AND currency=?"
             "   AND ABS(julianday(creation_dt) - julianday(?)) <= ?",
             (f"%{a['reference']}%", a["amount_minor"], a["currency"],
@@ -311,19 +311,41 @@ def existing_income(conn, a: dict, paid_date: str):
     like = f"%{a['payer'][:18]}%"
     return conn.execute(
         "SELECT canonical_key, source FROM transactions"
-        " WHERE category='income' AND amount_minor=? AND currency=?"
+        " WHERE category IN ('income','transfer_in') AND amount_minor=? AND currency=?"
         "   AND date(creation_dt)=date(?) AND description LIKE ?",
         (a["amount_minor"], a["currency"], paid_date, like)).fetchone()
+
+
+# An arrival that is OUR OWN money coming back from another wallet, not a
+# client paying (2026-11-06). Globaltize Workforce pays out through Whop, and a
+# withdrawal from that wallet "to Wise" lands here as "Received money from Whop
+# Inc with reference GLOBALTIZE" — $132.50 on 2 Nov, booked as revenue while
+# the "You've been paid" mail that IS the revenue had no ledger at all. Now the
+# Globaltize rail (modules/finance/globaltize_mail.py) books the payment, and
+# this arrival is the settlement of its withdrawal: transfer_in, never income.
+# Both halves must match — Whop pays out for other platforms too, and a Whop
+# arrival without the GLOBALTIZE reference stays income for him to name.
+WALLET_SETTLEMENTS = (("whop inc", "globaltize"),)      # (payer contains, reference contains)
+
+
+def is_wallet_settlement(a: dict) -> bool:
+    payer = (a.get("payer") or "").lower()
+    ref = (a.get("reference") or "").lower()
+    return any(p in payer and r in ref for p, r in WALLET_SETTLEMENTS)
 
 
 def income_row(a: dict, *, paid_date: str) -> dict:
     """The `transactions` income row this arrival implies. The description is
     written in the CSV's exact phrasing so anything downstream that reads
-    descriptions (client attribution, the P&L) cannot tell the two apart."""
+    descriptions (client attribution, the P&L) cannot tell the two apart.
+    A wallet settlement (see WALLET_SETTLEMENTS) is the same row as a
+    transfer_in: our money arriving, excluded from the P&L."""
     ref = f" with reference {a['reference']}" if a.get("reference") else ""
+    settlement = is_wallet_settlement(a)
     return {
         "canonical_key": income_key(a, paid_date), "wise_id": None,
-        "category": "income", "pnl_bucket": "revenue",
+        "category": "transfer_in" if settlement else "income",
+        "pnl_bucket": "transfer" if settlement else "revenue",
         "amount_minor": a["amount_minor"], "currency": a["currency"],
         "fx_rate": None,
         "description": f"Received money from {a['payer']}{ref}",

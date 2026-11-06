@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.finance-globaltize-mail</string>
+  <!-- Interpreter FIRST, script as an ARGUMENT: launchd cannot exec a file on
+       the Desktop directly (TCC). shadow-diff failed silently for months that
+       way. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>bin/finance-globaltize-mail</string>
+    <string>--days</string>
+    <string>45</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+    <key>PATH</key><string>/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/finance-globaltize-mail.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/finance-globaltize-mail.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- 06:10 IST daily, ten minutes after the Wise rail so a withdrawal "to
+       Wise" and its arrival are both in the ledger before pairing. A 45-day
+       window is deliberate overlap: idempotent on canonical keys, so a late
+       mail or a few days of downtime self-heals on the next run. -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>10</integer></dict>
+</dict>
+</plist>

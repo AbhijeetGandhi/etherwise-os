@@ -726,6 +726,41 @@ def _check_bank_splits(conn) -> Check:
                  " zero, each payment still where its split takes it from")
 
 
+def _check_globaltize(conn, today: Optional[str] = None) -> Check:
+    """#16 Globaltize counted once (added 2026-11-06). Globaltize pays through
+    the platform we built them; the "You've been paid" mail is the revenue
+    (bin/finance-globaltize-mail), and the money then LANDS where other rails
+    already read — the IDFC RDA credit, the Wise "Whop Inc" arrival — which
+    those rails book as income by rule. A landing still booked as income while
+    the withdrawal that sent it is in the ledger is the same dollars twice: RED.
+    `globaltize_mail.pair_landings` (run by bin/finance-bucketize after every
+    import, and by the rail daily) is what clears it. Withdrawals whose landing
+    has not arrived are listed, not failed — the bank statement is monthly."""
+    from modules.finance import globaltize_mail as gm
+    try:
+        twice = gm.double_counted(conn)
+        flight = gm.in_flight(conn, today or _dt.date.today().isoformat())
+        n = conn.execute("SELECT COUNT(*) FROM transactions WHERE source=?",
+                         (gm.SOURCE,)).fetchone()[0]
+    except Exception as exc:                                        # noqa: BLE001
+        return Check("#16 Globaltize counted once", "N/A", f"not readable: {exc!r}"[:120])
+    if not n:
+        return Check("#16 Globaltize counted once", "N/A", "no Globaltize mail rows yet")
+    if twice:
+        return Check("#16 Globaltize counted once", "RED",
+                     f"{len(twice)} landing(s) still booked as income beside the withdrawal"
+                     " that sent them — Globaltize money counted twice", twice[:20],
+                     fix="Run bin/finance-bucketize --apply (or bin/finance-globaltize-mail):"
+                         " it pairs each Globaltize withdrawal with the bank or Wise credit"
+                         " that is its landing and files that credit as a transfer.")
+    note = (f"; {len(flight)} withdrawal(s) not landed in the ledger yet"
+            + (" (oldest " + str(max(f['age_days'] for f in flight)) + "d)" if flight else ""))
+    return Check("#16 Globaltize counted once", "GREEN",
+                 f"{n} wallet rows; every landed withdrawal is a transfer{note}",
+                 [{"withdrawal": f["withdrawal"], "to": f["to"], "date": f["date"],
+                   "amount_minor": f["amount_minor"]} for f in flight])
+
+
 def run(db_path=None, period: Optional[str] = None,
         today: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
@@ -739,5 +774,6 @@ def run(db_path=None, period: Optional[str] = None,
                   _check_transfer_integrity(conn), _check_bucket_reproducibility(conn),
                   _check_payroll(conn), _check_stripe_arrival(conn, today),
                   _check_effective_month(conn), _check_salary_lines(conn),
-                  _check_payroll_tax(conn), _check_bank_splits(conn)]
+                  _check_payroll_tax(conn), _check_bank_splits(conn),
+                  _check_globaltize(conn, today)]
     return DoctorResult(checks)
