@@ -21,7 +21,9 @@ from core import config, db, runner
 from modules.upwork import scan_pipeline as sp
 from modules.upwork import scoring
 from modules.upwork.feeds import mcp_search, shadow_poll
-from tests.test_mcp_feed import GET_FIXED, GET_HOURLY, SEARCH_FIXED, SEARCH_HOURLY
+from tests.test_mcp_feed import (GET_FIXED, GET_HOURLY, NO_RANGE_ROW_1110,
+                                 SEARCH_FIXED, SEARCH_HOURLY, SEARCH_ROW_1110,
+                                 SMART_ROW_1110)
 
 J_HOURLY = SEARCH_HOURLY["id"]           # 2091139773174847123
 J_FIXED = SEARCH_FIXED["id"]             # 2091503480754476388
@@ -222,6 +224,149 @@ class TestFetchNew(PacedCase):
         self.assertEqual(shadow_poll.MAX_GETS_PER_RUN, config.MCP_MAX_GETS_PER_RUN)
 
 
+# ── Upwork's daily allowance of job opens (2026-11-10) ───────────────────────
+
+REFUSAL = 'find_jobs: {"error_code":"PERMISSION","reason":"This job can\'t be opened right now. It may be private or invite-only, or jobs are being opened too quickly. Slow down and try again later, and don\'t retry the same job repeatedly."}'
+
+
+class Refusing(FakeSession):
+    """Upwork after the day's allowance is spent: every `get` refused."""
+
+    def __init__(self, ok=(), **kw):
+        super().__init__(**kw)
+        self.ok = set(ok)                 # ids still answered
+
+    def call(self, tool, args):
+        if args.get("action") == "get" and args["params"]["id"] not in self.ok:
+            self.calls.append((tool, args))
+            raise RuntimeError(REFUSAL)
+        return super().call(tool, args)
+
+
+def gets_of(session):
+    return [c[1]["params"]["id"] for c in session.calls if c[1].get("action") == "get"]
+
+
+def low_rate_row(jid, rate="10.00–15.00/hr", **kw):
+    """A keyword row with the whole post on it: the rules can settle it."""
+    return {**SEARCH_ROW_1110, "id": jid, "title": kw.get("title", "Backend Developer"),
+            "budget": rate, "created_date": "2026-11-09T21:00:00Z",
+            "description": kw.get("description", "Build our backend, Make.com welcome.")}
+
+
+class TestGetAllowance(PacedCase):
+    def setUp(self):
+        super().setUp()
+        self.tmp = Path(tempfile.mkdtemp(prefix="get-pause-"))
+        self.pause = self.tmp / "upwork-get-pause.json"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        super().tearDown()
+
+    def test_two_refusals_in_a_row_pause_the_rest_of_the_run(self):
+        s = Refusing()
+        logs = []
+        out = mcp_search.fetch_new(s, "org", logs.append, known=set(),
+                                   pause_file=self.pause)
+        m = out["metrics"]
+        self.assertEqual(len(gets_of(s)), 2)               # the third was never asked
+        self.assertEqual((m["get_refused"], m["get_paused"]), (2, 1))
+        self.assertEqual(len(out["jobs"]), 3)              # every job still arrives
+        self.assertTrue(m["paused_until"].endswith("T00:00:00+00:00"))
+        self.assertTrue(any("gets PAUSED" in x for x in logs))
+        saved = json.loads(self.pause.read_text())
+        self.assertEqual(saved["until"], m["paused_until"])
+
+    def test_the_pause_outlives_the_run_and_ends_at_the_reset(self):
+        mcp_search.fetch_new(Refusing(), "org", lambda x: None,
+                             known=set(), pause_file=self.pause)
+        s = FakeSession()                                  # Upwork would answer now...
+        logs = []
+        out = mcp_search.fetch_new(s, "org", logs.append, known=set(),
+                                   pause_file=self.pause)
+        self.assertEqual(gets_of(s), [])                   # ...but nobody asks
+        self.assertEqual(out["metrics"]["get_paused"], 3)
+        self.assertTrue(any("gets paused until" in x for x in logs))
+        # past the reset the file is history
+        self.pause.write_text(json.dumps({"until": "2020-01-01T00:00:00+00:00"}))
+        s = FakeSession()
+        mcp_search.fetch_new(s, "org", lambda x: None, known=set(), pause_file=self.pause)
+        self.assertEqual(len(gets_of(s)), 3)
+
+    def test_one_refusal_is_a_private_job_not_a_pause(self):
+        s = Refusing(ok={J_FIXED, J_OLD})                  # only J_HOURLY refused
+        out = mcp_search.fetch_new(s, "org", lambda x: None, known=set(),
+                                   pause_file=self.pause)
+        self.assertEqual(len(gets_of(s)), 3)
+        self.assertEqual(out["metrics"]["get_refused"], 1)
+        self.assertIsNone(out["metrics"]["paused_until"])
+        self.assertFalse(self.pause.exists())
+
+    def test_without_a_pause_file_the_pause_holds_for_the_run_only(self):
+        out = mcp_search.fetch_new(Refusing(), "org", lambda x: None, known=set())
+        self.assertIsNotNone(out["metrics"]["paused_until"])
+        s = FakeSession()
+        mcp_search.fetch_new(s, "org", lambda x: None, known=set())
+        self.assertEqual(len(gets_of(s)), 3)
+
+    def test_no_open_is_spent_on_a_job_its_row_settles(self):
+        low = low_rate_row("2119907348261953417")                       # $10-15/hr
+        ok = low_rate_row("2119907452813069724", rate="$40.00–$70.00/hr")
+        snip = {**low, "id": "2119907519364820157"}
+        snip.pop("description")                                          # a snippet only
+        s = FakeSession(smart=[snip], terms={"airtable": [low, ok]}, gets={})
+        out = mcp_search.fetch_new(s, "org", lambda x: None, known=set(),
+                                   rule_check=scoring.hard_rule_skip)
+        asked = gets_of(s)
+        self.assertNotIn(low["id"], asked)       # whole post + $10-15: settled, no get
+        self.assertIn(ok["id"], asked)           # will be scored: worth the open
+        self.assertIn(snip["id"], asked)         # snippet: the post may say "placeholder"
+        self.assertEqual(out["metrics"]["get_saved"], 1)
+        by = {j["id"]: j for j in out["jobs"]}
+        self.assertEqual(scoring.hard_rule_skip(by[low["id"]]), "hourly_below_30")
+
+    def test_a_get_is_still_spent_where_it_can_change_the_verdict(self):
+        # no range, verified client, spend under the bar, hires unknown on the
+        # row: the get's hire count could prove the client -> ask
+        blank = {**NO_RANGE_ROW_1110, "id": "2119907683140592876",
+                 "title": "Backend Developer", "description": "Build our backend.",
+                 "client": {"country": "United States", "total_spent": "$900.00",
+                            "verification_status": "VERIFIED"}}
+        s = FakeSession(smart=[], terms={"airtable": [blank]}, gets={})
+        out = mcp_search.fetch_new(s, "org", lambda x: None, known=set(),
+                                   rule_check=scoring.hard_rule_skip)
+        self.assertEqual(gets_of(s), [blank["id"]])
+        self.assertEqual(out["metrics"]["get_saved"], 0)
+
+    def test_keyword_searches_ask_for_the_whole_post(self):
+        s = FakeSession()
+        mcp_search.fetch_new(s, "org", lambda x: None, known=set())
+        searches = [c[1]["params"] for c in s.calls if c[1].get("action") == "search"]
+        self.assertTrue(searches)
+        self.assertTrue(all(p.get("include_full_details") is True for p in searches))
+
+    def test_the_whole_post_joins_the_best_matches_row(self):
+        s = FakeSession(smart=[SMART_ROW_1110], terms={"airtable": [SEARCH_ROW_1110]},
+                        gets={})
+        out = mcp_search.fetch_new(s, "org", lambda x: None, known=set())
+        job = {j["id"]: j for j in out["jobs"]}[SMART_ROW_1110["id"]]
+        self.assertEqual(job["feed_source"], "mcp:smart_search")     # first finder kept
+        self.assertEqual(job["post_source"], "search")               # ...with the full text
+        self.assertEqual(job["total_applicants"], 24)                # the keyword row's count
+        self.assertEqual(scoring.hard_rule_skip(job), "hourly_below_30")
+
+    def test_rows_report_whether_they_carry_a_rate(self):
+        s = FakeSession(smart=[SMART_ROW_1110, NO_RANGE_ROW_1110], terms={}, gets={})
+        out = mcp_search.fetch_new(s, "org", lambda x: None, known=set())
+        r = out["metrics"]["rate"]
+        self.assertEqual((r["hourly_rows"], r["hourly_with_budget"]), (2, 1))
+        self.assertEqual(r["unread"], [])
+        s = FakeSession(smart=[], terms={"airtable": [old_search_row()]}, gets={})
+        r = mcp_search.fetch_new(s, "org", lambda x: None, known=set())["metrics"]["rate"]
+        self.assertEqual(r["unread"], [{"id": J_OLD, "budget": "0.0"}])
+
+
 # ── the provider inside the scan ─────────────────────────────────────────────
 
 class McpScanCase(PacedCase):
@@ -283,11 +428,17 @@ class TestScanMcpProvider(McpScanCase):
         self.assertEqual(result.status, "completed", result.error)
         self.assertEqual(result.metrics["provider"], "mcp")
         self.assertEqual(result.metrics["claimed"], 3)
-        # J_OLD has no `get` payload in the fake -> a search-only hourly row
-        # with no rate -> the hard rules skip it before any model call, exactly
-        # as they would on the Chrome path (rate_unstated_low_client)
+        # J_OLD has no `get` payload in the fake and its row is the August shape
+        # ("budget": "0.0" on an hourly job): a rate nobody could read. Since
+        # 2026-11-10 that fails closed before any model call (rate_unread);
+        # it used to read as rate-unstated, which is how a $15-20/hr job was
+        # carded on 9 Nov.
         self.assertEqual(result.metrics["scored"], 2)
         self.assertEqual(result.metrics["skipped"], 1)
+        old = self.rows("SELECT hard_rule_skip, rate_source FROM scored_jobs"
+                        " WHERE id=?", (J_OLD,))[0]
+        self.assertEqual((old["hard_rule_skip"], old["rate_source"]),
+                         ("rate_unread", "unread"))
         # BOTH scored rows are hot since 2026-09-23: the hot bar sits on the
         # card floor, so "carded but not hot" is a shape that no longer exists
         # and a scan drafts for everything it cards. J_FIXED at 21 used to be a
@@ -323,6 +474,33 @@ class TestScanMcpProvider(McpScanCase):
         self.assertIsNone(rows[J_OLD]["screening_questions_json"])       # no `get`
         self.assertIn("1. Describe 2\u20133 production AI automation systems",
                       scoring.job_brief(rows[J_HOURLY]))
+
+    def test_the_9_nov_card_never_reaches_the_model(self):
+        """2026-11-10: hourly $15-20, the get refused, a proven client. It was
+        scored 26 and carded; now the row's rate stops it at the rules, and
+        the row records where its rate and text came from."""
+        s = Refusing(smart=[SMART_ROW_1110], terms={})
+        result = self.run_scan(s, score_map={SMART_ROW_1110["id"]: 26})
+        self.assertEqual(result.status, "completed", result.error)
+        row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (SMART_ROW_1110["id"],))[0]
+        self.assertEqual(row["hard_rule_skip"], "hourly_below_30")
+        self.assertIsNone(row["score"])
+        self.assertEqual((row["hourly_min"], row["hourly_max"]), (15.0, 20.0))
+        self.assertEqual((row["rate_source"], row["post_source"]), ("search", "snippet"))
+        self.assertEqual(row["client_total_spent"], 13556.63)
+        self.assertEqual(result.metrics["scored"], 0)
+
+    def test_an_unreadable_rate_is_loud(self):
+        result = self.run_scan(FakeSession(smart=[], terms={"airtable": [old_search_row()]},
+                                           gets={}))
+        self.assertEqual(result.status, "completed", result.error)
+        kinds = [r["kind"] for r in self.rows("SELECT * FROM anomalies")]
+        self.assertIn("rate_unread", kinds)
+
+    def test_the_pause_file_sits_beside_the_database(self):
+        self.run_scan(Refusing(smart=[SMART_ROW_1110, NO_RANGE_ROW_1110], terms={
+            "airtable": [low_rate_row("2119907791625384903", rate="$40.00\u2013$70.00/hr")]}))
+        self.assertTrue((self.db_path.parent / "upwork-get-pause.json").exists())
 
     def test_second_round_claims_nothing_and_skips_empty(self):
         self.run_scan(FakeSession())

@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from core import config, db, notify, runner
@@ -267,6 +268,20 @@ def _store_screening(dbp, jobs, claimed) -> int:
     return len(rows)
 
 
+def _store_provenance(dbp, jobs, claimed) -> int:
+    """Where each claimed job's rate and post were read from (migration 048):
+    rate_source get | search | none | unread, post_source get | search |
+    snippet. hard_rule_skip fails closed on rate_source 'unread', and the next
+    "why was this scored?" is one query, not a log dig (2026-11-10)."""
+    rows = [(job.get("rate_source"), job.get("post_source"), str(job.get("id")))
+            for job in jobs if str(job.get("id") or "") in claimed]
+    if rows:
+        with db.connect(dbp) as conn:
+            conn.executemany(f"UPDATE {TABLE} SET rate_source=?, post_source=?"
+                             " WHERE id=?", rows)
+    return len(rows)
+
+
 def _fetch_mcp(ctx, dbp) -> dict:
     """Provider 'mcp': one bounded standing-query round, then the SAME claim
     path as Chrome (feed_bridge.process — the Iron-Law validation, the
@@ -289,8 +304,13 @@ def _fetch_mcp(ctx, dbp) -> dict:
             " until then; the scan retries on the next :15 run.") from exc
     with db.connect(dbp) as conn:
         known = {r["id"] for r in conn.execute(f"SELECT id FROM {TABLE}")}
+    # rule_check: no job-open is spent on a job its search row already settles;
+    # pause_file: Upwork's "opened too quickly" pause outlives this run (beside
+    # the database, so a test's temp database keeps its own) — 2026-11-10
     round_ = mcp_search.fetch_new(session, org, ctx.log, known=known,
-                                  claim_since=config.MCP_CLAIM_SINCE)
+                                  claim_since=config.MCP_CLAIM_SINCE,
+                                  rule_check=scoring.hard_rule_skip,
+                                  pause_file=Path(dbp).parent / "upwork-get-pause.json")
     m = round_["metrics"]
     # DEGRADED-FEED GUARD, the MCP twin of MIN_HEALTHY_TILES: a search round
     # that surfaces almost nothing is a broken feed (auth, a changed tool
@@ -319,6 +339,21 @@ def _fetch_mcp(ctx, dbp) -> dict:
     stored = _store_screening(dbp, round_["jobs"], claimed)
     if stored:
         ctx.log(f"mcp round: screening questions kept for {stored} new job(s)")
+    _store_provenance(dbp, round_["jobs"], claimed)
+    rate = m.get("rate") or {}
+    if rate.get("unread"):
+        # fail closed (scoring: rate_unread), but LOUD: Upwork changed how a
+        # row writes its rate, or a get was refused on a row that never had one
+        ctx.anomaly("rate_unread", "warn",
+                    {"count": len(rate["unread"]), "samples": rate["unread"][:5],
+                     "note": "posted rate unreadable on the row and no get:"
+                             " skipped as rate_unread, never scored blind"})
+    if rate.get("hourly_rows", 0) >= 5 and not rate.get("hourly_with_budget"):
+        ctx.anomaly("search_rate_missing", "warn",
+                    {"hourly_rows": rate["hourly_rows"],
+                     "note": "no hourly search row carried a posted rate this"
+                             " round — Upwork may have changed the row; a job"
+                             " whose get is refused would read as rate-unstated"})
     # every query the round ran is reported, claimed something or not — a
     # query that surfaced only known/cut rows still proves it ran
     for feed, fm in m["by_feed"].items():

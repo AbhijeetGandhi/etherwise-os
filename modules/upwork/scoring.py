@@ -172,6 +172,13 @@ def hard_rule_skip(job: dict) -> Optional[str]:
         return "n8n_exclusion"
     if _N8N_RE.search(text) and not _OTHER_TOOLS_RE.search(text):
         return "n8n_exclusion"          # sole-tool: n8n is THE subject
+    if job.get("rate_source") == "unread" and not placeholder_price:
+        # 2026-11-10: the posted rate (or fixed budget) could be read from
+        # neither the post nor its search row. A rate we did not SEE is never
+        # a blank the client LEFT: reading it as one is how a $15-20/hr job
+        # was scored 26 and carded on 9 Nov (feeds/mcp_feed.search_rate).
+        # Chrome-path rows carry no rate_source and never meet this rule.
+        return "rate_unread"
     if job.get("contract_type") == "Hourly":
         if _rate_unstated(job):
             # no rate stated: the $30 floor read a blank as $0 and killed ~370

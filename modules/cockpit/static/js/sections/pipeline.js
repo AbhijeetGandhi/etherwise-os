@@ -177,6 +177,7 @@ const hiredCols = [
 const SKIP_LABEL = {
   no_rate: "hourly — no rate (pre-fix, scored as $0)",
   rate_unstated_low_client: "hourly — no rate + unproven client",
+  rate_unread: "rate unreadable — not scored blind",
   hourly_below_30: "hourly < $30 (stated)",
   low_hourly_rate: "hourly < $30 (stated, v2 rule)",
   low_hourly: "hourly < $30 (stated, v2 rule)",

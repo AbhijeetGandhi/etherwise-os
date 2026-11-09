@@ -20,6 +20,19 @@ So a job needs one `search` row (cheap, ten per page) plus one `get` (per job).
 `get` wins every field both carry, because search's description is a snippet
 and its client block is thinner.
 
+2026-11-10, WHAT A SEARCH ROW CARRIES NOW (probed live): the posted hourly
+range in `budget` ("$19.00–$40.00/hr" on smart_search, "15.00–20.00/hr" on
+search; no budget at all when the client posted none), the client's
+total_spent as text, and — on `search` with include_full_details — the whole
+untruncated description. It matters because from 6 Nov Upwork refuses `get`
+once the day's allowance of job opens is spent ("jobs are being opened too
+quickly"): every get from about 10:15 IST to the 05:30 IST reset. This module
+read the rate from `get` alone, so for 19 hours a day every hourly job looked
+RATE-UNSTATED, and a $15–20/hr job from a proven client was scored 26 and
+carded (job 2119895503208409490 — he caught it). The row is now read for what
+it says, `get` still wins when it answers, and `rate_source` / `post_source`
+record which one spoke (the scan fails closed on rate_source 'unread').
+
 WHAT IS DELIBERATELY DIFFERENT FROM THE SCRAPER — read before treating a diff
 as a bug:
 
@@ -83,6 +96,52 @@ def _num(v) -> Optional[float]:
     return float(m.group(1).replace(",", "")) * unit
 
 
+# THE POSTED RATE ON A SEARCH ROW (2026-11-10). Shapes seen live: smart_search
+# "$19.00–$40.00/hr", search "15.00–20.00/hr"; Upwork's own tool notes name
+# "up to B/hr" (no min) and "A+/hr" (no max). Any dash, "to", optional "$".
+_AMT = r"\$?\s*(\d[\d,]*(?:\.\d+)?)"
+_PER_HOUR = r"\s*/\s*(?:hr|hour)\s*$"
+_RANGE_RE = re.compile(rf"^\s*{_AMT}\s*(?:[-\u2010-\u2015]|to)\s*{_AMT}{_PER_HOUR}", re.I)
+_UP_TO_RE = re.compile(rf"^\s*up\s*to\s*{_AMT}{_PER_HOUR}", re.I)
+_FROM_RE = re.compile(rf"^\s*{_AMT}\s*\+{_PER_HOUR}", re.I)
+_ONE_RE = re.compile(rf"^\s*{_AMT}{_PER_HOUR}", re.I)
+
+
+def _amt(text: str) -> Optional[float]:
+    v = float(text.replace(",", ""))
+    return v or None                      # a $0 end is no end
+
+
+def search_rate(search_row: Optional[dict]) -> tuple:
+    """What a search row says about an HOURLY job's posted rate:
+      ('range', lo, hi)      a posted range; lo None for "up to B/hr", hi None
+                             for "A+/hr"
+      ('none', None, None)   no budget on the row: the client posted no range
+      ('unread', None, None) a budget is there but is not a rate this code can
+                             read — the old "0.0", or a shape Upwork has not
+                             shown us yet. The scan fails closed on it: a rate
+                             we could not see is never taken for a blank one."""
+    b = (search_row or {}).get("budget")
+    if b is None or (isinstance(b, str) and not b.strip()):
+        return ("none", None, None)
+    s = str(b)
+    for rx, shape in ((_RANGE_RE, "lo-hi"), (_UP_TO_RE, "hi"),
+                      (_FROM_RE, "lo"), (_ONE_RE, "one")):
+        m = rx.match(s)
+        if not m:
+            continue
+        if shape == "lo-hi":
+            lo, hi = _amt(m.group(1)), _amt(m.group(2))
+        elif shape == "hi":
+            lo, hi = None, _amt(m.group(1))
+        elif shape == "lo":
+            lo, hi = _amt(m.group(1)), None
+        else:
+            lo = hi = _amt(m.group(1))
+        return ("range", lo, hi) if (lo or hi) else ("none", None, None)
+    return ("unread", None, None)
+
+
 def _posting(get_row: dict) -> dict:
     return ((get_row or {}).get("data") or {}).get("marketplaceJobPosting") or {}
 
@@ -133,17 +192,34 @@ def normalize(search_row: Optional[dict] = None,
             else ("FIXED" if search_row.get("job_type") else "")
     if ctype == "HOURLY":
         out["contract_type"] = "Hourly"
-        out["hourly_min"] = _num(hourly.get("hourlyBudgetMin")) or None
-        out["hourly_max"] = _num(hourly.get("hourlyBudgetMax")) or None
+        lo = _num(hourly.get("hourlyBudgetMin")) or None
+        hi = _num(hourly.get("hourlyBudgetMax")) or None
+        state, s_lo, s_hi = search_rate(search_row)
+        if lo or hi:
+            source = "get"
+        elif state == "range":            # get absent or silent: the row's range
+            lo, hi, source = s_lo, s_hi, "search"
+        elif terms.get("contractType"):   # the get read the post: no range posted
+            source = "get"
+        elif state == "none":             # the row says no range was posted
+            source = "search"
+        else:                             # nobody we could read said
+            source = "unread"
+        out["hourly_min"], out["hourly_max"] = lo, hi
         out["fixed_budget"] = None
     else:
         out["contract_type"] = "Fixed"
         amt = _num((fixed.get("amount") or {}).get("rawValue")
                    if isinstance(fixed.get("amount"), dict) else fixed.get("amount"))
+        source = "get" if amt is not None else None
         if amt is None:
-            amt = _num(search_row.get("budget"))
+            b = search_row.get("budget")
+            amt = _num(b)
+            source = ("search" if amt is not None
+                      else "none" if b is None or not str(b).strip() else "unread")
         out["fixed_budget"] = amt or None
         out["hourly_min"] = out["hourly_max"] = None
+    out["rate_source"] = source           # get | search | none | unread
 
     out["experience_level"] = (terms.get("experienceLevel")
                                or search_row.get("experience_level") or None)
@@ -158,7 +234,12 @@ def normalize(search_row: Optional[dict] = None,
     pc = search_row.get("proposal_count")
     out["total_applicants"] = int(pc) if isinstance(pc, int) else None
 
-    desc = content.get("description") or search_row.get("description_snippet") or ""
+    # get's post, else search's include_full_details text, else the snippet
+    desc = (content.get("description") or search_row.get("description")
+            or search_row.get("description_snippet") or "")
+    out["post_source"] = ("get" if content.get("description") else
+                          "search" if search_row.get("description") else
+                          "snippet" if search_row.get("description_snippet") else None)
     # Upwork wraps posting copy in an untrusted marker. Strip the tags, keep the
     # text: it is DATA for the scorer, and the marker is Upwork telling us so.
     out["description"] = re.sub(
@@ -178,6 +259,8 @@ def normalize(search_row: Optional[dict] = None,
     # ── client block
     out["client_country"] = _country(get_row, search_row)
     spent = client_rec.get("spend_total")
+    if spent is None:                     # search rows carry it as text now
+        spent = s_client.get("total_spent")
     out["client_total_spent"] = _num(spent) if spent is not None else None
     # client_hires == contracts_total, NOT jobs_with_hires.
     # Caught by scripts/mcp_feed_compare.py on 2026-08-24: for the whale client
@@ -218,5 +301,6 @@ def normalize(search_row: Optional[dict] = None,
             for q in (get_row.get("screening_questions") or [])],
         "client_contracts_active": client_rec.get("contracts_active"),
         "client_hours_total": client_rec.get("hours_total"),
+        "search_budget": search_row.get("budget"),
     }
     return out

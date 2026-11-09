@@ -346,5 +346,142 @@ class SpendAsText(unittest.TestCase):
         self.assertTrue(scoring._proven_spender({"client_total_spent": self.with_spend("$65,990.74")}))
 
 
+# ── the search row speaks for itself (2026-11-10) ─────────────────────────────
+# REAL rows, captured 10 Nov from his account while `get` was refused. The job
+# is the card he caught: hourly $15-20, carded at 26 on 9 Nov because the row's
+# rate was never read and the post could not be opened.
+
+SMART_ROW_1110 = {   # smart_search (Best Matches): "$" amounts, snippet, hires
+    "id": "2119895503208409490", "job_type": "hourly",
+    "title": "Remote AI Implementation & Automation Specialist",
+    "budget": "$15.00\u2013$20.00/hr", "hourly_budget_type": "client-specified range",
+    "proposals_tier": "10 to 15", "created_date": "2026-11-09T20:50:48.821Z",
+    "duration": "More than 6 months", "engagement": "FULL_TIME",
+    "experience_level": "intermediate", "skills": ["Make.com", "n8n", "Claude AI"],
+    "description_snippet": "We are looking for a skilled and versatile AI"
+                           " Implementation & Automation Specialist to help"
+                           " integrate artificial intelligence into business"
+                           " operations...\n\nThe ideal c...",
+    "client": {"country": "Dominican Republic", "rating": 5, "total_hires": 5,
+               "total_reviews": 1, "total_spent": "$13,556.63",
+               "verification_status": "VERIFIED"},
+}
+SEARCH_ROW_1110 = {  # search(title=..., include_full_details): bare amounts, full text
+    "id": "2119895503208409490", "job_type": "hourly",
+    "title": "Remote AI Implementation & Automation Specialist",
+    "budget": "15.00\u201320.00/hr", "proposal_count": 24,
+    "created_date": "2026-11-09T20:50:48.821Z",
+    "description": "<untrusted_participant_content>\nWe are looking for a skilled"
+                   " and versatile AI Implementation & Automation Specialist..."
+                   " (5,362 characters in the original)"
+                   "\n</untrusted_participant_content>",
+    "description_snippet": "We are looking for a skilled and versatile AI...",
+    "client": {"country": "Dominican Republic", "rating": 5, "total_posted_jobs": 89,
+               "total_reviews": 1, "total_spent": "$13,556.63",
+               "verification_status": "VERIFIED"},
+}
+NO_RANGE_ROW_1110 = {  # an hourly post with no range: the row has no budget
+    "id": "2119647899741681620", "job_type": "hourly",
+    "title": "Senior Telecom & AI Voice chat engineer",
+    "client": {"country": "United States", "rating": 4.74, "total_posted_jobs": 97,
+               "total_reviews": 19, "total_spent": "$20,415.52",
+               "verification_status": "VERIFIED"},
+}
+
+
+class SearchRowRate(unittest.TestCase):
+    def test_the_shapes_upwork_writes(self):
+        cases = {"$19.00\u2013$40.00/hr": ("range", 19.0, 40.0),
+                 "15.00\u201320.00/hr": ("range", 15.0, 20.0),
+                 "up to 20.00/hr": ("range", None, 20.0),
+                 "30.00+/hr": ("range", 30.0, None),
+                 "25.00/hr": ("range", 25.0, 25.0),
+                 "$1,000.00-$2,000.00/hr": ("range", 1000.0, 2000.0),
+                 "15.00 - 20.00 / hour": ("range", 15.0, 20.0),
+                 "0.00\u20130.00/hr": ("none", None, None),
+                 "": ("none", None, None), None: ("none", None, None),
+                 "0.0": ("unread", None, None),          # the August row
+                 "$800.00": ("unread", None, None)}      # a fixed price on an hourly row
+        for budget, want in cases.items():
+            self.assertEqual(mcp_feed.search_rate({"budget": budget}), want, budget)
+        self.assertEqual(mcp_feed.search_rate({}), ("none", None, None))
+        self.assertEqual(mcp_feed.search_rate(None), ("none", None, None))
+
+    def test_the_card_he_caught_is_skipped_on_its_row_alone(self):
+        for row in (SMART_ROW_1110, SEARCH_ROW_1110):
+            job = mcp_feed.normalize(row, None)          # the get was refused
+            self.assertEqual((job["hourly_min"], job["hourly_max"]), (15.0, 20.0))
+            self.assertEqual(job["rate_source"], "search")
+            self.assertEqual(scoring.hard_rule_skip(job), "hourly_below_30")
+
+    def test_the_get_still_wins_when_it_answers(self):
+        job = mcp_feed.normalize({**SEARCH_HOURLY, "budget": "$15.00\u2013$20.00/hr"},
+                                 GET_HOURLY)
+        self.assertEqual((job["hourly_min"], job["hourly_max"]), (20.0, 50.0))
+        self.assertEqual(job["rate_source"], "get")
+
+    def test_a_get_with_no_range_lets_the_row_speak(self):
+        import copy
+        g = copy.deepcopy(GET_HOURLY)
+        g["data"]["marketplaceJobPosting"]["contractTerms"]["hourlyContractTerms"] = {}
+        job = mcp_feed.normalize({**SEARCH_HOURLY, "budget": "30.00\u201360.00/hr"}, g)
+        self.assertEqual((job["hourly_min"], job["hourly_max"]), (30.0, 60.0))
+        self.assertEqual(job["rate_source"], "search")
+        unstated = mcp_feed.normalize({**SEARCH_HOURLY, "budget": "0.0"}, g)
+        self.assertEqual(unstated["rate_source"], "get")   # the post says: no range
+        self.assertIsNone(unstated["hourly_max"])
+
+    def test_no_budget_on_the_row_is_a_blank_the_client_left(self):
+        job = mcp_feed.normalize(NO_RANGE_ROW_1110, None)
+        self.assertEqual(job["rate_source"], "search")
+        self.assertIsNone(job["hourly_min"])
+        self.assertIsNone(job["hourly_max"])
+        # $20,415.52 spent, read off the row: the proven-spender escape holds
+        self.assertEqual(job["client_total_spent"], 20415.52)
+        self.assertIsNone(scoring.hard_rule_skip(job))
+
+    def test_a_rate_nobody_could_read_fails_closed(self):
+        job = mcp_feed.normalize(SEARCH_HOURLY, None)      # "0.0", no get
+        self.assertEqual(job["rate_source"], "unread")
+        self.assertEqual(scoring.hard_rule_skip(job), "rate_unread")
+        # ...unless the client says the posted price is a placeholder
+        ph = mcp_feed.normalize({**SEARCH_HOURLY, "description":
+                                 "The budget is a placeholder, we pay well."}, None)
+        self.assertNotEqual(scoring.hard_rule_skip(ph), "rate_unread")
+
+    def test_fixed_reads_the_row_and_fails_closed_on_junk(self):
+        job = mcp_feed.normalize({"id": "1", "job_type": "fixed", "title": "Backend Developer",
+                                  "budget": "$800.00", "client": {}}, None)
+        self.assertEqual((job["fixed_budget"], job["rate_source"]), (800.0, "search"))
+        self.assertIsNone(scoring.hard_rule_skip(job))
+        junk = mcp_feed.normalize({"id": "1", "job_type": "fixed", "title": "Backend Developer",
+                                   "budget": "negotiable", "client": {}}, None)
+        self.assertEqual(junk["rate_source"], "unread")
+        self.assertEqual(scoring.hard_rule_skip(junk), "rate_unread")
+        self.assertEqual(mcp_feed.normalize(SEARCH_FIXED, GET_FIXED)["rate_source"], "get")
+
+    def test_spend_falls_back_to_the_row_and_the_get_still_wins(self):
+        self.assertEqual(mcp_feed.normalize(SMART_ROW_1110, None)["client_total_spent"],
+                         13556.63)
+        self.assertEqual(mcp_feed.normalize({**SEARCH_FIXED, "client": {
+            **SEARCH_FIXED["client"], "total_spent": "$1.00"}}, GET_FIXED)
+            ["client_total_spent"], 375023.53)
+
+    def test_where_the_text_came_from(self):
+        full = mcp_feed.normalize(SEARCH_ROW_1110, None)
+        self.assertEqual(full["post_source"], "search")
+        self.assertIn("5,362 characters", full["description"])
+        self.assertNotIn("untrusted_participant_content", full["description"])
+        self.assertEqual(mcp_feed.normalize(SMART_ROW_1110, None)["post_source"], "snippet")
+        self.assertEqual(mcp_feed.normalize(SEARCH_HOURLY, GET_HOURLY)["post_source"], "get")
+        self.assertIsNone(mcp_feed.normalize({}, None)["post_source"])
+
+    def test_the_new_fields_cannot_reach_the_scorer(self):
+        import json as j
+        seen = j.loads(scoring.job_input(mcp_feed.normalize(SMART_ROW_1110, None)))
+        self.assertNotIn("rate_source", seen)
+        self.assertNotIn("post_source", seen)
+
+
 if __name__ == "__main__":
     unittest.main()

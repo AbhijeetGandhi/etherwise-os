@@ -13,18 +13,36 @@ until 2026-10-18, every quarter hour since, his decision:
 config.UPWORK_SCAN_MINUTES). The bounds are config (MCP_SMART_PAGES,
 MCP_PER_QUERY_LIMIT, MCP_MAX_GETS_PER_RUN, MCP_TERM_QUERIES), never literals
 here.
+
+THE DAILY ALLOWANCE OF JOB OPENS (2026-11-10). From 6 Nov Upwork refuses
+`get` once a day's allowance is spent: "This job can't be opened right now. It
+may be private or invite-only, or jobs are being opened too quickly. Slow down
+and try again later, and don't retry the same job repeatedly." Measured 6-9
+Nov: 75-98 opens a day (the funnel's nightly re-read included) and then
+nothing until 00:00 UTC (05:30 IST). So, three things, each one his ask of us:
+  * no get is spent on a job its search row already settles (the hard rules
+    reject it on the full text include_full_details gives the keyword rows);
+  * two refusals in a row and gets PAUSE until the next 00:00 UTC, persisted
+    in the pause file the scan passes (beside the database) — no more asking
+    all evening for a job we were told not to retry;
+  * the rate and the client's spend are read off the row (mcp_feed), so a job
+    judged without its get is judged on what Upwork showed, not on a blank.
 """
 from __future__ import annotations
 
+import json
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 from core import config
 from modules.upwork.feeds import mcp_feed
 
 SMART_LABEL = "mcp:smart_search"
+GET_REFUSALS_TO_PAUSE = 2    # refusals in a row before gets wait for the reset
+_REFUSED = "opened too quickly"     # Upwork's words; a private job says it too
 _sleep = time.sleep          # injectable for tests
 _last_call = [0.0]           # monotonic stamp of the previous paced call
 
@@ -87,6 +105,10 @@ def search_rows(session, org: str, log: Callable[[str], None]) -> dict:
                 if (not isinstance(rows[jid].get("proposal_count"), int)
                         and isinstance(j.get("proposal_count"), int)):
                     rows[jid]["proposal_count"] = j["proposal_count"]
+                # Best Matches rows carry a 300-character snippet; a keyword
+                # row asked for include_full_details carries the whole post
+                if not rows[jid].get("description") and j.get("description"):
+                    rows[jid]["description"] = j["description"]
             else:
                 rows[jid] = {**j, "_feed_source": label, "_also": []}
 
@@ -111,7 +133,11 @@ def search_rows(session, org: str, log: Callable[[str], None]) -> dict:
             res = paced_call(session, "find_jobs", {
                 "action": "search", "org_uid": org,
                 "params": {"query": q, "sort": "recency",
-                           "limit": config.MCP_PER_QUERY_LIMIT}}, log)
+                           "limit": config.MCP_PER_QUERY_LIMIT,
+                           # the whole post on the row (probed 10 Nov: 5,362
+                           # characters while `get` was refused) — the rules
+                           # and the scorer read it when the get cannot run
+                           "include_full_details": True}}, log)
         except Exception as exc:                                 # noqa: BLE001
             log(f"search {q!r} failed: {exc!r}")
             continue
@@ -170,16 +196,81 @@ def proposal_count(session, org: str, job_id: str, title: str,
     return None
 
 
-def get_row(session, org: str, jid: str, log: Callable[[str], None]):
-    """One `get`; None (logged) when it fails — the search row alone still
-    passes the hard rules, so a failed get degrades, never aborts."""
+def get_detail(session, org: str, jid: str, log: Callable[[str], None]):
+    """(row, refused): one `get`. row is None (logged) when it fails — the
+    search row still carries the rate, the spend and the rules' text, so a
+    failed get degrades, never aborts. refused is True when Upwork said the
+    day's allowance is spent ("jobs are being opened too quickly")."""
     try:
         return paced_call(session, "find_jobs",
                           {"action": "get", "org_uid": org, "params": {"id": jid}},
-                          log)
+                          log), False
     except Exception as exc:                                     # noqa: BLE001
         log(f"get {jid} failed: {exc!r}")
+        return None, _REFUSED in str(exc).lower()
+
+
+def get_row(session, org: str, jid: str, log: Callable[[str], None]):
+    """One `get`; None (logged) when it fails (get_detail without the flag)."""
+    return get_detail(session, org, jid, log)[0]
+
+
+def next_reset(now: Optional[datetime] = None) -> datetime:
+    """The next 00:00 UTC — where the allowance came back on 7, 8 and 9 Nov
+    (05:31 IST, the first scan after it, every day)."""
+    now = now or datetime.now(timezone.utc)
+    return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0,
+                                             microsecond=0)
+
+
+def paused_until(path: Optional[Path], now: Optional[datetime] = None
+                 ) -> Optional[datetime]:
+    """When gets resume, if they are paused now; None when they are not (or
+    there is no pause file to read: tests, the shadow poller)."""
+    if not path:
         return None
+    try:
+        until = parse_instant(json.loads(Path(path).read_text()).get("until"))
+    except (OSError, ValueError, AttributeError):
+        return None
+    now = now or datetime.now(timezone.utc)
+    return until if until and until > now else None
+
+
+def pause_gets(path: Optional[Path], log: Callable[[str], None], reason: str,
+               now: Optional[datetime] = None) -> datetime:
+    """Stop asking for posts until the next reset; persisted when a path is
+    given, so the next quarter hour does not ask again."""
+    now = now or datetime.now(timezone.utc)
+    until = next_reset(now)
+    if path:
+        try:
+            Path(path).write_text(json.dumps({
+                "until": until.isoformat(), "since": now.isoformat(),
+                "reason": reason[:300]}))
+        except OSError as exc:
+            log(f"get pause not saved ({exc!r}); it holds for this run only")
+    log(f"gets PAUSED until {until.isoformat()} — Upwork refused"
+        f" {GET_REFUSALS_TO_PAUSE} in a row (the day's job-open allowance is"
+        " spent); jobs are judged on their search rows until then")
+    return until
+
+
+def settled_without_get(job: dict, srow: dict, rule_check) -> bool:
+    """True when the search row alone settles a job the hard rules reject, so
+    a get would be spent on a job that cannot be scored. Only with the whole
+    post on the row (a snippet may hide a placeholder price, or the other tool
+    that keeps an n8n post in), and never for the reasons a get can overturn:
+    the rate it could not read, or a hire count the row did not carry."""
+    if not srow.get("description") or rule_check is None:
+        return False
+    reason = rule_check(job)
+    if not reason or reason == "rate_unread":
+        return False
+    if (reason == "rate_unstated_low_client" and job.get("client_hires") is None
+            and job.get("client_payment_verified")):
+        return False
+    return True
 
 
 def parse_instant(value) -> Optional[datetime]:
@@ -200,7 +291,8 @@ def parse_instant(value) -> Optional[datetime]:
 
 def fetch_new(session, org: str, log: Callable[[str], None], *,
               known: Iterable[str], max_gets: Optional[int] = None,
-              claim_since: Optional[str] = None) -> dict:
+              claim_since: Optional[str] = None, rule_check=None,
+              pause_file: Optional[Path] = None) -> dict:
     """The provider round: search, then normalize every job not in `known`
     (one bounded `get` each). Returns {"jobs": [normalized...],
     "metrics": {...}} — the caller writes. Nothing here opens a connection.
@@ -208,17 +300,30 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
     claim_since: an ISO instant; posts created before it are reported
     (`skipped_before_cut`) and not returned. A post with NO parseable
     created_date is kept — dropping fresh work on a parsing quirk would be
-    the silent loss this pipeline exists to prevent."""
+    the silent loss this pipeline exists to prevent.
+
+    rule_check: scoring.hard_rule_skip from the scan — a job its search row
+    already settles is not opened (settled_without_get). pause_file: where a
+    get pause is kept between runs (None = this run only)."""
     known = set(known)
     max_gets = config.MCP_MAX_GETS_PER_RUN if max_gets is None else max_gets
     cut = parse_instant(claim_since)
+    pause = paused_until(pause_file)
+    if pause:
+        log(f"gets paused until {pause.isoformat()} (Upwork's job-open"
+            " allowance); jobs are judged on their search rows")
     rows = search_rows(session, org, log)
     jobs, gets, skipped_cut, get_capped = [], 0, 0, 0
+    saved = refused = paused = streak = 0
+    rate = {"hourly_rows": 0, "hourly_with_budget": 0, "unread": []}
     by_feed: dict = {}
     for jid, srow in rows.items():
         feed = srow["_feed_source"]
         m = by_feed.setdefault(feed, {"extracted": 0, "known": 0, "new": 0,
                                       "skipped_before_cut": 0, "get_capped": 0})
+        if str(srow.get("job_type") or "").lower() == "hourly":
+            rate["hourly_rows"] += 1
+            rate["hourly_with_budget"] += 1 if srow.get("budget") else 0
         m["extracted"] += 1
         if jid in known:
             m["known"] += 1
@@ -231,18 +336,35 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
                 skipped_cut += 1
                 continue
         detail = None
-        if gets < max_gets:
-            detail = get_row(session, org, jid, log)
+        bare = mcp_feed.normalize(srow, None)
+        if settled_without_get(bare, srow, rule_check):
+            saved += 1                    # the row settles it: no open spent
+        elif pause:
+            paused += 1
+        elif gets < max_gets:
+            detail, was_refused = get_detail(session, org, jid, log)
             gets += 1
+            if was_refused:
+                refused += 1
+                streak += 1
+                if streak >= GET_REFUSALS_TO_PAUSE:
+                    pause = pause_gets(pause_file, log, f"get {jid} refused")
+            elif detail:
+                streak = 0
         else:
             m["get_capped"] += 1
             get_capped += 1
-        job = mcp_feed.normalize(srow, detail)
+        job = mcp_feed.normalize(srow, detail) if detail else bare
         job["_got_detail"] = bool(detail)
+        if job.get("rate_source") == "unread":
+            rate["unread"].append({"id": jid, "budget": srow.get("budget")})
         jobs.append(job)
         m["new"] += 1
     return {"jobs": jobs,
             "metrics": {"queries": len(config.MCP_TERM_QUERIES) + config.MCP_SMART_PAGES,
                         "surfaced": len(rows), "new": len(jobs), "gets": gets,
                         "get_capped": get_capped, "skipped_before_cut": skipped_cut,
-                        "by_feed": by_feed}}
+                        "get_saved": saved, "get_refused": refused,
+                        "get_paused": paused,
+                        "paused_until": pause.isoformat() if pause else None,
+                        "rate": rate, "by_feed": by_feed}}
