@@ -301,7 +301,43 @@ class TestGetAllowance(PacedCase):
         self.assertEqual(len(gets_of(s)), 3)
         self.assertEqual(out["metrics"]["get_refused"], 1)
         self.assertIsNone(out["metrics"]["paused_until"])
-        self.assertFalse(self.pause.exists())
+        self.assertIsNone(mcp_search.paused_until(self.pause))
+        self.assertEqual(mcp_search.refusal_streak(self.pause), 0)   # the success reset it
+
+    def one_new(self, session_cls=FakeSession, **kw):
+        """A round where only J_FIXED is new: one get, at most."""
+        s = session_cls(**kw)
+        out = mcp_search.fetch_new(s, "org", lambda x: None,
+                                   known={J_HOURLY, J_OLD}, pause_file=self.pause)
+        return s, out
+
+    def test_refusals_in_a_row_count_across_runs(self):
+        """Most runs now ask for one post or none, so a streak that died with
+        each run would never reach two (03:45 IST, 10 Nov: one get, refused)."""
+        _, out = self.one_new(Refusing)
+        self.assertIsNone(out["metrics"]["paused_until"])
+        self.assertEqual(mcp_search.refusal_streak(self.pause), 1)
+        _, out = self.one_new(Refusing)
+        self.assertIsNotNone(out["metrics"]["paused_until"])
+        s, out = self.one_new()                            # the next run asks nothing
+        self.assertEqual(gets_of(s), [])
+        self.assertEqual(out["metrics"]["get_paused"], 1)
+
+    def test_a_post_that_opens_breaks_the_streak(self):
+        self.one_new(Refusing)
+        self.one_new()                                     # answered
+        self.assertEqual(mcp_search.refusal_streak(self.pause), 0)
+        _, out = self.one_new(Refusing)
+        self.assertIsNone(out["metrics"]["paused_until"])
+
+    def test_a_refusal_before_the_reset_does_not_count(self):
+        from datetime import datetime, timedelta, timezone
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1, minutes=5)
+        self.pause.write_text(json.dumps({"streak": 1,
+                                          "last_refusal": yesterday.isoformat()}))
+        self.assertEqual(mcp_search.refusal_streak(self.pause), 0)
+        _, out = self.one_new(Refusing)
+        self.assertIsNone(out["metrics"]["paused_until"])
 
     def test_without_a_pause_file_the_pause_holds_for_the_run_only(self):
         out = mcp_search.fetch_new(Refusing(), "org", lambda x: None, known=set())

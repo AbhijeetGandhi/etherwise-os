@@ -22,9 +22,9 @@ Nov: 75-98 opens a day (the funnel's nightly re-read included) and then
 nothing until 00:00 UTC (05:30 IST). So, three things, each one his ask of us:
   * no get is spent on a job its search row already settles (the hard rules
     reject it on the full text include_full_details gives the keyword rows);
-  * two refusals in a row and gets PAUSE until the next 00:00 UTC, persisted
-    in the pause file the scan passes (beside the database) — no more asking
-    all evening for a job we were told not to retry;
+  * two refusals in a row — across runs: most runs now ask for one post or
+    none — and gets PAUSE until the next 00:00 UTC, kept in the pause file the
+    scan passes (beside the database), so nobody asks all evening;
   * the rate and the client's spend are read off the row (mcp_feed), so a job
     judged without its get is judged on what Upwork showed, not on a blank.
 """
@@ -223,36 +223,63 @@ def next_reset(now: Optional[datetime] = None) -> datetime:
                                              microsecond=0)
 
 
+def _read_state(path: Optional[Path]) -> dict:
+    """The pause file: {"until": when gets resume (absent = not paused),
+    "streak": refusals in a row since the last reset, "last_refusal": when}."""
+    if not path:
+        return {}
+    try:
+        state = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _write_state(path: Optional[Path], state: dict, log: Callable[[str], None]):
+    if not path:
+        return
+    try:
+        Path(path).write_text(json.dumps(state))
+    except OSError as exc:
+        log(f"get pause state not saved ({exc!r}); it holds for this run only")
+
+
 def paused_until(path: Optional[Path], now: Optional[datetime] = None
                  ) -> Optional[datetime]:
     """When gets resume, if they are paused now; None when they are not (or
     there is no pause file to read: tests, the shadow poller)."""
-    if not path:
-        return None
-    try:
-        until = parse_instant(json.loads(Path(path).read_text()).get("until"))
-    except (OSError, ValueError, AttributeError):
-        return None
+    until = parse_instant(_read_state(path).get("until"))
     now = now or datetime.now(timezone.utc)
     return until if until and until > now else None
 
 
+def refusal_streak(path: Optional[Path], now: Optional[datetime] = None) -> int:
+    """Refusals in a row carried over from earlier runs — only those since the
+    last reset: yesterday's refusal says nothing about today's allowance."""
+    state = _read_state(path)
+    last = parse_instant(state.get("last_refusal"))
+    now = now or datetime.now(timezone.utc)
+    if not last or last < next_reset(now) - timedelta(days=1):
+        return 0
+    try:
+        return int(state.get("streak") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def pause_gets(path: Optional[Path], log: Callable[[str], None], reason: str,
-               now: Optional[datetime] = None) -> datetime:
+               now: Optional[datetime] = None, streak: int = GET_REFUSALS_TO_PAUSE
+               ) -> datetime:
     """Stop asking for posts until the next reset; persisted when a path is
     given, so the next quarter hour does not ask again."""
     now = now or datetime.now(timezone.utc)
     until = next_reset(now)
-    if path:
-        try:
-            Path(path).write_text(json.dumps({
-                "until": until.isoformat(), "since": now.isoformat(),
-                "reason": reason[:300]}))
-        except OSError as exc:
-            log(f"get pause not saved ({exc!r}); it holds for this run only")
+    _write_state(path, {"until": until.isoformat(), "since": now.isoformat(),
+                        "streak": streak, "last_refusal": now.isoformat(),
+                        "reason": reason[:300]}, log)
     log(f"gets PAUSED until {until.isoformat()} — Upwork refused"
-        f" {GET_REFUSALS_TO_PAUSE} in a row (the day's job-open allowance is"
-        " spent); jobs are judged on their search rows until then")
+        f" {streak} in a row (the day's job-open allowance is spent); jobs are"
+        " judged on their search rows until then")
     return until
 
 
@@ -314,7 +341,8 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
             " allowance); jobs are judged on their search rows")
     rows = search_rows(session, org, log)
     jobs, gets, skipped_cut, get_capped = [], 0, 0, 0
-    saved = refused = paused = streak = 0
+    saved = refused = paused = 0
+    streak = 0 if pause else refusal_streak(pause_file)
     rate = {"hourly_rows": 0, "hourly_with_budget": 0, "unread": []}
     by_feed: dict = {}
     for jid, srow in rows.items():
@@ -348,8 +376,15 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
                 refused += 1
                 streak += 1
                 if streak >= GET_REFUSALS_TO_PAUSE:
-                    pause = pause_gets(pause_file, log, f"get {jid} refused")
+                    pause = pause_gets(pause_file, log, f"get {jid} refused",
+                                       streak=streak)
+                else:
+                    _write_state(pause_file, {
+                        "streak": streak, "last_refusal":
+                        datetime.now(timezone.utc).isoformat()}, log)
             elif detail:
+                if streak:
+                    _write_state(pause_file, {"streak": 0}, log)
                 streak = 0
         else:
             m["get_capped"] += 1
