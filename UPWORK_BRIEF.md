@@ -1217,6 +1217,32 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-11-10 · **An unread rate is not a blank rate (`92081d8`).** His catch: job
+  2119895503208409490, "the max rate is 20$/hr ... so why this was scored" - scored 26
+  and carded on 9 Nov. (The floor in config is $30/hr, his 18 Oct rule; $20 fails
+  either way.) Cause: from 6 Nov 14:01 IST Upwork refuses find_jobs `get` once a day's
+  allowance of job opens is spent - PERMISSION, "jobs are being opened too quickly.
+  Slow down and try again later, and don't retry the same job repeatedly." Every day
+  since: 75-98 opens (the funnel's 05:41 IST re-read of ~48 posts included), refused
+  from ~10:15 IST until 00:00 UTC (05:30 IST). 628 jobs were claimed without their post
+  6-10 Nov, and mcp_feed read the hourly rate from `get` alone (an August search row
+  said "0.0"), so all 413 hourly ones read as rate-unstated: 282 skipped as
+  unproven-client, 121 scored blind, 22 carded. Probed 10 Nov: the rows now carry the
+  posted range ("$15.00-$20.00/hr"; no budget = no range), the client's spend, and with
+  include_full_details the whole post (5,362 characters while `get` was refused).
+  Built: the row's rate and spend when the get is silent (get still wins); migration
+  048 records rate_source / post_source; a rate nobody could read is skipped as
+  rate_unread, never scored, and raises an anomaly; keyword searches ask for the whole
+  post; no get is spent on a job its row already settles; two refusals in a row pause
+  gets until the next 00:00 UTC (var/upwork-get-pause.json). First live run 03:30 IST:
+  2 new jobs settled on their rows, 0 gets; 30 of 49 hourly rows carried a rate (19
+  posted none), none unreadable. Open cards rechecked by title search: 17 open hourly
+  cards with no rate read; 4 skipped with a comment ($12-28, $15-25, $10-25, $15-20 -
+  his catch among them), 9 pass on their real rate, 4 not found. Left for him: the
+  funnel's nightly ~48 post re-reads spend half the day's allowance; Best-Matches-only
+  jobs are scored on a 300-character snippet while gets are paused (a title search with
+  include_full_details would fetch the text without an open); the 282 wrongly skipped
+  hourly jobs (94 in the last 24 h) were never scored.
 - 2026-10-23 · **The crowd check (`3e8ae55`).** His worry: "in the past 20 days or 25
   days ... we haven't gotten a single reply ... more than 95% of the proposals are not
   having been open", Upwork says the account is healthy, and was it the MCP, HubSpot,
