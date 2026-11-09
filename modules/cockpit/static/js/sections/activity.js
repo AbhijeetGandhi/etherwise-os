@@ -203,6 +203,7 @@ const AGO = (h) => {
 
 function statusWords(s) {
   if (s.status === "ok") return ["OK", "ok", ""];
+  if (s.status === "paused") return ["Paused", "muted", s.paused || "stopped on purpose"];
   if (s.status === "down") return ["Not running", "bad", "has never produced a run"];
   if (s.status === "degraded") return ["Needs a look", "warn", "ran, but its output was thin"];
   const late = s.hours_overdue || 0;
@@ -1278,6 +1279,7 @@ function systemRegion(d, ctx) {
         {
           key: "status", label: "Status",
           render: (s) => pill(s.status, s.status === "ok" ? "green"
+            : s.status === "paused" ? "outline"
             : s.status === "degraded" || s.status === "stale" ? "amber" : "red"),
         },
         {
@@ -1373,6 +1375,7 @@ function systemRegion(d, ctx) {
 /** v1's per-status Source-health copy, kept word for word. */
 function sourceDetail(s) {
   if (s.status === "ok") return `fresh · ${s.age_hours}h ago`;
+  if (s.status === "paused") return s.paused || "paused on purpose";
   if (s.status === "down") return "never produced a successful run";
   if (s.status === "stale") return `${s.age_hours}h ago > ${s.max_age_hours}h max`;
   return "ran but output was thin/degraded";

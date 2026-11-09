@@ -1128,11 +1128,16 @@ SOURCES = (
     # every 2h 12:05-04:05 IST. The overnight gap is 8h, so 10h is late. Not
     # critical: a channel being built, not a money/pipeline source. Catch-up
     # safe: read-only, and the store is an upsert.
+    # PAUSED 2026-11-09 — Abhijeet: "stop all linkedin related scheduled
+    # tasks". The launchd job is unloaded; catch_up is False so nothing kicks
+    # it; the tab and Today's block keep reading the last copy and say so.
+    # To resume: drop `paused`, set catch_up True, load the plist again.
     {"key": "linkedin_sync", "label": "LinkedIn tracker (Airtable)",
      "task_name": "linkedin_sync", "max_age_hours": 10,
      "degrade_kinds": ("linkedin_schema_drift",),
      "critical": False, "backs": "linkedin",
-     "launchd_label": "io.etherwise.v3.linkedin-sync", "catch_up": True,
+     "paused": "paused 2026-11-09 on Abhijeet's word — no scheduled LinkedIn runs",
+     "launchd_label": "io.etherwise.v3.linkedin-sync", "catch_up": False,
      "why": "the LinkedIn tab and Today's LinkedIn block read it; stale means"
             " drafts, replies and DM-ready people stop appearing"},
     # Manually fed: statement imports have no scheduled run to age, but the DATA

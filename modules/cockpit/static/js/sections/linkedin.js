@@ -102,24 +102,22 @@ function drill(title, rows, columns, opts = {}) {
 export async function render(root, ctx) {
   const d = await ctx.api("/api/linkedin");
 
-  const refresh = btn("Refresh from Airtable", null, { sm: true, icon: "refresh-cw" });
-  refresh.addEventListener("click", () => ctx.kick("/api/rerun", { task: "linkedin_sync" },
-    refresh, { refresh: ctx.refresh }));
-
+  // 2026-11-09: the sync is PAUSED on Abhijeet's word ("stop all linkedin
+  // related scheduled tasks") — no Refresh button, because /api/rerun no
+  // longer allows the task; the page reads the last copy and says so.
   root.append(heading("LinkedIn", "— the second channel: suitable paying clients, not followers"));
 
   if (d.never_synced) {
-    root.append(notice("warn", d.note || "Not synced yet.", { action: refresh }));
+    root.append(notice("warn", d.note || "Not synced yet."));
     return;
   }
 
   root.append(el("div", "srcline ok", [
     el("div", "grow", [
       "Copied from the Airtable tracker ", el("b", null, fmt.relative(d.as_of)),
-      el("span", "muted", ` (${fmt.dateTime(d.as_of)}) · every 2h, 12 PM–4 AM · read-only — the social sessions edit `),
+      el("span", "muted", ` (${fmt.dateTime(d.as_of)}) · sync paused since 9 Nov — the figures below stop here · read-only — the social sessions edit `),
       extLink(d.base_url, "the tracker"),
     ]),
-    refresh,
   ]));
 
   root.append(

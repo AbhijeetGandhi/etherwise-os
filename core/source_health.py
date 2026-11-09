@@ -26,7 +26,13 @@ from core import config
 
 # status precedence, worst first. 'down' (never ran) is worse than 'stale'
 # (ran, went cold) is worse than 'degraded' (fresh but thin) is worse than 'ok'.
-STATUS_RANK = {"down": 3, "stale": 2, "degraded": 1, "ok": 0}
+STATUS_RANK = {"down": 3, "stale": 2, "degraded": 1, "ok": 0, "paused": 0}
+# A PAUSED source (2026-11-09) is one Abhijeet stopped on purpose — its launchd
+# job unloaded, its `paused` text saying when and why. It is never stale, never
+# escalates, never turns the health chip amber, and the catch-up leaves it
+# alone (catch_up must be False on it). The data it fed keeps its last "as of";
+# the pages that read it say so. Distinct from a RETIRED source, which leaves
+# the registry altogether: paused is meant to come back.
 
 # Which run statuses PROVE the rail is alive (2026-08-13).
 # A rail whose 'nothing new' outcome is a clean skip (runner.TaskSkip ->
@@ -128,7 +134,10 @@ def source_status(conn, source: dict, now: datetime) -> dict:
                 except (TypeError, ValueError):
                     degrade_detail = None
 
-    if never:
+    paused = source.get("paused")
+    if paused:
+        status, stale, degraded = "paused", False, False
+    elif never:
         status = "down"
     elif stale:
         status = "stale"
@@ -155,7 +164,8 @@ def source_status(conn, source: dict, now: datetime) -> dict:
         # there is no age to escalate from, so it starts at the top.
         "escalation": 3 if status == "down"
                       else (_escalation(hours_overdue) if status == "stale" else 0),
-        "status": status, "ok": status == "ok",
+        "status": status, "ok": status in ("ok", "paused"),
+        "paused": paused or None,
     }
 
 

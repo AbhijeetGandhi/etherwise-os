@@ -69,9 +69,10 @@ RERUN_JOBS = {
     "cos_sweep": "io.etherwise.v3.cos-sweep",
     "jarvis_sweep": "io.etherwise.v3.jarvis-sweep",
     "jarvis_slack": "io.etherwise.v3.jarvis-slack",
-    # the LinkedIn tracker (2026-10-28): read-only on Airtable, an upsert —
-    # the tab's Refresh button kicks it
-    "linkedin_sync": "io.etherwise.v3.linkedin-sync",
+    # (linkedin_sync sat here 2026-10-28 → 2026-11-09; PAUSED on Abhijeet's
+    # word — "stop all linkedin related scheduled tasks". Its SOURCES entry
+    # carries `paused` and catch_up False; the tab's Refresh button is gone
+    # with it. Put it back here when the pause lifts.)
     "finance_stripe": "io.etherwise.v3.finance-stripe",
     "finance_wise_mail": "io.etherwise.v3.finance-wise-mail",
     # Globaltize's payment mails off contact@ (2026-11-06): a read-only Gmail

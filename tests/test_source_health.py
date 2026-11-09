@@ -75,6 +75,24 @@ class SourceHealthCase(unittest.TestCase):
         self.assertEqual(h["worst"], "stale")
         self.assertIn("rail", h["critical_unhealthy"])
 
+    def test_a_paused_source_is_never_stale_and_never_amber(self):
+        """2026-11-09: a source Abhijeet stopped on purpose (the LinkedIn sync)
+        is 'paused' — ok, no escalation, the chip stays green — however long
+        ago it last ran, even if it never ran."""
+        paused = tuple(dict(s, paused="paused 2026-11-09 on his word", catch_up=False)
+                       if s["key"] == "rail" else s for s in SRC)
+        with db.connect(self.db_path) as conn:
+            _run(conn, "t_rail", hours_ago=400)
+            _run(conn, "t_scan", hours_ago=0.5)
+            h = sh.source_health(conn, now=_now(), sources=paused)
+        rail = {s["key"]: s for s in h["sources"]}["rail"]
+        self.assertEqual((rail["status"], rail["ok"], rail["escalation"], rail["stale"]),
+                         ("paused", True, 0, False))
+        self.assertEqual(rail["paused"], "paused 2026-11-09 on his word")
+        self.assertTrue(h["ok"])
+        self.assertEqual(h["worst"], "ok")
+        self.assertEqual(sh.headline(h), "all 2 sources fresh")
+
     def test_never_run_source_is_down(self):
         h = self.health()                        # no runs at all
         self.assertTrue(all(s["status"] == "down" for s in h["sources"]))

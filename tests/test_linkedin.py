@@ -187,7 +187,12 @@ class Store(Base):
         src = next(s for s in config.SOURCES if s["key"] == "linkedin_sync")
         self.assertIn(S.DRIFT_KIND, src["degrade_kinds"])
         self.assertEqual(src["task_name"], S.TASK_NAME)
-        self.assertEqual(actions.RERUN_JOBS[S.TASK_NAME], src["launchd_label"])
+        # PAUSED 2026-11-09 (Abhijeet: "stop all linkedin related scheduled
+        # tasks"): the source says so, nothing may kick it, and the plist is
+        # kept on disk for the day the pause lifts
+        self.assertTrue(src["paused"])
+        self.assertFalse(src["catch_up"])
+        self.assertNotIn(S.TASK_NAME, actions.RERUN_JOBS)
         plist = ROOT / "launchd" / (src["launchd_label"] + ".plist")
         self.assertTrue(plist.exists())
         self.assertIn("modules.linkedin.sync", plist.read_text())

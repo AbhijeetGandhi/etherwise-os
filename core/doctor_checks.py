@@ -342,6 +342,10 @@ def check_source_freshness(db_path: Optional[Path] = None,
 
     checks = []
     for s in health["sources"]:
+        if s.get("status") == "paused":
+            # stopped on purpose (2026-11-09): say so, never "fresh"
+            checks.append(Check("PASS", f"source {s['key']}", f"PAUSED — {s['paused']}"))
+            continue
         if s["ok"]:
             checks.append(Check("PASS", f"source {s['key']}",
                                 f"fresh ({s['age_hours']}h ago)"))
