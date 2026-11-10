@@ -1217,6 +1217,32 @@ the Upwork chat, write the answer back into this brief, and note who asked.
     exactly. Files/artifacts remain fine for real client-facing deliverables.
 
 ## Decision log
+- 2026-11-10 · **Only valid jobs on the board (`e53962c`).** His ask: "do a review and fix my
+  pipeline I only want valid jobs". The review, read against his own cards since 1 Oct
+  (33 applied, 360 skipped by him): the v2 reaper (his R1/R2 of 11 Jun - expire `new`
+  cards for jobs posted 14+ days ago, close duplicate reposts) last ran 6 Jul and v3 never
+  ported it, so the board held 368 open `new` cards, 302 for jobs 47-141 days old; a Best
+  Matches job was judged on a 300-character snippet whenever Upwork refused the post; a
+  card pushed late (up to 7 days) never met a rule or crowd line added since; the funnel's
+  05:41 IST refresh re-opened 47 job posts, half the day's allowance, 40 of them 15-60 days
+  past the proposal (23 compared night on night: none changed); a card said "$None/hr" and
+  "Total Spent: $0" for unknowns. Four stricter rules were put to him with their numbers
+  (50+ proposals: 59 of his skips / 2 of his applies; HubSpot without Make/Airtable/
+  Zapier/n8n: 67 / 3; score 19: 73 / 3; no rate + $0 client: 47 / 5); he chose one:
+  **hubspot_only** (a title naming HubSpot and none of Make.com, Integromat, Airtable,
+  Zapier, n8n). Built: that rule; modules/upwork/board_hygiene.py - R1, R2 and R3 (today's
+  hard rules and the crowd line reach the cards already on the board; never the Invites
+  list, applied/interview cards or a job with a proposal), once per IST day from the scan,
+  live and only against the real board; a Best Matches snippet gets its whole post and live
+  count from one title search before it is judged; a late card meets today's rules and its
+  last crowd reading; job posts re-read for 14 days, not 60; honest unknowns on the card.
+  Run once over the board at 05:32 IST: 312 closed (300 expired, 10 HubSpot-only, 2
+  duplicates), 0 failed; with the 5 cards the re-run below made, the board's open `new`
+  cards went from 368 to 61 (2 old ones kept: he bid on those jobs). The 130 hourly
+  jobs of the last 36 h skipped as "no rate + unproven" while their rows went unread were
+  read again by title search: 47 passed today's rules and went back through the scan
+  (scored, crowd-checked, carded at 19+: 5 cards, every one with $30 inside its range),
+  71 stay skipped (39 under $30, 31 no rate and an unproven client, 1 n8n), 12 not found.
 - 2026-11-10 · **An unread rate is not a blank rate (`92081d8`).** His catch: job
   2119895503208409490, "the max rate is 20$/hr ... so why this was scored" - scored 26
   and carded on 9 Nov. (The floor in config is $30/hr, his 18 Oct rule; $20 fails
