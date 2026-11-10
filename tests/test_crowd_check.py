@@ -124,6 +124,26 @@ class TestDecide(unittest.TestCase):
         self.assertIn("Proposals when carded: 75",
                       clickup_push.task_body(dict(row, proposals_now=75)))
 
+    def test_the_card_says_an_unknown_is_unknown(self):
+        """2026-11-10: the 9 Nov card read "Hourly: $None/hr - $None/hr" and
+        "Total Spent: $0" for a client nobody had read."""
+        body = clickup_push.task_body({"title": "Ops", "score": 22, "contract_type": "Hourly"})
+        self.assertIn("- Hourly: no rate posted", body)
+        self.assertIn("- Total Spent: not shown", body)
+        self.assertIn("- Hires: not shown", body)
+        self.assertNotIn("None", body.split("## Client Context")[1])
+        body = clickup_push.task_body({"title": "Ops", "score": 22, "contract_type": "Hourly",
+                                       "hourly_min": 15.0, "hourly_max": 20.0,
+                                       "client_total_spent": 13556.63, "client_hires": 5})
+        self.assertIn("- Hourly: $15-$20/hr", body)
+        self.assertIn("- Total Spent: $13,557", body)
+        self.assertIn("- Hires: 5", body)
+        self.assertEqual(clickup_push.hourly_words(None, 20.0), "up to $20/hr")
+        self.assertEqual(clickup_push.hourly_words(30.0, None), "$30+/hr")
+        fixed = clickup_push.task_body({"title": "Ops", "score": 22, "contract_type": "Fixed",
+                                        "fixed_budget": 2500.0})
+        self.assertIn("- Fixed: $2,500", fixed)
+
 
 def _quiet(get_title, skills=("Artificial Intelligence",)):
     """The hourly fixture as a job with no Make.com in it, and no count."""
@@ -214,7 +234,12 @@ class TestAtTheCard(McpScanCase):
         s = LookupSession(counts={}, smart=[SEARCH_HOURLY], terms={})   # carries 39
         res, _ = self.scan(s)
         self.assertEqual(res.status, "completed", res.error)
-        self.assertFalse([c for c in s.calls if "title" in (c[1].get("params") or {})])
+        # no CROWD lookup (the row carries 39). Since 2026-11-10 a Best Matches
+        # snippet gets one title search for its whole post (include_full_details)
+        # before it is judged; that one is the text lookup, not the crowd's.
+        titled = [c[1]["params"] for c in s.calls if "title" in (c[1].get("params") or {})]
+        self.assertFalse([p for p in titled if not p.get("include_full_details")])
+        self.assertEqual(len(titled), 1)
         row = self.rows("SELECT * FROM scored_jobs WHERE id=?", (SEARCH_HOURLY["id"],))[0]
         self.assertEqual(row["proposals_now"], 39)
 

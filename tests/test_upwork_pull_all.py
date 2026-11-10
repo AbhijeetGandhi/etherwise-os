@@ -92,6 +92,27 @@ class TestPullAll(PullCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("STOPPED at messages", (self.tmp / "pull.log").read_text())
 
+    def test_job_posts_are_read_again_only_while_young(self):
+        """2026-11-10: a job read is a `get` from Upwork's daily allowance; the
+        nightly step re-read 47 posts, 40 of them 15-60 days past the proposal."""
+        from datetime import date, timedelta
+        d = lambda n: (date.today() - timedelta(days=n)).isoformat()
+        with db.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM proposal_outcomes")
+            for pid, sent in (("y1", d(3)), ("y2", d(pull.JOB_FRESH_DAYS)), ("o1", d(20)), ("o2", d(50))):
+                conn.execute("INSERT INTO proposal_outcomes (proposal_id, sent_dt, kind, job_id, source)"
+                             " VALUES (?, ?, 'cold', ?, 'test')", (pid, sent, "j" + pid))
+        moved = {}
+        with mock.patch.object(pull, "_move_aside",
+                               side_effect=lambda paths, label: moved.setdefault(label, [p.name for p in paths])), \
+             mock.patch.object(pull, "_run"), mock.patch.object(pull, "_tail_says_stopped", return_value=False):
+            plan = pull.step_funnel(self.db_path, dry=False)
+        jobs = next(v for k, v in moved.items() if k.startswith("job reads"))
+        self.assertEqual(sorted(jobs), ["jy1.json", "jy2.json"])
+        gets = next(v for k, v in moved.items() if k.startswith("proposal reads"))
+        self.assertEqual(len(gets), 4)                 # proposals and rooms keep 60 days
+        self.assertEqual(plan["job_posts_to_reread"], 2)
+
     def test_unknown_steps_are_refused(self):
         with self.assertRaises(SystemExit):
             pull.main(["everything", "--db", str(self.db_path)])

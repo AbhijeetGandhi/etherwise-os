@@ -392,6 +392,41 @@ class TestGetAllowance(PacedCase):
         self.assertEqual(job["total_applicants"], 24)                # the keyword row's count
         self.assertEqual(scoring.hard_rule_skip(job), "hourly_below_30")
 
+    def test_a_best_matches_snippet_gets_its_whole_post_from_a_search(self):
+        """2026-11-10: while gets are refused, a Best Matches job was judged on
+        a 300-character snippet. One title search (include_full_details, no
+        job-open spent) brings the whole post and the live proposal count."""
+        class TitleSearch(FakeSession):
+            def call(self, tool, args):
+                p = (args.get("params") or {})
+                if args.get("action") == "search" and "title" in p:
+                    self.calls.append((tool, args))
+                    return {"jobs": [SEARCH_ROW_1110] if p.get("include_full_details")
+                            else [{**SEARCH_ROW_1110, "description": None}]}
+                return super().call(tool, args)
+        s = TitleSearch(smart=[SMART_ROW_1110], terms={}, gets={})
+        out = mcp_search.fetch_new(s, "org", lambda x: None, known=set(),
+                                   rule_check=scoring.hard_rule_skip, lookup_text=True)
+        job = out["jobs"][0]
+        self.assertEqual(job["post_source"], "search")
+        self.assertIn("5,362 characters", job["description"])
+        self.assertEqual(job["total_applicants"], 24)          # the live count came too
+        self.assertEqual(job["feed_source"], "mcp:smart_search")
+        self.assertEqual((out["metrics"]["text_looked_up"], out["metrics"]["text_found"]), (1, 1))
+        # whole post + $15-20/hr: the row settles it, no job-open is spent
+        self.assertEqual(gets_of(s), [])
+        self.assertEqual(out["metrics"]["get_saved"], 1)
+
+    def test_no_lookup_unless_asked_or_when_the_row_has_the_post(self):
+        s = FakeSession(smart=[SMART_ROW_1110], terms={"airtable": [SEARCH_ROW_1110]}, gets={})
+        out = mcp_search.fetch_new(s, "org", lambda x: None, known=set(), lookup_text=True)
+        titled = [c for c in s.calls if "title" in (c[1].get("params") or {})]
+        self.assertEqual(titled, [])                  # the keyword row already brought it
+        self.assertEqual(out["metrics"]["text_looked_up"], 0)
+        s = FakeSession(smart=[SMART_ROW_1110], terms={}, gets={})
+        mcp_search.fetch_new(s, "org", lambda x: None, known=set())   # not asked
+        self.assertEqual([c for c in s.calls if "title" in (c[1].get("params") or {})], [])
+
     def test_rows_report_whether_they_carry_a_rate(self):
         s = FakeSession(smart=[SMART_ROW_1110, NO_RANGE_ROW_1110], terms={}, gets={})
         out = mcp_search.fetch_new(s, "org", lambda x: None, known=set())

@@ -121,6 +121,24 @@ def _breakdown(row) -> dict:
         return {}
 
 
+def _money(v) -> str:
+    return f"${v:,.0f}" if isinstance(v, (int, float)) else "not shown"
+
+
+def hourly_words(lo, hi) -> str:
+    """The posted hourly range the way he reads it: "$15-$20/hr", "up to
+    $20/hr", "$30+/hr", or "no rate posted" — never "$None/hr" (9 Nov card)."""
+    lo = lo if isinstance(lo, (int, float)) and lo else None
+    hi = hi if isinstance(hi, (int, float)) and hi else None
+    if lo and hi:
+        return f"${lo:,.0f}/hr" if lo == hi else f"${lo:,.0f}-${hi:,.0f}/hr"
+    if hi:
+        return f"up to ${hi:,.0f}/hr"
+    if lo:
+        return f"${lo:,.0f}+/hr"
+    return "no rate posted"
+
+
 def is_invite(row) -> bool:
     return (_breakdown(row).get("bonuses") or {}).get("invite", 0) > 0
 
@@ -180,8 +198,10 @@ def task_body(row) -> str:
     lines += [
         "## Client Context",
         f"- Country: {row.get('client_country') or '—'}",
-        f"- Total Spent: ${row.get('client_total_spent') or 0:,.0f}",
-        f"- Hires: {row.get('client_hires') or 0}",
+        # an unknown is said as unknown (2026-11-10): "$0" and "0 hires" for a
+        # client nobody read is a fact we did not have
+        f"- Total Spent: {_money(row.get('client_total_spent'))}",
+        f"- Hires: {row.get('client_hires') if row.get('client_hires') is not None else 'not shown'}",
         f"- Rating: {row.get('client_rating') or '—'}",
         f"- Payment Verified: {'Yes' if row.get('client_payment_verified') else 'No'}",
         "",
@@ -189,16 +209,16 @@ def task_body(row) -> str:
         f"- Type: {row.get('contract_type') or '—'}",
     ]
     if row.get("contract_type") == "Hourly":
-        lines.append(f"- Hourly: ${row.get('hourly_min')}/hr –"
-                     f" ${row.get('hourly_max')}/hr")
+        lines.append(f"- Hourly: {hourly_words(row.get('hourly_min'), row.get('hourly_max'))}")
     elif row.get("contract_type") == "Fixed":
-        lines.append(f"- Fixed: ${row.get('fixed_budget')}")
+        lines.append(f"- Fixed: {_money(row.get('fixed_budget'))}")
     if row.get("proposals_now") is not None:
         lines.append(f"- Proposals when carded: {row.get('proposals_now')}"
                      " (re-read while the card is open)")
-    lines += [f"- Applicants: {row.get('total_applicants')}",
-              f"- Engagement: {row.get('engagement')}"
-              f" ({row.get('engagement_duration')})"]
+    apps = row.get("total_applicants")
+    lines += [f"- Applicants: {apps if apps is not None else 'not shown'}",
+              f"- Engagement: {row.get('engagement') or 'not shown'}"
+              + (f" ({row['engagement_duration']})" if row.get("engagement_duration") else "")]
     return "\n".join(lines)
 
 

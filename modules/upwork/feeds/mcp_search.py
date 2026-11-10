@@ -166,34 +166,47 @@ def lookup_words(title: str, n: int = 3) -> list:
             and w.lower() not in _LOOKUP_STOP][:n]
 
 
-def proposal_count(session, org: str, job_id: str, title: str,
-                   log: Callable[[str], None], pages: int = 2) -> Optional[int]:
-    """The live proposal count on one job, read off a title search; None when
-    the search does not return it (the caller treats None as 'not known',
-    never as zero)."""
+def find_row(session, org: str, job_id: str, title: str,
+             log: Callable[[str], None], pages: int = 2, full: bool = False,
+             what: str = "crowd lookup") -> Optional[dict]:
+    """One job's search row, found by a title search (newest first, its own
+    title words); None when the first `pages` pages do not hold it. full=True
+    asks for the whole post on the row (include_full_details) — a search, so
+    it spends no job-open from Upwork's daily allowance."""
     words = lookup_words(title)
     if not words:
         return None
     cursor = None
     for _ in range(pages):
         params = {"title": " ".join(words), "limit": config.MCP_PER_QUERY_LIMIT}
+        if full:
+            params["include_full_details"] = True
         if cursor:
             params["cursor"] = cursor
         try:
             res = paced_call(session, "find_jobs", {"action": "search",
                              "org_uid": org, "params": params}, log) or {}
         except Exception as exc:                                 # noqa: BLE001
-            log(f"crowd lookup {job_id} failed: {exc!r}")
+            log(f"{what} {job_id} failed: {exc!r}")
             return None
         for r in res.get("jobs") or []:
             if str(r.get("id")) == str(job_id):
-                pc = r.get("proposal_count")
-                return pc if isinstance(pc, int) else None
+                return r
         info = res.get("pageInfo") or {}
         cursor = info.get("endCursor")
         if not info.get("hasNextPage") or not cursor:
             return None
     return None
+
+
+def proposal_count(session, org: str, job_id: str, title: str,
+                   log: Callable[[str], None], pages: int = 2) -> Optional[int]:
+    """The live proposal count on one job, read off a title search; None when
+    the search does not return it (the caller treats None as 'not known',
+    never as zero)."""
+    r = find_row(session, org, job_id, title, log, pages=pages)
+    pc = (r or {}).get("proposal_count")
+    return pc if isinstance(pc, int) else None
 
 
 def get_detail(session, org: str, jid: str, log: Callable[[str], None]):
@@ -319,7 +332,7 @@ def parse_instant(value) -> Optional[datetime]:
 def fetch_new(session, org: str, log: Callable[[str], None], *,
               known: Iterable[str], max_gets: Optional[int] = None,
               claim_since: Optional[str] = None, rule_check=None,
-              pause_file: Optional[Path] = None) -> dict:
+              pause_file: Optional[Path] = None, lookup_text: bool = False) -> dict:
     """The provider round: search, then normalize every job not in `known`
     (one bounded `get` each). Returns {"jobs": [normalized...],
     "metrics": {...}} — the caller writes. Nothing here opens a connection.
@@ -331,7 +344,11 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
 
     rule_check: scoring.hard_rule_skip from the scan — a job its search row
     already settles is not opened (settled_without_get). pause_file: where a
-    get pause is kept between runs (None = this run only)."""
+    get pause is kept between runs (None = this run only). lookup_text: a new
+    job whose row is a Best Matches snippet gets its whole post (and live
+    proposal count) from one title search before anything judges it — every
+    hour Upwork refuses gets, Best Matches jobs were scored on 300 characters
+    (his 9 Nov card among them)."""
     known = set(known)
     max_gets = config.MCP_MAX_GETS_PER_RUN if max_gets is None else max_gets
     cut = parse_instant(claim_since)
@@ -341,7 +358,7 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
             " allowance); jobs are judged on their search rows")
     rows = search_rows(session, org, log)
     jobs, gets, skipped_cut, get_capped = [], 0, 0, 0
-    saved = refused = paused = 0
+    saved = refused = paused = looked = found = 0
     streak = 0 if pause else refusal_streak(pause_file)
     rate = {"hourly_rows": 0, "hourly_with_budget": 0, "unread": []}
     by_feed: dict = {}
@@ -364,6 +381,18 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
                 skipped_cut += 1
                 continue
         detail = None
+        if lookup_text and not srow.get("description"):
+            looked += 1
+            hit = find_row(session, org, jid, srow.get("title") or "", log,
+                           full=True, what="text lookup")
+            if hit and hit.get("description"):
+                found += 1
+                srow = {**srow, "description": hit["description"]}
+                if (not isinstance(srow.get("proposal_count"), int)
+                        and isinstance(hit.get("proposal_count"), int)):
+                    srow["proposal_count"] = hit["proposal_count"]
+                if not srow.get("budget") and hit.get("budget"):
+                    srow["budget"] = hit["budget"]
         bare = mcp_feed.normalize(srow, None)
         if settled_without_get(bare, srow, rule_check):
             saved += 1                    # the row settles it: no open spent
@@ -400,6 +429,7 @@ def fetch_new(session, org: str, log: Callable[[str], None], *,
                         "surfaced": len(rows), "new": len(jobs), "gets": gets,
                         "get_capped": get_capped, "skipped_before_cut": skipped_cut,
                         "get_saved": saved, "get_refused": refused,
-                        "get_paused": paused,
+                        "get_paused": paused, "text_looked_up": looked,
+                        "text_found": found,
                         "paused_until": pause.isoformat() if pause else None,
                         "rate": rate, "by_feed": by_feed}}

@@ -343,9 +343,11 @@ class TestPlatformGateAndWeights(unittest.TestCase):
         he made the floors on a STATED rate or budget firm again. A blank rate
         still goes to the model when the title names a platform he sells."""
         body = "Set up our base and the interfaces on top of it. " * 10
+        # (a HubSpot-only title no longer reaches these rules at all: since
+        # 2026-11-10 it is hubspot_only, below)
         for title in ("Airtable Setup Specialist",
                       "GoHighLevel Pipeline Setup for Cleaning Business",
-                      "HubSpot Marketing Operations Specialist"):
+                      "Zapier Workflow Specialist"):
             cheap = dict(self._job(title, body), hourly_min=10.0, hourly_max=15.0)
             self.assertEqual(scoring.hard_rule_skip(cheap), "hourly_below_30", title)
             blank = dict(self._job(title, body), hourly_min=None, hourly_max=None)
@@ -353,6 +355,26 @@ class TestPlatformGateAndWeights(unittest.TestCase):
             small = dict(self._job(title, body), contract_type="Fixed",
                          hourly_min=None, hourly_max=None, fixed_budget=150.0)
             self.assertEqual(scoring.hard_rule_skip(small), "fixed_below_500", title)
+
+    def test_hubspot_only_titles_stay_off_the_board(self):
+        """His rule, 2026-11-10: a title naming HubSpot and none of Make.com /
+        Integromat / Airtable / Zapier / n8n is not a valid job for him, at
+        any rate or budget. Title only, as it was measured for him."""
+        body = "Set up our pipelines, workflows and reporting. " * 10
+        for title in ("HubSpot CRM Setup & Webflow Integration",
+                      "Hubspot sms automation specialist",
+                      "HubSpot, Clay, Lemlist, Quo Integration Specialist",
+                      "HUBSPOT Revenue Operations"):
+            rich = dict(self._job(title, body), hourly_min=60.0, hourly_max=120.0)
+            self.assertEqual(scoring.hard_rule_skip(rich), "hubspot_only", title)
+        for title in ("HubSpot + Make.com automation", "Zapier & HubSpot integration",
+                      "Airtable to Hub Spot sync", "HubSpot workflows in Integromat"):
+            rich = dict(self._job(title, body), hourly_min=60.0, hourly_max=120.0)
+            self.assertIsNone(scoring.hard_rule_skip(rich), title)
+        # the body naming Make.com does not lift a HubSpot-only title
+        body_make = dict(self._job("HubSpot Operations Lead", body + " Make.com too."),
+                         hourly_min=60.0, hourly_max=120.0)
+        self.assertEqual(scoring.hard_rule_skip(body_make), "hubspot_only")
 
     def test_the_exemption_reads_the_title_only(self):
         """A platform mentioned in passing in the body is not a client buying

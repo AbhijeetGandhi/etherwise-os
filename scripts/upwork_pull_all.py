@@ -55,7 +55,14 @@ from core import config, db                                       # noqa: E402
 ROOT = config.V3_ROOT
 PROP = ROOT / "var" / "prop"
 LOG = PROP / "pull_all.log"
-FRESH_DAYS = 60                     # proposals this young get their status, room and job read again
+FRESH_DAYS = 60                     # proposals this young get their status and room read again
+# ...and their JOB POST only this young (2026-11-10, his yes to "it could re-read
+# less often"): a job read is a `get`, and from 6 Nov Upwork allows ~75-100 a
+# day, then refuses until 05:30 IST. This step re-read 47 posts at 05:41 IST,
+# half the day's allowance, before the first scan could open one; 40 of them
+# were 15-60 days past the proposal, and the 23 of those compared night on
+# night had not changed. A client hires within two weeks or not at all.
+JOB_FRESH_DAYS = 14
 MESSAGE_PAGES = 30                  # pages of 20 per room: a long conversation is read whole
 STEPS = ("contracts", "messages", "funnel")
 EXTRA_STEPS = ("new",)              # named only, never part of "all steps"
@@ -214,22 +221,24 @@ def _tail_says_stopped(logfile: Path) -> bool:
 
 def step_funnel(db_path, dry: bool) -> dict:
     cut = (date.today() - timedelta(days=FRESH_DAYS)).isoformat()
+    job_cut = (date.today() - timedelta(days=JOB_FRESH_DAYS)).isoformat()
     with db.connect(db_path) as conn:
-        recent = conn.execute("SELECT proposal_id, job_id FROM proposal_outcomes WHERE sent_dt >= ?",
-                              (cut,)).fetchall()
+        recent = conn.execute("SELECT proposal_id, job_id, sent_dt FROM proposal_outcomes"
+                              " WHERE sent_dt >= ?", (cut,)).fetchall()
         newest = conn.execute("SELECT MAX(sent_dt) FROM proposal_outcomes").fetchone()[0]
     lists = sorted((PROP / "raw" / "list").glob("*.json"))
     gets = [PROP / "raw" / "get" / f"{r['proposal_id']}.json" for r in recent]
-    jobs = [PROP / "raw" / "job" / f"{r['job_id']}.json" for r in recent if r["job_id"]]
+    jobs = [PROP / "raw" / "job" / f"{r['job_id']}.json" for r in recent
+            if r["job_id"] and str(r["sent_dt"] or "") >= job_cut]
     rooms = [PROP / "raw" / "room" / f"{r['proposal_id']}.json" for r in recent]
     plan = {"newest_stored": newest, "fresh_since": cut, "lists_to_reread": len(lists),
-            "recent_proposals": len(recent)}
+            "recent_proposals": len(recent), "job_posts_to_reread": len(jobs)}
     if dry:
         return plan
     _move_aside(lists, "proposal list pages (so new proposals are listed)")
     _move_aside(gets, f"proposal reads from the last {FRESH_DAYS} days")
     _move_aside(rooms, f"room reads from the last {FRESH_DAYS} days")
-    _move_aside(jobs, f"job reads from the last {FRESH_DAYS} days")
+    _move_aside(jobs, f"job reads from the last {JOB_FRESH_DAYS} days")
     _run("scripts/funnel/fetch.py")
     if _tail_says_stopped(PROP / "fetch.log"):
         raise RuntimeError("the proposals fetch stopped (see var/prop/fetch.log)")

@@ -451,6 +451,37 @@ class TestPushRetry(ScanPipelineCase):
                                score_map={JID_A: 21})
         self.assertEqual(result.metrics["clickup_retried"], 0)
 
+    def test_a_late_card_is_judged_by_todays_rules(self):
+        """2026-11-10: a leftover is carded up to CLICKUP_PUSH_RETRY_DAYS after
+        its verdict. A rule added since (hubspot_only) or a crowd reading past
+        150 keeps it off the board, and the row says why."""
+        self.seed_uncarded(days_ago=1)
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE scored_jobs SET title=? WHERE id=?",
+                         ("HubSpot CRM Cleanup Specialist", self.LEFT))
+        result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                               score_map={JID_A: 21})
+        self.assertEqual(result.status, "completed", result.error)
+        self.assertEqual(result.metrics["clickup_late_skipped"], 1)
+        self.assertEqual(result.metrics["clickup_retried"], 0)
+        keys = {r["entity_key"] for r in self.rows(
+            "SELECT entity_key FROM shadow_ledger WHERE target='clickup'")}
+        self.assertEqual(keys, {JID_A})
+        row = self.rows("SELECT status, hard_rule_skip FROM scored_jobs WHERE id=?",
+                        (self.LEFT,))[0]
+        self.assertEqual((row["status"], row["hard_rule_skip"]), ("Skipped", "hubspot_only"))
+
+    def test_a_late_card_past_the_crowd_line_stays_off(self):
+        self.seed_uncarded(days_ago=1)
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE scored_jobs SET proposals_now=? WHERE id=?",
+                         (config.CROWD_SKIP_AT + 10, self.LEFT))
+        result = self.run_scan([payload(tile(JID_A)), payload(), payload()],
+                               score_map={JID_A: 21})
+        self.assertEqual(result.metrics["clickup_late_skipped"], 1)
+        row = self.rows("SELECT hard_rule_skip FROM scored_jobs WHERE id=?", (self.LEFT,))[0]
+        self.assertEqual(row["hard_rule_skip"], "crowded")
+
     def test_live_retry_cards_the_row_and_carries_it_in_the_digest(self):
         # seeded ABOVE the patched bar below (25 > 23), not at the live
         # HOT_LEAD_THRESHOLD: the leftover has to stay hot inside the patch or

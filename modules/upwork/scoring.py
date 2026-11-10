@@ -31,6 +31,14 @@ _OTHER_TOOLS_RE = re.compile(
     r"\b(make\.com|airtable|claude|zapier|vapi|retell|gohighlevel|ghl|"
     r"python|openai|gpt|hubspot|salesforce|notion|monday\.com)\b", re.I)
 _NO_ASIA_RE = re.compile(r"no\s+asia", re.I)
+# HIS RULE, 2026-11-10 ("I only want valid jobs"; of the options put to him he
+# chose this one): a job whose TITLE names HubSpot and none of Make.com /
+# Integromat / Airtable / Zapier / n8n stays off the board. HubSpot is not
+# proven on his profile; on the cards since 1 Oct this rule would have removed
+# 67 he skipped and 3 he applied to (all HubSpot CRM cleanups). Title only, as
+# measured: the post's body naming Make.com does not lift it.
+_HUBSPOT_TITLE_RE = re.compile(r"hub\s?spot", re.I)
+_HUBSPOT_PARTNER_RE = re.compile(r"make\.com|integromat|airtable|zapier|n8n", re.I)
 # A client saying the posted price is not the real one (2026-10-18, his rule:
 # "unless in the proposal they have mentioned its a placeholder price"). The
 # word alone is not enough, because automation posts are full of template
@@ -172,6 +180,8 @@ def hard_rule_skip(job: dict) -> Optional[str]:
         return "n8n_exclusion"
     if _N8N_RE.search(text) and not _OTHER_TOOLS_RE.search(text):
         return "n8n_exclusion"          # sole-tool: n8n is THE subject
+    if _HUBSPOT_TITLE_RE.search(title) and not _HUBSPOT_PARTNER_RE.search(title):
+        return "hubspot_only"
     if job.get("rate_source") == "unread" and not placeholder_price:
         # 2026-11-10: the posted rate (or fixed budget) could be read from
         # neither the post nor its search row. A rate we did not SEE is never

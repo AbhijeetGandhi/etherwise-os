@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 from core import config, db, notify, runner
-from modules.upwork import crowd, icp, scoring
+from modules.upwork import board_hygiene, crowd, icp, scoring
 
 sys.path.insert(0, str(config.V3_ROOT / "scripts"))
 import clickup_push  # noqa: E402  (routing/list names for intents)
@@ -310,7 +310,8 @@ def _fetch_mcp(ctx, dbp) -> dict:
     round_ = mcp_search.fetch_new(session, org, ctx.log, known=known,
                                   claim_since=config.MCP_CLAIM_SINCE,
                                   rule_check=scoring.hard_rule_skip,
-                                  pause_file=Path(dbp).parent / "upwork-get-pause.json")
+                                  pause_file=Path(dbp).parent / "upwork-get-pause.json",
+                                  lookup_text=True)
     m = round_["metrics"]
     # DEGRADED-FEED GUARD, the MCP twin of MIN_HEALTHY_TILES: a search round
     # that surfaces almost nothing is a broken feed (auth, a changed tool
@@ -479,6 +480,7 @@ def scan(ctx, _sleep=time.sleep) -> dict:
     pushed = 0      # LIVE cards actually created (0 in shadow) — separate metric
     retried = 0     # of which: leftovers from an earlier run (either mode)
     push_failed = 0  # rows whose card create failed this run (retried next run)
+    late_skipped = 0  # leftovers today's rules (or their crowd reading) reject
     icp_hits = []   # ideal-client-profile leads (the tier above 'hot')
     icp_near = []
     run_ids = {e["id"] for e in scored}
@@ -510,6 +512,21 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             row = dict(conn.execute(
                 f"SELECT * FROM {TABLE} WHERE id=?",
                 (entry["id"],)).fetchone())
+        if entry.get("retry"):
+            # A LATE card (up to CLICKUP_PUSH_RETRY_DAYS after its verdict) is
+            # judged by TODAY's rules and its last crowd reading before it
+            # reaches the board (2026-11-10, "I only want valid jobs"): a rule
+            # added since, or a crowd that passed 150, keeps it off.
+            late = scoring.hard_rule_skip(row) or (
+                crowd.SKIP_REASON
+                if crowd.decide(row.get("proposals_now"), row) == "skip" else None)
+            if late:
+                with db.connect(dbp) as conn:
+                    conn.execute(f"UPDATE {TABLE} SET status='Skipped',"
+                                 " hard_rule_skip=? WHERE id=?", (late, row["id"]))
+                ctx.log(f"{row['id']}: not carded late — {late} under today's rules")
+                late_skipped += 1
+                continue
         # ICP / Prime: deterministic ideal-client overlay ON TOP of the score
         row["skills"] = json.loads(row.get("skills_json") or "[]")
         verdict_bd = json.loads(row.get("score_breakdown_json") or "{}")
@@ -617,6 +634,24 @@ def scan(ctx, _sleep=time.sleep) -> dict:
                 ctx.log(f"hot-lead digest send FAILED: {exc!r}")
                 digest_status = "send_failed"
 
+    # THE BOARD'S DAILY HYGIENE (his R1/R2 of 2026-06-11, which v3 never ran
+    # until 2026-11-10): `new` cards for jobs posted 14+ days ago expire, and
+    # duplicate reposts close. Once per IST day, live, against the real board
+    # only (a test's temp database never reaches ClickUp), never the scan's
+    # undoing. Before the quiet-run skip below, so a quiet morning still runs it.
+    hygiene_m = {}
+    marker = Path(dbp).parent / "board-hygiene-day.txt"
+    if (not ctx.shadow and Path(dbp).resolve() == Path(config.DB_PATH).resolve()
+            and board_hygiene.due_today(marker)):
+        try:
+            hygiene_m = board_hygiene.sweep(dbp, clickup_push.token(),
+                                            clickup_push.req, ctx.log, live=True)
+            if not hygiene_m.get("remaining"):
+                board_hygiene.mark_done(marker)
+        except Exception as exc:                      # noqa: BLE001
+            ctx.log(f"board hygiene FAILED: {exc!r}")
+            hygiene_m = {"error": repr(exc)[:200]}
+
     if not new_rows and all(f["extracted"] == 0 for f in feeds.values()):
         raise runner.TaskSkip("no tiles extracted on any feed"
                               if provider == "chrome" else
@@ -630,10 +665,11 @@ def scan(ctx, _sleep=time.sleep) -> dict:
             "clickup_intents": intents,
             "clickup_pushed": pushed,
             "clickup_retried": retried, "clickup_push_failed": push_failed,
+            "clickup_late_skipped": late_skipped,
             "hot": len(hot), "hot_retried": len(hot_retried),
             "digest": digest_status,
             "icp": len(icp_hits), "icp_near": len(icp_near),
-            "icp_email": icp_status,
+            "icp_email": icp_status, "board_hygiene": hygiene_m,
             "crowd": dict(crowd_m, **{f"recheck_{k}": v for k, v in recheck_m.items()})}
 
 
