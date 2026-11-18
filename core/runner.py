@@ -206,14 +206,19 @@ SELF_HEAL_EXEMPT_TASKS = ("catch_up",)
 
 
 def _self_heal(db_path: Optional[Path], task_name: str, run_id: int) -> int:
-    if task_name in SELF_HEAL_EXEMPT_TASKS:
-        return 0
+    # An exempt task still heals its OWN CRASH. `task_failure` is the runner's
+    # statement that the task itself fell over, not the task's statement about
+    # another source — and exempting it too left catch_up's one crash of
+    # 31 Oct (a migration pending for a minute mid-build) open as a "critical"
+    # for eighteen days, through 800 clean catch_up runs (found 2026-11-18).
+    own_crash_only = task_name in SELF_HEAL_EXEMPT_TASKS
     try:
         with db.connect(db_path) as conn:
             cur = conn.execute(
                 "UPDATE anomalies SET resolved_at=datetime('now') WHERE"
                 " resolved_at IS NULL AND task_name=? AND run_id IS NOT NULL"
-                " AND run_id < ?", (task_name, run_id))
+                " AND run_id < ?" + (" AND kind='task_failure'" if own_crash_only else ""),
+                (task_name, run_id))
             return cur.rowcount or 0
     except Exception:                   # noqa: BLE001 — healing is a courtesy
         return 0                        # never a reason for a clean run to fail

@@ -26,6 +26,11 @@ VAR_DIR = V3_ROOT / "var"
 DB_PATH = VAR_DIR / "etherwise.db"
 LOG_DIR = VAR_DIR / "logs"
 BACKUP_DIR = VAR_DIR / "backups"
+# The nightly snapshot of THIS database (core/backup.py, 2026-11-18): the last
+# week of days, plus the first backup of each of the last six months so a slow
+# corruption noticed late still has a clean copy behind it. ~75 MB each gzipped.
+BACKUP_KEEP_DAILY = 7
+BACKUP_KEEP_MONTHLY = 6
 LOCK_DIR = VAR_DIR / "locks"   # flock single-instance locks (runner)
 KNOWLEDGE_DIR = V3_ROOT / "knowledge"
 KNOWLEDGE_INBOX = V3_ROOT / "knowledge-inbox"
@@ -1019,6 +1024,16 @@ SOURCES = (
      "why": "the only source of Globaltize revenue now that they pay through their"
             " own platform; the bank credit that follows is the settlement and is"
             " paired, never counted"},
+    # The database itself (2026-11-18). Until tonight the only nightly backup
+    # was of the retired v2 database; this one had no copy newer than 9 Oct.
+    # Daily 03:20 IST; 30 h = a missed night is amber by the next evening.
+    {"key": "db_backup", "label": "Database backup (nightly, verified)",
+     "task_name": "backup_db", "max_age_hours": 30,
+     "degrade_kinds": ("backup_failed",), "critical": True, "backs": "everything",
+     "launchd_label": "io.etherwise.v3.backup-db", "catch_up": True,
+     "why": "the ledger, every decision on every card and the audit log live in one"
+            " file; stale means the newest copy that could be restored is older than"
+            " a day"},
     # PayPal (2026-11-18): The Cradle Company left Upwork for PayPal invoices
     # (first one paid 17 Nov). The "paid for your invoice" mail on inbox 01 is
     # the only record of that revenue until the bank statement — and the bank

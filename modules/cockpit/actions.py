@@ -81,6 +81,9 @@ RERUN_JOBS = {
     # PayPal's payment mails off inbox 01 (2026-11-18): a read-only IMAP search,
     # PayPal's own transaction id on every row — safe to kick when one lands
     "finance_paypal_mail": "io.etherwise.v3.finance-paypal-mail",
+    # the nightly database backup (2026-11-18): reads the database, writes one
+    # file under var/backups/nightly — safe to take another before a risky import
+    "backup_db": "io.etherwise.v3.backup-db",
     "finance_upwork_weekly": "io.etherwise.v3.finance-upwork-weekly",
     # the MCP ledger read (2026-08-26, use case A): read-only on Upwork, the
     # upsert dedups on the canonical key — safe to kick any time.

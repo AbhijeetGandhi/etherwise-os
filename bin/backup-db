@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Back up the live database: a verified, gzipped snapshot in var/backups/nightly/.
+
+    PYTHONPATH=. python3 bin/backup-db
+
+A consistent copy while the rails keep writing, proved (quick_check + row
+counts) before it is kept, then pruned to the last few days and month-firsts.
+Fails loudly when the copy does not verify. See core/backup.py.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import backup, config, runner                      # noqa: E402
+
+TASK_NAME = "backup_db"
+
+
+def main() -> int:
+    def task(ctx):
+        try:
+            m = backup.run(ctx.db_path or config.DB_PATH)
+        except Exception as exc:                             # noqa: BLE001
+            ctx.anomaly("backup_failed", "critical",
+                        {"error": repr(exc)[:300],
+                         "note": "last night's database backup was NOT made — the newest"
+                                 " good one is whatever is already in var/backups/nightly"})
+            raise
+        ctx.log(f"backup: {Path(m['file']).name} {m['gz_bytes'] / 1e6:.1f} MB gz"
+                f" ({m['db_bytes'] / 1e6:.1f} MB db), quick_check {m['quick_check']},"
+                f" {m['kept']} kept, {len(m['pruned'])} pruned")
+        return m
+
+    res = runner.run_task(TASK_NAME, task, module="system")
+    print(json.dumps({"status": res.status, "metrics": res.metrics}, default=str))
+    return 0 if res.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

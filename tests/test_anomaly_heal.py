@@ -71,6 +71,14 @@ class SelfHeal(unittest.TestCase):
         # catch_up never heals its own (they are about other sources)
         r4 = self._run("catch_up", status="completed")
         self.assertEqual(runner._self_heal(self.db_path, "catch_up", r4), 0)
+        # …except its own CRASH, which is the runner's statement about catch_up
+        # itself (2026-11-18: one sat open as a critical for eighteen days)
+        r5 = self._run("catch_up")
+        self._anom("catch_up", r5, kind="task_failure")
+        r6 = self._run("catch_up", status="completed")
+        self.assertEqual(runner._self_heal(self.db_path, "catch_up", r6), 1)
+        self.assertIn(("catch_up", "catch_up_gave_up"), self._open())
+        self.assertNotIn(("catch_up", "task_failure"), self._open())
 
     def test_run_task_heals_on_completed_and_on_a_clean_skip(self):
         r1 = self._run("t_demo")

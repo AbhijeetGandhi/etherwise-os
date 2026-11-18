@@ -555,8 +555,15 @@ def main() -> int:
                           lambda ctx: write_brief(ctx.db_path or config.DB_PATH, slot),
                           module="chief_of_staff")
     if res.metrics:
-        print(render_text(res.metrics, {"headline": res.metrics.get("headline", ""),
-                                        "narrative": res.metrics.get("narrative", "")}))
+        # The stdout copy is for the launchd log only. The PM slot is the DELTA
+        # brief since 2026-11-01 and has its own text shape; render_text on it
+        # raised KeyError('movement') AFTER the brief had been written and
+        # mailed, so launchd recorded exit 1 for a job that had done its work —
+        # seventeen evenings in a row before it was noticed (2026-11-18).
+        m = res.metrics
+        print(render_text(m, {"headline": m.get("headline", ""),
+                              "narrative": m.get("narrative", "")})
+              if "movement" in m else render_delta_text(m))
     print(json.dumps({"run_id": res.run_id, "status": res.status}))
     return 0 if res.status in ("completed", "skipped_empty") else 1
 

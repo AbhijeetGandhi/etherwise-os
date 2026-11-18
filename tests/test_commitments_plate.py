@@ -138,6 +138,26 @@ class Delta(unittest.TestCase):
         self.assertNotIn("OVERDUE", html_body)
         self.assertNotIn("Top priorities", html_body)
 
+    def test_the_pm_job_prints_the_delta_and_exits_clean(self):
+        """2026-11-18: main() printed every brief through render_text, which
+        needs the morning brief's keys — the PM delta raised KeyError('movement')
+        after it had been written and mailed, and launchd recorded exit 1 for
+        seventeen evenings. The stdout copy must take the slot's own shape."""
+        import contextlib
+        import io
+        import types
+        with mock.patch.object(brief.source_health, "report",
+                               return_value={"ok": True, "headline": "all fresh",
+                                             "lines": [], "worst_escalation": 0}):
+            d = brief.build_delta(self.db_path, now=dt(22, 20))
+        done = types.SimpleNamespace(metrics=d, run_id=7, status="completed")
+        out = io.StringIO()
+        with mock.patch.object(brief.runner, "run_task", return_value=done), \
+                mock.patch("sys.argv", ["brief", "pm"]), contextlib.redirect_stdout(out):
+            self.assertEqual(brief.main(), 0)
+        self.assertIn("PM delta since 11:00", out.getvalue())
+        self.assertIn('"status": "completed"', out.getvalue())
+
     def test_what_changed_since_eleven_is_listed_and_nothing_else(self):
         with db.connect(self.db_path) as conn:
             conn.execute("INSERT INTO threads (id, room_name) VALUES ('t1', 'Acme room')")

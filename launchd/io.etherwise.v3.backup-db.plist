@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.etherwise.v3.backup-db</string>
+  <!-- Interpreter FIRST, script as an ARGUMENT: launchd cannot exec a file on
+       the Desktop directly (TCC). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+    <string>bin/backup-db</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key><string>/Users/abhijeet/Desktop/Etherwise/etherwise-v3</string>
+    <key>PATH</key><string>/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/backup-db.log</string>
+  <key>StandardErrorPath</key><string>/Users/abhijeet/Library/Logs/Etherwise-v3/backup-db.log</string>
+  <key>RunAtLoad</key><false/>
+  <!-- 03:20 IST daily, before the 05:20-06:20 morning rails. Any hour is
+       safe (an online snapshot; a reader never blocks a writer in WAL), this
+       one just puts the copy ahead of the day's imports. The v2 job at 03:00
+       copies the RETIRED v2 database and is not this. -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>20</integer></dict>
+</dict>
+</plist>
