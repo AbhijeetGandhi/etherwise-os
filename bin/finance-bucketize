@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import config, db  # noqa: E402
 from modules.finance import pnl, accrual, bank_splits, payroll_tax, salary_lines  # noqa: E402
-from modules.finance import globaltize_mail  # noqa: E402
+from modules.finance import globaltize_mail, paypal_mail  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "finance-bucketize.md"
 
@@ -71,6 +71,14 @@ def run(apply: bool) -> dict:
         landings = globaltize_mail.pair_landings(conn, apply=apply)
         if apply:
             conn.commit()
+    # AND the landing of a PayPal sale (2026-11-18), for the same reason: the
+    # "paid for your invoice" mail is the revenue (bin/finance-paypal-mail); the
+    # bank credit that follows names PayPal and reads as income until it is
+    # paired here (finance doctor #17).
+    with db.connect(config.DB_PATH) as conn:
+        paypal = paypal_mail.pair_landings(conn, apply=apply)
+        if apply:
+            conn.commit()
 
     changed = 0
     counts = Counter()
@@ -108,7 +116,9 @@ def run(apply: bool) -> dict:
             "bank_split_rows": splits["written"],
             "bank_split_problems": splits_bad,
             "globaltize_landings_paired": len(landings["paired"]),
-            "globaltize_in_flight": len(landings["in_flight"])}
+            "globaltize_in_flight": len(landings["in_flight"]),
+            "paypal_landings_paired": len(paypal["paired"]),
+            "paypal_landings_unexplained": len(paypal["unexplained"])}
 
 
 def main() -> int:

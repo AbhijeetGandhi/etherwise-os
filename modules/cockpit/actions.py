@@ -78,6 +78,9 @@ RERUN_JOBS = {
     # Globaltize's payment mails off contact@ (2026-11-06): a read-only Gmail
     # query, canonical keys on every row — safe to kick after a payment lands
     "finance_globaltize_mail": "io.etherwise.v3.finance-globaltize-mail",
+    # PayPal's payment mails off inbox 01 (2026-11-18): a read-only IMAP search,
+    # PayPal's own transaction id on every row — safe to kick when one lands
+    "finance_paypal_mail": "io.etherwise.v3.finance-paypal-mail",
     "finance_upwork_weekly": "io.etherwise.v3.finance-upwork-weekly",
     # the MCP ledger read (2026-08-26, use case A): read-only on Upwork, the
     # upsert dedups on the canonical key — safe to kick any time.

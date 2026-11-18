@@ -761,6 +761,61 @@ def _check_globaltize(conn, today: Optional[str] = None) -> Check:
                    "amount_minor": f["amount_minor"]} for f in flight])
 
 
+def _check_paypal(conn, today: Optional[str] = None) -> Check:
+    """#17 PayPal counted once (added 2026-11-18). A client who pays a PayPal
+    invoice is booked from the "paid for your invoice" mail
+    (bin/finance-paypal-mail); the money then reaches the bank as a credit that
+    names PayPal, which the bank rail reads as income. RED when:
+      * such a credit is still income and `paypal_mail.pair_landings` would pair
+        it — the same sale on the books twice; bucketize clears it;
+      * such a credit is income, fits no open payment, and payments ARE open —
+        which one it settles cannot be told, so one is probably counted twice;
+      * a payment is past the last day its money could land and the bank has
+        been read beyond that day with no credit naming PayPal — the landing is
+        in the statement under a narration nobody recognised, as income.
+    Payments not yet in the bank ledger are listed, not failed: PayPal holds a
+    new seller's funds, and the bank statement is monthly."""
+    from modules.finance import paypal_mail as pp
+    name = "#17 PayPal counted once"
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM transactions WHERE source=?",
+                         (pp.SOURCE,)).fetchone()[0]
+        if not n:
+            return Check(name, "N/A", "no PayPal mail rows yet")
+        twice = pp.double_counted(conn)
+        unclear = pp.ambiguous(conn)
+        flight = pp.in_flight(conn, today or _dt.date.today().isoformat())
+    except Exception as exc:                                        # noqa: BLE001
+        return Check(name, "N/A", f"not readable: {exc!r}"[:120])
+    if twice:
+        return Check(name, "RED",
+                     f"{len(twice)} bank credit(s) from PayPal still booked as income beside"
+                     " the sale they settle — PayPal money counted twice", twice[:20],
+                     fix="Run bin/finance-bucketize --apply (or bin/finance-paypal-mail): it"
+                         " pairs each PayPal bank credit with the payment it settles and files"
+                         " the credit as a transfer.")
+    if unclear:
+        return Check(name, "RED",
+                     f"{len(unclear)} bank credit(s) from PayPal fit no open payment and not"
+                     " their sum — which sale they settle cannot be told", unclear[:20],
+                     fix="Tell the ops chat which PayPal payment(s) the bank credit settles; it"
+                         " is recorded in modules/finance/paypal_mail.py (LANDINGS_BY_HAND).")
+    late = [f for f in flight if f["overdue"]]
+    if late:
+        return Check(name, "RED",
+                     f"{len(late)} PayPal payment(s) should have reached the bank by now and no"
+                     " bank credit names PayPal — the landing is probably in the statement"
+                     " under another narration, booked as income", late[:20],
+                     fix="Find the bank credit that is the PayPal payment (same week, a little"
+                         " under its amount in rupees) and tell the ops chat which one it is.")
+    note = (f"; {len(flight)} payment(s) not in the bank ledger yet"
+            + (" (oldest " + str(max(f['age_days'] for f in flight)) + "d)" if flight else ""))
+    return Check(name, "GREEN",
+                 f"{n} PayPal rows; every bank credit from PayPal is a transfer{note}",
+                 [{"payment": f["payment"], "payer": f["payer"], "date": f["date"],
+                   "net_minor": f["net_minor"], "expected_by": f["expected_by"]} for f in flight])
+
+
 def run(db_path=None, period: Optional[str] = None,
         today: Optional[str] = None) -> DoctorResult:
     """Evaluate every implemented invariant. RED on any -> the caller must block
@@ -775,5 +830,5 @@ def run(db_path=None, period: Optional[str] = None,
                   _check_payroll(conn), _check_stripe_arrival(conn, today),
                   _check_effective_month(conn), _check_salary_lines(conn),
                   _check_payroll_tax(conn), _check_bank_splits(conn),
-                  _check_globaltize(conn, today)]
+                  _check_globaltize(conn, today), _check_paypal(conn, today)]
     return DoctorResult(checks)

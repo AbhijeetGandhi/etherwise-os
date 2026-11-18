@@ -1019,6 +1019,19 @@ SOURCES = (
      "why": "the only source of Globaltize revenue now that they pay through their"
             " own platform; the bank credit that follows is the settlement and is"
             " paired, never counted"},
+    # PayPal (2026-11-18): The Cradle Company left Upwork for PayPal invoices
+    # (first one paid 17 Nov). The "paid for your invoice" mail on inbox 01 is
+    # the only record of that revenue until the bank statement — and the bank
+    # credit is the settlement, not the sale. Daily 06:15 IST + grace.
+    {"key": "paypal_mail", "label": "PayPal mail -> ledger (invoice payments + fee)",
+     "task_name": "finance_paypal_mail", "max_age_hours": 30,
+     "degrade_kinds": ("paypal_mail_unparsed", "paypal_mail_unrecognised",
+                       "paypal_landing_unexplained"),
+     "critical": True, "backs": "money",
+     "launchd_label": "io.etherwise.v3.finance-paypal-mail", "catch_up": True,
+     "why": "the only source of revenue from clients who pay a PayPal invoice (The"
+            " Cradle Company since Nov 2026); stale means their weeks silently stop"
+            " reaching the P&L"},
     {"key": "upwork_sync", "label": "Upwork sync",
      "task_name": "upwork_sync", "max_age_hours": 3,     # hourly at :45
      # the MCP proposals pass inside the sync failing is a degraded sync, not

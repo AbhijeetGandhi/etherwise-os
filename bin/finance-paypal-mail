@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""PayPal mails (inbox 01, All Mail, read-only IMAP) -> ledger.
+
+    PYTHONPATH=. python3 bin/finance-paypal-mail --dry-run     # report, write nothing
+    PYTHONPATH=. python3 bin/finance-paypal-mail --days 90     # widen the window
+    PYTHONPATH=. python3 bin/finance-paypal-mail
+
+Books every "X paid for your invoice" as that payer's revenue (USD) with
+PayPal's cut as a platform fee, then pairs each PayPal credit in the bank
+ledger with the payment(s) it settles and files it as a transfer — so the
+money counts once. Prints what has not reached the bank yet, and any PayPal
+money mail of a shape it does not know. See modules/finance/paypal_mail.py.
+"""
+from __future__ import annotations
+
+import argparse
+import email
+import sys
+from datetime import datetime, timedelta, timezone
+from email.header import decode_header, make_header
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import config, db, runner                          # noqa: E402
+from modules.finance import payment_mail_rail as pmr         # noqa: E402
+from modules.finance import paypal_mail as pp                # noqa: E402
+from modules.jarvis import imap_rail                         # noqa: E402
+
+TASK_NAME = "finance_paypal_mail"
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _ist_date(date_header) -> str:
+    try:
+        return parsedate_to_datetime(date_header).astimezone(IST).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return datetime.now(IST).strftime("%Y-%m-%d")
+
+
+def fetch(days: int, *, _connect=None, _password=None) -> list:
+    """Every PayPal mail in the window as (subject, body, ist_date, sender).
+    select readonly + BODY.PEEK: nothing in the mailbox changes, not even a
+    read flag."""
+    inbox = config.PAYMENT_MAIL_INBOX
+    pw = (_password or imap_rail.app_password)(inbox)
+    if not pw:
+        sys.exit(f"no app password on file for {inbox}")
+    client = (_connect or imap_rail._connect)(config.JARVIS_IMAP_HOST, inbox, pw)
+    out = []
+    try:
+        client.select(config.PAYMENT_MAIL_MAILBOX, readonly=True)
+        since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+        typ, data = client.uid("SEARCH", None, "FROM", pp.SENDER_DOMAIN, "SINCE", since)
+        uids = sorted(set(data[0].split()), key=int) if typ == "OK" and data and data[0] else []
+        for uid in uids:
+            typ, d = client.uid("FETCH", uid, "(BODY.PEEK[])")
+            if typ != "OK" or not d or not d[0]:
+                continue
+            msg = email.message_from_bytes(d[0][1])
+            subj = str(make_header(decode_header(msg.get("Subject", ""))))
+            sender = str(make_header(decode_header(msg.get("From", ""))))
+            out.append((subj, pmr._body_text(msg), _ist_date(msg.get("Date")), sender))
+    finally:
+        try:
+            client.logout()
+        except Exception:                                    # noqa: BLE001
+            pass
+    return out
+
+
+def _collect_and_commit(ctx, args) -> dict:
+    mails = fetch(args.days)
+    print(f"paypal emails in last {args.days}d: {len(mails)}")
+    rows, paid, incomplete, unknown, quiet = [], [], [], [], 0
+    for subj, body, day, sender in mails:
+        verdict, p = pp.classify(subj, sender, body)
+        if verdict == "paid":
+            paid.append((p, day))
+            rows.extend(pp.ledger_rows(p, paid_date=day))
+        elif verdict == "incomplete":
+            incomplete.append((subj, p.get("have")))
+        elif verdict == "unrecognised":
+            unknown.append((day, subj))
+        else:
+            quiet += 1
+    print(f"parsed {len(paid)} payments -> {len(rows)} ledger rows ({quiet} other mails,"
+          f" not money)")
+    if incomplete:
+        print(f"!! {len(incomplete)} payment mails did not fully parse (template change, or a"
+              f" currency other than USD?): {incomplete[:5]}")
+    for day, subj in unknown:
+        print(f"   ? {day} a PayPal money mail of a shape this rail does not know: {subj!r}")
+
+    with db.connect(ctx.db_path or config.DB_PATH) as conn:
+        if args.dry_run:
+            new = [r for r in rows if not conn.execute(
+                "SELECT 1 FROM transactions WHERE canonical_key=?", (r["canonical_key"],)).fetchone()]
+            print(f"DRY RUN — would insert {len(new)}, {len(rows) - len(new)} already in the ledger")
+            for r in new:
+                print(f"   + {r['creation_dt']} {r['canonical_key']:32} {r['amount_minor'] / 100:>10,.2f}"
+                      f" {r['currency']}  {r['category']:7} {r['assignment_company']}")
+            out = {"inserted": 0, "already_present": len(rows) - len(new)}
+        else:
+            out = pp.commit(conn, rows)
+            print(f"ledger: inserted {out['inserted']}, already present {out['already_present']}")
+        pairing = pp.pair_landings(conn, apply=not args.dry_run)
+        if not args.dry_run:
+            conn.commit()
+        flight = pp.in_flight(conn, datetime.now(IST).strftime("%Y-%m-%d"))
+    for p in pairing["paired"]:
+        print(f"   = {', '.join(p['payments'])} reached the bank as {p['landing']} on"
+              f" {p['landing_date']} ({p['how']}; was {p['was']}, now transfer_in)"
+              + ("  [dry run]" if args.dry_run else ""))
+    for u in pairing["unexplained"]:
+        print(f"   ? {u['date']} bank credit {u['landing']} names PayPal and fits no open payment"
+              f" — left as {u['category']}")
+    for f in flight:
+        print(f"   ~ {f['date']} {f['net_minor'] / 100:>10,.2f} USD net from {f['payer']} — not in the"
+              f" bank ledger yet (expected by {f['expected_by']})"
+              + ("  OVERDUE" if f["overdue"] else ""))
+
+    if incomplete:
+        ctx.anomaly("paypal_mail_unparsed", "critical",
+                    {"count": len(incomplete), "sample": incomplete[:5],
+                     "note": "a PayPal payment mail did not parse — that revenue is NOT in the"
+                             " ledger until the parser is re-pointed"})
+    if unknown:
+        ctx.anomaly("paypal_mail_unrecognised", "warn",
+                    {"count": len(unknown), "sample": unknown[:5],
+                     "note": "PayPal money mail of a shape this rail has not met (a refund, a"
+                             " dispute, a direct payment, a transfer?) — read it and teach"
+                             " modules/finance/paypal_mail.py"})
+    if pairing["unexplained"]:
+        ctx.anomaly("paypal_landing_unexplained", "warn",
+                    {"rows": pairing["unexplained"][:5],
+                     "note": "a bank credit names PayPal and fits no open payment — name the"
+                             " payment(s) it settles (paypal_mail.LANDINGS_BY_HAND)"})
+    return {"emails": len(mails), "payments": len(paid), "incomplete": len(incomplete),
+            "unrecognised": len(unknown), "inserted": out["inserted"],
+            "already_present": out["already_present"], "paired": len(pairing["paired"]),
+            "unexplained": len(pairing["unexplained"]), "in_flight": len(flight),
+            "dry_run": bool(args.dry_run)}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--days", type=int, default=45)
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+    # local ledger only + a read-only IMAP search: nothing for the shadow gate
+    result = runner.run_task(TASK_NAME, lambda ctx: _collect_and_commit(ctx, args),
+                             module="system")
+    return 0 if result.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

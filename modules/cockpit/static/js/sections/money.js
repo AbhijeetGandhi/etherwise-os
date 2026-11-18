@@ -140,7 +140,9 @@ function accountWords(a) {
 /** the ledger's source tags in words */
 function srcWords(s) {
   const m = { "Upwork-CSV": "Upwork", "Upwork": "Upwork", "Wise-mail": "Wise", "Wise": "Wise",
-    "IDFC": "bank", "Bank": "bank", "Card": "card", "Stripe": "Stripe", "Direct": "direct" };
+    "IDFC": "bank", "Bank": "bank", "Card": "card", "Stripe": "Stripe", "Direct": "direct",
+    // the two mail rails of Nov 2026: a client paying through its own platform / a PayPal invoice
+    "Globaltize-mail": "Globaltize", "PayPal-mail": "PayPal" };
   return m[s] || s || "";
 }
 
