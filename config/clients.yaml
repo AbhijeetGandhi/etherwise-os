@@ -99,6 +99,15 @@ clients:
     billing:
       canonical: Brendan Jansen
   -
+    id: ccoh
+    name: CCOH
+    upwork_rooms:
+      - room_5a6d1e0c50ff6c732125fe38dbd387ad
+    kind: client
+    billing:
+      canonical: CCOH
+    scope_notes: "upwork room room_5a6d1e0c50ff6c732125fe38dbd387ad; 'Brittany Gabriel, Brittany G'; 6 messages; last 2026-11-19"
+  -
     id: celciusherbs
     name: Celsius Herbs
     aliases:
