@@ -34,6 +34,8 @@ def main() -> int:
         m = call_recorders.poll(ctx, dry_run=args.dry_run)
         for s in m["saved"]:
             print(f"   + {s['day']} {s['recording'][:44]:44} {s['title']}")
+        for t in m["retired"]:
+            print(f"   - {t['recording'][:44]:44} taken back out: Fathom has it as {t['twin_of']}  ({t['title']})")
         for t in m["twins"]:
             print(f"   = {t['recording'][:44]:44} same call as {t['twin_of']}  ({t['title']})")
         for k, v in m["errors"].items():
@@ -41,6 +43,7 @@ def main() -> int:
         if m["errors"]:
             ctx.anomaly("call_recorder_error", "warn", {"errors": m["errors"]})
         return {"listed": m["listed"], "saved": len(m["saved"]), "twins": len(m["twins"]),
+                "retired": len(m["retired"]),
                 "waiting": m["waiting"], "skipped": m["skipped"], "settling": m["settling"],
                 "deferred": m["deferred"], "before_floor": m["before_floor"],
                 "errors": m["errors"], "dry_run": m["dry_run"]}

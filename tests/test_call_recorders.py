@@ -327,6 +327,61 @@ class Poll(unittest.TestCase):
         self.assertIn("fireflies", m["errors"])
         self.assertEqual([x["recording"] for x in m["saved"]], ["clickup-doc-own"])
 
+    def test_a_fathom_call_that_arrived_in_this_same_run_is_seen(self):
+        """24 Nov, the first live run: the Fathom poll had dropped that
+        morning's meetings in the inbox minutes earlier; they were not `sources`
+        yet, and ClickUp's copies of two of them were saved beside them."""
+        s = datetime(2026, 11, 23, 8, 45, tzinfo=UTC)
+        self.inbox.mkdir(parents=True)
+        fath = fathom_payload(rid=205743694, start=s, end=s + timedelta(minutes=31),
+                              speakers=("Abhijeet Gandhi", "Jaap Meijvogel"))
+        (self.inbox / "2026-11-23__205743694.json").write_text(json.dumps(fath))
+        doc = cu_doc("doc-hermon", "Etherwise <> Hermon Day Start - 11/23/2026", s + timedelta(minutes=35))
+        md = notes_md(attendees="Abhijeet Gandhi, Jaap Meijvogel", duration="31m 11s",
+                      people=("Jaap Meijvogel", "Abhijeet Gandhi"))
+        m = self._poll(FakeFireflies([]), FakeClickUp([(doc, md)]))
+        self.assertEqual((m["saved"], [t["twin_of"] for t in m["twins"]]), ([], ["205743694"]))
+
+    def test_a_copy_saved_before_fathoms_arrived_is_taken_back_out_unless_already_read(self):
+        s = datetime(2026, 11, 23, 8, 45, tzinfo=UTC)
+        doc = cu_doc("doc-hermon", "Etherwise <> Hermon Day Start - 11/23/2026", s + timedelta(minutes=35))
+        md = notes_md(attendees="Abhijeet Gandhi, Jaap Meijvogel", duration="31m 11s",
+                      people=("Jaap Meijvogel", "Abhijeet Gandhi"))
+        clickup = FakeClickUp([(doc, md)])
+        self._poll(FakeFireflies([]), clickup)                           # saved: nobody else has it
+        path = self.inbox / "2026-11-23__clickup-doc-hermon.json"
+        ingest.ingest_file(path, db_path=self.db_path, client_map=[], source_type="fathom")
+        # …then Fathom's copy of the same call lands
+        fath = fathom_payload(rid=205743694, start=s, end=s + timedelta(minutes=31),
+                              speakers=("Abhijeet Gandhi", "Jaap Meijvogel"))
+        (self.inbox / "2026-11-23__205743694.json").write_text(json.dumps(fath))
+        m = self._poll(FakeFireflies([]), clickup)
+        self.assertEqual([(r["recording"], r["twin_of"]) for r in m["retired"]],
+                         [("clickup-doc-hermon", "205743694")])
+        self.assertFalse(path.exists())
+        row = self._rows()[("clickup", "doc-hermon")]
+        self.assertEqual((row["state"], row["twin_of"], row["file"]), ("twin", "205743694", None))
+        with db.connect(self.db_path) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sources WHERE source_ref="
+                                          "'fathom/clickup-doc-hermon'").fetchone()[0], 0)
+        self.assertEqual(clickup.pages, ["doc-hermon"])                  # and it is not fetched again
+
+    def test_a_copy_already_read_is_never_retired(self):
+        s = datetime(2026, 11, 23, 8, 45, tzinfo=UTC)
+        doc = cu_doc("doc-hermon", "Etherwise <> Hermon Day Start - 11/23/2026", s + timedelta(minutes=35))
+        md = notes_md(attendees="Abhijeet Gandhi, Jaap Meijvogel", duration="31m 11s",
+                      people=("Jaap Meijvogel", "Abhijeet Gandhi"))
+        self._poll(FakeFireflies([]), FakeClickUp([(doc, md)]))
+        path = self.inbox / "2026-11-23__clickup-doc-hermon.json"
+        out = ingest.ingest_file(path, db_path=self.db_path, client_map=[], source_type="fathom")
+        with db.connect(self.db_path) as conn:
+            conn.execute("UPDATE sources SET status='extracted' WHERE id=?", (out["source_id"],))
+        fath = fathom_payload(rid=205743694, start=s, end=s + timedelta(minutes=31),
+                              speakers=("Abhijeet Gandhi", "Jaap Meijvogel"))
+        (self.inbox / "2026-11-23__205743694.json").write_text(json.dumps(fath))
+        self.assertEqual(cr.retire_late_twins(self.db_path, inbox=self.inbox), [])
+        self.assertTrue(path.exists())
+
     def test_nothing_before_the_floor_is_read_or_recorded(self):
         old = cu_doc("doc-2025", "automated trading bot - 9/12/2025", datetime(2025, 9, 12, 15, 0, tzinfo=UTC))
         clickup = FakeClickUp([(old, notes_md()), (cu_doc("doc-own"), notes_md())])

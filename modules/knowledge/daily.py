@@ -72,7 +72,8 @@ def _poll_recorders(ctx) -> dict:
                      "note": "Fireflies or ClickUp could not be read for call recordings;"
                              " the calls stay on the recorder and are picked up when it answers"})
     return {"listed": m.get("listed"), "saved": len(m.get("saved") or []),
-            "twins": len(m.get("twins") or []), "waiting": m.get("waiting", 0),
+            "twins": len(m.get("twins") or []) + len(m.get("retired") or []),
+            "waiting": m.get("waiting", 0),
             "skipped": m.get("skipped", 0), "settling": m.get("settling", 0),
             "deferred": m.get("deferred", 0), "before_floor": m.get("before_floor", 0),
             "errors": m.get("errors") or {},

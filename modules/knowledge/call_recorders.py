@@ -449,10 +449,23 @@ def _read(path) -> Optional[dict]:
         return None
 
 
-def find_twin(conn, payload: dict, extra=()) -> Optional[str]:
+def is_recorder_id(rid) -> bool:
+    return str(rid).startswith(("fireflies-", "clickup-"))
+
+
+def find_twin(conn, payload: dict, extra=(), inbox: Optional[Path] = None,
+              fathom_only: bool = False) -> Optional[str]:
     """The recording_id of a call already held that is this same call, or None.
-    Looks at every call source and every recording this module has saved within
-    a day of it, plus `extra` (payloads accepted earlier in this same run)."""
+    Looks, within a day of it, at every call source, every recording this module
+    has saved, EVERY FILE IN THE CALL INBOX, plus `extra` (payloads accepted
+    earlier in this run).
+
+    The inbox is the part that was missing on the first live run (24 Nov): the
+    Fathom poll had just dropped three meetings there, they were not `sources`
+    yet (ingest runs after both polls), and so two of ClickUp's copies of those
+    very calls were saved beside them. "Fathom is polled first so its copy
+    wins" was only true for Fathom calls of earlier days. `fathom_only` is for
+    the repair pass: only a twin Fathom itself recorded counts."""
     iv = interval(payload)
     if not iv:
         return None
@@ -464,21 +477,67 @@ def find_twin(conn, payload: dict, extra=()) -> Optional[str]:
     paths += [r[0] for r in conn.execute(
         f"SELECT file FROM call_recordings WHERE state='saved' AND file IS NOT NULL"
         f" AND substr(ended_at,1,10) IN ({marks})", days)]
+    inbox = inbox or (config.KNOWLEDGE_INBOX / "fathom")
+    if inbox.exists():
+        for day in days:                       # files are named <day>__<recording id>.json
+            paths += [str(p) for p in sorted(inbox.glob(f"{day}__*.json"))]
     me = str(payload.get("recording_id"))
     seen = set()
     candidates = list(extra)
     for p in paths:
-        if p in seen:
+        key = str(Path(p).resolve()) if p else p
+        if key in seen:
             continue
-        seen.add(p)
+        seen.add(key)
         other = _read(p)
         if other:
             candidates.append(other)
     for other in candidates:
         rid = str(other.get("recording_id") or other.get("id") or "")
-        if rid and rid != me and same_call(payload, other):
+        if not rid or rid == me or (fathom_only and is_recorder_id(rid)):
+            continue
+        if same_call(payload, other):
             return rid
     return None
+
+
+def retire_late_twins(db_path, *, inbox: Optional[Path] = None, dry_run: bool = False) -> list:
+    """A recording this module saved that turns out to be a call FATHOM also
+    recorded, and that nothing has read yet: take ours back out. Its file and
+    its un-extracted `sources` row go, the registry says `twin`. Only a copy
+    still waiting for extraction is ever retired — once facts have been drawn
+    from one it stays, and the settle delay is what keeps that from mattering."""
+    out = []
+    with db.connect(db_path) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT recorder, native_id, file FROM call_recordings WHERE state='saved'"
+            " AND file IS NOT NULL")]
+        for r in rows:
+            payload = _read(r["file"])
+            if not payload:
+                continue
+            ref = f"fathom/{payload['recording_id']}"
+            src = conn.execute("SELECT id, status FROM sources WHERE source_ref=?",
+                               (ref,)).fetchone()
+            if src and src["status"] != "ingested":
+                continue                              # already read: it stays
+            twin = find_twin(conn, payload, inbox=inbox, fathom_only=True)
+            if not twin:
+                continue
+            out.append({"recording": payload["recording_id"], "twin_of": twin,
+                        "title": payload.get("title")})
+            if dry_run:
+                continue
+            if src:
+                conn.execute("DELETE FROM source_fts WHERE source_id=?", (src["id"],))
+                conn.execute("DELETE FROM sources WHERE id=? AND status='ingested'", (src["id"],))
+            Path(r["file"]).unlink(missing_ok=True)
+            conn.execute(
+                "UPDATE call_recordings SET state='twin', twin_of=?, file=NULL,"
+                " note='Fathom had this call too; our copy was taken back out before"
+                " anything read it', checked_at=datetime('now')"
+                " WHERE recorder=? AND native_id=?", (twin, r["recorder"], r["native_id"]))
+    return out
 
 
 # ── the poll ─────────────────────────────────────────────────────────────────
@@ -555,6 +614,8 @@ def poll(ctx, *, fireflies=None, clickup=None, now: Optional[datetime] = None,
     m = {"listed": {"fireflies": 0, "clickup": 0}, "saved": [], "twins": [],
          "waiting": 0, "skipped": 0, "settling": 0, "deferred": 0, "before_floor": 0,
          "errors": {}, "dry_run": bool(dry_run)}
+    # a copy saved on an earlier run that Fathom has since turned out to hold too
+    m["retired"] = retire_late_twins(dbp, inbox=inbox, dry_run=dry_run)
     floor = _instant(config.CALL_RECORDER_SINCE)
     items = []
     for i in _listing(fireflies, clickup, m["errors"]):
@@ -601,7 +662,7 @@ def poll(ctx, *, fireflies=None, clickup=None, now: Optional[datetime] = None,
                             note="no transcript on it" + ("" if old else " yet"))
                 continue
             iv = interval(payload) or (item["start"], item["end"])
-            twin = find_twin(conn, payload, extra=accepted)
+            twin = find_twin(conn, payload, extra=accepted, inbox=inbox)
             if twin:
                 m["twins"].append({"recording": payload["recording_id"], "twin_of": twin,
                                    "title": payload.get("title")})
