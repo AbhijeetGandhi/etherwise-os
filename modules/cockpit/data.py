@@ -408,15 +408,24 @@ def _fathom_status(conn) -> dict:
     last = conn.execute(
         "SELECT completed_at, metrics_json FROM runs WHERE task_name='kb_daily'"
         " AND status='completed' ORDER BY completed_at DESC LIMIT 1").fetchone()
-    saved = None
+    saved, others = None, None
     if last and last["metrics_json"]:
         try:
-            saved = (json.loads(last["metrics_json"]).get("fathom") or {}).get("saved")
+            m = json.loads(last["metrics_json"])
+            saved = (m.get("fathom") or {}).get("saved")
+            # the other recorders, read in the same run since 2026-11-24
+            # (Fireflies for the Globaltize calls, ClickUp's AI Notetaker):
+            # how many NEW calls they added, how many were calls already held
+            rec = m.get("recorders")
+            if isinstance(rec, dict):
+                others = {"saved": rec.get("saved"), "twins": rec.get("twins"),
+                          "waiting": rec.get("waiting"),
+                          "errors": sorted((rec.get("errors") or {}).keys())}
         except (TypeError, ValueError):
             saved = None
     return {"cursor": row["value"] if row else None,
             "last_poll": last["completed_at"] if last else None,
-            "last_saved": saved}
+            "last_saved": saved, "others": others}
 
 
 def nudges(db_path: Optional[Path] = None) -> dict:

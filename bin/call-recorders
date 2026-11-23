@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Read the other call recorders — Fireflies (his Globaltize calls) and ClickUp's
+AI Notetaker — into the call inbox Fathom fills. kb_daily does this every
+morning; this is the same pass by hand.
+
+    PYTHONPATH=. python3 bin/call-recorders --dry-run     # what would be saved / is a twin
+    PYTHONPATH=. python3 bin/call-recorders
+
+Saving a recording only puts it in the inbox; the next kb_daily (or
+`python3 -m modules.knowledge.daily`) ingests and reads it. Reads only on both
+services. See modules/knowledge/call_recorders.py.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core import runner                                      # noqa: E402
+from modules.knowledge import call_recorders                 # noqa: E402
+
+TASK_NAME = "call_recorders"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    def task(ctx):
+        m = call_recorders.poll(ctx, dry_run=args.dry_run)
+        for s in m["saved"]:
+            print(f"   + {s['day']} {s['recording'][:44]:44} {s['title']}")
+        for t in m["twins"]:
+            print(f"   = {t['recording'][:44]:44} same call as {t['twin_of']}  ({t['title']})")
+        for k, v in m["errors"].items():
+            print(f"   ! {k}: {v}")
+        if m["errors"]:
+            ctx.anomaly("call_recorder_error", "warn", {"errors": m["errors"]})
+        return {"listed": m["listed"], "saved": len(m["saved"]), "twins": len(m["twins"]),
+                "waiting": m["waiting"], "skipped": m["skipped"], "settling": m["settling"],
+                "deferred": m["deferred"], "before_floor": m["before_floor"],
+                "errors": m["errors"], "dry_run": m["dry_run"]}
+
+    res = runner.run_task(TASK_NAME, task, module="knowledge")
+    print(json.dumps({"status": res.status, "metrics": res.metrics}, default=str))
+    return 0 if res.status in ("completed", "skipped_empty") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

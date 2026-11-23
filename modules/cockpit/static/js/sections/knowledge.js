@@ -175,7 +175,7 @@ export async function render(root, ctx) {
         askCard(d, ctx),
         searchCard(ctx),
         freshnessLine(fr, dossiers),
-        expander("What came in — facts, sources, Fathom ingest, proof points",
+        expander("What came in — facts, sources, call recordings, proof points",
           (body) => { body.appendChild(statCards(d, dossiers, totals, ctx)); }),
       ]),
       dossiers: () => el("div", "stack", dossierRegion(dossiers, fr, ctx)),
@@ -551,10 +551,17 @@ function statCards(d, dossiers, t, ctx) {
     }),
   }));
 
-  // 3) FATHOM INGEST
+  // 3) CALL RECORDINGS — Fathom, and since 2026-11-24 the two other recorders
+  // on his calls (Fireflies for Globaltize, ClickUp's AI Notetaker), read in
+  // the same daily run into the same pipeline, one copy per call
   const f = d.fathom || {};
+  const o = f.others || null;
+  const othersBit = !o ? "" : (o.errors && o.errors.length
+    ? ` · ${o.errors.join(" + ")} could not be read`
+    : ` · ${fmt.num(o.saved || 0)} from Fireflies / ClickUp`
+      + (o.twins ? ` (${fmt.num(o.twins)} more were calls already held)` : ""));
   append(g, kpi({
-    label: "Fathom ingest",
+    label: "Call recordings",
     value: f.last_poll ? "daily ✓" : "not running",
     // no poll has ever completed, so "how fresh is Fathom" is NOT MEASURED —
     // the tile greys itself rather than reading like a live status.
@@ -563,20 +570,24 @@ function statCards(d, dossiers, t, ctx) {
     sub: f.last_poll
       ? `last pull ${fmt.relative(f.last_poll)}`
         + (f.last_saved != null
-          ? ` · ${fmt.num(f.last_saved)} new transcript${f.last_saved === 1 ? "" : "s"}`
+          ? ` · ${fmt.num(f.last_saved)} new from Fathom`
           : "")
-        + ` · caught up to ${String(f.cursor || "—").slice(0, 16)}`
+        + othersBit
+        + ` · Fathom caught up to ${String(f.cursor || "—").slice(0, 16)}`
       : "kb-daily has not completed — transcripts are not being pulled, so the"
         + " kb is not just quiet, it is blind",
     onClick: () => openDrill({
-      title: "Fathom ingest state",
-      subtitle: "the poll runs inside the kb_daily task",
+      title: "Call recordings — ingest state",
+      subtitle: "Fathom, Fireflies and ClickUp's AI Notetaker are all read inside the kb_daily task",
       rows: [
         { k: "Last poll", v: f.last_poll || null },
-        { k: "Cursor (caught up to)", v: f.cursor || null },
-        { k: "Transcripts saved on the last poll", v: f.last_saved == null ? null : String(f.last_saved) },
+        { k: "Fathom cursor (caught up to)", v: f.cursor || null },
+        { k: "Fathom transcripts saved on the last poll", v: f.last_saved == null ? null : String(f.last_saved) },
+        { k: "Fireflies / ClickUp calls saved on the last poll", v: !o || o.saved == null ? null : String(o.saved) },
+        { k: "…that were calls already held (not saved twice)", v: !o || o.twins == null ? null : String(o.twins) },
+        { k: "Recorders that could not be read", v: !o ? null : (o.errors && o.errors.length ? o.errors.join(", ") : "none") },
       ],
-      total: 3,
+      total: 6,
       columns: [
         { key: "k", label: "Field" },
         { key: "v", label: "Value", cls: "mono" },

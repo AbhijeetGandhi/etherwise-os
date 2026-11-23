@@ -1509,6 +1509,34 @@ HOURS_AWAITING_CLIENT = ("waiting on client", "awaiting client",
 # shipped is a claim a client checks once and then stops believing the report.
 HOURS_BULK_CLOSE_MIN = 5
 
+# ── The other call recorders (2026-11-24) — modules/knowledge/call_recorders.py
+# Fathom is no longer the only thing recording his calls: Fireflies records the
+# Globaltize ones, ClickUp's AI Notetaker the rest. Both are read into the SAME
+# call pipeline as Fathom (kb_daily, right after the Fathom poll).
+FIREFLIES_API = "https://api.fireflies.ai/graphql"
+FIREFLIES_KEY_FILE = CREDENTIALS_DIR / "fireflies-api-key.txt"     # mode 600, never in git
+# THE KEY IS HIS SEAT IN GLOBALTIZE'S WORKSPACE AND CAN LIST THEIR WHOLE
+# COMPANY'S RECORDINGS — candidate interviews, their client calls, fifty in
+# three hours on 23 Nov. Only calls one of these addresses took part in are
+# ever asked for or read. Adding a teammate here (jay@etherwise.io sits on some
+# of the same calls) is his decision, not a default.
+FIREFLIES_PARTICIPANT_EMAILS = ("abhijeet@globaltize.com",)
+CLICKUP_NOTETAKER_DOC_TYPE = 3        # the v3 Docs API's type for an AI Notetaker doc
+# A recording younger than this waits a run, so that Fathom — polled first, and
+# the richest copy when it has one — is never beaten to a call by minutes.
+CALL_RECORDER_SETTLE_MINUTES = 45
+CALL_RECORDER_WAIT_DAYS = 3           # no transcript after this long -> skipped
+CALL_RECORDER_MAX_FETCH = 60          # recordings read per recorder per run
+# Nothing that ended before this day is read. His "backfill what's missing"
+# (24 Nov) was asked about Fireflies since 20 Aug 2026 and ClickUp since 16 Oct
+# 2026; ClickUp also holds 23 notetaker docs from Sep-Oct 2025 (an earlier
+# trial) that he was not asked about. They are left on ClickUp, uncounted and
+# unrecorded, so moving this date back is all it takes to bring them in.
+CALL_RECORDER_SINCE = "2026-08-01"
+# ClickUp says when the notes doc was made, not when the call ran; its window
+# is an estimate and may be this far off when two copies are compared.
+CALL_TWIN_CLOCK_SLACK_MINUTES = 12
+
 # ── LinkedIn (2026-10-28) — the engagement tracker into the cockpit ──────────
 # Spec: etherwise-v3-linkedin-brief.md. The base is OWNED by the social
 # sessions (business/social/); v3 only reads it (modules/linkedin/sync.py).

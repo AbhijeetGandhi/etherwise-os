@@ -1,5 +1,7 @@
 """Daily brain update (launchd, June-14 TCC pattern). One run_task that:
   1. polls Fathom (live API) -> knowledge-inbox/fathom/
+     …then the other recorders, Fireflies and ClickUp's AI Notetaker, into the
+     same inbox in the same shape, one copy per call (call_recorders.py)
   2. polls Gmail IF connected (token present) -> knowledge-inbox/email/
   3. ingests new inbox drops (dedup by content hash)
   4. extracts pending fathom+email sources, BUDGET-AWARE (stops cleanly at the
@@ -20,7 +22,7 @@ from pathlib import Path
 from core import config, db, runner
 from core.claude_gateway import ClaudeBudgetExceeded
 from modules.knowledge import (fathom_poll, email_poll, ingest, extract, index,
-                               clients, crm, dossier, proof_points)
+                               clients, crm, dossier, proof_points, call_recorders)
 
 # INGEST scans these inbox dirs each run (dedup by content hash makes an already-
 # ingested drop a no-op). Loom is INGESTED so a freshly-fetched recording becomes a
@@ -51,6 +53,30 @@ def _poll_fathom(ctx) -> dict:
         return {"saved": 0, "deduped": 0}
     except Exception as e:                  # a poll outage must not block extract
         return {"error": str(e)[:200]}
+
+
+def _poll_recorders(ctx) -> dict:
+    """Fireflies + ClickUp's AI Notetaker, into the same inbox Fathom fills
+    (2026-11-24). AFTER the Fathom poll on purpose: when two recorders hold one
+    call the first copy stays, and Fathom's is the one with addresses and
+    timestamps. A recorder that is down is reported, never raised — and filed
+    as an anomaly, because "it quietly stopped reading his calls" is exactly
+    the failure a poll inside a bigger job can hide."""
+    try:
+        m = call_recorders.poll(ctx)
+    except Exception as e:                  # noqa: BLE001 — must not block extract
+        m = {"errors": {"poll": str(e)[:200]}}
+    if m.get("errors") and hasattr(ctx, "anomaly"):
+        ctx.anomaly("call_recorder_error", "warn",
+                    {"errors": m["errors"],
+                     "note": "Fireflies or ClickUp could not be read for call recordings;"
+                             " the calls stay on the recorder and are picked up when it answers"})
+    return {"listed": m.get("listed"), "saved": len(m.get("saved") or []),
+            "twins": len(m.get("twins") or []), "waiting": m.get("waiting", 0),
+            "skipped": m.get("skipped", 0), "settling": m.get("settling", 0),
+            "deferred": m.get("deferred", 0), "before_floor": m.get("before_floor", 0),
+            "errors": m.get("errors") or {},
+            "saved_titles": [x["title"] for x in (m.get("saved") or [])][:20]}
 
 
 def _poll_email(ctx) -> dict:
@@ -159,6 +185,7 @@ def run_daily(ctx) -> dict:
     dbp = ctx.db_path or config.DB_PATH
     result = {
         "fathom": _poll_fathom(ctx),
+        "recorders": _poll_recorders(ctx),
         "email": _poll_email(ctx),
         "ingest": _ingest_inbox(dbp),
         # attribute newly-ingested Upwork threads to registry clients. This has

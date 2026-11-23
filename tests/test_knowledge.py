@@ -979,6 +979,7 @@ class TestDaily(KBCase):
         with mock.patch.object(_config, "KNOWLEDGE_INBOX", self.tmp / "inbox"), \
              mock.patch.object(_config, "KNOWLEDGE_DIR", self.tmp / "kb"), \
              mock.patch.object(daily, "_poll_fathom", return_value={"saved": 0}), \
+             mock.patch.object(daily, "_poll_recorders", return_value={"saved": 0}), \
              mock.patch.object(daily, "_poll_email",
                                return_value={"skipped": "gmail not connected"}), \
              mock.patch.object(daily, "_extract_pending",
